@@ -14,7 +14,7 @@
 
 <br />
 
-Cost Deck is a lightweight Kubernetes Operator that **finds waste**, **right‑sizes workloads**, and **shuts down idle environments** — all from a single dashboard. Attach AWS Aurora clusters to scale cloud databases alongside your pods.
+Cost Deck is a lightweight Kubernetes Operator that **finds waste**, **right‑sizes workloads**, and **shuts down idle environments** - all from a single dashboard. Attach cloud services to scale them alongside your k8s workloads.
 
 ![Cost Deck Dashboard](docs/assets/dashboard.png)
 
@@ -26,7 +26,7 @@ Cost Deck is a lightweight Kubernetes Operator that **finds waste**, **right‑s
 | **One‑Click Optimization** | Right‑size every Deployment and StatefulSet based on actual usage — revert instantly |
 | **Scheduled Scaling** | Scale Dev/Staging environments down outside working hours via `ScalingConfig` (single ns) or `ScalingGroup` (multi‑ns) |
 | **Sequential Pipelines** | Define namespace stages so databases scale before apps, and apps before ingress |
-| **Cloud Database Scaling** | Start/stop AWS Aurora (and more providers coming) as part of your scaling pipeline |
+| **Cloud Scaling** | Start/stop cloud services (AWS, GCP, Azure) as part of your scaling pipeline |
 | **Cluster Node Map** | Visual heat map of node utilization across availability zones |
 | **Three Config Methods** | UI Dashboard, REST API, or Kubernetes CRDs (GitOps‑friendly) |
 
