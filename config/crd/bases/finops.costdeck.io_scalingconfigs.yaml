@@ -1,0 +1,188 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.1
+  name: scalingconfigs.finops.costdeck.io
+spec:
+  group: finops.costdeck.io
+  names:
+    kind: ScalingConfig
+    listKind: ScalingConfigList
+    plural: scalingconfigs
+    singular: scalingconfig
+  scope: Namespaced
+  versions:
+  - name: v1
+    schema:
+      openAPIV3Schema:
+        description: ScalingConfig is the Schema for the scalingconfigs API
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: spec defines the desired state of ScalingConfig
+            properties:
+              active:
+                description: |-
+                  Active is the manual override for scaling.
+                  If null, the schedule is followed.
+                  If true, the namespace is forced to Scale Up.
+                  If false, the namespace is forced to Scale Down.
+                type: boolean
+              exclusions:
+                description: Exclusions lists resources that should never be scaled
+                  down
+                items:
+                  type: string
+                type: array
+                x-kubernetes-list-type: atomic
+              schedules:
+                description: Schedules define periodic scaling events
+                items:
+                  description: ScalingSchedule defines when a namespace should be
+                    active
+                  properties:
+                    days:
+                      description: Days of week (0-6, 0=Sunday)
+                      items:
+                        type: integer
+                      maxItems: 7
+                      minItems: 1
+                      type: array
+                    endTime:
+                      description: EndTime in HH:MM format (local operator time)
+                      pattern: ^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$
+                      type: string
+                    startTime:
+                      description: StartTime in HH:MM format (local operator time)
+                      pattern: ^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$
+                      type: string
+                    timezone:
+                      description: |-
+                        Timezone for the schedule (e.g. "UTC", "America/New_York")
+                        If empty, local operator time is used.
+                      type: string
+                  required:
+                  - days
+                  - endTime
+                  - startTime
+                  type: object
+                type: array
+                x-kubernetes-list-type: atomic
+              sequence:
+                description: |-
+                  Sequence defines the order of scaling resources.
+                  Format: "Group/Version:Kind/Name" (e.g. "apps/v1:Deployment/my-app" or "apps/v1:Deployment/*")
+                items:
+                  type: string
+                type: array
+                x-kubernetes-list-type: atomic
+              targetNamespace:
+                description: TargetNamespace is the namespace this config applies
+                  to
+                type: string
+            required:
+            - targetNamespace
+            type: object
+          status:
+            description: status defines the observed state of ScalingConfig
+            properties:
+              conditions:
+                description: Conditions represent the current state of the ScalingConfig
+                  resource.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              lastAction:
+                description: LastAction is the timestamp of the last scaling event
+                format: date-time
+                type: string
+              originalReplicas:
+                additionalProperties:
+                  format: int32
+                  type: integer
+                description: |-
+                  OriginalReplicas stores the previous replica counts for restoration
+                  Key format: "Kind/Name"
+                type: object
+              phase:
+                description: Phase is the current state of the config (ScaledUp, ScalingDown,
+                  ScaledDown)
+                type: string
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

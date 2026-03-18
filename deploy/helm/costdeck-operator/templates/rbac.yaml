@@ -1,0 +1,106 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "costdeck-operator.serviceAccountName" . }}
+  labels:
+    {{- include "costdeck-operator.labels" . | nindent 4 }}
+  {{- with .Values.serviceAccount.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "costdeck-operator.fullname" . }}-manager-role
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  - pods/log
+  - namespaces
+  - nodes
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+  - update
+  - watch
+  - list
+  - get
+- apiGroups:
+  - metrics.k8s.io
+  resources:
+  - pods
+  - nodes
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - apps
+  resources:
+  - deployments
+  - statefulsets
+  verbs:
+  - get
+  - list
+  - watch
+  - patch
+  - update
+- apiGroups:
+  - finops.costdeck.io
+  resources:
+  - namespacefinops
+  - scalinggroups
+  - scalingconfigs
+  - namespaceoptimizations
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - finops.costdeck.io
+  resources:
+  - namespacefinops/finalizers
+  - scalinggroups/finalizers
+  - scalingconfigs/finalizers
+  - namespaceoptimizations/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - finops.costdeck.io
+  resources:
+  - namespacefinops/status
+  - scalinggroups/status
+  - scalingconfigs/status
+  - namespaceoptimizations/status
+  verbs:
+  - get
+  - patch
+  - update
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "costdeck-operator.fullname" . }}-manager-rolebinding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "costdeck-operator.fullname" . }}-manager-role
+subjects:
+- kind: ServiceAccount
+  name: {{ include "costdeck-operator.serviceAccountName" . }}
+  namespace: {{ .Release.Namespace }}

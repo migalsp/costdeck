@@ -1,0 +1,739 @@
+openapi: "3.0.3"
+info:
+  title: Cost Deck Operator API
+  description: |
+    REST API for the Cost Deck Kubernetes FinOps operator.
+    Provides namespace resource insights, workload scaling, optimization, and cluster monitoring.
+
+    **Authentication:** All endpoints (except `/api/login`) require a valid `costdeck-session` cookie.
+    Obtain one via `POST /api/login`.
+  version: "1.0.0" # x-release-please-version
+  contact:
+    name: Cost Deck
+    url: https://github.com/migalsp/costdeck-operator
+  license:
+    name: Apache 2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+
+servers:
+  - url: /
+    description: Current instance
+
+tags:
+  - name: Auth
+    description: Authentication endpoints
+  - name: System
+    description: Operator version and cluster info
+  - name: Health
+    description: Operator self-monitoring
+  - name: Namespaces
+    description: Namespace resource insights
+  - name: Optimization
+    description: Resource right-sizing
+  - name: Scaling
+    description: Workload scaling management
+
+paths:
+  /api/login:
+    post:
+      tags: [Auth]
+      summary: Sign in
+      description: Authenticate with username/password. Returns a session cookie.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username:
+                  type: string
+                  example: costdeck-admin
+                password:
+                  type: string
+                  example: "<from-secret>"
+      responses:
+        "200":
+          description: Login successful
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+                example: costdeck-session=abc123; Path=/; Max-Age=86400; HttpOnly
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+        "401":
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/logout:
+    post:
+      tags: [Auth]
+      summary: Sign out
+      description: Clears the session cookie.
+      responses:
+        "200":
+          description: Logout successful
+
+  /api/version:
+    get:
+      tags: [System]
+      summary: Operator version
+      responses:
+        "200":
+          description: Build version
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  version:
+                    type: string
+                    example: v1.0.0
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/cluster-info:
+    get:
+      tags: [System]
+      summary: Cluster summary
+      description: Returns node count and total cluster resources.
+      responses:
+        "200":
+          description: Cluster info
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  nodes:
+                    type: integer
+                  totalCPU:
+                    type: string
+                  totalMemory:
+                    type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/cluster/nodes:
+    get:
+      tags: [System]
+      summary: Node metrics
+      description: Per-node resource metrics for the cluster heatmap.
+      responses:
+        "200":
+          description: Node list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/NodeMetrics"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/operator/health:
+    get:
+      tags: [Health]
+      summary: Runtime health metrics
+      description: Go runtime stats, CPU/memory usage, and historical data.
+      responses:
+        "200":
+          description: Health data
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  current:
+                    $ref: "#/components/schemas/HealthCurrent"
+                  history:
+                    type: array
+                    items:
+                      type: object
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/operator/logs:
+    get:
+      tags: [Health]
+      summary: Operator logs
+      description: Returns the trailing 100 lines of operator logs.
+      responses:
+        "200":
+          description: Log text
+          content:
+            text/plain:
+              schema:
+                type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/operator/logs/download:
+    get:
+      tags: [Health]
+      summary: Download full logs
+      description: Downloads the complete operator log file.
+      responses:
+        "200":
+          description: Log file
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+
+  /api/namespaces:
+    get:
+      tags: [Namespaces]
+      summary: List namespaces
+      description: Lists all monitored NamespaceFinOps CRDs.
+      responses:
+        "200":
+          description: Namespace list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/NamespaceFinOps"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/namespaces/{ns}/history:
+    get:
+      tags: [Namespaces]
+      summary: Usage history
+      description: Resource usage history for the last 60 minutes.
+      parameters:
+        - $ref: "#/components/parameters/Namespace"
+      responses:
+        "200":
+          description: History data points
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/HistoryPoint"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/namespaces/{ns}/pods:
+    get:
+      tags: [Namespaces]
+      summary: Pod metrics
+      description: Pod-level resource metrics for the namespace.
+      parameters:
+        - $ref: "#/components/parameters/Namespace"
+      responses:
+        "200":
+          description: Pod list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PodDetail"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/namespaces/{ns}/workloads:
+    get:
+      tags: [Namespaces]
+      summary: List workloads
+      description: Lists Deployments and StatefulSets in the namespace.
+      parameters:
+        - $ref: "#/components/parameters/Namespace"
+      responses:
+        "200":
+          description: Workload list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/WorkloadDetail"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/namespaces/{ns}/workloads/{name}:
+    put:
+      tags: [Namespaces]
+      summary: Scale workload
+      description: Set replica count for a specific Deployment or StatefulSet.
+      parameters:
+        - $ref: "#/components/parameters/Namespace"
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                kind:
+                  type: string
+                  enum: [Deployment, StatefulSet]
+                replicas:
+                  type: integer
+      responses:
+        "200":
+          description: Scaled successfully
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/namespaces/{ns}/optimize:
+    post:
+      tags: [Optimization]
+      summary: Optimize namespace
+      description: Right-size all workload resources based on actual usage. Stores original values for revert.
+      parameters:
+        - $ref: "#/components/parameters/Namespace"
+      responses:
+        "200":
+          description: Optimization applied
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/namespaces/{ns}/revert:
+    post:
+      tags: [Optimization]
+      summary: Revert optimization
+      description: Restore original resource requests/limits from before optimization.
+      parameters:
+        - $ref: "#/components/parameters/Namespace"
+      responses:
+        "200":
+          description: Reverted successfully
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/namespaces/{ns}/optimization:
+    get:
+      tags: [Optimization]
+      summary: Optimization status
+      description: Returns whether an optimization is active and the before/after values.
+      parameters:
+        - $ref: "#/components/parameters/Namespace"
+      responses:
+        "200":
+          description: Optimization info
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OptimizationStatus"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/scaling/groups:
+    get:
+      tags: [Scaling]
+      summary: List scaling groups
+      responses:
+        "200":
+          description: Group list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ScalingGroup"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [Scaling]
+      summary: Create scaling group
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScalingGroup"
+      responses:
+        "201":
+          description: Group created
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/scaling/groups/{name}:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      tags: [Scaling]
+      summary: Get scaling group
+      responses:
+        "200":
+          description: Group details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScalingGroup"
+    put:
+      tags: [Scaling]
+      summary: Update scaling group
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScalingGroup"
+      responses:
+        "200":
+          description: Group updated
+    delete:
+      tags: [Scaling]
+      summary: Delete scaling group
+      responses:
+        "204":
+          description: Group deleted
+
+  /api/scaling/groups/{name}/manual:
+    post:
+      tags: [Scaling]
+      summary: Manual override for group
+      description: Activate or deactivate a scaling group manually.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                active:
+                  type: boolean
+      responses:
+        "200":
+          description: Override applied
+
+  /api/scaling/configs:
+    get:
+      tags: [Scaling]
+      summary: List scaling configs
+      responses:
+        "200":
+          description: Config list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ScalingConfig"
+    post:
+      tags: [Scaling]
+      summary: Create scaling config
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScalingConfig"
+      responses:
+        "201":
+          description: Config created
+
+  /api/scaling/configs/{name}:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      tags: [Scaling]
+      summary: Get scaling config
+      responses:
+        "200":
+          description: Config details
+    put:
+      tags: [Scaling]
+      summary: Update scaling config
+      responses:
+        "200":
+          description: Config updated
+    delete:
+      tags: [Scaling]
+      summary: Delete scaling config
+      responses:
+        "204":
+          description: Config deleted
+
+  /api/scaling/configs/{name}/manual:
+    post:
+      tags: [Scaling]
+      summary: Manual override for config
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                active:
+                  type: boolean
+      responses:
+        "200":
+          description: Override applied
+
+components:
+  parameters:
+    Namespace:
+      name: ns
+      in: path
+      required: true
+      description: Target namespace name
+      schema:
+        type: string
+
+  responses:
+    Unauthorized:
+      description: Authentication required
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+          example: Authentication required
+
+    NodeMetrics:
+      type: object
+      properties:
+        name:
+          type: string
+        cpuCapacity:
+          type: string
+        cpuUsage:
+          type: string
+        memoryCapacity:
+          type: string
+        memoryUsage:
+          type: string
+        pods:
+          type: integer
+
+    HealthCurrent:
+      type: object
+      properties:
+        status:
+          type: string
+          example: healthy
+        goroutines:
+          type: integer
+        cpuUsage:
+          type: number
+        memoryUsage:
+          type: number
+        gcCycles:
+          type: integer
+        managedNamespaces:
+          type: integer
+        cpuRequests:
+          type: number
+        cpuLimits:
+          type: number
+        memoryRequests:
+          type: number
+        memoryLimits:
+          type: number
+
+    ResourceMetrics:
+      type: object
+      properties:
+        usage:
+          type: string
+        requests:
+          type: string
+        limits:
+          type: string
+
+    HistoryPoint:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        cpu:
+          $ref: "#/components/schemas/ResourceMetrics"
+        memory:
+          $ref: "#/components/schemas/ResourceMetrics"
+
+    PodDetail:
+      type: object
+      properties:
+        name:
+          type: string
+        status:
+          type: string
+        cpu:
+          $ref: "#/components/schemas/ResourceMetrics"
+        memory:
+          $ref: "#/components/schemas/ResourceMetrics"
+
+    WorkloadDetail:
+      type: object
+      properties:
+        name:
+          type: string
+        kind:
+          type: string
+          enum: [Deployment, StatefulSet]
+        replicas:
+          type: integer
+        readyReplicas:
+          type: integer
+        status:
+          type: string
+
+    NamespaceFinOps:
+      type: object
+      properties:
+        metadata:
+          type: object
+          properties:
+            name:
+              type: string
+            namespace:
+              type: string
+        spec:
+          type: object
+          properties:
+            targetNamespace:
+              type: string
+        status:
+          type: object
+          properties:
+            insights:
+              type: array
+              items:
+                type: string
+
+    OptimizationStatus:
+      type: object
+      properties:
+        active:
+          type: boolean
+        optimizedAt:
+          type: string
+          format: date-time
+        workloads:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+              kind:
+                type: string
+              original:
+                $ref: "#/components/schemas/ResourceValues"
+              optimized:
+                $ref: "#/components/schemas/ResourceValues"
+
+    ResourceValues:
+      type: object
+      properties:
+        cpuRequest:
+          type: string
+        cpuLimit:
+          type: string
+        memoryRequest:
+          type: string
+        memoryLimit:
+          type: string
+
+    ScalingGroup:
+      type: object
+      properties:
+        metadata:
+          type: object
+          properties:
+            name:
+              type: string
+        spec:
+          type: object
+          properties:
+            category:
+              type: string
+            namespaces:
+              type: array
+              items:
+                type: string
+            active:
+              type: boolean
+            schedules:
+              type: array
+              items:
+                $ref: "#/components/schemas/ScalingSchedule"
+            sequence:
+              type: array
+              items:
+                type: string
+
+    ScalingConfig:
+      type: object
+      properties:
+        metadata:
+          type: object
+          properties:
+            name:
+              type: string
+        spec:
+          type: object
+          properties:
+            targetNamespace:
+              type: string
+            active:
+              type: boolean
+            schedules:
+              type: array
+              items:
+                $ref: "#/components/schemas/ScalingSchedule"
+
+    ScalingSchedule:
+      type: object
+      properties:
+        days:
+          type: array
+          items:
+            type: integer
+        startTime:
+          type: string
+          example: "08:00"
+        endTime:
+          type: string
+          example: "20:00"
+        timezone:
+          type: string
+          example: Europe/Bratislava

@@ -1,0 +1,5 @@
+## Append samples of your project ##
+resources:
+- finops_v1_scalingpolicy.yaml
+- finops_v1_scalinggroup.yaml
+# +kubebuilder:scaffold:manifestskustomizesamples
