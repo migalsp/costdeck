@@ -1,0 +1,13 @@
+apiVersion: finops.costdeck.io/v1
+kind: ScalingConfig
+metadata:
+  labels:
+    app.kubernetes.io/name: costdeck
+    app.kubernetes.io/instance: scalingconfig-sample
+    app.kubernetes.io/part-of: costdeck
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/created-by: costdeck
+  name: scalingconfig-sample
+spec:
+  targetNamespace: default
+  active: true

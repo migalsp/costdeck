@@ -1,0 +1,21 @@
+@import "tailwindcss";
+
+@theme {
+  --color-operator-blue: #0ea5e9;
+  --color-operator-green: #10b981;
+  --color-operator-red: #ef4444;
+  --color-operator-bg: #f8fafc;
+  --color-operator-card: #ffffff;
+  --color-operator-sidebar: #0f172a;
+}
+
+body {
+  margin: 0;
+  display: flex;
+  min-height: 100vh;
+  @apply bg-slate-50 text-slate-900;
+}
+
+#root {
+  width: 100%;
+}

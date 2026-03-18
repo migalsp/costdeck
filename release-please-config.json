@@ -1,0 +1,26 @@
+{
+  "packages": {
+    ".": {
+      "release-type": "go",
+      "extra-files": [
+        {
+          "type": "generic",
+          "path": "deploy/helm/costdeck-operator/Chart.yaml"
+        },
+        {
+          "type": "generic",
+          "path": "deploy/helm/costdeck-operator/values.yaml"
+        },
+        {
+          "type": "generic",
+          "path": "internal/api/openapi.yaml"
+        },
+        {
+          "type": "json",
+          "path": "ui/package.json",
+          "jsonpath": "$.version"
+        }
+      ]
+    }
+  }
+}

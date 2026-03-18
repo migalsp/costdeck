@@ -1,0 +1,70 @@
+replicaCount: 1
+
+fullnameOverride: "costdeck-operator"
+
+image:
+  repository: ghcr.io/migalsp/costdeck-operator/costdeck-operator
+  pullPolicy: IfNotPresent
+  # Overrides the image tag whose default is the chart appVersion.
+  tag: "1.0.0" # x-release-please-version
+
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # Annotations to add to the service account (useful for AWS IRSA / Workload Identity)
+  annotations: {}
+  # The name of the service account to use.
+  # If not set and create is true, a name is generated using the fullname template
+  name: ""
+
+# Configuration for External 3rd Party Cloud Providers
+# This enables Cost Deck to auto-discover and scale external resources (like databases)
+# alongside your Kubernetes namespaces in a unified Execution Pipeline.
+providers:
+  # Enable AWS Provider to scale RDS/Aurora clusters.
+  aws:
+    enabled: false
+    # Region where your AWS RDS/Aurora clusters are located
+    region: ""
+    # Provide IAM credentials here, OR leave empty and use IRSA (ServiceAccount annotations)
+    accessKeyId: ""
+    secretAccessKey: ""
+  gcp:
+    enabled: false
+    # projectId: ""
+  azure:
+    enabled: false
+
+service:
+  type: ClusterIP
+  port: 8082
+
+resources:
+  limits:
+    cpu: 200m
+    memory: 256Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+    # kubernetes.io/ingress.class: nginx
+    # kubernetes.io/tls-acme: "true"
+  hosts:
+    - host: chart-example.local
+      paths:
+        - path: /
+          pathType: ImplementationSpecific
+  tls: []
+  #  - secretName: chart-example-tls
+  #    hosts:
+  #      - chart-example.local
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}

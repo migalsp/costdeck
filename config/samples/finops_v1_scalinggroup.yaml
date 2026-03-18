@@ -1,0 +1,8 @@
+apiVersion: finops.costdeck.io/v1
+kind: ScalingGroup
+metadata:
+  labels:
+    app.kubernetes.io/name: costdeck
+    app.kubernetes.io/managed-by: kustomize
+  name: scalinggroup-sample
+spec: {}
