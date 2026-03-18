@@ -41,7 +41,7 @@ kubectl create namespace costdeck
 Install the operator directly from the OCI registry. This eliminates the need to manually add `.tgz` repositories to your local Helm cache.
 
 ```bash
-helm upgrade --install costdeck-operator oci://ghcr.io/migalsp/costdeck-operator/charts/costdeck-operator \
+helm upgrade --install costdeck-operator oci://ghcr.io/migalsp/costdeck/charts/costdeck-operator \
   --version 1.0.0 \
   --namespace costdeck
 ```
@@ -68,9 +68,10 @@ Cost Deck relies on several Custom Resource Definitions. Ensure they are present
 
 ```bash
 kubectl get crds | grep costdeck.io
-# scalinggroups.costdeck.io
-# scalingconfigs.costdeck.io
-# namespacefinops.costdeck.io
+# namespacefinops.finops.costdeck.io
+# namespaceoptimizations.finops.costdeck.io
+# scalingconfigs.finops.costdeck.io
+# scalinggroups.finops.costdeck.io
 ```
 
 ### 3. Check Operator Logs
@@ -93,12 +94,12 @@ Cost Deck ships with sane defaults (100m CPU / 128Mi RAM requests). However, for
 | :--- | :--- | :--- |
 | `replicaCount` | Number of operator instances | `1` |
 | `resources` | Resource requests/limits | `100m/128Mi` |
-| `providers.aws.enabled` | Enable AWS RDS discovery | `false` |
-| `ingress.enabled` | Expose the dashboard | `false` |
+| `providers.aws.enabled` | Enable AWS cloud scaling | `false` |
+| `ingress.enabled` | Expose the dashboard via Ingress | `false` |
 
 ### Provider Configuration (AWS Example)
 
-To enable cloud database scaling, you must configure the cloud provider. We recommend using **IAM Roles for Service Accounts (IRSA)** instead of static keys.
+To enable cloud scaling, configure the cloud provider. We recommend using **IAM Roles for Service Accounts (IRSA)** instead of static keys.
 
 ```yaml
 # my-values.yaml
@@ -115,7 +116,7 @@ providers:
 Apply changes:
 
 ```bash
-helm upgrade --install costdeck-operator oci://ghcr.io/migalsp/costdeck-operator/charts/costdeck-operator \
+helm upgrade --install costdeck-operator oci://ghcr.io/migalsp/costdeck/charts/costdeck-operator \
   --version 1.0.0 \
   --namespace costdeck \
   -f my-values.yaml
@@ -125,19 +126,9 @@ helm upgrade --install costdeck-operator oci://ghcr.io/migalsp/costdeck-operator
 
 ## Exposing the UI Dashboard
 
-### Option A: Local Port-Forwarding (Recommended)
+### Option A: Ingress (Recommended)
 
-Quickly access the dashboard without exposing it to the internet:
-
-```bash
-kubectl port-forward svc/costdeck-operator 8082:8082 -n costdeck
-```
-
-*Open `http://localhost:8082`.*
-
-### Option B: Ingress
-
-For team access, use an Ingress resource. **Important:** Always secure your Ingress with an authentication layer (like OAuth2 Proxy).
+For team access, configure Ingress in your `values.yaml`. **Important:** Always secure your Ingress with an authentication layer (like OAuth2 Proxy).
 
 ```yaml
 ingress:
@@ -150,6 +141,16 @@ ingress:
           pathType: Prefix
 ```
 
+### Option B: Local Port-Forwarding
+
+For quick debugging or local access:
+
+```bash
+kubectl port-forward svc/costdeck-operator 8082:8082 -n costdeck
+```
+
+*Open `http://localhost:8082`.*
+
 ---
 
 ## Upgrading
@@ -157,7 +158,7 @@ ingress:
 Upgrading is a single command:
 
 ```bash
-helm upgrade costdeck-operator oci://ghcr.io/migalsp/costdeck-operator/charts/costdeck-operator \
+helm upgrade costdeck-operator oci://ghcr.io/migalsp/costdeck/charts/costdeck-operator \
   --version <new-version> \
   --namespace costdeck
 ```
