@@ -9,21 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/migalsp/costdeck/actions/workflows/ci.yml">
-    <img src="https://github.com/migalsp/costdeck/actions/workflows/ci.yml/badge.svg" alt="CI">
-  </a>
-  <a href="https://github.com/migalsp/costdeck/releases">
-    <img src="https://img.shields.io/github/v/release/migalsp/costdeck" alt="Release">
-  </a>
-  <a href="https://goreportcard.com/report/github.com/migalsp/costdeck">
-    <img src="https://goreportcard.com/badge/github.com/migalsp/costdeck" alt="Go Report">
-  </a>
-  <a href="https://opensource.org/licenses/Apache-2.0">
-    <img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License">
-  </a>
-  <a href="https://codecov.io/gh/migalsp/costdeck">
-    <img src="https://codecov.io/gh/migalsp/costdeck/graph/badge.svg?token=9BJ6GV6K69" alt="codecov">
-  </a>
+  <a href="https://github.com/migalsp/costdeck/actions/workflows/ci.yml"><img src="https://github.com/migalsp/costdeck/actions/workflows/ci.yml/badge.svg" alt="CI"></a><a href="https://github.com/migalsp/costdeck/releases"><img src="https://img.shields.io/github/v/release/migalsp/costdeck" alt="Release"></a><a href="https://goreportcard.com/report/github.com/migalsp/costdeck"><img src="https://goreportcard.com/badge/github.com/migalsp/costdeck" alt="Go Report"></a><a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License"></a><a href="https://codecov.io/gh/migalsp/costdeck"><img src="https://codecov.io/gh/migalsp/costdeck/graph/badge.svg?token=9BJ6GV6K69" alt="codecov"></a>
 </p>
 
 <br />
