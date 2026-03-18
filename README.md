@@ -1,67 +1,75 @@
 <p align="center">
-  <img src="docs/assets/logo.png" width="200" alt="Cost Deck Logo">
+  <img src="docs/assets/logo.png" width="180" alt="Cost Deck Logo">
 </p>
 
 <h1 align="center">Cost Deck</h1>
 
 <p align="center">
-  <strong>Stop wasting money on empty pods. Start optimizing your Kubernetes clusters.</strong>
+  <strong>Kubernetes FinOps Operator - stop paying for idle infrastructure.</strong>
 </p>
 
 <p align="center">
-  <a href="https://github.com/migalsp/Cost Deck/actions/workflows/ci.yml">
-    <img src="https://github.com/migalsp/Cost Deck/actions/workflows/ci.yml/badge.svg" alt="Build Status">
+  <a href="https://github.com/migalsp/costdeck/actions/workflows/ci.yml">
+    <img src="https://github.com/migalsp/costdeck/actions/workflows/ci.yml/badge.svg" alt="CI">
   </a>
-  <a href="https://github.com/migalsp/Cost Deck/releases">
-    <img src="https://img.shields.io/github/v/release/migalsp/Cost Deck" alt="Latest Release">
+  <a href="https://github.com/migalsp/costdeck/releases">
+    <img src="https://img.shields.io/github/v/release/migalsp/costdeck" alt="Release">
   </a>
-  <a href="https://goreportcard.com/report/github.com/migalsp/costdeck-operator">
-    <img src="https://goreportcard.com/badge/github.com/migalsp/costdeck-operator" alt="Go Report Card">
+  <a href="https://goreportcard.com/report/github.com/migalsp/costdeck">
+    <img src="https://goreportcard.com/badge/github.com/migalsp/costdeck" alt="Go Report">
   </a>
   <a href="https://opensource.org/licenses/Apache-2.0">
     <img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License">
   </a>
-  <a href="https://app.codecov.io/gh/migalsp/costdeck-operator">
-    <img src="https://img.shields.io/codecov/c/github/migalsp/costdeck-operator" alt="Coverage">
+  <a href="https://codecov.io/gh/migalsp/costdeck">
+    <img src="https://codecov.io/gh/migalsp/costdeck/graph/badge.svg?token=9BJ6GV6K69" alt="codecov">
   </a>
+</p>
 
 <br />
 
-**Cost Deck** is a lightweight Kubernetes Operator that automatically cuts cloud costs and simplifies resource management. It finds over-provisioned workloads, scales them down when not in use, and provides a beautiful real-time UI to manage it all.
+Cost Deck is a lightweight Kubernetes Operator that **finds waste**, **right‑sizes workloads**, and **shuts down idle environments** — all from a single dashboard. Attach AWS Aurora clusters to scale cloud databases alongside your pods.
 
 ![Cost Deck Dashboard](docs/assets/dashboard.png)
 
-## Why use Cost Deck?
+## Features
 
-Relying on static, guesswork-based CPU and memory limits across hundreds of microservices is a recipe for waste. Developers over-provision "just in case", and cloud bills skyrocket.
-
-**Cost Deck runs autonomously to fix this:**
-
-- **Save Money:** Automatically identify namespaces that request too much CPU/Memory and right-size them with a single click.
-- **Night & Weekend Savings:** Shut down Dev and Staging environments automatically outside of working hours using simple CRDs (`ScalingConfig` & `ScalingGroup`).
-- **Cloud Database Scaling:** Stop paying for idle AWS RDS/Aurora databases by orchestrating their scaling alongside your Kubernetes workloads.
-- **Visual Capacity Planning:** Instantly see which cluster nodes are burning hot (>90%) and which are sitting empty (<50%).
-- **Zero Risk:** Revert optimization changes instantly if a workload underperforms.
+| | |
+|---|---|
+| **Namespace Insights** | Real‑time CPU/Memory breakdown per namespace with waste detection badges |
+| **One‑Click Optimization** | Right‑size every Deployment and StatefulSet based on actual usage — revert instantly |
+| **Scheduled Scaling** | Scale Dev/Staging environments down outside working hours via `ScalingConfig` (single ns) or `ScalingGroup` (multi‑ns) |
+| **Sequential Pipelines** | Define namespace stages so databases scale before apps, and apps before ingress |
+| **Cloud Database Scaling** | Start/stop AWS Aurora (and more providers coming) as part of your scaling pipeline |
+| **Cluster Node Map** | Visual heat map of node utilization across availability zones |
+| **Three Config Methods** | UI Dashboard, REST API, or Kubernetes CRDs (GitOps‑friendly) |
 
 ## Quick Start
 
-Drop Cost Deck into your cluster in under a minute via Helm:
-
 ```bash
-helm upgrade --install costdeck-operator oci://ghcr.io/migalsp/costdeck-operator/charts/costdeck-operator --version 1.x.x -n costdeck --create-namespace
+helm upgrade --install costdeck-operator \
+  oci://ghcr.io/migalsp/costdeck/charts/costdeck-operator \
+  --version 1.0.0 \
+  --namespace costdeck --create-namespace
 ```
 
-Open the Dashboard:
+Configure Ingress in your `values.yaml` and open the dashboard. See the [Installation Guide](docs/installation.md) for details.
 
-```bash
-kubectl port-forward svc/costdeck-operator 8082:8082 -n costdeck
-# Go to http://localhost:8082
-```
+## Documentation
 
-## Learn More
+| Resource | Description |
+|---|---|
+| [Installation Guide](docs/installation.md) | Prerequisites, Helm install, post‑install verification, values.yaml reference |
+| [User Guide](docs/user-guide.md) | Full feature walkthrough — ScalingConfig, ScalingGroup, Optimization, AWS, all 3 config methods |
 
-- [**Installation Guide**](docs/installation.md)
-- [**User Guide & Custom Resources**](docs/user-guide.md)
+## Architecture
+
+![Cost Deck Architecture](docs/assets/architecture.png)
+
+## License
+
+[Apache 2.0](LICENSE)
 
 ---
-If Cost Deck saves you money, please **⭐️ star this repository!**
+
+<p align="center">If Cost Deck saves you money, please <strong>⭐ star this repository</strong>.</p>
