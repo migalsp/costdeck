@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import type { MetricDataPoint } from '../pages/Dashboard'
 import {
   Area,
   AreaChart,
@@ -53,7 +54,7 @@ export default function NamespaceCard({ namespace, insights = [], onClick }: Nam
     fetch(`/api/namespaces/${namespace}/history`)
       .then(res => res.json())
       .then(data => {
-        const formattedData = (data || []).map((point: any) => {
+        const formattedData = (data || []).map((point: MetricDataPoint) => {
           const t = new Date(point.timestamp)
           return {
             time: `${t.getHours().toString().padStart(2, '0')}:${t.getMinutes().toString().padStart(2, '0')}`,
@@ -224,7 +225,7 @@ export default function NamespaceCard({ namespace, insights = [], onClick }: Nam
                   <Tooltip 
                     contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
                     itemStyle={{ fontSize: '12px', fontWeight: 500 }}
-                    formatter={(value: any) => [`${parseFloat(value).toFixed(3)} Cores`, 'Usage']}
+                    formatter={(value: any) => [`${(value || 0).toFixed(3)} Cores`, 'Usage']}
                   />
                   {/* Real Usage (Blue) */}
                   <Area type="monotone" dataKey="cpuUsage" name="Usage" stroke="#3b82f6" fillOpacity={1} fill="url(#colorCpuUsage)" />
@@ -278,7 +279,7 @@ export default function NamespaceCard({ namespace, insights = [], onClick }: Nam
                   <Tooltip 
                     contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
                     itemStyle={{ fontSize: '12px', fontWeight: 500 }}
-                    formatter={(value: any) => [`${parseFloat(value).toFixed(1)} MiB`, 'Usage']}
+                    formatter={(value: any) => [`${(value || 0).toFixed(1)} MiB`, 'Usage']}
                   />
                   {/* Real Usage (Blue) */}
                   <Area type="monotone" dataKey="memUsage" name="Usage (MiB)" stroke="#6366f1" fillOpacity={1} fill="url(#colorMemUsage)" />

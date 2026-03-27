@@ -3,6 +3,18 @@ import { Filter, AlertCircle } from 'lucide-react'
 import NamespaceCard from '../components/NamespaceCard'
 import InfoTooltip from '../components/InfoTooltip'
 
+export interface ResourceMetrics {
+  usage: string;
+  requests: string;
+  limits: string;
+}
+
+export interface MetricDataPoint {
+  timestamp: string;
+  cpu: ResourceMetrics;
+  memory: ResourceMetrics;
+}
+
 // Define the namespace structure we will get from the API
 export interface NamespaceFinOps {
   metadata: {
@@ -15,7 +27,7 @@ export interface NamespaceFinOps {
   status?: {
     lastUpdated?: string;
     insights?: string[];
-    history?: any[];
+    history?: MetricDataPoint[];
   };
 }
 

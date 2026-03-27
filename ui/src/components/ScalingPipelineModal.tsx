@@ -37,18 +37,6 @@ const ScalingPipelineModal: React.FC<ScalingPipelineModalProps> = ({ group, onCl
   const [liveGroup, setLiveGroup] = useState<ScalingGroup>(group);
   const terminalRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    fetchData();
-    const interval = setInterval(fetchData, 2000);
-    return () => clearInterval(interval);
-  }, [group.metadata.name]);
-
-  useEffect(() => {
-    if (terminalRef.current) {
-      terminalRef.current.scrollTop = terminalRef.current.scrollHeight;
-    }
-  }, [events]);
-
   const fetchData = async () => {
     try {
       const [eventsRes, groupRes] = await Promise.all([
@@ -77,6 +65,18 @@ const ScalingPipelineModal: React.FC<ScalingPipelineModalProps> = ({ group, onCl
       console.error("Failed to fetch data for modal", err);
     }
   };
+
+  useEffect(() => {
+    fetchData();
+    const interval = setInterval(fetchData, 2000);
+    return () => clearInterval(interval);
+  }, [group.metadata.name]);
+
+  useEffect(() => {
+    if (terminalRef.current) {
+      terminalRef.current.scrollTop = terminalRef.current.scrollHeight;
+    }
+  }, [events]);
 
   // Build Pipeline Stages
   let stages: string[][] = [];
