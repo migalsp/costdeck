@@ -181,7 +181,7 @@ function App() {
             Sign Out
           </button>
           <div className="text-xs text-slate-600 text-center mt-3">
-            Cost Deck {appVersion}
+            {appVersion}
           </div>
         </div>
       </aside>

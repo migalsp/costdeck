@@ -302,7 +302,13 @@ func (e *Engine) hasRemainingPods(ctx context.Context, ns string, matchLabels ma
 	if err != nil {
 		return true // assume pods exist if we can't be sure
 	}
-	return len(pods.Items) > 0
+
+	for _, p := range pods.Items {
+		if p.Status.Phase != corev1.PodSucceeded {
+			return true
+		}
+	}
+	return false
 }
 
 func (e *Engine) isGroupReady(ctx context.Context, objs []client.Object, targetActive bool) bool {
