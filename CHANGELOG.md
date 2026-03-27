@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.2](https://github.com/migalsp/costdeck/compare/v1.1.1...v1.1.2) (2026-03-27)
+
+
+### Bug Fixes
+
+* **scaling:** ignore succeeded pods during scale-down sequencing ([877012a](https://github.com/migalsp/costdeck/commit/877012ad3086a8a20c0b3d8e00b55ad4a36b4b69))
+
 ## [1.1.1](https://github.com/migalsp/costdeck/compare/v1.1.0...v1.1.1) (2026-03-27)
 
 
