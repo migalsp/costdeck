@@ -7,7 +7,7 @@ info:
 
     **Authentication:** All endpoints (except `/api/login`) require a valid `costdeck-session` cookie.
     Obtain one via `POST /api/login`.
-  version: "1.1.0" # x-release-please-version
+  version: "1.1.1" # x-release-please-version
   contact:
     name: Cost Deck
     url: https://github.com/migalsp/costdeck-operator
