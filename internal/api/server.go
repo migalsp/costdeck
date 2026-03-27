@@ -1137,8 +1137,9 @@ func (s *Server) handleNamespaceOptimizationInfo(w http.ResponseWriter, r *http.
 
 func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+	version := strings.TrimPrefix(Version, "v")
 	json.NewEncoder(w).Encode(map[string]string{
-		"version": Version,
+		"version": version,
 	})
 }
 

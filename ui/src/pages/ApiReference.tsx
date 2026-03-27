@@ -31,7 +31,7 @@ const endpoints: { section: string; items: Endpoint[] }[] = [
     section: 'System',
     items: [
       { method: 'GET', path: '/api/version', description: 'Operator build version', auth: true,
-        responseExample: '{ "version": "v1.0.0" }' },
+        responseExample: '{ "version": "1.0.0" }' },
       { method: 'GET', path: '/api/cluster-info', description: 'Cluster summary (nodes, CPU, memory)', auth: true,
         responseExample: '{\n  "nodes": 1,\n  "totalCPU": "2",\n  "totalMemory": "4Gi"\n}' },
       { method: 'GET', path: '/api/cluster/nodes', description: 'Per-node resource metrics for heatmap', auth: true,
