@@ -6,7 +6,7 @@ image:
   repository: ghcr.io/migalsp/costdeck-operator/costdeck-operator
   pullPolicy: IfNotPresent
   # Overrides the image tag whose default is the chart appVersion.
-  tag: "1.1.0" # x-release-please-version
+  tag: "1.1.1" # x-release-please-version
 
 serviceAccount:
   # Specifies whether a service account should be created
