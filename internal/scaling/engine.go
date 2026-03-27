@@ -94,25 +94,46 @@ func parseMinutes(hhmm string) int {
 // ScaleTarget handles scaling for a specific namespace.
 // It returns the updated map of original replicas and a boolean indicating if target state is fully reached.
 func (e *Engine) ScaleTarget(ctx context.Context, ns string, active bool, sequence []string, exclusions []string, originalReplicas map[string]int32, timeoutPassed bool) (map[string]int32, bool, error) {
-	l := log.FromContext(ctx).WithValues("namespace", ns, "targetActive", active)
-
 	if originalReplicas == nil {
 		originalReplicas = make(map[string]int32)
 	}
 
-	// 1. List all scalable resources in the namespace
+	// 1 & 2. List and Filter
+	scalableResources, err := e.listScalableResources(ctx, ns, exclusions)
+	if err != nil {
+		return nil, false, err
+	}
+
+	// 3, 4. Group and Sort
+	priorities, priorityGroups := e.groupAndSortPriorities(scalableResources, sequence, active)
+
+	// 5. Execute Scaling by priority groups (NON-BLOCKING)
+	for _, p := range priorities {
+		objs := priorityGroups[p]
+
+		ready, err := e.scalePriorityGroup(ctx, ns, objs, p, active, originalReplicas, timeoutPassed)
+		if err != nil {
+			return originalReplicas, false, err
+		}
+		if !ready {
+			return originalReplicas, false, nil
+		}
+	}
+
+	return originalReplicas, true, nil
+}
+
+func (e *Engine) listScalableResources(ctx context.Context, ns string, exclusions []string) ([]client.Object, error) {
 	deployments := &appsv1.DeploymentList{}
 	if err := e.Client.List(ctx, deployments, client.InNamespace(ns)); err != nil {
-		return nil, false, err
+		return nil, err
 	}
-
 	statefulSets := &appsv1.StatefulSetList{}
 	if err := e.Client.List(ctx, statefulSets, client.InNamespace(ns)); err != nil {
-		return nil, false, err
+		return nil, err
 	}
 
-	// 2. Filter exclusions
-	scalableResources := []client.Object{}
+	var scalableResources []client.Object
 	for i := range deployments.Items {
 		if !isExcluded(deployments.Items[i].Name, exclusions) {
 			scalableResources = append(scalableResources, &deployments.Items[i])
@@ -123,96 +144,93 @@ func (e *Engine) ScaleTarget(ctx context.Context, ns string, active bool, sequen
 			scalableResources = append(scalableResources, &statefulSets.Items[i])
 		}
 	}
+	return scalableResources, nil
+}
 
-	// 3. Group by priority
+func (e *Engine) groupAndSortPriorities(resources []client.Object, sequence []string, active bool) ([]int, map[int][]client.Object) {
 	priorityGroups := make(map[int][]client.Object)
-	for _, obj := range scalableResources {
+	for _, obj := range resources {
 		idx := getSequenceIndex(obj, sequence)
 		priorityGroups[idx] = append(priorityGroups[idx], obj)
 	}
 
-	// 4. Sort priorities
-	priorities := []int{}
+	priorities := make([]int, 0, len(priorityGroups))
 	for p := range priorityGroups {
 		priorities = append(priorities, p)
 	}
 	sort.Ints(priorities)
 
-	// If scaling UP, reverse priorities
 	if active {
 		for i, j := 0, len(priorities)-1; i < j; i, j = i+1, j-1 {
 			priorities[i], priorities[j] = priorities[j], priorities[i]
 		}
 	}
+	return priorities, priorityGroups
+}
 
-	// 5. Execute Scaling by priority groups (NON-BLOCKING)
-	for _, p := range priorities {
-		objs := priorityGroups[p]
+func (e *Engine) scalePriorityGroup(ctx context.Context, ns string, objs []client.Object, p int, active bool, originalReplicas map[string]int32, timeoutPassed bool) (bool, error) {
+	l := log.FromContext(ctx).WithValues("namespace", ns, "targetActive", active)
 
-		// First, check if this priority group is ALREADY ready.
-		// If so, we move to the next.
-		if e.isGroupReady(ctx, objs, active) {
-			continue
+	if e.isGroupReady(ctx, objs, active) {
+		if active {
+			e.cleanupOriginals(objs, originalReplicas)
 		}
-
-		// Group is not ready. Act on it.
-		l.Info("Scaling priority group", "priority", p, "count", len(objs))
-		for _, obj := range objs {
-			key := fmt.Sprintf("%T/%s", obj, obj.GetName())
-
-			// Target replicas for this object
-			var target int32
-			current := getReplicas(obj)
-
-			if !active {
-				target = 0
-			} else {
-				if current > 0 {
-					// Respect manual or HPA scaling that occurred during active state.
-					target = current
-				} else {
-					if t, ok := originalReplicas[key]; ok {
-						target = t
-					} else {
-						// Fallback if no record of original replicas
-						target = 1
-					}
-				}
-			}
-			if current != target {
-				// Record original IF scaling down for the first time
-				if !active && current > 0 {
-					originalReplicas[key] = current
-				}
-
-				l.Info("Setting replicas", "resource", key, "from", current, "to", target)
-				if err := e.setReplicas(ctx, obj, target); err != nil {
-					l.Error(err, "failed to update replicas", "resource", key, "target", target)
-				}
-			}
-		}
-
-		// After acting, check if it reached readiness.
-		// If not, we return false and stop here (strict sequencing).
-		if !e.isGroupReady(ctx, objs, active) {
-			if timeoutPassed {
-				l.Info("Priority group not yet ready, but 1-minute timeout passed! Bypassing strict sequence for this group.", "priority", p)
-			} else {
-				l.Info("Priority group not yet ready, stopping for now", "priority", p)
-				return originalReplicas, false, nil
-			}
-		}
-
-		// If scaling UP, we can now safely remove from originals IF they are ready.
-		if active && e.isGroupReady(ctx, objs, active) {
-			for _, obj := range objs {
-				key := fmt.Sprintf("%T/%s", obj, obj.GetName())
-				delete(originalReplicas, key)
-			}
-		}
+		return true, nil
 	}
 
-	return originalReplicas, true, nil
+	l.Info("Scaling priority group", "priority", p, "count", len(objs))
+	for _, obj := range objs {
+		e.scaleResource(ctx, obj, active, originalReplicas)
+	}
+
+	if !e.isGroupReady(ctx, objs, active) {
+		if timeoutPassed {
+			l.Info("Priority group not ready, bypassing due to timeout", "priority", p)
+			return true, nil
+		}
+		return false, nil
+	}
+
+	if active {
+		e.cleanupOriginals(objs, originalReplicas)
+	}
+	return true, nil
+}
+
+func (e *Engine) scaleResource(ctx context.Context, obj client.Object, active bool, originalReplicas map[string]int32) {
+	l := log.FromContext(ctx)
+	key := fmt.Sprintf("%T/%s", obj, obj.GetName())
+	current := getReplicas(obj)
+	target := e.getTargetReplicas(obj, active, current, originalReplicas)
+
+	if current != target {
+		if !active && current > 0 {
+			originalReplicas[key] = current
+		}
+		l.Info("Setting replicas", "resource", key, "from", current, "to", target)
+		if err := e.setReplicas(ctx, obj, target); err != nil {
+			l.Error(err, "failed to update replicas", "resource", key)
+		}
+	}
+}
+
+func (e *Engine) getTargetReplicas(obj client.Object, active bool, current int32, originals map[string]int32) int32 {
+	if !active {
+		return 0
+	}
+	if current > 0 {
+		return current
+	}
+	if t, ok := originals[fmt.Sprintf("%T/%s", obj, obj.GetName())]; ok {
+		return t
+	}
+	return 1
+}
+
+func (e *Engine) cleanupOriginals(objs []client.Object, originals map[string]int32) {
+	for _, obj := range objs {
+		delete(originals, fmt.Sprintf("%T/%s", obj, obj.GetName()))
+	}
 }
 
 func isExcluded(name string, exclusions []string) bool {
@@ -289,53 +307,48 @@ func (e *Engine) hasRemainingPods(ctx context.Context, ns string, matchLabels ma
 
 func (e *Engine) isGroupReady(ctx context.Context, objs []client.Object, targetActive bool) bool {
 	for _, o := range objs {
-		// Refetch to get latest status
-		key := client.ObjectKey{Name: o.GetName(), Namespace: o.GetNamespace()}
-		switch v := o.(type) {
-		case *appsv1.Deployment:
-			e.Client.Get(ctx, key, v)
-			if targetActive {
-				target := int32(0)
-				if v.Spec.Replicas != nil {
-					target = *v.Spec.Replicas
-				}
-				// If target is still 0, the deployment hasn't been scaled up yet → NOT ready
-				if target == 0 {
-					return false
-				}
-				if v.Status.ReadyReplicas < target {
-					return false
-				}
-			} else {
-				if v.Status.ReadyReplicas > 0 || v.Status.Replicas > 0 {
-					return false
-				}
-				if v.Spec.Selector != nil && e.hasRemainingPods(ctx, v.GetNamespace(), v.Spec.Selector.MatchLabels) {
-					return false
-				}
-			}
-		case *appsv1.StatefulSet:
-			e.Client.Get(ctx, key, v)
-			if targetActive {
-				target := int32(0)
-				if v.Spec.Replicas != nil {
-					target = *v.Spec.Replicas
-				}
-				if target == 0 {
-					return false
-				}
-				if v.Status.ReadyReplicas < target {
-					return false
-				}
-			} else {
-				if v.Status.ReadyReplicas > 0 || v.Status.Replicas > 0 {
-					return false
-				}
-				if v.Spec.Selector != nil && e.hasRemainingPods(ctx, v.GetNamespace(), v.Spec.Selector.MatchLabels) {
-					return false
-				}
-			}
+		if !e.isResourceReady(ctx, o, targetActive) {
+			return false
 		}
+	}
+	return true
+}
+
+func (e *Engine) isResourceReady(ctx context.Context, o client.Object, targetActive bool) bool {
+	key := client.ObjectKey{Name: o.GetName(), Namespace: o.GetNamespace()}
+	e.Client.Get(ctx, key, o)
+
+	var replicas, readyReplicas int32
+	var matchLabels map[string]string
+
+	switch v := o.(type) {
+	case *appsv1.Deployment:
+		if v.Spec.Replicas != nil {
+			replicas = *v.Spec.Replicas
+		}
+		if v.Spec.Selector != nil {
+			matchLabels = v.Spec.Selector.MatchLabels
+		}
+		readyReplicas = v.Status.ReadyReplicas
+	case *appsv1.StatefulSet:
+		if v.Spec.Replicas != nil {
+			replicas = *v.Spec.Replicas
+		}
+		if v.Spec.Selector != nil {
+			matchLabels = v.Spec.Selector.MatchLabels
+		}
+		readyReplicas = v.Status.ReadyReplicas
+	default:
+		return true
+	}
+
+	if targetActive {
+		return replicas > 0 && readyReplicas >= replicas
+	}
+
+	// Scaling Down
+	if readyReplicas > 0 || replicas > 0 || e.hasRemainingPods(ctx, o.GetNamespace(), matchLabels) {
+		return false
 	}
 	return true
 }
@@ -348,49 +361,7 @@ func (e *Engine) ComputePhase(ctx context.Context, ns string, targetActive bool)
 	statefulSets := &appsv1.StatefulSetList{}
 	_ = e.Client.List(ctx, statefulSets, client.InNamespace(ns))
 
-	totalResources := 0
-	runningCount := 0 // spec.replicas > 0
-	zeroCount := 0    // spec.replicas == 0
-	readyCount := 0   // all pods ready (readyReplicas == spec.replicas)
-
-	for _, d := range deployments.Items {
-		totalResources++
-		replicas := int32(1)
-		if d.Spec.Replicas != nil {
-			replicas = *d.Spec.Replicas
-		}
-		if replicas == 0 && d.Status.Replicas == 0 {
-			if d.Spec.Selector != nil && e.hasRemainingPods(ctx, ns, d.Spec.Selector.MatchLabels) {
-				runningCount++
-			} else {
-				zeroCount++
-			}
-		} else {
-			runningCount++
-			if replicas > 0 && d.Status.ReadyReplicas >= replicas {
-				readyCount++
-			}
-		}
-	}
-	for _, s := range statefulSets.Items {
-		totalResources++
-		replicas := int32(1)
-		if s.Spec.Replicas != nil {
-			replicas = *s.Spec.Replicas
-		}
-		if replicas == 0 && s.Status.Replicas == 0 {
-			if s.Spec.Selector != nil && e.hasRemainingPods(ctx, ns, s.Spec.Selector.MatchLabels) {
-				runningCount++
-			} else {
-				zeroCount++
-			}
-		} else {
-			runningCount++
-			if replicas > 0 && s.Status.ReadyReplicas >= replicas {
-				readyCount++
-			}
-		}
-	}
+	totalResources, zeroCount, readyCount := e.getScalingStats(ctx, ns, deployments.Items, statefulSets.Items)
 
 	if totalResources == 0 {
 		if targetActive {
@@ -400,16 +371,70 @@ func (e *Engine) ComputePhase(ctx context.Context, ns string, targetActive bool)
 	}
 
 	if targetActive {
-		// We want everything up but some are still at 0 or not ready
 		if readyCount == totalResources {
 			return "ScaledUp"
 		}
 		return "ScalingUp"
 	}
 
-	// We want everything down
 	if zeroCount == totalResources {
 		return "ScaledDown"
 	}
 	return "ScalingDown"
+}
+
+func (e *Engine) getScalingStats(ctx context.Context, ns string, deploys []appsv1.Deployment, stss []appsv1.StatefulSet) (int, int, int) {
+	total, zero, ready := 0, 0, 0
+	for _, d := range deploys {
+		total++
+		z, r := e.getResourceStats(ctx, ns, &d)
+		if z {
+			zero++
+		}
+		if r {
+			ready++
+		}
+	}
+	for _, s := range stss {
+		total++
+		z, r := e.getResourceStats(ctx, ns, &s)
+		if z {
+			zero++
+		}
+		if r {
+			ready++
+		}
+	}
+	return total, zero, ready
+}
+
+func (e *Engine) getResourceStats(ctx context.Context, ns string, obj client.Object) (bool, bool) {
+	var replicas, readyReplicas int32
+	var matchLabels map[string]string
+	var currentReplicas int32
+
+	switch v := obj.(type) {
+	case *appsv1.Deployment:
+		if v.Spec.Replicas != nil {
+			replicas = *v.Spec.Replicas
+		}
+		if v.Spec.Selector != nil {
+			matchLabels = v.Spec.Selector.MatchLabels
+		}
+		readyReplicas = v.Status.ReadyReplicas
+		currentReplicas = v.Status.Replicas
+	case *appsv1.StatefulSet:
+		if v.Spec.Replicas != nil {
+			replicas = *v.Spec.Replicas
+		}
+		if v.Spec.Selector != nil {
+			matchLabels = v.Spec.Selector.MatchLabels
+		}
+		readyReplicas = v.Status.ReadyReplicas
+		currentReplicas = v.Status.Replicas
+	}
+
+	isZero := replicas == 0 && currentReplicas == 0 && !e.hasRemainingPods(ctx, ns, matchLabels)
+	isReady := replicas > 0 && readyReplicas >= replicas
+	return isZero, isReady
 }

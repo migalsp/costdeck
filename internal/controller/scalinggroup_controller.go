@@ -68,7 +68,66 @@ func (r *ScalingGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 
 	// 3. Define stages from group.Spec.Sequence
-	// Default: all namespaces in one stage if no sequence defined
+	stages := r.getScalingStages(group, targetActive)
+
+	allReady := true
+	managedCount := 0
+
+	timeoutPassed := false
+	if group.Status.Phase == "ScalingUp" || group.Status.Phase == "ScalingDown" {
+		if time.Since(group.Status.LastAction.Time) > time.Minute {
+			timeoutPassed = true
+		}
+	}
+
+	namespacesReady := 0
+	namespacesTotal := 0
+	for _, stage := range stages {
+		namespacesTotal += len(stage)
+	}
+
+	var blockingNamespaces []string
+	var readyNamespaces []string
+
+	// 4. Iterate over stages
+	for i, stage := range stages {
+		l.Info("Processing scaling stage", "stageIndex", i, "namespaces", stage)
+
+		stageReady := true
+		for _, ns := range stage {
+			managedCount++
+
+			isReady, err := r.reconcileTarget(ctx, group, ns, targetActive, timeoutPassed)
+			if err != nil {
+				l.Error(err, "failed to reconcile target", "target", ns)
+				allReady = false
+				stageReady = false
+				blockingNamespaces = append(blockingNamespaces, ns)
+				continue
+			}
+
+			if isReady {
+				namespacesReady++
+				readyNamespaces = append(readyNamespaces, ns)
+			} else {
+				stageReady = false
+				allReady = false
+				blockingNamespaces = append(blockingNamespaces, ns)
+			}
+		}
+
+		if !stageReady {
+			l.Info("Stage not ready, waiting before next stage", "stageIndex", i)
+			break // Stop at this stage, wait for next reconcile
+		}
+	}
+
+	r.emitScalingEvents(group, stages, blockingNamespaces, namespacesReady, namespacesTotal, timeoutPassed)
+
+	// 5. Update Status
+	return r.updateStatusAndPhase(ctx, group, allReady, managedCount, namespacesReady, namespacesTotal, readyNamespaces)
+}
+func (r *ScalingGroupReconciler) getScalingStages(group *finopsv1.ScalingGroup, targetActive bool) [][]string {
 	managedNamespaces := group.Spec.Namespaces
 	var stages [][]string
 
@@ -103,218 +162,97 @@ func (r *ScalingGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		stages = append(stages, managedNamespaces)
 	}
 
-	// Reverse stages for Scaling Up if needed?
-	// Usually sequence is defined for "Shutdown" order.
-	// User said: "first 1, then 3,4,5, then 2".
-	// This usually means Up order. Let's assume sequence defines UP order, and reverse for DOWN.
 	if !targetActive {
 		for i, j := 0, len(stages)-1; i < j; i, j = i+1, j-1 {
 			stages[i], stages[j] = stages[j], stages[i]
 		}
 	}
+	return stages
+}
 
-	allReady := true
-	managedCount := 0
+func (r *ScalingGroupReconciler) reconcileTarget(ctx context.Context, group *finopsv1.ScalingGroup, ns string, targetActive bool, timeoutPassed bool) (bool, error) {
+	if strings.HasPrefix(ns, "ext:") {
+		return r.reconcileExternalTarget(ctx, group, ns, targetActive)
+	}
+	return r.reconcileK8sTarget(ctx, group, ns, targetActive, timeoutPassed)
+}
 
-	timeoutPassed := false
-	if group.Status.Phase == "ScalingUp" || group.Status.Phase == "ScalingDown" {
-		if time.Since(group.Status.LastAction.Time) > time.Minute {
-			timeoutPassed = true
+func (r *ScalingGroupReconciler) reconcileExternalTarget(ctx context.Context, group *finopsv1.ScalingGroup, ns string, targetActive bool) (bool, error) {
+	extId := strings.TrimPrefix(ns, "ext:")
+	var extTarget *finopsv1.ExternalTarget
+	for i := range group.Spec.ExternalTargets {
+		if group.Spec.ExternalTargets[i].Identifier == extId {
+			extTarget = &group.Spec.ExternalTargets[i]
+			break
 		}
 	}
 
-	namespacesReady := 0
-	namespacesTotal := 0
-	for _, stage := range stages {
-		namespacesTotal += len(stage)
+	if extTarget == nil {
+		return false, fmt.Errorf("external target %s not found in spec", extId)
 	}
 
-	var blockingNamespaces []string
-	var readyNamespaces []string
+	provider, ok := r.Engine.Providers[extTarget.Provider]
+	if !ok {
+		return false, fmt.Errorf("provider %s not found", extTarget.Provider)
+	}
 
-	// 4. Iterate over stages
-	for i, stage := range stages {
-		l.Info("Processing scaling stage", "stageIndex", i, "namespaces", stage)
+	if err := provider.Scale(ctx, *extTarget, targetActive); err != nil {
+		return false, err
+	}
 
-		stageReady := true
-		for _, ns := range stage {
-			managedCount++
+	return provider.IsReady(ctx, *extTarget, targetActive)
+}
 
-			// Handle External Targets embedded in the sequence
-			if strings.HasPrefix(ns, "ext:") {
-				extId := strings.TrimPrefix(ns, "ext:")
-				var extTarget *finopsv1.ExternalTarget
-				for i := range group.Spec.ExternalTargets {
-					if group.Spec.ExternalTargets[i].Identifier == extId {
-						extTarget = &group.Spec.ExternalTargets[i]
-						break
-					}
-				}
+func (r *ScalingGroupReconciler) reconcileK8sTarget(ctx context.Context, group *finopsv1.ScalingGroup, ns string, targetActive bool, timeoutPassed bool) (bool, error) {
+	var exclusions []string
+	var nsSequence []string
 
-				if extTarget == nil {
-					l.Info("External target in sequence not found in spec", "target", extId)
-					continue
-				}
-
-				provider, ok := r.Engine.Providers[extTarget.Provider]
-				if !ok {
-					l.Error(fmt.Errorf("provider not found"), "cannot scale external target", "target", extTarget.Identifier)
-					stageReady = false
-					allReady = false
-					// check if not already in blocking string
-					found := false
-					for _, b := range blockingNamespaces {
-						if b == ns {
-							found = true
-							break
-						}
-					}
-					if !found {
-						blockingNamespaces = append(blockingNamespaces, ns)
-					}
-					continue
-				}
-
-				if err := provider.Scale(ctx, *extTarget, targetActive); err != nil {
-					l.Error(err, "failed to scale external target", "target", extTarget.Identifier)
-					stageReady = false
-					allReady = false
-					found := false
-					for _, b := range blockingNamespaces {
-						if b == ns {
-							found = true
-							break
-						}
-					}
-					if !found {
-						blockingNamespaces = append(blockingNamespaces, ns)
-					}
-					continue
-				}
-
-				isRdy, err := provider.IsReady(ctx, *extTarget, targetActive)
-				if err != nil {
-					l.Error(err, "failed to check readiness of external target", "target", extTarget.Identifier)
-					stageReady = false
-					allReady = false
-					found := false
-					for _, b := range blockingNamespaces {
-						if b == ns {
-							found = true
-							break
-						}
-					}
-					if !found {
-						blockingNamespaces = append(blockingNamespaces, ns)
-					}
-				} else if !isRdy {
-					stageReady = false
-					allReady = false
-					found := false
-					for _, b := range blockingNamespaces {
-						if b == ns {
-							found = true
-							break
-						}
-					}
-					if !found {
-						blockingNamespaces = append(blockingNamespaces, ns)
-					}
-				} else {
-					namespacesReady++
-					readyNamespaces = append(readyNamespaces, ns)
-				}
-				continue
+	configList := &finopsv1.ScalingConfigList{}
+	if err := r.List(ctx, configList, client.InNamespace(group.Namespace)); err == nil {
+		for _, cfg := range configList.Items {
+			if cfg.Spec.TargetNamespace == ns {
+				exclusions = cfg.Spec.Exclusions
+				nsSequence = cfg.Spec.Sequence
+				break
 			}
-
-			// a. Fetch individual ScalingConfig for exclusions and sequence inheritance
-			var exclusions []string
-			var nsSequence []string
-
-			// Try to find a ScalingConfig that manages this target namespace
-			configList := &finopsv1.ScalingConfigList{}
-			if err := r.List(ctx, configList, client.InNamespace(group.Namespace)); err == nil {
-				for _, cfg := range configList.Items {
-					if cfg.Spec.TargetNamespace == ns {
-						exclusions = cfg.Spec.Exclusions
-						nsSequence = cfg.Spec.Sequence
-						l.Info("Found ScalingConfig for inheritance", "namespace", ns, "config", cfg.Name)
-						break
-					}
-				}
-			}
-
-			// b. Scale Target
-			nsKeyPrefix := ns + "/"
-			nsReplicas := make(map[string]int32)
-			if group.Status.OriginalReplicas != nil {
-				for k, v := range group.Status.OriginalReplicas {
-					if strings.HasPrefix(k, nsKeyPrefix) {
-						nsReplicas[strings.TrimPrefix(k, nsKeyPrefix)] = v
-					}
-				}
-			}
-
-			updatedOriginals, nsReady, err := r.Engine.ScaleTarget(ctx, ns, targetActive, nsSequence, exclusions, nsReplicas, timeoutPassed)
-			if err != nil {
-				l.Error(err, "failed to scale namespace", "namespace", ns)
-				allReady = false
-				stageReady = false
-				blockingNamespaces = append(blockingNamespaces, ns)
-				continue
-			}
-
-			if !nsReady {
-				stageReady = false
-				allReady = false
-			}
-
-			// Merge back
-			if group.Status.OriginalReplicas == nil {
-				group.Status.OriginalReplicas = make(map[string]int32)
-			}
-			// First clear old ones for this namespace to sync deletions from engine
-			for k := range group.Status.OriginalReplicas {
-				if strings.HasPrefix(k, nsKeyPrefix) {
-					delete(group.Status.OriginalReplicas, k)
-				}
-			}
-			for k, v := range updatedOriginals {
-				group.Status.OriginalReplicas[nsKeyPrefix+k] = v
-			}
-
-			// c. Check if namespace reached target phase
-			phase := r.Engine.ComputePhase(ctx, ns, targetActive)
-			if (targetActive && phase == "ScaledUp") || (!targetActive && phase == "ScaledDown") {
-				namespacesReady++
-				readyNamespaces = append(readyNamespaces, ns)
-			} else {
-				stageReady = false
-				allReady = false
-				// Prevent duplicate appends if ScaleTarget also failed
-				found := false
-				for _, bNs := range blockingNamespaces {
-					if bNs == ns {
-						found = true
-						break
-					}
-				}
-				if !found {
-					blockingNamespaces = append(blockingNamespaces, ns)
-				}
-			}
-		}
-
-		if !stageReady {
-			l.Info("Stage not ready, waiting before next stage", "stageIndex", i)
-			break // Stop at this stage, wait for next reconcile
 		}
 	}
 
-	if !allReady && len(blockingNamespaces) > 0 {
+	nsKeyPrefix := ns + "/"
+	nsReplicas := make(map[string]int32)
+	for k, v := range group.Status.OriginalReplicas {
+		if strings.HasPrefix(k, nsKeyPrefix) {
+			nsReplicas[strings.TrimPrefix(k, nsKeyPrefix)] = v
+		}
+	}
+
+	updatedOriginals, nsReady, err := r.Engine.ScaleTarget(ctx, ns, targetActive, nsSequence, exclusions, nsReplicas, timeoutPassed)
+	if err != nil {
+		return false, err
+	}
+
+	// Merge back
+	for k := range group.Status.OriginalReplicas {
+		if strings.HasPrefix(k, nsKeyPrefix) {
+			delete(group.Status.OriginalReplicas, k)
+		}
+	}
+	for k, v := range updatedOriginals {
+		group.Status.OriginalReplicas[nsKeyPrefix+k] = v
+	}
+
+	if !nsReady {
+		return false, nil
+	}
+
+	phase := r.Engine.ComputePhase(ctx, ns, targetActive)
+	return (targetActive && phase == "ScaledUp") || (!targetActive && phase == "ScaledDown"), nil
+}
+
+func (r *ScalingGroupReconciler) emitScalingEvents(group *finopsv1.ScalingGroup, stages [][]string, blockingNamespaces []string, namespacesReady, namespacesTotal int, timeoutPassed bool) {
+	if len(blockingNamespaces) > 0 {
 		stageNumber := 0
 		for idx, stage := range stages {
-			// Find which stage the first blocking namespace belongs to
 			for _, sNs := range stage {
 				if sNs == blockingNamespaces[0] {
 					stageNumber = idx + 1
@@ -338,34 +276,30 @@ func (r *ScalingGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if namespacesReady > group.Status.NamespacesReady {
 		r.Recorder.Eventf(group, "Normal", "ScalingProgress", "Progress updated: %d of %d targets reached target state.", namespacesReady, namespacesTotal)
 	}
+}
 
-	// 5. Update Status
+func (r *ScalingGroupReconciler) updateStatusAndPhase(ctx context.Context, group *finopsv1.ScalingGroup, allReady bool, managedCount, namespacesReady, namespacesTotal int, readyNamespaces []string) (ctrl.Result, error) {
 	group.Status.ManagedCount = managedCount
 	group.Status.NamespacesReady = namespacesReady
 	group.Status.NamespacesTotal = namespacesTotal
 	group.Status.ReadyNamespaces = readyNamespaces
 
-	newPhase := "ScaledUp"
+	targetActive := r.Engine.IsActive(group.Spec.Schedules, group.Spec.Active)
+	newPhase := "ScalingUp"
 	if allReady {
 		if targetActive {
 			newPhase = "ScaledUp"
 		} else {
 			newPhase = "ScaledDown"
 		}
-	} else {
-		if targetActive {
-			newPhase = "ScalingUp"
-		} else {
-			newPhase = "ScalingDown"
-		}
+	} else if !targetActive {
+		newPhase = "ScalingDown"
 	}
 
 	if group.Status.Phase != newPhase {
 		oldPhase := group.Status.Phase
 		group.Status.Phase = newPhase
 		group.Status.LastAction = metav1.Now()
-
-		// Emit Event on Phase transition
 		r.Recorder.Eventf(group, "Normal", "PhaseTransition", "Group phase transitioned from %s to %s", oldPhase, newPhase)
 	} else if group.Status.LastAction.IsZero() {
 		group.Status.LastAction = metav1.Now()
@@ -375,11 +309,9 @@ func (r *ScalingGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, err
 	}
 
-	// Requeue faster if scaling is in progress
 	if !allReady {
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	}
-
 	return ctrl.Result{RequeueAfter: time.Minute}, nil
 }
 

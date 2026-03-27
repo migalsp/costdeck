@@ -56,22 +56,9 @@ func (r *ScalingConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	// 1.5 Conflict Resolution: "Group Wins"
-	// Check if this namespace is managed by any ScalingGroup
-	groups := &finopsv1.ScalingGroupList{}
-	if err := r.List(ctx, groups); err == nil {
-		for _, g := range groups.Items {
-			for _, managedNs := range g.Spec.Namespaces {
-				if managedNs == config.Spec.TargetNamespace {
-					l.Info("Namespace managed by group, overriding individual config", "namespace", config.Spec.TargetNamespace, "group", g.Name)
-					config.Status.Phase = "OverriddenByGroup"
-					config.Status.LastAction = metav1.Now()
-					if err := r.Status().Update(ctx, config); err != nil {
-						return ctrl.Result{}, err
-					}
-					return ctrl.Result{RequeueAfter: 5 * time.Minute}, nil
-				}
-			}
-		}
+	if managed, groupName, err := r.isManagedByGroup(ctx, config.Spec.TargetNamespace); err == nil && managed {
+		l.Info("Namespace managed by group, overriding individual config", "namespace", config.Spec.TargetNamespace, "group", groupName)
+		return r.markAsOverridden(ctx, config)
 	}
 
 	// 2. Determine desired state
@@ -80,23 +67,7 @@ func (r *ScalingConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	l.Info("Reconciling ScalingConfig", "targetNamespace", config.Spec.TargetNamespace, "targetActive", targetActive)
 
 	// 2.5 Phase and Timeout Logic
-	currentPhase := config.Status.Phase
-	computedPhase := r.Engine.ComputePhase(ctx, config.Spec.TargetNamespace, targetActive)
-
-	if currentPhase != computedPhase {
-		config.Status.Phase = computedPhase
-		config.Status.LastAction = metav1.Now()
-	} else if config.Status.LastAction.IsZero() {
-		config.Status.LastAction = metav1.Now()
-	}
-
-	timeoutPassed := false
-	if config.Status.Phase == "ScalingUp" || config.Status.Phase == "ScalingDown" {
-		if time.Since(config.Status.LastAction.Time) > time.Minute {
-			l.Info("Scaling timeout exceeded 1 minute. Overriding sequence blocks.", "elapsed", time.Since(config.Status.LastAction.Time))
-			timeoutPassed = true
-		}
-	}
+	timeoutPassed := r.updateStatusPhase(ctx, config, targetActive)
 
 	// 3. Execute Scaling if needed
 	newReplicas, ready, err := r.Engine.ScaleTarget(ctx, config.Spec.TargetNamespace, targetActive, config.Spec.Sequence, config.Spec.Exclusions, config.Status.OriginalReplicas, timeoutPassed)
@@ -120,6 +91,51 @@ func (r *ScalingConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	// Check again in 1 minute for schedule changes
 	return ctrl.Result{RequeueAfter: time.Minute}, nil
+}
+
+func (r *ScalingConfigReconciler) isManagedByGroup(ctx context.Context, ns string) (bool, string, error) {
+	groups := &finopsv1.ScalingGroupList{}
+	if err := r.List(ctx, groups); err != nil {
+		return false, "", err
+	}
+	for _, g := range groups.Items {
+		for _, managedNs := range g.Spec.Namespaces {
+			if managedNs == ns {
+				return true, g.Name, nil
+			}
+		}
+	}
+	return false, "", nil
+}
+
+func (r *ScalingConfigReconciler) markAsOverridden(ctx context.Context, config *finopsv1.ScalingConfig) (ctrl.Result, error) {
+	config.Status.Phase = "OverriddenByGroup"
+	config.Status.LastAction = metav1.Now()
+	if err := r.Status().Update(ctx, config); err != nil {
+		return ctrl.Result{}, err
+	}
+	return ctrl.Result{RequeueAfter: 5 * time.Minute}, nil
+}
+
+func (r *ScalingConfigReconciler) updateStatusPhase(ctx context.Context, config *finopsv1.ScalingConfig, targetActive bool) bool {
+	l := logf.FromContext(ctx)
+	currentPhase := config.Status.Phase
+	computedPhase := r.Engine.ComputePhase(ctx, config.Spec.TargetNamespace, targetActive)
+
+	if currentPhase != computedPhase {
+		config.Status.Phase = computedPhase
+		config.Status.LastAction = metav1.Now()
+	} else if config.Status.LastAction.IsZero() {
+		config.Status.LastAction = metav1.Now()
+	}
+
+	if config.Status.Phase == "ScalingUp" || config.Status.Phase == "ScalingDown" {
+		if time.Since(config.Status.LastAction.Time) > time.Minute {
+			l.Info("Scaling timeout exceeded", "namespace", config.Spec.TargetNamespace)
+			return true
+		}
+	}
+	return false
 }
 
 // SetupWithManager sets up the controller with the Manager.

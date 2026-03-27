@@ -318,10 +318,7 @@ func (s *Server) handleClusterNodes(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	version, err := s.K8sClient.Discovery().ServerVersion()
-	if err != nil {
-		logf.Log.Error(err, "Failed to get k8s version")
-	}
+	k8sVer := s.getK8sVersion()
 
 	nodes, err := s.K8sClient.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 	if err != nil {
@@ -329,66 +326,8 @@ func (s *Server) handleClusterNodes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	nodeMetricsMap := make(map[string]corev1.ResourceList)
-	if s.MetricsClient != nil {
-		nmList, err := s.MetricsClient.MetricsV1beta1().NodeMetricses().List(ctx, metav1.ListOptions{})
-		if err != nil {
-			logf.Log.Error(err, "Failed to list node metrics")
-		} else {
-			for _, nm := range nmList.Items {
-				nodeMetricsMap[nm.Name] = nm.Usage
-			}
-		}
-	}
-
-	pods, err := s.K8sClient.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
-	if err != nil {
-		logf.Log.Error(err, "Failed to list pods for calculating node capacity requests")
-	}
-
-	nodeReqCPU := make(map[string]*resource.Quantity)
-	nodeReqMem := make(map[string]*resource.Quantity)
-
-	if pods != nil {
-		for _, pod := range pods.Items {
-			if pod.Spec.NodeName == "" || pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed {
-				continue
-			}
-
-			reqCPU := resource.NewQuantity(0, resource.DecimalSI)
-			reqMem := resource.NewQuantity(0, resource.BinarySI)
-
-			for _, container := range pod.Spec.Containers {
-				if q, ok := container.Resources.Requests[corev1.ResourceCPU]; ok {
-					reqCPU.Add(q)
-				}
-				if q, ok := container.Resources.Requests[corev1.ResourceMemory]; ok {
-					reqMem.Add(q)
-				}
-			}
-
-			// Pod request is max of any init container request vs sum of app container requests
-			for _, container := range pod.Spec.InitContainers {
-				if q, ok := container.Resources.Requests[corev1.ResourceCPU]; ok {
-					if q.Cmp(*reqCPU) > 0 {
-						reqCPU = &q // use copy to prevent pointer sharing issues, actually q is by value in range, safe
-					}
-				}
-				if q, ok := container.Resources.Requests[corev1.ResourceMemory]; ok {
-					if q.Cmp(*reqMem) > 0 {
-						reqMem = &q
-					}
-				}
-			}
-
-			if _, ok := nodeReqCPU[pod.Spec.NodeName]; !ok {
-				nodeReqCPU[pod.Spec.NodeName] = resource.NewQuantity(0, resource.DecimalSI)
-				nodeReqMem[pod.Spec.NodeName] = resource.NewQuantity(0, resource.BinarySI)
-			}
-			nodeReqCPU[pod.Spec.NodeName].Add(*reqCPU)
-			nodeReqMem[pod.Spec.NodeName].Add(*reqMem)
-		}
-	}
+	nodeMetricsMap := s.getNodeMetricsMap(ctx)
+	nodeReqCPU, nodeReqMem := s.getPodRequestsPerNode(ctx)
 
 	var totalCapacityCPU, totalCapacityMem resource.Quantity
 	var totalUsageCPU, totalUsageMem resource.Quantity
@@ -396,66 +335,23 @@ func (s *Server) handleClusterNodes(w http.ResponseWriter, r *http.Request) {
 	var nodeInfos []map[string]interface{}
 
 	for _, n := range nodes.Items {
-		capacity := n.Status.Allocatable // Use Allocatable instead of absolute Capacity for true limits
+		info := s.gatherNodeInfo(n, nodeMetricsMap, nodeReqCPU, nodeReqMem)
+		nodeInfos = append(nodeInfos, info)
+
+		capacity := n.Status.Allocatable
 		totalCapacityCPU.Add(*capacity.Cpu())
 		totalCapacityMem.Add(*capacity.Memory())
 
-		var uCPU, uMem resource.Quantity
 		if usage, ok := nodeMetricsMap[n.Name]; ok {
-			uCPU = *usage.Cpu()
-			uMem = *usage.Memory()
+			totalUsageCPU.Add(*usage.Cpu())
+			totalUsageMem.Add(*usage.Memory())
 		}
-
-		var rCPU, rMem resource.Quantity
 		if q, ok := nodeReqCPU[n.Name]; ok {
-			rCPU = *q
+			totalRequestedCPU.Add(*q)
 		}
 		if q, ok := nodeReqMem[n.Name]; ok {
-			rMem = *q
+			totalRequestedMem.Add(*q)
 		}
-
-		totalUsageCPU.Add(uCPU)
-		totalUsageMem.Add(uMem)
-		totalRequestedCPU.Add(rCPU)
-		totalRequestedMem.Add(rMem)
-
-		status := "Unknown"
-		for _, cond := range n.Status.Conditions {
-			if cond.Type == corev1.NodeReady {
-				if cond.Status == corev1.ConditionTrue {
-					status = "Ready"
-				} else {
-					status = "NotReady"
-				}
-			}
-		}
-
-		nodeInfo := map[string]interface{}{
-			"name":   n.Name,
-			"status": status,
-			"cpu": map[string]interface{}{
-				"used":      uCPU.AsApproximateFloat64(),
-				"requested": rCPU.AsApproximateFloat64(),
-				"capacity":  capacity.Cpu().AsApproximateFloat64(),
-			},
-			"mem": map[string]interface{}{
-				"used":      uMem.Value(),
-				"requested": rMem.Value(),
-				"capacity":  capacity.Memory().Value(),
-			},
-			"info": map[string]string{
-				"os":      n.Status.NodeInfo.OSImage,
-				"arch":    n.Status.NodeInfo.Architecture,
-				"kernel":  n.Status.NodeInfo.KernelVersion,
-				"kubelet": n.Status.NodeInfo.KubeletVersion,
-			},
-		}
-		nodeInfos = append(nodeInfos, nodeInfo)
-	}
-
-	k8sVer := "unknown"
-	if version != nil {
-		k8sVer = version.GitVersion
 	}
 
 	response := map[string]interface{}{
@@ -477,6 +373,135 @@ func (s *Server) handleClusterNodes(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
+}
+
+func (s *Server) getK8sVersion() string {
+	version, err := s.K8sClient.Discovery().ServerVersion()
+	if err != nil {
+		logf.Log.Error(err, "Failed to get k8s version")
+		return "unknown"
+	}
+	return version.GitVersion
+}
+
+func (s *Server) getNodeMetricsMap(ctx context.Context) map[string]corev1.ResourceList {
+	nodeMetricsMap := make(map[string]corev1.ResourceList)
+	if s.MetricsClient == nil {
+		return nodeMetricsMap
+	}
+	nmList, err := s.MetricsClient.MetricsV1beta1().NodeMetricses().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		logf.Log.Error(err, "Failed to list node metrics")
+		return nodeMetricsMap
+	}
+	for _, nm := range nmList.Items {
+		nodeMetricsMap[nm.Name] = nm.Usage
+	}
+	return nodeMetricsMap
+}
+
+func (s *Server) getPodRequestsPerNode(ctx context.Context) (map[string]*resource.Quantity, map[string]*resource.Quantity) {
+	nodeReqCPU := make(map[string]*resource.Quantity)
+	nodeReqMem := make(map[string]*resource.Quantity)
+
+	pods, err := s.K8sClient.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		logf.Log.Error(err, "Failed to list pods for calculating node capacity requests")
+		return nodeReqCPU, nodeReqMem
+	}
+
+	for _, pod := range pods.Items {
+		if pod.Spec.NodeName == "" || pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed {
+			continue
+		}
+
+		reqCPU, reqMem := s.calculatePodRequests(pod)
+
+		if _, ok := nodeReqCPU[pod.Spec.NodeName]; !ok {
+			nodeReqCPU[pod.Spec.NodeName] = resource.NewQuantity(0, resource.DecimalSI)
+			nodeReqMem[pod.Spec.NodeName] = resource.NewQuantity(0, resource.BinarySI)
+		}
+		nodeReqCPU[pod.Spec.NodeName].Add(*reqCPU)
+		nodeReqMem[pod.Spec.NodeName].Add(*reqMem)
+	}
+	return nodeReqCPU, nodeReqMem
+}
+
+func (s *Server) calculatePodRequests(pod corev1.Pod) (*resource.Quantity, *resource.Quantity) {
+	reqCPU := resource.NewQuantity(0, resource.DecimalSI)
+	reqMem := resource.NewQuantity(0, resource.BinarySI)
+
+	for _, container := range pod.Spec.Containers {
+		if q, ok := container.Resources.Requests[corev1.ResourceCPU]; ok {
+			reqCPU.Add(q)
+		}
+		if q, ok := container.Resources.Requests[corev1.ResourceMemory]; ok {
+			reqMem.Add(q)
+		}
+	}
+
+	for _, container := range pod.Spec.InitContainers {
+		if q, ok := container.Resources.Requests[corev1.ResourceCPU]; ok {
+			if q.Cmp(*reqCPU) > 0 {
+				reqCPU = &q
+			}
+		}
+		if q, ok := container.Resources.Requests[corev1.ResourceMemory]; ok {
+			if q.Cmp(*reqMem) > 0 {
+				reqMem = &q
+			}
+		}
+	}
+	return reqCPU, reqMem
+}
+
+func (s *Server) gatherNodeInfo(n corev1.Node, nodeMetricsMap map[string]corev1.ResourceList, nodeReqCPU, nodeReqMem map[string]*resource.Quantity) map[string]interface{} {
+	capacity := n.Status.Allocatable
+	var uCPU, uMem resource.Quantity
+	if usage, ok := nodeMetricsMap[n.Name]; ok {
+		uCPU = *usage.Cpu()
+		uMem = *usage.Memory()
+	}
+
+	var rCPU, rMem resource.Quantity
+	if q, ok := nodeReqCPU[n.Name]; ok {
+		rCPU = *q
+	}
+	if q, ok := nodeReqMem[n.Name]; ok {
+		rMem = *q
+	}
+
+	status := "Unknown"
+	for _, cond := range n.Status.Conditions {
+		if cond.Type == corev1.NodeReady {
+			if cond.Status == corev1.ConditionTrue {
+				status = "Ready"
+			} else {
+				status = "NotReady"
+			}
+		}
+	}
+
+	return map[string]interface{}{
+		"name":   n.Name,
+		"status": status,
+		"cpu": map[string]interface{}{
+			"used":      uCPU.AsApproximateFloat64(),
+			"requested": rCPU.AsApproximateFloat64(),
+			"capacity":  capacity.Cpu().AsApproximateFloat64(),
+		},
+		"mem": map[string]interface{}{
+			"used":      uMem.Value(),
+			"requested": rMem.Value(),
+			"capacity":  capacity.Memory().Value(),
+		},
+		"info": map[string]string{
+			"os":      n.Status.NodeInfo.OSImage,
+			"arch":    n.Status.NodeInfo.Architecture,
+			"kernel":  n.Status.NodeInfo.KernelVersion,
+			"kubelet": n.Status.NodeInfo.KubeletVersion,
+		},
+	}
 }
 
 func (s *Server) handleClusterInfo(w http.ResponseWriter, r *http.Request) {
@@ -729,20 +754,47 @@ func (s *Server) handleNamespaceOptimize(w http.ResponseWriter, r *http.Request,
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-
 	ctx := r.Context()
 	operatorNs := getOperatorNamespace()
 
 	// 1. Calculate Average Usage from NamespaceFinOps (last 60 mins)
-	var finOps finopsv1.NamespaceFinOps
-	if err := s.Client.Get(ctx, client.ObjectKey{Name: nsName, Namespace: operatorNs}, &finOps); err != nil {
-		http.Error(w, "NamespaceFinOps not found: "+err.Error(), http.StatusNotFound)
+	avgCpuNs, avgMemNs, err := s.calculateAverageUsage(ctx, nsName, operatorNs)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	if len(finOps.Status.History) == 0 {
-		http.Error(w, "No history available for optimization", http.StatusBadRequest)
+	// 2. Get current individual usage from Metrics API
+	currentCpuNs, currentMemNs, workloadUsage, workloadMemUsage, err := s.getCurrentUsage(ctx, nsName)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+
+	// 3. Compute Correction Factor
+	cpuFactor := s.computeFactor(avgCpuNs, currentCpuNs)
+	memFactor := s.computeFactor(avgMemNs, currentMemNs)
+
+	// 4. Update Workloads and Store Optimization Info
+	optimizedWorkloads := s.optimizeWorkloads(ctx, nsName, cpuFactor, memFactor, workloadUsage, workloadMemUsage)
+
+	// 5. Store/Update NamespaceOptimization CR
+	if err := s.updateOptimizationCR(ctx, nsName, operatorNs, optimizedWorkloads); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+func (s *Server) calculateAverageUsage(ctx context.Context, nsName, operatorNs string) (float64, float64, error) {
+	var finOps finopsv1.NamespaceFinOps
+	if err := s.Client.Get(ctx, client.ObjectKey{Name: nsName, Namespace: operatorNs}, &finOps); err != nil {
+		return 0, 0, fmt.Errorf("NamespaceFinOps not found: %w", err)
+	}
+
+	if len(finOps.Status.History) == 0 {
+		return 0, 0, fmt.Errorf("no history available for optimization")
 	}
 
 	var totalCpuAv, totalMemAv float64
@@ -754,43 +806,24 @@ func (s *Server) handleNamespaceOptimize(w http.ResponseWriter, r *http.Request,
 	}
 	avgCpuNs := totalCpuAv / float64(len(finOps.Status.History))
 	avgMemNs := totalMemAv / float64(len(finOps.Status.History))
+	return avgCpuNs, avgMemNs, nil
+}
 
-	// 2. Get current individual usage from Metrics API
+func (s *Server) getCurrentUsage(ctx context.Context, nsName string) (float64, float64, map[string]float64, map[string]float64, error) {
 	if s.MetricsClient == nil {
-		http.Error(w, "Metrics API is not available", http.StatusInternalServerError)
-		return
+		return 0, 0, nil, nil, fmt.Errorf("Metrics API is not available")
 	}
 	podMetricsList, err := s.MetricsClient.MetricsV1beta1().PodMetricses(nsName).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		http.Error(w, "Failed to get metrics: "+err.Error(), http.StatusInternalServerError)
-		return
+		return 0, 0, nil, nil, fmt.Errorf("failed to get metrics: %w", err)
 	}
 
 	var currentCpuNs, currentMemNs float64
-	workloadUsage := make(map[string]float64) // key: KIND/NAME
+	workloadUsage := make(map[string]float64)
 	workloadMemUsage := make(map[string]float64)
 
 	for _, pm := range podMetricsList.Items {
-		// Find owner
-		var workloadName, workloadKind string
-		for _, or := range pm.OwnerReferences {
-			if or.Kind == "ReplicaSet" {
-				// Get RS to find Deployment
-				var rs appsv1.ReplicaSet
-				if err := s.Client.Get(ctx, client.ObjectKey{Name: or.Name, Namespace: nsName}, &rs); err == nil {
-					for _, rsor := range rs.OwnerReferences {
-						if rsor.Kind == "Deployment" {
-							workloadName = rsor.Name
-							workloadKind = "Deployment"
-						}
-					}
-				}
-			} else if or.Kind == "StatefulSet" {
-				workloadName = or.Name
-				workloadKind = "StatefulSet"
-			}
-		}
-
+		workloadName, workloadKind := s.getWorkloadOwner(ctx, nsName, pm.OwnerReferences)
 		if workloadName == "" {
 			continue
 		}
@@ -805,260 +838,177 @@ func (s *Server) handleNamespaceOptimize(w http.ResponseWriter, r *http.Request,
 			workloadMemUsage[key] += mem
 		}
 	}
+	return currentCpuNs, currentMemNs, workloadUsage, workloadMemUsage, nil
+}
 
-	// 3. Compute Correction Factor
-	cpuFactor := 1.0
-	if currentCpuNs > 0 {
-		cpuFactor = avgCpuNs / currentCpuNs
+func (s *Server) getWorkloadOwner(ctx context.Context, nsName string, ownerReferences []metav1.OwnerReference) (string, string) {
+	for _, or := range ownerReferences {
+		if or.Kind == "ReplicaSet" {
+			var rs appsv1.ReplicaSet
+			if err := s.Client.Get(ctx, client.ObjectKey{Name: or.Name, Namespace: nsName}, &rs); err == nil {
+				for _, rsor := range rs.OwnerReferences {
+					if rsor.Kind == "Deployment" {
+						return rsor.Name, "Deployment"
+					}
+				}
+			}
+		} else if or.Kind == "StatefulSet" {
+			return or.Name, "StatefulSet"
+		}
 	}
-	memFactor := 1.0
-	if currentMemNs > 0 {
-		memFactor = avgMemNs / currentMemNs
+	return "", ""
+}
+
+func (s *Server) computeFactor(avg, current float64) float64 {
+	if current > 0 {
+		return avg / current
 	}
+	return 1.0
+}
 
-	// 4. Update Workloads and Store Optimization Info
-	optimizedWorkloads := []finopsv1.WorkloadOptimization{}
+func (s *Server) optimizeWorkloads(ctx context.Context, nsName string, cpuFactor, memFactor float64, workloadUsage, workloadMemUsage map[string]float64) []finopsv1.WorkloadOptimization {
+	var optimizedWorkloads []finopsv1.WorkloadOptimization
 
-	// Process Deployments
+	// Deployments
 	deploys := &appsv1.DeploymentList{}
 	s.Client.List(ctx, deploys, client.InNamespace(nsName))
 	for _, d := range deploys.Items {
-		key := "Deployment/" + d.Name
-		replicas := int32(1)
-		if d.Spec.Replicas != nil {
-			replicas = *d.Spec.Replicas
-		}
-		if replicas == 0 {
-			continue
-		}
-
-		// Calc new values
-		usageCPU := workloadUsage[key] * cpuFactor
-		usageMem := workloadMemUsage[key] * memFactor
-
-		newReqCPU := usageCPU * 1.3 / float64(replicas)
-		newLimCPU := usageCPU * 1.5 / float64(replicas)
-		newReqMem := usageMem * 1.3 / float64(replicas)
-		newLimMem := usageMem * 1.5 / float64(replicas)
-
-		// Sanity mimimums & protection
-		currentReqCPU := d.Spec.Template.Spec.Containers[0].Resources.Requests.Cpu().AsApproximateFloat64()
-		currentReqMem := float64(d.Spec.Template.Spec.Containers[0].Resources.Requests.Memory().Value())
-		currentLimCPU := d.Spec.Template.Spec.Containers[0].Resources.Limits.Cpu().AsApproximateFloat64()
-		currentLimMem := float64(d.Spec.Template.Spec.Containers[0].Resources.Limits.Memory().Value())
-
-		// Safety floor: 20m CPU, 64Mi RAM
-		cpuFloor := 0.02
-		memFloor := 64.0 * 1024 * 1024
-
-		if newReqCPU < cpuFloor {
-			if currentReqCPU >= cpuFloor {
-				newReqCPU = cpuFloor
-			} else {
-				// Already manually tuned below floor, keep it
-				newReqCPU = currentReqCPU
-			}
-		}
-		if newLimCPU < cpuFloor*1.5 {
-			if currentLimCPU >= cpuFloor*1.5 {
-				newLimCPU = cpuFloor * 1.5
-			} else {
-				newLimCPU = currentLimCPU
-			}
-		}
-
-		if newReqMem < memFloor {
-			if currentReqMem >= memFloor {
-				newReqMem = memFloor
-			} else {
-				// Already manually tuned below floor, keep it
-				newReqMem = currentReqMem
-			}
-		}
-		if newLimMem < memFloor*1.5 {
-			if currentLimMem >= memFloor*1.5 {
-				newLimMem = memFloor * 1.5
-			} else {
-				newLimMem = currentLimMem
-			}
-		}
-
-		// Guarantee limits are always >= requests
-		if newLimCPU < newReqCPU {
-			newLimCPU = newReqCPU
-		}
-		if newLimMem < newReqMem {
-			newLimMem = newReqMem
-		}
-
-		orig := finopsv1.ResourceValues{}
-		if len(d.Spec.Template.Spec.Containers) > 0 {
-			c := d.Spec.Template.Spec.Containers[0]
-			orig.CPURequest = c.Resources.Requests.Cpu().String()
-			orig.CPULimit = c.Resources.Limits.Cpu().String()
-			orig.MemoryRequest = c.Resources.Requests.Memory().String()
-			orig.MemoryLimit = c.Resources.Limits.Memory().String()
-
-			// Update
-			d.Spec.Template.Spec.Containers[0].Resources.Requests = corev1.ResourceList{
-				corev1.ResourceCPU:    resource.MustParse(fmt.Sprintf("%dm", int64(newReqCPU*1000))),
-				corev1.ResourceMemory: resource.MustParse(fmt.Sprintf("%dMi", int64(newReqMem/1024/1024))),
-			}
-			d.Spec.Template.Spec.Containers[0].Resources.Limits = corev1.ResourceList{
-				corev1.ResourceCPU:    resource.MustParse(fmt.Sprintf("%dm", int64(newLimCPU*1000))),
-				corev1.ResourceMemory: resource.MustParse(fmt.Sprintf("%dMi", int64(newLimMem/1024/1024))),
-			}
-			s.Client.Update(ctx, &d)
-
-			optimizedWorkloads = append(optimizedWorkloads, finopsv1.WorkloadOptimization{
-				Name:     d.Name,
-				Kind:     "Deployment",
-				Original: orig,
-				Optimized: finopsv1.ResourceValues{
-					CPURequest:    d.Spec.Template.Spec.Containers[0].Resources.Requests.Cpu().String(),
-					CPULimit:      d.Spec.Template.Spec.Containers[0].Resources.Limits.Cpu().String(),
-					MemoryRequest: d.Spec.Template.Spec.Containers[0].Resources.Requests.Memory().String(),
-					MemoryLimit:   d.Spec.Template.Spec.Containers[0].Resources.Limits.Memory().String(),
-				},
-			})
+		if opt, ok := s.optimizeSingleWorkload(ctx, &d, "Deployment", cpuFactor, memFactor, workloadUsage, workloadMemUsage); ok {
+			optimizedWorkloads = append(optimizedWorkloads, opt)
 		}
 	}
 
-	// Process StatefulSets
+	// StatefulSets
 	stss := &appsv1.StatefulSetList{}
 	s.Client.List(ctx, stss, client.InNamespace(nsName))
-	for _, d := range stss.Items {
-		key := "StatefulSet/" + d.Name
-		replicas := int32(1)
-		if d.Spec.Replicas != nil {
-			replicas = *d.Spec.Replicas
-		}
-		if replicas == 0 {
-			continue
-		}
-
-		usageCPU := workloadUsage[key] * cpuFactor
-		usageMem := workloadMemUsage[key] * memFactor
-
-		newReqCPU := usageCPU * 1.3 / float64(replicas)
-		newLimCPU := usageCPU * 1.5 / float64(replicas)
-		newReqMem := usageMem * 1.3 / float64(replicas)
-		newLimMem := usageMem * 1.5 / float64(replicas)
-
-		// Sanity mimimums & protection
-		currentReqCPU := d.Spec.Template.Spec.Containers[0].Resources.Requests.Cpu().AsApproximateFloat64()
-		currentReqMem := float64(d.Spec.Template.Spec.Containers[0].Resources.Requests.Memory().Value())
-		currentLimCPU := d.Spec.Template.Spec.Containers[0].Resources.Limits.Cpu().AsApproximateFloat64()
-		currentLimMem := float64(d.Spec.Template.Spec.Containers[0].Resources.Limits.Memory().Value())
-
-		// Safety floor: 20m CPU, 64Mi RAM
-		cpuFloor := 0.02
-		memFloor := 64.0 * 1024 * 1024
-
-		if newReqCPU < cpuFloor {
-			if currentReqCPU >= cpuFloor {
-				newReqCPU = cpuFloor
-			} else {
-				// Already manually tuned below floor, keep it
-				newReqCPU = currentReqCPU
-			}
-		}
-		if newLimCPU < cpuFloor*1.5 {
-			if currentLimCPU >= cpuFloor*1.5 {
-				newLimCPU = cpuFloor * 1.5
-			} else {
-				newLimCPU = currentLimCPU
-			}
-		}
-
-		if newReqMem < memFloor {
-			if currentReqMem >= memFloor {
-				newReqMem = memFloor
-			} else {
-				// Already manually tuned below floor, keep it
-				newReqMem = currentReqMem
-			}
-		}
-		if newLimMem < memFloor*1.5 {
-			if currentLimMem >= memFloor*1.5 {
-				newLimMem = memFloor * 1.5
-			} else {
-				newLimMem = currentLimMem
-			}
-		}
-
-		// Guarantee limits are always >= requests
-		if newLimCPU < newReqCPU {
-			newLimCPU = newReqCPU
-		}
-		if newLimMem < newReqMem {
-			newLimMem = newReqMem
-		}
-
-		orig := finopsv1.ResourceValues{}
-		if len(d.Spec.Template.Spec.Containers) > 0 {
-			c := d.Spec.Template.Spec.Containers[0]
-			orig.CPURequest = c.Resources.Requests.Cpu().String()
-			orig.CPULimit = c.Resources.Limits.Cpu().String()
-			orig.MemoryRequest = c.Resources.Requests.Memory().String()
-			orig.MemoryLimit = c.Resources.Limits.Memory().String()
-
-			d.Spec.Template.Spec.Containers[0].Resources.Requests = corev1.ResourceList{
-				corev1.ResourceCPU:    resource.MustParse(fmt.Sprintf("%dm", int64(newReqCPU*1000))),
-				corev1.ResourceMemory: resource.MustParse(fmt.Sprintf("%dMi", int64(newReqMem/1024/1024))),
-			}
-			d.Spec.Template.Spec.Containers[0].Resources.Limits = corev1.ResourceList{
-				corev1.ResourceCPU:    resource.MustParse(fmt.Sprintf("%dm", int64(newLimCPU*1000))),
-				corev1.ResourceMemory: resource.MustParse(fmt.Sprintf("%dMi", int64(newLimMem/1024/1024))),
-			}
-			s.Client.Update(ctx, &d)
-
-			optimizedWorkloads = append(optimizedWorkloads, finopsv1.WorkloadOptimization{
-				Name:     d.Name,
-				Kind:     "StatefulSet",
-				Original: orig,
-				Optimized: finopsv1.ResourceValues{
-					CPURequest:    d.Spec.Template.Spec.Containers[0].Resources.Requests.Cpu().String(),
-					CPULimit:      d.Spec.Template.Spec.Containers[0].Resources.Limits.Cpu().String(),
-					MemoryRequest: d.Spec.Template.Spec.Containers[0].Resources.Requests.Memory().String(),
-					MemoryLimit:   d.Spec.Template.Spec.Containers[0].Resources.Limits.Memory().String(),
-				},
-			})
+	for _, sts := range stss.Items {
+		if opt, ok := s.optimizeSingleWorkload(ctx, &sts, "StatefulSet", cpuFactor, memFactor, workloadUsage, workloadMemUsage); ok {
+			optimizedWorkloads = append(optimizedWorkloads, opt)
 		}
 	}
 
-	// 5. Store/Update NamespaceOptimization CR
+	return optimizedWorkloads
+}
+
+func (s *Server) optimizeSingleWorkload(ctx context.Context, obj client.Object, kind string, cpuFactor, memFactor float64, workloadUsage, workloadMemUsage map[string]float64) (finopsv1.WorkloadOptimization, bool) {
+	name := obj.GetName()
+	key := kind + "/" + name
+
+	var replicas int32
+	var podSpec *corev1.PodTemplateSpec
+
+	switch o := obj.(type) {
+	case *appsv1.Deployment:
+		if o.Spec.Replicas != nil {
+			replicas = *o.Spec.Replicas
+		}
+		podSpec = &o.Spec.Template
+	case *appsv1.StatefulSet:
+		if o.Spec.Replicas != nil {
+			replicas = *o.Spec.Replicas
+		}
+		podSpec = &o.Spec.Template
+	}
+
+	if replicas == 0 || podSpec == nil || len(podSpec.Spec.Containers) == 0 {
+		return finopsv1.WorkloadOptimization{}, false
+	}
+
+	usageCPU := workloadUsage[key] * cpuFactor
+	usageMem := workloadMemUsage[key] * memFactor
+
+	newReqCPU := usageCPU * 1.3 / float64(replicas)
+	newLimCPU := usageCPU * 1.5 / float64(replicas)
+	newReqMem := usageMem * 1.3 / float64(replicas)
+	newLimMem := usageMem * 1.5 / float64(replicas)
+
+	container := &podSpec.Spec.Containers[0]
+	currentReqCPU := container.Resources.Requests.Cpu().AsApproximateFloat64()
+	currentReqMem := float64(container.Resources.Requests.Memory().Value())
+	currentLimCPU := container.Resources.Limits.Cpu().AsApproximateFloat64()
+	currentLimMem := float64(container.Resources.Limits.Memory().Value())
+
+	cpuFloor := 0.02
+	memFloor := 64.0 * 1024 * 1024
+
+	newReqCPU = s.applyFloor(newReqCPU, currentReqCPU, cpuFloor)
+	newLimCPU = s.applyFloor(newLimCPU, currentLimCPU, cpuFloor*1.5)
+	newReqMem = s.applyFloor(newReqMem, currentReqMem, memFloor)
+	newLimMem = s.applyFloor(newLimMem, currentLimMem, memFloor*1.5)
+
+	if newLimCPU < newReqCPU {
+		newLimCPU = newReqCPU
+	}
+	if newLimMem < newReqMem {
+		newLimMem = newReqMem
+	}
+
+	orig := finopsv1.ResourceValues{
+		CPURequest:    container.Resources.Requests.Cpu().String(),
+		CPULimit:      container.Resources.Limits.Cpu().String(),
+		MemoryRequest: container.Resources.Requests.Memory().String(),
+		MemoryLimit:   container.Resources.Limits.Memory().String(),
+	}
+
+	container.Resources.Requests = corev1.ResourceList{
+		corev1.ResourceCPU:    resource.MustParse(fmt.Sprintf("%dm", int64(newReqCPU*1000))),
+		corev1.ResourceMemory: resource.MustParse(fmt.Sprintf("%dMi", int64(newReqMem/1024/1024))),
+	}
+	container.Resources.Limits = corev1.ResourceList{
+		corev1.ResourceCPU:    resource.MustParse(fmt.Sprintf("%dm", int64(newLimCPU*1000))),
+		corev1.ResourceMemory: resource.MustParse(fmt.Sprintf("%dMi", int64(newLimMem/1024/1024))),
+	}
+
+	s.Client.Update(ctx, obj)
+
+	return finopsv1.WorkloadOptimization{
+		Name:     name,
+		Kind:     kind,
+		Original: orig,
+		Optimized: finopsv1.ResourceValues{
+			CPURequest:    container.Resources.Requests.Cpu().String(),
+			CPULimit:      container.Resources.Limits.Cpu().String(),
+			MemoryRequest: container.Resources.Requests.Memory().String(),
+			MemoryLimit:   container.Resources.Limits.Memory().String(),
+		},
+	}, true
+}
+
+func (s *Server) applyFloor(newValue, current, floor float64) float64 {
+	if newValue < floor {
+		if current >= floor {
+			return floor
+		}
+		return current
+	}
+	return newValue
+}
+
+func (s *Server) updateOptimizationCR(ctx context.Context, nsName, operatorNs string, workloads []finopsv1.WorkloadOptimization) error {
 	opt := &finopsv1.NamespaceOptimization{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      nsName,
 			Namespace: operatorNs,
 		},
 	}
-	err = s.Client.Get(ctx, client.ObjectKey{Name: nsName, Namespace: operatorNs}, opt)
+
+	err := s.Client.Get(ctx, client.ObjectKey{Name: nsName, Namespace: operatorNs}, opt)
 	opt.Spec.TargetNamespace = nsName
 
 	if err != nil {
-		// CR doesn't exist yet — create it first (status is stripped on Create)
 		if createErr := s.Client.Create(ctx, opt); createErr != nil {
-			logf.Log.Error(createErr, "Failed to create NamespaceOptimization", "namespace", nsName)
-			http.Error(w, "Failed to create optimization record: "+createErr.Error(), http.StatusInternalServerError)
-			return
+			return fmt.Errorf("failed to create NamespaceOptimization: %w", createErr)
 		}
 	}
 
-	// Now update the status subresource separately (this is required because
-	// +kubebuilder:subresource:status means status is stripped on Create)
 	opt.Status.Active = true
 	opt.Status.OptimizedAt = metav1.Now()
-	opt.Status.Workloads = optimizedWorkloads
+	opt.Status.Workloads = workloads
 
 	if statusErr := s.Client.Status().Update(ctx, opt); statusErr != nil {
-		logf.Log.Error(statusErr, "Failed to update NamespaceOptimization status", "namespace", nsName)
-		http.Error(w, "Failed to update optimization status: "+statusErr.Error(), http.StatusInternalServerError)
-		return
+		return fmt.Errorf("failed to update NamespaceOptimization status: %w", statusErr)
 	}
-
-	w.WriteHeader(http.StatusOK)
+	return nil
 }
 
 func (s *Server) handleNamespaceRevert(w http.ResponseWriter, r *http.Request, nsName string) {

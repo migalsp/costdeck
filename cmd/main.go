@@ -54,85 +54,43 @@ func init() {
 	// +kubebuilder:scaffold:scheme
 }
 
-// nolint:gocyclo
-func main() {
-	var metricsAddr string
+func parseFlags() (map[string]string, bool, string, bool, zap.Options) {
+	var metricsAddr, probeAddr string
 	var metricsCertPath, metricsCertName, metricsCertKey string
 	var webhookCertPath, webhookCertName, webhookCertKey string
-	var enableLeaderElection bool
-	var probeAddr string
-	var secureMetrics bool
-	var enableHTTP2 bool
-	var tlsOpts []func(*tls.Config)
-	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
-		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
+	var enableLeaderElection, secureMetrics, enableHTTP2 bool
+
+	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
-	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
-		"Enable leader election for controller manager. "+
-			"Enabling this will ensure there is only one active controller manager.")
-	flag.BoolVar(&secureMetrics, "metrics-secure", true,
-		"If set, the metrics endpoint is served securely via HTTPS. Use --metrics-secure=false to use HTTP instead.")
-	flag.StringVar(&webhookCertPath, "webhook-cert-path", "", "The directory that contains the webhook certificate.")
-	flag.StringVar(&webhookCertName, "webhook-cert-name", "tls.crt", "The name of the webhook certificate file.")
-	flag.StringVar(&webhookCertKey, "webhook-cert-key", "tls.key", "The name of the webhook key file.")
-	flag.StringVar(&metricsCertPath, "metrics-cert-path", "",
-		"The directory that contains the metrics server certificate.")
-	flag.StringVar(&metricsCertName, "metrics-cert-name", "tls.crt", "The name of the metrics server certificate file.")
-	flag.StringVar(&metricsCertKey, "metrics-cert-key", "tls.key", "The name of the metrics server key file.")
-	flag.BoolVar(&enableHTTP2, "enable-http2", false,
-		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
-	opts := zap.Options{
-		Development: true,
-	}
+	flag.BoolVar(&enableLeaderElection, "leader-elect", false, "Enable leader election.")
+	flag.BoolVar(&secureMetrics, "metrics-secure", true, "Serve metrics securely.")
+	flag.StringVar(&webhookCertPath, "webhook-cert-path", "", "Webhook cert directory.")
+	flag.StringVar(&webhookCertName, "webhook-cert-name", "tls.crt", "Webhook cert filename.")
+	flag.StringVar(&webhookCertKey, "webhook-cert-key", "tls.key", "Webhook key filename.")
+	flag.StringVar(&metricsCertPath, "metrics-cert-path", "", "Metrics cert directory.")
+	flag.StringVar(&metricsCertName, "metrics-cert-name", "tls.crt", "Metrics cert filename.")
+	flag.StringVar(&metricsCertKey, "metrics-cert-key", "tls.key", "Metrics key filename.")
+	flag.BoolVar(&enableHTTP2, "enable-http2", false, "Enable HTTP/2.")
+
+	opts := zap.Options{Development: true}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
 
-	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
-
-	disableHTTP2 := func(c *tls.Config) {
-		setupLog.Info("Disabling HTTP/2")
-		c.NextProtos = []string{"http/1.1"}
+	flags := map[string]string{
+		"metricsAddr":     metricsAddr,
+		"probeAddr":       probeAddr,
+		"webhookCertPath": webhookCertPath, "webhookCertName": webhookCertName, "webhookCertKey": webhookCertKey,
+		"metricsCertPath": metricsCertPath, "metricsCertName": metricsCertName, "metricsCertKey": metricsCertKey,
 	}
+	return flags, enableLeaderElection, probeAddr, secureMetrics, opts
+}
 
-	if !enableHTTP2 {
-		tlsOpts = append(tlsOpts, disableHTTP2)
-	}
+func main() {
+	flags, enableLeaderElection, probeAddr, secureMetrics, zapOpts := parseFlags()
+	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&zapOpts)))
 
-	// Initial webhook TLS options
-	webhookTLSOpts := tlsOpts
-	webhookServerOptions := webhook.Options{
-		TLSOpts: webhookTLSOpts,
-	}
-
-	if len(webhookCertPath) > 0 {
-		setupLog.Info("Initializing webhook certificate watcher using provided certificates",
-			"webhook-cert-path", webhookCertPath, "webhook-cert-name", webhookCertName, "webhook-cert-key", webhookCertKey)
-
-		webhookServerOptions.CertDir = webhookCertPath
-		webhookServerOptions.CertName = webhookCertName
-		webhookServerOptions.KeyName = webhookCertKey
-	}
-
-	webhookServer := webhook.NewServer(webhookServerOptions)
-
-	metricsServerOptions := metricsserver.Options{
-		BindAddress:   metricsAddr,
-		SecureServing: secureMetrics,
-		TLSOpts:       tlsOpts,
-	}
-
-	if secureMetrics {
-		metricsServerOptions.FilterProvider = filters.WithAuthenticationAndAuthorization
-	}
-
-	if len(metricsCertPath) > 0 {
-		setupLog.Info("Initializing metrics certificate watcher using provided certificates",
-			"metrics-cert-path", metricsCertPath, "metrics-cert-name", metricsCertName, "metrics-cert-key", metricsCertKey)
-
-		metricsServerOptions.CertDir = metricsCertPath
-		metricsServerOptions.CertName = metricsCertName
-		metricsServerOptions.KeyName = metricsCertKey
-	}
+	webhookServer := setupWebhookServer(flags)
+	metricsServerOptions := setupMetricsOptions(flags, secureMetrics)
 
 	config := ctrl.GetConfigOrDie()
 	mgr, err := ctrl.NewManager(config, ctrl.Options{
@@ -217,4 +175,37 @@ func main() {
 		setupLog.Error(err, "Failed to run manager")
 		os.Exit(1)
 	}
+}
+
+func setupWebhookServer(flags map[string]string) webhook.Server {
+	opts := webhook.Options{
+		TLSOpts: []func(*tls.Config){func(c *tls.Config) {
+			c.NextProtos = []string{"http/1.1"}
+		}},
+	}
+	if p := flags["webhookCertPath"]; len(p) > 0 {
+		opts.CertDir = p
+		opts.CertName = flags["webhookCertName"]
+		opts.KeyName = flags["webhookCertKey"]
+	}
+	return webhook.NewServer(opts)
+}
+
+func setupMetricsOptions(flags map[string]string, secure bool) metricsserver.Options {
+	opts := metricsserver.Options{
+		BindAddress:   flags["metricsAddr"],
+		SecureServing: secure,
+		TLSOpts: []func(*tls.Config){func(c *tls.Config) {
+			c.NextProtos = []string{"http/1.1"}
+		}},
+	}
+	if secure {
+		opts.FilterProvider = filters.WithAuthenticationAndAuthorization
+	}
+	if p := flags["metricsCertPath"]; len(p) > 0 {
+		opts.CertDir = p
+		opts.CertName = flags["metricsCertName"]
+		opts.KeyName = flags["metricsCertKey"]
+	}
+	return opts
 }
