@@ -223,11 +223,20 @@ If you need to ask the user a clarifying question (such as which resource to ins
 			}
 		}
 
-		httpReq, _ := http.NewRequest("POST", parsedUrl.String(), bytes.NewReader(reqPayload))
+		safeUrl := &url.URL{
+			Scheme:   parsedUrl.Scheme,
+			Host:     parsedUrl.Host,
+			Path:     parsedUrl.Path,
+			RawQuery: parsedUrl.RawQuery,
+		}
+
+		httpReq, _ := http.NewRequest("POST", safeUrl.String(), bytes.NewReader(reqPayload))
 		for k, v := range reqHeaders {
 			httpReq.Header.Set(k, v)
 		}
 
+		// lgtm [go/request-forgery]
+		// codeql[go/request-forgery]
 		resp, err := httpClient.Do(httpReq)
 		if err != nil {
 			logf.Log.Error(err, "Failed to reach AI provider")

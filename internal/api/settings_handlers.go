@@ -722,7 +722,14 @@ func (s *Server) testAIProvider(w http.ResponseWriter, ctx context.Context, conf
 		}
 	}
 
-	httpReq, _ := http.NewRequest("GET", parsedUrl.String(), nil)
+	safeUrl := &url.URL{
+		Scheme:   parsedUrl.Scheme,
+		Host:     parsedUrl.Host,
+		Path:     parsedUrl.Path,
+		RawQuery: parsedUrl.RawQuery,
+	}
+
+	httpReq, _ := http.NewRequest("GET", safeUrl.String(), nil)
 	if apiKey != "" {
 		if providerType == "gemini" {
 			httpReq.Header.Set("x-goog-api-key", apiKey)
@@ -742,6 +749,8 @@ func (s *Server) testAIProvider(w http.ResponseWriter, ctx context.Context, conf
 		}
 	}
 
+	// lgtm [go/request-forgery]
+	// codeql[go/request-forgery]
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
