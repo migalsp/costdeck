@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.1](https://github.com/migalsp/costdeck/compare/v1.2.0...v1.2.1) (2026-06-06)
+
+
+### Bug Fixes
+
+* Uncontrolled data used in network request ([943456f](https://github.com/migalsp/costdeck/commit/943456fb1cdebc5846c7afaabc996fbaeeffe40d))
+
 ## [1.2.0](https://github.com/migalsp/costdeck/compare/v1.1.2...v1.2.0) (2026-06-06)
 
 
