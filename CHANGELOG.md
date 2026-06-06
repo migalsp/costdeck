@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.2.0](https://github.com/migalsp/costdeck/compare/v1.1.2...v1.2.0) (2026-06-06)
+
+
+### Features
+
+* major FinOps and AI capabilities update, Go 1.26 bump, and UI overhaul ([57239ee](https://github.com/migalsp/costdeck/commit/57239ee97eb124e8a6715bf183ba626fecd886a5))
+* major FinOps and AI capabilities update, Go 1.26 bump, and UI overhaul ([cb5c781](https://github.com/migalsp/costdeck/commit/cb5c781ef5e4b30f7fa4066d79ab1b1621b07479))
+
+
+### Bug Fixes
+
+* resolve SSRF vulnerabilities, chat UI bugs, and improve AI reporting ([a4cef23](https://github.com/migalsp/costdeck/commit/a4cef23d0aeb5cef516edd59446d237bdd223926))
+
 ## [1.1.2](https://github.com/migalsp/costdeck/compare/v1.1.1...v1.1.2) (2026-03-27)
 
 
