@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Server, Cpu, Database, Activity, Globe } from 'lucide-react'
+import { Server, Cpu, Database, Activity, DollarSign, Globe } from 'lucide-react'
 import InfoTooltip from '../components/InfoTooltip'
 
 interface NodeData {
@@ -43,6 +43,8 @@ interface ClusterResponse {
 export default function ClusterDashboard() {
   const [data, setData] = useState<ClusterResponse | null>(null)
   const [loading, setLoading] = useState(true)
+  const [clusterCost, setClusterCost] = useState<any>(null)
+  const [nodeCosts, setNodeCosts] = useState<Record<string, any>>({})
 
   useEffect(() => {
     fetch('/api/cluster/nodes')
@@ -50,6 +52,52 @@ export default function ClusterDashboard() {
       .then(d => {
         setData(d)
         setLoading(false)
+        
+        const totalCpuCores = d.totalCapacity.cpu
+        const totalMemGb = d.totalCapacity.mem / 1024 / 1024 / 1024
+
+        const fetchCost = async () => {
+          try {
+            const res = await fetch('/api/costing', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ 
+                targetType: 'cluster', 
+                targetName: 'cluster', 
+                totalCpu: totalCpuCores, 
+                totalMemoryGb: totalMemGb 
+              })
+            })
+            if (res.ok) {
+              const cost = await res.json()
+              if (cost) setClusterCost(cost)
+            }
+          } catch (e) {
+            console.error('Failed to fetch cluster cost', e)
+          }
+        }
+        fetchCost()
+
+        // Fetch AI Costing for each node (fire-and-forget style for UI snappiness)
+        d.nodes.forEach((node: NodeData) => {
+          fetch('/api/costing', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+              targetType: 'node',
+              targetName: node.name,
+              totalCpu: node.cpu.capacity,
+              totalMemoryGb: node.mem.capacity / 1024 / 1024 / 1024
+            })
+          }).then(res => {
+            if (res.ok) return res.json();
+            return null;
+          }).then(cost => {
+            if (cost) {
+              setNodeCosts(prev => ({ ...prev, [node.name]: cost }))
+            }
+          }).catch(() => {})
+        })
       })
       .catch(err => {
         console.error(err)
@@ -94,11 +142,36 @@ export default function ClusterDashboard() {
           </div>
           <p className="text-slate-500 mt-1 font-medium italic">Real-time infrastructure capacity and heatmap utilization</p>
         </div>
-        <div className="bg-slate-900 text-white px-4 py-2 rounded-xl shadow-lg border border-slate-800 flex items-center gap-3">
-          <Globe size={18} className="text-emerald-400" />
-          <div className="flex flex-col">
-            <span className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">K8s Version</span>
-            <span className="font-mono text-sm font-bold">{data.k8sVersion}</span>
+        <div className="flex items-center gap-3 h-full">
+          {/* Total Cost Badge (Left) */}
+          <div className="bg-emerald-50 text-emerald-900 px-4 py-2 rounded-xl shadow-sm border border-emerald-200 flex items-center gap-3 h-full">
+            <div className="p-1.5 bg-emerald-100 rounded-lg text-emerald-600 shrink-0">
+              <DollarSign size={18} />
+            </div>
+            <div className="flex flex-col justify-center">
+              <span className="text-[10px] uppercase tracking-widest text-emerald-600 font-bold mb-0.5">Total Cluster Cost</span>
+              {clusterCost ? (
+                <InfoTooltip content={`Pricing Source: ${clusterCost.determinedBy}`} position="bottom">
+                  <div className="flex items-baseline gap-1.5 cursor-text">
+                    <span className="font-black text-sm leading-none">${clusterCost.monthlyCost.toFixed(2)}<span className="text-[10px] font-bold text-emerald-700/70">/mo</span></span>
+                    <span className="text-[10px] font-bold text-emerald-600/70 leading-none">${clusterCost.hourlyCost.toFixed(4)}/hr</span>
+                  </div>
+                </InfoTooltip>
+              ) : (
+                <span className="font-mono text-[10px] font-bold text-emerald-700/50 leading-none">Calculating...</span>
+              )}
+            </div>
+          </div>
+
+          {/* K8s Version Badge (Right) */}
+          <div className="bg-slate-900 text-white px-4 py-2 rounded-xl shadow-lg border border-slate-800 flex items-center gap-3 h-full">
+            <div className="p-1.5 bg-slate-800 rounded-lg text-emerald-400 shrink-0">
+              <Globe size={18} />
+            </div>
+            <div className="flex flex-col justify-center">
+              <span className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-0.5">K8s Version</span>
+              <span className="font-mono text-sm font-black leading-none">{data.k8sVersion}</span>
+            </div>
           </div>
         </div>
       </div>
@@ -148,6 +221,8 @@ export default function ClusterDashboard() {
           </div>
         </div>
 
+
+
         <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100">
           <div className="flex justify-between items-start mb-4">
             <div className="flex items-center gap-3">
@@ -196,6 +271,7 @@ export default function ClusterDashboard() {
               <tr className="text-[10px] font-black text-slate-400 uppercase tracking-widest bg-slate-50/30">
                 <th className="px-8 py-4">Node Name</th>
                 <th className="px-4 py-4 text-center">Status</th>
+                <th className="px-4 py-4">Est. Cost / Hour</th>
                 <th className="px-4 py-4">CPU Allocation & Usage</th>
                 <th className="px-4 py-4">RAM Allocation & Usage</th>
                 <th className="px-8 py-4 text-right">Environment Info</th>
@@ -225,7 +301,17 @@ export default function ClusterDashboard() {
                         {node.status}
                       </span>
                     </td>
-                    <td className="px-4 py-5 w-[28%]">
+                    <td className="px-4 py-5">
+                      {nodeCosts[node.name] ? (
+                        <div className="flex flex-col animate-in fade-in zoom-in duration-300 bg-emerald-50/50 p-2 rounded-lg border border-emerald-100/50">
+                          <span className="text-emerald-600 font-bold text-xs">${nodeCosts[node.name].monthlyCost.toFixed(2)}<span className="text-[10px] font-medium opacity-70">/mo</span></span>
+                          <span className="text-emerald-400 font-medium text-[10px]">${nodeCosts[node.name].hourlyCost.toFixed(4)}/hr</span>
+                        </div>
+                      ) : (
+                        <span className="text-xs font-mono text-slate-300">...</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-5 w-[25%]">
                       <div className="flex flex-col gap-3 pr-4">
                         <div className="flex flex-col gap-1">
                           <div className="flex justify-between text-[9px] font-black uppercase tracking-wider">
@@ -247,7 +333,7 @@ export default function ClusterDashboard() {
                         </div>
                       </div>
                     </td>
-                    <td className="px-4 py-5 w-[28%]">
+                    <td className="px-4 py-5 w-[25%]">
                       <div className="flex flex-col gap-3 pr-4">
                         <div className="flex flex-col gap-1">
                           <div className="flex justify-between text-[9px] font-black uppercase tracking-wider">

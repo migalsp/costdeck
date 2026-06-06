@@ -47,6 +47,8 @@ func (s *Server) Start(ctx context.Context) error {
 
 	mux := http.NewServeMux()
 
+	go s.StartMCPServerLoop(ctx)
+
 	mux.HandleFunc("/api/namespaces", s.handleNamespaces)
 	mux.HandleFunc("/api/namespaces/", s.handleNamespaceRouting)
 	mux.HandleFunc("/api/cluster-info", s.handleClusterInfo)
@@ -58,8 +60,16 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("/api/scaling/configs", s.handleScalingConfigs)
 	mux.HandleFunc("/api/scaling/configs/", s.handleScalingConfigActions)
 	mux.HandleFunc("/api/discovery/", s.handleDiscovery)
+	mux.HandleFunc("/api/webex/webhook", s.handleWebexWebhook)
+	mux.HandleFunc("/api/settings", s.handleSettings)
+	mux.HandleFunc("/api/settings/providers/", s.handleSettingsProviderActions)
 	mux.HandleFunc("/api/version", s.handleVersion)
 	mux.HandleFunc("/api/cluster/nodes", s.handleClusterNodes)
+	mux.HandleFunc("/api/costing", s.handleCosting)
+	mux.HandleFunc("/api/ai/chat", s.handleAIChat)
+	mux.HandleFunc("/api/ai/report", s.handleAIReportGet)
+	mux.HandleFunc("/api/ai/report/save", s.handleAIReportSave)
+	mux.HandleFunc("/api/ai/report/generate", s.handleAIReportGenerate)
 	mux.HandleFunc("/api/login", HandleLogin)
 	mux.HandleFunc("/api/logout", HandleLogout)
 	mux.HandleFunc("/api/openapi.yaml", handleOpenAPISpec)
@@ -135,27 +145,45 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request) {
 	providerName := parts[3]
 	resourceType := parts[4]
 
-	// Currently only "aws" is implemented, but we design for extension
 	if providerName != "aws" {
 		http.Error(w, fmt.Sprintf("Provider '%s' not supported yet", providerName), http.StatusNotImplemented)
 		return
 	}
 
-	if os.Getenv("AWS_PROVIDER_ENABLED") != "true" {
+	// Read provider config from CostDeckConfig CR
+	ctx := r.Context()
+	config := s.getOrCreateDefaultConfig(ctx)
+
+	// Check if AWS is enabled from CostDeckConfig CR
+	if config.Spec.Providers.AWS == nil || !config.Spec.Providers.AWS.Enabled {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode([]interface{}{})
 		return
 	}
 
-	// Initialize Provider (ideally cached or part of engine)
-	awsProv, err := scaling.NewAWSProvider(r.Context())
+	awsCfg := config.Spec.Providers.AWS
+
+	// Try to initialize from CostDeckConfig secret first, fallback to env/IRSA
+	var awsProv *scaling.AWSProvider
+	var err error
+	if awsCfg != nil && awsCfg.SecretRef != "" {
+		awsProv, err = scaling.NewAWSProviderFromSecret(ctx, s.Client, awsCfg.SecretRef, config.Namespace, awsCfg.Region)
+	} else {
+		awsProv, err = scaling.NewAWSProvider(ctx)
+	}
 	if err != nil {
 		logf.Log.Error(err, "Failed to initialize AWS Discovery provider")
 		http.Error(w, "Cloud provider configuration error", http.StatusInternalServerError)
 		return
 	}
 
-	targets, err := awsProv.Discover(r.Context(), resourceType)
+	// Use discovery tags from config if available
+	var tags map[string]string
+	if awsCfg != nil {
+		tags = awsCfg.DiscoveryTags
+	}
+
+	targets, err := awsProv.Discover(ctx, resourceType, tags)
 	if err != nil {
 		logf.Log.Error(err, "Failed to discover resources", "provider", providerName, "type", resourceType)
 		http.Error(w, "Failed to discover external resources", http.StatusInternalServerError)
@@ -243,10 +271,18 @@ type PodDetail struct {
 	Status string                   `json:"status"`
 	CPU    finopsv1.ResourceMetrics `json:"cpu"`
 	Memory finopsv1.ResourceMetrics `json:"memory"`
+	Cost   *CostResponse            `json:"cost,omitempty"`
 }
 
 func (s *Server) servePods(w http.ResponseWriter, r *http.Request, nsName string) {
 	ctx := r.Context()
+
+	config := s.getOrCreateDefaultConfig(ctx)
+	provider := "local"
+	if config.Spec.Providers.AWS != nil && config.Spec.Providers.AWS.Enabled {
+		provider = "aws"
+	}
+	cpuRate, ramRate := getDefaultRates(provider)
 
 	podMetricsMapCPU := make(map[string]string)
 	podMetricsMapMem := make(map[string]string)
@@ -291,6 +327,28 @@ func (s *Server) servePods(w http.ResponseWriter, r *http.Request, nsName string
 			memU = "0"
 		}
 
+		var podCost *CostResponse
+		if p.Status.Phase != corev1.PodSucceeded && p.Status.Phase != corev1.PodFailed {
+			cpuCores := float64(cpuReq.MilliValue()) / 1000.0
+			ramGb := float64(memReq.Value()) / 1024.0 / 1024.0 / 1024.0
+			hourly := (cpuCores * cpuRate) + (ramGb * ramRate)
+
+			determinedBy := "Heuristic Math Pricing"
+			if config.Spec.Features.CloudPricingAPI {
+				determinedBy = "Public Cloud API Pricing"
+			}
+			if provider != "local" {
+				determinedBy = fmt.Sprintf("%s (%s)", determinedBy, provider)
+			}
+
+			podCost = &CostResponse{
+				HourlyCost:   hourly,
+				MonthlyCost:  hourly * 730,
+				Currency:     "USD",
+				DeterminedBy: determinedBy,
+			}
+		}
+
 		details = append(details, PodDetail{
 			Name:   p.Name,
 			Status: string(p.Status.Phase),
@@ -304,6 +362,7 @@ func (s *Server) servePods(w http.ResponseWriter, r *http.Request, nsName string
 				Requests: memReq.String(),
 				Limits:   memLim.String(),
 			},
+			Cost: podCost,
 		})
 	}
 
@@ -1105,7 +1164,7 @@ func handleSwaggerUI(w http.ResponseWriter, r *http.Request) {
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Cost Deck API — Swagger UI</title>
+  <title>Cost Deck API - Swagger UI</title>
   <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css">
   <style>
     body { margin: 0; background: #fafafa; }

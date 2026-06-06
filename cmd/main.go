@@ -17,6 +17,7 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"flag"
 	"os"
@@ -27,6 +28,7 @@ import (
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
@@ -39,6 +41,8 @@ import (
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
 	"github.com/migalsp/costdeck-operator/internal/api"
 	"github.com/migalsp/costdeck-operator/internal/controller"
+	"github.com/migalsp/costdeck-operator/internal/metrics"
+	"github.com/migalsp/costdeck-operator/internal/webex"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -129,10 +133,44 @@ func main() {
 		os.Exit(1)
 	}
 
+	webexPoller := &webex.WebexPoller{
+		Client: mgr.GetClient(),
+	}
+	if err := mgr.Add(webexPoller); err != nil {
+		setupLog.Error(err, "Failed to add Webex poller to manager")
+		os.Exit(1)
+	}
+
+	// Try to initialize VictoriaMetrics client from CostDeckConfig
+	var vmClient *metrics.VMClient
+	{
+		operatorNs := os.Getenv("POD_NAMESPACE")
+		if operatorNs == "" {
+			operatorNs = "costdeck"
+		}
+		var cdConfig finopsv1.CostDeckConfig
+		configKey := client.ObjectKey{Name: "default", Namespace: operatorNs}
+		ctx := context.Background()
+		if err := mgr.GetAPIReader().Get(ctx, configKey, &cdConfig); err == nil {
+			if cdConfig.Spec.Integrations.VictoriaMetrics != nil && cdConfig.Spec.Integrations.VictoriaMetrics.Enabled && cdConfig.Spec.Integrations.VictoriaMetrics.Endpoint != "" {
+				vm, err := metrics.NewVMClient(ctx, mgr.GetClient(), cdConfig.Spec.Integrations.VictoriaMetrics.Endpoint, cdConfig.Spec.Integrations.VictoriaMetrics.SecretRef, operatorNs)
+				if err != nil {
+					setupLog.Error(err, "Failed to initialize VictoriaMetrics client, falling back to metrics-server")
+				} else {
+					vmClient = vm
+					setupLog.Info("VictoriaMetrics client initialized", "endpoint", cdConfig.Spec.Integrations.VictoriaMetrics.Endpoint)
+				}
+			}
+		} else {
+			setupLog.Info("No CostDeckConfig found at startup, using metrics-server")
+		}
+	}
+
 	if err := (&controller.NamespaceFinOpsReconciler{
 		Client:        mgr.GetClient(),
 		Scheme:        mgr.GetScheme(),
 		MetricsClient: metricsClient,
+		VMClient:      vmClient,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "NamespaceFinOps")
 		os.Exit(1)
@@ -157,6 +195,13 @@ func main() {
 		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "ScalingGroup")
+		os.Exit(1)
+	}
+	if err := (&controller.CostDeckConfigReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "CostDeckConfig")
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder

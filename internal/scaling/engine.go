@@ -27,8 +27,8 @@ type ExternalProvider interface {
 	Scale(ctx context.Context, target finopsv1.ExternalTarget, active bool) error
 	// IsReady checks if the target resource has reached the desired state
 	IsReady(ctx context.Context, target finopsv1.ExternalTarget, active bool) (bool, error)
-	// Discover returns a list of scalable targets in the environment
-	Discover(ctx context.Context, resourceType string) ([]finopsv1.ExternalTarget, error)
+	// Discover returns a list of scalable targets in the environment, optionally filtered by tags
+	Discover(ctx context.Context, resourceType string, tags map[string]string) ([]finopsv1.ExternalTarget, error)
 }
 
 // IsActive checks if the namespace/group should be active based on schedules and manual override.

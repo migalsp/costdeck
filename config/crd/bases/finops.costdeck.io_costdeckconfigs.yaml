@@ -1,0 +1,348 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.1
+  name: costdeckconfigs.finops.costdeck.io
+spec:
+  group: finops.costdeck.io
+  names:
+    kind: CostDeckConfig
+    listKind: CostDeckConfigList
+    plural: costdeckconfigs
+    shortNames:
+    - cdc
+    singular: costdeckconfig
+  scope: Namespaced
+  versions:
+  - name: v1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          CostDeckConfig is the Schema for the costdeckconfigs API.
+          It is a singleton resource (one per namespace, conventionally named "default")
+          that holds all provider and integration settings.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: spec defines the desired configuration
+            properties:
+              clusterName:
+                description: |-
+                  ClusterName defines an optional identifier for this cluster.
+                  Used in multi-cluster environments to distinguish bot commands.
+                type: string
+              features:
+                description: Features holds core CostDeck feature toggles
+                properties:
+                  cloudPricingApi:
+                    description: CloudPricingAPI toggles whether to use Public Cloud
+                      Pricing API (e.g., AWS Pricing API) instead of heuristic math
+                      calculations.
+                    type: boolean
+                type: object
+              integrations:
+                description: Integrations holds AI and messenger configurations
+                properties:
+                  ai:
+                    description: AI model integration (coming soon)
+                    properties:
+                      baseUrl:
+                        description: BaseURL is the optional API base URL, used primarily
+                          for local or custom endpoints.
+                        type: string
+                      enabled:
+                        description: Enabled toggles the AI integration on/off
+                        type: boolean
+                      model:
+                        description: Model is the specific model to use (e.g. "gpt-4",
+                          "claude-3-opus")
+                        type: string
+                      provider:
+                        description: Provider is the AI service provider (e.g. "openai",
+                          "anthropic", "gemini")
+                        type: string
+                      secretRef:
+                        description: SecretRef is the name of the K8s Secret holding
+                          the AI API key
+                        type: string
+                      skipSslVerify:
+                        description: SkipSSLVerify allows skipping TLS certificate
+                          verification for custom endpoints
+                        type: boolean
+                    type: object
+                  mcp:
+                    description: MCP Server configuration
+                    properties:
+                      enabled:
+                        description: Enabled toggles the MCP server on/off
+                        type: boolean
+                      port:
+                        default: 8083
+                        description: Port is the HTTP port the MCP server will listen
+                          on for SSE connections
+                        type: integer
+                    type: object
+                  messenger:
+                    description: Messenger integrations
+                    properties:
+                      webex:
+                        description: Webex messenger integration (coming soon)
+                        properties:
+                          enabled:
+                            description: Enabled toggles the Webex integration on/off
+                            type: boolean
+                          roomId:
+                            description: RoomID is the Webex room/space ID for notifications
+                            type: string
+                          secretRef:
+                            description: SecretRef is the name of the K8s Secret holding
+                              the Webex bot token
+                            type: string
+                        type: object
+                    type: object
+                  victoriaMetrics:
+                    description: VictoriaMetrics metrics integration
+                    properties:
+                      enabled:
+                        description: Enabled toggles VictoriaMetrics as the metrics
+                          source (instead of metrics-server)
+                        type: boolean
+                      endpoint:
+                        description: |-
+                          Endpoint is the PromQL-compatible query URL
+                          e.g. "http://vmselect.monitoring.svc:8481/select/0/prometheus"
+                        type: string
+                      retentionDays:
+                        default: 7
+                        description: |-
+                          RetentionDays is the lookback period for metrics queries.
+                          Used by the Optimize feature to compute resource recommendations.
+                        minimum: 1
+                        type: integer
+                      secretRef:
+                        description: |-
+                          SecretRef is the name of the K8s Secret holding VictoriaMetrics credentials
+                          (keys: BEARER_TOKEN or USERNAME/PASSWORD)
+                        type: string
+                    type: object
+                type: object
+              providers:
+                description: Providers holds cloud provider configurations
+                properties:
+                  aws:
+                    description: AWS provider configuration
+                    properties:
+                      discoveryTags:
+                        additionalProperties:
+                          type: string
+                        description: |-
+                          DiscoveryTags defines tag key-value pairs used to filter AWS resources during discovery.
+                          Only resources matching ALL specified tags will be discovered.
+                        type: object
+                      enabled:
+                        description: Enabled toggles the AWS provider on/off
+                        type: boolean
+                      region:
+                        description: Region is the default AWS region (e.g. "us-east-1")
+                        pattern: ^[a-z]{2}-[a-z]+-\d$
+                        type: string
+                      resourceTypes:
+                        description: |-
+                          ResourceTypes lists which AWS resource types to discover and manage.
+                          Supported values: "aurora", "ec2"
+                        items:
+                          type: string
+                        type: array
+                        x-kubernetes-list-type: set
+                      secretRef:
+                        description: |-
+                          SecretRef is the name of the K8s Secret holding AWS credentials
+                          (keys: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)
+                        type: string
+                    type: object
+                  azure:
+                    description: Azure provider configuration (coming soon)
+                    properties:
+                      enabled:
+                        description: Enabled toggles the Azure provider on/off
+                        type: boolean
+                      secretRef:
+                        description: SecretRef is the name of the K8s Secret holding
+                          Azure credentials
+                        type: string
+                      subscriptionId:
+                        description: SubscriptionID is the Azure subscription ID
+                        type: string
+                      tenantId:
+                        description: TenantID is the Azure AD tenant ID
+                        type: string
+                    type: object
+                  gcp:
+                    description: GCP provider configuration (coming soon)
+                    properties:
+                      enabled:
+                        description: Enabled toggles the GCP provider on/off
+                        type: boolean
+                      projectId:
+                        description: ProjectID is the GCP project ID
+                        type: string
+                      secretRef:
+                        description: SecretRef is the name of the K8s Secret holding
+                          GCP service account JSON
+                        type: string
+                    type: object
+                type: object
+            type: object
+          status:
+            description: status defines the observed state
+            properties:
+              aws:
+                description: AWS provider status
+                properties:
+                  connected:
+                    description: Connected indicates whether the provider credentials
+                      are valid and the provider is reachable
+                    type: boolean
+                  discoveredResources:
+                    description: DiscoveredResources is the count of resources found
+                      during the last discovery
+                    type: integer
+                  error:
+                    description: Error contains the last error message if connection
+                      failed
+                    type: string
+                  lastChecked:
+                    description: LastChecked is when connectivity was last verified
+                    format: date-time
+                    type: string
+                required:
+                - connected
+                type: object
+              azure:
+                description: Azure provider status
+                properties:
+                  connected:
+                    description: Connected indicates whether the provider credentials
+                      are valid and the provider is reachable
+                    type: boolean
+                  discoveredResources:
+                    description: DiscoveredResources is the count of resources found
+                      during the last discovery
+                    type: integer
+                  error:
+                    description: Error contains the last error message if connection
+                      failed
+                    type: string
+                  lastChecked:
+                    description: LastChecked is when connectivity was last verified
+                    format: date-time
+                    type: string
+                required:
+                - connected
+                type: object
+              conditions:
+                description: Conditions represent the current state of the CostDeckConfig
+                  resource.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              gcp:
+                description: GCP provider status
+                properties:
+                  connected:
+                    description: Connected indicates whether the provider credentials
+                      are valid and the provider is reachable
+                    type: boolean
+                  discoveredResources:
+                    description: DiscoveredResources is the count of resources found
+                      during the last discovery
+                    type: integer
+                  error:
+                    description: Error contains the last error message if connection
+                      failed
+                    type: string
+                  lastChecked:
+                    description: LastChecked is when connectivity was last verified
+                    format: date-time
+                    type: string
+                required:
+                - connected
+                type: object
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

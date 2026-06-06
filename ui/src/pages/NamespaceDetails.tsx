@@ -16,6 +16,11 @@ interface PodDetail {
     requests: string;
     limits: string;
   };
+  cost?: {
+    hourlyCost: number;
+    monthlyCost: number;
+    currency: string;
+  };
 }
 
 interface NamespaceDetailsProps {
@@ -54,6 +59,7 @@ export default function NamespaceDetails({ namespace, onBack }: NamespaceDetails
   const [sortField, setSortField] = useState<keyof PodDetail | 'cpuUsage' | 'memUsage' | 'cpuReq' | 'cpuLim' | 'memReq' | 'memLim'>('name')
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc')
   const [isScaling, setIsScaling] = useState(false)
+  const [namespaceCost, setNamespaceCost] = useState<any>(null)
 
   const fetchPods = (silent = false) => {
     if (!silent) setLoading(true);
@@ -89,14 +95,35 @@ export default function NamespaceDetails({ namespace, onBack }: NamespaceDetails
       .catch(console.error);
   }
 
+  const fetchNamespaceCost = async () => {
+    try {
+      const res = await fetch('/api/costing', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          targetType: 'namespace',
+          targetName: namespace
+        })
+      })
+      if (res.ok) {
+        const cost = await res.json()
+        if (cost) setNamespaceCost(cost)
+      }
+    } catch (e) {
+      console.error('Failed to fetch cost', e)
+    }
+  }
+
   useEffect(() => {
     fetchPods()
     fetchConfig()
     fetchOptimization()
+    fetchNamespaceCost()
     const interval = setInterval(() => {
       fetchPods(true)
       fetchConfig()
       fetchOptimization()
+      fetchNamespaceCost()
     }, 10000)
     return () => clearInterval(interval)
   }, [namespace])
@@ -227,6 +254,9 @@ export default function NamespaceDetails({ namespace, onBack }: NamespaceDetails
       } else if (sortField === 'memLim') {
         valA = parseFloat(formatMem(a.memory.limits));
         valB = parseFloat(formatMem(b.memory.limits));
+      } else if (sortField === 'cost') {
+        valA = a.cost ? a.cost.monthlyCost : 0;
+        valB = b.cost ? b.cost.monthlyCost : 0;
       }
 
       if (valA < valB) return sortDirection === 'asc' ? -1 : 1;
@@ -352,6 +382,13 @@ export default function NamespaceDetails({ namespace, onBack }: NamespaceDetails
             <Activity size={14} />
             {pods.length} Total Pods
           </div>
+          {namespaceCost && (
+            <div className="flex flex-col items-end">
+              <span className="text-xl font-black text-slate-900 flex items-center gap-1.5">
+                ${namespaceCost.hourlyCost.toFixed(4)}/hr • ${namespaceCost.monthlyCost.toFixed(2)}/mo
+              </span>
+            </div>
+          )}
         </div>
       </div>
 
@@ -411,10 +448,16 @@ export default function NamespaceDetails({ namespace, onBack }: NamespaceDetails
                   RAM Req {sortField === 'memReq' && (sortDirection === 'asc' ? '↑' : '↓')}
                 </th>
                 <th 
-                  className="px-6 py-4 text-xs font-semibold text-slate-600 uppercase tracking-wider bg-indigo-50/30 cursor-pointer hover:bg-indigo-100/30 transition-colors"
+                  className="px-6 py-4 text-xs font-semibold text-slate-600 uppercase tracking-wider bg-indigo-50/30 cursor-pointer hover:bg-indigo-100/30 transition-colors border-r border-slate-100"
                   onClick={() => handleSort('memLim')}
                 >
                   RAM Lim {sortField === 'memLim' && (sortDirection === 'asc' ? '↑' : '↓')}
+                </th>
+                <th 
+                  className="px-6 py-4 text-xs font-semibold text-emerald-600 uppercase tracking-wider bg-emerald-50/30 cursor-pointer hover:bg-emerald-100/30 transition-colors"
+                  onClick={() => handleSort('cost')}
+                >
+                  Est. Cost {sortField === 'cost' && (sortDirection === 'asc' ? '↑' : '↓')}
                 </th>
               </tr>
             </thead>
@@ -474,13 +517,23 @@ export default function NamespaceDetails({ namespace, onBack }: NamespaceDetails
                           </div>
                         ) : formatMem(pod.memory.requests)}
                       </td>
-                      <td className="px-6 py-4 bg-indigo-50/10 font-mono text-xs text-slate-500">
+                      <td className="px-6 py-4 bg-indigo-50/10 font-mono text-xs text-slate-500 border-r border-slate-50">
                         {opt ? (
                           <div className="flex flex-col">
                             <span className="line-through opacity-50">{formatMem(opt.original.memoryLimit)}</span>
                             <span className="text-emerald-600 font-bold">{formatMem(pod.memory.limits)}</span>
                           </div>
                         ) : formatMem(pod.memory.limits)}
+                      </td>
+                      <td className="px-6 py-4 bg-emerald-50/10">
+                        {pod.cost ? (
+                          <div className="flex flex-col animate-in fade-in zoom-in duration-300">
+                            <span className="text-emerald-600 font-bold text-xs">${pod.cost.monthlyCost.toFixed(2)}<span className="text-[10px] font-medium opacity-70">/mo</span></span>
+                            <span className="text-emerald-400 font-medium text-[10px]">${pod.cost.hourlyCost.toFixed(4)}/hr</span>
+                          </div>
+                        ) : (
+                          <span className="text-slate-400 text-xs">-</span>
+                        )}
                       </td>
                     </tr>
                   )

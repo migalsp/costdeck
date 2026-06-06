@@ -31,6 +31,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
+	"github.com/migalsp/costdeck-operator/internal/metrics"
 )
 
 // NamespaceFinOpsReconciler reconciles a NamespaceFinOps object
@@ -38,6 +39,7 @@ type NamespaceFinOpsReconciler struct {
 	client.Client
 	Scheme        *runtime.Scheme
 	MetricsClient metricsv.Interface
+	VMClient      *metrics.VMClient
 }
 
 // +kubebuilder:rbac:groups=finops.costdeck.io,resources=namespacefinops,verbs=get;list;watch;create;update;patch;delete
@@ -59,19 +61,31 @@ func (r *NamespaceFinOpsReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 	targetNs := nsFinOps.Spec.TargetNamespace
 
-	// 1. Get current usage from metrics API
-	podMetricsList, err := r.MetricsClient.MetricsV1beta1().PodMetricses(targetNs).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		log.Error(err, "unable to fetch pod metrics", "namespace", targetNs)
-		return ctrl.Result{RequeueAfter: time.Minute}, nil // Soft fail
-	}
-
+	// 1. Get current usage from metrics API (VictoriaMetrics or metrics-server)
 	var totalCpuUsage resource.Quantity
 	var totalMemUsage resource.Quantity
-	for _, pm := range podMetricsList.Items {
-		for _, c := range pm.Containers {
-			totalCpuUsage.Add(*c.Usage.Cpu())
-			totalMemUsage.Add(*c.Usage.Memory())
+
+	if r.VMClient != nil {
+		// Use VictoriaMetrics as the metrics source
+		cpu, mem, err := r.VMClient.QueryNamespaceUsage(ctx, targetNs)
+		if err != nil {
+			log.Error(err, "Unable to fetch metrics from VictoriaMetrics", "namespace", targetNs)
+			return ctrl.Result{RequeueAfter: time.Minute}, nil // Soft fail
+		}
+		totalCpuUsage = cpu
+		totalMemUsage = mem
+	} else {
+		// Fallback to metrics-server
+		podMetricsList, err := r.MetricsClient.MetricsV1beta1().PodMetricses(targetNs).List(ctx, metav1.ListOptions{})
+		if err != nil {
+			log.Error(err, "Unable to fetch pod metrics from metrics-server", "namespace", targetNs)
+			return ctrl.Result{RequeueAfter: time.Minute}, nil // Soft fail
+		}
+		for _, pm := range podMetricsList.Items {
+			for _, c := range pm.Containers {
+				totalCpuUsage.Add(*c.Usage.Cpu())
+				totalMemUsage.Add(*c.Usage.Memory())
+			}
 		}
 	}
 

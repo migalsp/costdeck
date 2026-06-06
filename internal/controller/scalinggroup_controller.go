@@ -60,6 +60,13 @@ func (r *ScalingGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request
 
 	// 2. Determine desired state
 	targetActive := r.Engine.IsActive(group.Spec.Schedules, group.Spec.Active)
+	if val, ok := group.Annotations["costdeck.io/manual-override"]; ok {
+		if val == "ScaledUp" {
+			targetActive = true
+		} else if val == "ScaledDown" {
+			targetActive = false
+		}
+	}
 	l.Info("Reconciling ScalingGroup", "category", group.Spec.Category, "namespaces", group.Spec.Namespaces, "targetActive", targetActive)
 
 	// Initialize status maps if nil
@@ -74,8 +81,13 @@ func (r *ScalingGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	managedCount := 0
 
 	timeoutPassed := false
-	if group.Status.Phase == "ScalingUp" || group.Status.Phase == "ScalingDown" {
-		if time.Since(group.Status.LastAction.Time) > time.Minute {
+	if group.Spec.FeatureFlags != nil && group.Spec.FeatureFlags.SkipOnTimeout {
+		timeoutMinutes := 5 // default
+		if group.Spec.FeatureFlags.TimeoutMinutes > 0 {
+			timeoutMinutes = group.Spec.FeatureFlags.TimeoutMinutes
+		}
+		if (group.Status.Phase == "ScalingUp" || group.Status.Phase == "ScalingDown") &&
+			time.Since(group.Status.LastAction.Time) > time.Duration(timeoutMinutes)*time.Minute {
 			timeoutPassed = true
 		}
 	}
@@ -125,7 +137,7 @@ func (r *ScalingGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	r.emitScalingEvents(group, stages, blockingNamespaces, namespacesReady, namespacesTotal, timeoutPassed)
 
 	// 5. Update Status
-	return r.updateStatusAndPhase(ctx, group, allReady, managedCount, namespacesReady, namespacesTotal, readyNamespaces)
+	return r.updateStatusAndPhase(ctx, group, allReady, managedCount, namespacesReady, namespacesTotal, readyNamespaces, targetActive)
 }
 func (r *ScalingGroupReconciler) getScalingStages(group *finopsv1.ScalingGroup, targetActive bool) [][]string {
 	managedNamespaces := group.Spec.Namespaces
@@ -278,13 +290,12 @@ func (r *ScalingGroupReconciler) emitScalingEvents(group *finopsv1.ScalingGroup,
 	}
 }
 
-func (r *ScalingGroupReconciler) updateStatusAndPhase(ctx context.Context, group *finopsv1.ScalingGroup, allReady bool, managedCount, namespacesReady, namespacesTotal int, readyNamespaces []string) (ctrl.Result, error) {
+func (r *ScalingGroupReconciler) updateStatusAndPhase(ctx context.Context, group *finopsv1.ScalingGroup, allReady bool, managedCount, namespacesReady, namespacesTotal int, readyNamespaces []string, targetActive bool) (ctrl.Result, error) {
 	group.Status.ManagedCount = managedCount
 	group.Status.NamespacesReady = namespacesReady
 	group.Status.NamespacesTotal = namespacesTotal
 	group.Status.ReadyNamespaces = readyNamespaces
 
-	targetActive := r.Engine.IsActive(group.Spec.Schedules, group.Spec.Active)
 	newPhase := "ScalingUp"
 	if allReady {
 		if targetActive {

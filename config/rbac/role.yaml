@@ -7,6 +7,19 @@ rules:
 - apiGroups:
   - ""
   resources:
+  - configmaps
+  - secrets
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ""
+  resources:
   - namespaces
   - pods
   verbs:
@@ -27,6 +40,7 @@ rules:
 - apiGroups:
   - finops.costdeck.io
   resources:
+  - costdeckconfigs
   - namespacefinops
   - scalingconfigs
   - scalinggroups
@@ -41,6 +55,7 @@ rules:
 - apiGroups:
   - finops.costdeck.io
   resources:
+  - costdeckconfigs/finalizers
   - namespacefinops/finalizers
   - scalingconfigs/finalizers
   - scalinggroups/finalizers
@@ -49,6 +64,7 @@ rules:
 - apiGroups:
   - finops.costdeck.io
   resources:
+  - costdeckconfigs/status
   - namespacefinops/status
   - scalingconfigs/status
   - scalinggroups/status

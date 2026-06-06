@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Scaling, Server, LineChart, Activity, BookOpen, LogOut } from 'lucide-react'
+import { Scaling, Server, LineChart, Activity, BookOpen, LogOut, Settings } from 'lucide-react'
 import Dashboard from './pages/Dashboard'
 import NamespaceDetails from './pages/NamespaceDetails'
 import OperatorHealth from './pages/OperatorHealth'
@@ -8,9 +8,12 @@ import ScalingWorkloads from './pages/ScalingWorkloads'
 import ClusterDashboard from './pages/ClusterDashboard'
 import LoginPage from './pages/LoginPage'
 import ApiReference from './pages/ApiReference'
+import SettingsPage from './pages/SettingsPage'
+import ReportsPage from './pages/ReportsPage'
+import AIChatWidget from './components/AIChatModal'
 
 function App() {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'scale' | 'cluster' | 'operator' | 'api-docs'>('dashboard')
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'scale' | 'cluster' | 'operator' | 'api-docs' | 'settings' | 'reports'>('dashboard')
   const [selectedNamespace, setSelectedNamespace] = useState<string | null>(null)
   const [selectedScalingNS, setSelectedScalingNS] = useState<string | null>(null)
   const [appVersion, setAppVersion] = useState('...')
@@ -144,6 +147,30 @@ function App() {
             </div>
           </div>
 
+          {/* Reporting Block */}
+          <div>
+            <div className="flex items-center gap-2 px-4 mb-4">
+              <div className="h-px flex-1 bg-slate-800" />
+              <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-500 whitespace-nowrap">Reporting</h3>
+              <div className="h-px flex-1 bg-slate-800" />
+            </div>
+
+            <div className="space-y-1.5">
+              <button
+                onClick={() => setActiveTab('reports')}
+                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-300 relative group overflow-hidden ${
+                  activeTab === 'reports'
+                    ? 'bg-emerald-500 shadow-lg shadow-emerald-500/20 text-white'
+                    : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+                }`}
+              >
+                {activeTab === 'reports' && <div className="absolute left-0 top-0 bottom-0 w-1 bg-white rounded-r-full shadow-[0_0_10px_white]" />}
+                <BookOpen size={20} className={activeTab === 'reports' ? 'text-white' : 'text-slate-500 group-hover:text-emerald-400 transition-colors'} />
+                <span className="font-bold text-[13px] tracking-tight">AI Reports</span>
+              </button>
+            </div>
+          </div>
+
           {/* Documentation Block */}
           <div>
             <div className="flex items-center gap-2 px-4 mb-4">
@@ -163,7 +190,31 @@ function App() {
               >
                 {activeTab === 'api-docs' && <div className="absolute left-0 top-0 bottom-0 w-1 bg-white rounded-r-full shadow-[0_0_10px_white]" />}
                 <BookOpen size={20} className={activeTab === 'api-docs' ? 'text-white' : 'text-slate-500 group-hover:text-emerald-400 transition-colors'} />
-                <span className="font-bold text-[13px] tracking-tight">API Reference</span>
+                <span className="font-bold text-[13px] tracking-tight">Documentation</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Configuration Block */}
+          <div>
+            <div className="flex items-center gap-2 px-4 mb-4">
+              <div className="h-px flex-1 bg-slate-800" />
+              <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-500 whitespace-nowrap">Configuration</h3>
+              <div className="h-px flex-1 bg-slate-800" />
+            </div>
+
+            <div className="space-y-1.5">
+              <button
+                onClick={() => setActiveTab('settings')}
+                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-300 relative group overflow-hidden ${
+                  activeTab === 'settings'
+                    ? 'bg-emerald-500 shadow-lg shadow-emerald-500/20 text-white'
+                    : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+                }`}
+              >
+                {activeTab === 'settings' && <div className="absolute left-0 top-0 bottom-0 w-1 bg-white rounded-r-full shadow-[0_0_10px_white]" />}
+                <Settings size={20} className={activeTab === 'settings' ? 'text-white' : 'text-slate-500 group-hover:text-emerald-400 transition-colors'} />
+                <span className="font-bold text-[13px] tracking-tight">Settings</span>
               </button>
             </div>
           </div>
@@ -201,6 +252,8 @@ function App() {
         {activeTab === 'cluster' && <ClusterDashboard />}
         {activeTab === 'operator' && <OperatorHealth />}
         {activeTab === 'api-docs' && <ApiReference />}
+        {activeTab === 'settings' && <SettingsPage />}
+        {activeTab === 'reports' && <ReportsPage />}
         {activeTab === 'scale' && (
           selectedScalingNS ? (
             <ScalingWorkloads 
@@ -212,6 +265,9 @@ function App() {
           )
         )}
       </main>
+      
+      {/* AI Chat Widget */}
+      <AIChatWidget />
     </div>
   )
 }

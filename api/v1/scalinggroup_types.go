@@ -53,6 +53,27 @@ type ScalingGroupSpec struct {
 	// +optional
 	// +listType=atomic
 	ExternalTargets []ExternalTarget `json:"externalTargets,omitempty"`
+
+	// FeatureFlags holds optional feature toggles for this scaling group
+	// +optional
+	FeatureFlags *ScalingGroupFeatureFlags `json:"featureFlags,omitempty"`
+}
+
+// ScalingGroupFeatureFlags defines optional behavior toggles for a scaling group.
+type ScalingGroupFeatureFlags struct {
+	// SkipOnTimeout if true, namespaces that don't reach target state within TimeoutMinutes
+	// will be skipped instead of blocking the entire pipeline.
+	// Default: false (wait indefinitely for all services to reach target state)
+	// +optional
+	SkipOnTimeout bool `json:"skipOnTimeout,omitempty"`
+
+	// TimeoutMinutes is used when SkipOnTimeout is true.
+	// Namespaces not ready within this duration are skipped.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=30
+	// +kubebuilder:default=5
+	// +optional
+	TimeoutMinutes int `json:"timeoutMinutes,omitempty"`
 }
 
 // ExternalTarget represents a 3rd party resource to scale
@@ -80,6 +101,10 @@ type ExternalTarget struct {
 	// Status tells you if the DB is available or stopped (populated at runtime by UI/Discovery API)
 	// +optional
 	Status string `json:"status,omitempty"`
+
+	// Name is a human-readable name for the resource (e.g. EC2 "Name" tag)
+	// +optional
+	Name string `json:"name,omitempty"`
 }
 
 // ScalingGroupStatus defines the observed state of ScalingGroup.

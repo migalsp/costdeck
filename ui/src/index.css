@@ -1,5 +1,5 @@
 @import "tailwindcss";
-
+@plugin "@tailwindcss/typography";
 @theme {
   --color-operator-blue: #0ea5e9;
   --color-operator-green: #10b981;
@@ -18,4 +18,32 @@ body {
 
 #root {
   width: 100%;
+}
+
+/* Print Styles for PDF Export */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .print-page, .print-page * {
+    visibility: visible;
+  }
+  .print-page {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+  }
+  .print-hide {
+    display: none !important;
+  }
+  .print-container {
+    box-shadow: none !important;
+    border: none !important;
+  }
+  .print-prose {
+    padding: 0 !important;
+  }
 }
