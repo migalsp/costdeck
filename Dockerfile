@@ -7,7 +7,7 @@ COPY ui/ ./ui/
 RUN cd ui && npm run build
 
 # Build the Go Manager
-FROM golang:1.25 AS builder
+FROM golang:1.26 AS builder
 ARG TARGETOS
 ARG TARGETARCH
 
@@ -29,7 +29,7 @@ COPY --from=ui-builder /app/ui/dist internal/api/ui
 
 # Build
 ARG VERSION=dev
-RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -ldflags "-X github.com/migalsp/costdeck-operator/internal/api.Version=${VERSION}" -a -o manager cmd/main.go
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} GOMAXPROCS=1 GOGC=50 go build -p 1 -ldflags "-X github.com/migalsp/costdeck-operator/internal/api.Version=${VERSION}" -a -o manager cmd/main.go
 
 # Use distroless as minimal base image to package the manager binary
 # Refer to https://github.com/GoogleContainerTools/distroless for more details

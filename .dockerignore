@@ -4,11 +4,12 @@
 
 # Re-include Go source files
 !**/*.go
-**/*_test.go
-
-# Re-include Go module files
+!cmd/**
+!api/**
+!internal/**
 !go.mod
 !go.sum
+**/*_test.go
 
 # Re-include UI source files
 !ui/**
@@ -23,3 +24,4 @@ ui/node_modules
 !config/**
 !PROJECT
 !Dockerfile
+!manager

@@ -63,6 +63,13 @@ func (r *ScalingConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	// 2. Determine desired state
 	targetActive := r.Engine.IsActive(config.Spec.Schedules, config.Spec.Active)
+	if val, ok := config.Annotations["costdeck.io/manual-override"]; ok {
+		if val == "ScaledUp" {
+			targetActive = true
+		} else if val == "ScaledDown" {
+			targetActive = false
+		}
+	}
 
 	l.Info("Reconciling ScalingConfig", "targetNamespace", config.Spec.TargetNamespace, "targetActive", targetActive)
 

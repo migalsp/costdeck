@@ -28,6 +28,19 @@ rules:
 - apiGroups:
   - ""
   resources:
+  - secrets
+  - configmaps
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - patch
+  - delete
+- apiGroups:
+  - ""
+  resources:
   - events
   verbs:
   - create
@@ -63,6 +76,7 @@ rules:
   - scalinggroups
   - scalingconfigs
   - namespaceoptimizations
+  - costdeckconfigs
   verbs:
   - create
   - delete
@@ -78,6 +92,7 @@ rules:
   - scalinggroups/finalizers
   - scalingconfigs/finalizers
   - namespaceoptimizations/finalizers
+  - costdeckconfigs/finalizers
   verbs:
   - update
 - apiGroups:
@@ -87,6 +102,7 @@ rules:
   - scalinggroups/status
   - scalingconfigs/status
   - namespaceoptimizations/status
+  - costdeckconfigs/status
   verbs:
   - get
   - patch

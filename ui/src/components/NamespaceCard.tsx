@@ -11,6 +11,7 @@ import {
   ReferenceLine
 } from 'recharts'
 import { AlertTriangle, CheckCircle, Database, Cpu, Zap, RotateCcw } from 'lucide-react'
+import InfoTooltip from './InfoTooltip'
 
 interface NamespaceCardProps {
   namespace: string;
@@ -42,12 +43,32 @@ export default function NamespaceCard({ namespace, insights = [], onClick }: Nam
   const [optimization, setOptimization] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [actionLoading, setActionLoading] = useState<'optimize' | 'revert' | null>(null)
+  const [namespaceCost, setNamespaceCost] = useState<any>(null)
 
   const fetchOptimization = () => {
     fetch(`/api/namespaces/${namespace}/optimization`)
       .then(res => res.json())
       .then(data => setOptimization(data))
       .catch(err => console.error("Failed to fetch optimization", err))
+  }
+
+  const fetchCost = async () => {
+    try {
+      const res = await fetch('/api/costing', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          targetType: 'namespace',
+          targetName: namespace
+        })
+      })
+      if (res.ok) {
+        const cost = await res.json()
+        if (cost) setNamespaceCost(cost)
+      }
+    } catch (e) {
+      console.error('Failed to fetch cost', e)
+    }
   }
 
   const fetchData = () => {
@@ -77,10 +98,12 @@ export default function NamespaceCard({ namespace, insights = [], onClick }: Nam
   useEffect(() => {
     fetchData()
     fetchOptimization()
+    fetchCost()
     // Auto-refresh every 30 seconds
     const interval = setInterval(() => {
       fetchData()
       fetchOptimization()
+      fetchCost()
     }, 30000)
     return () => clearInterval(interval)
   }, [namespace])
@@ -160,12 +183,19 @@ export default function NamespaceCard({ namespace, insights = [], onClick }: Nam
       className="bg-white rounded-xl shadow-[0_2px_10px_-3px_rgba(6,81,237,0.1)] border border-slate-100 overflow-hidden flex flex-col cursor-pointer hover:border-emerald-500/50 hover:shadow-md transition-all group"
     >
       {/* Header */}
-      <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-white">
-        <h3 className="font-semibold text-lg text-slate-800 flex items-center gap-2">
+      <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-white gap-4">
+        <h3 className="font-semibold text-lg text-slate-800 flex items-center gap-2 whitespace-nowrap shrink-0">
           {namespace}
+          {namespaceCost && (
+            <InfoTooltip content={`Pricing Source: ${namespaceCost.determinedBy || 'Unknown'}`} position="bottom">
+              <span className="text-emerald-500 text-sm font-medium ml-2 tracking-tight animate-in fade-in duration-300 cursor-text">
+                ${namespaceCost.hourlyCost.toFixed(4)}/h &nbsp; ${namespaceCost.monthlyCost.toFixed(2)}/m
+              </span>
+            </InfoTooltip>
+          )}
         </h3>
         
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap justify-end gap-2">
           {insights.length > 0 ? (
             insights.map(tag => (
               <div 

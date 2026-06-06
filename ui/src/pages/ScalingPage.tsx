@@ -16,6 +16,7 @@ import {
 } from 'lucide-react'
 import ScalingConfigModal from '../components/ScalingConfigModal'
 import ScalingPipelineModal from '../components/ScalingPipelineModal'
+import { AWSLogo } from '../components/ProviderLogos'
 
 interface ScalingSchedule {
   days: number[];
@@ -35,6 +36,10 @@ interface ScalingGroup {
     schedules?: ScalingSchedule[];
     sequence?: string[];
     exclusions?: string[];
+    featureFlags?: {
+      skipOnTimeout: boolean;
+      timeoutMinutes: number;
+    };
   };
   status?: {
     phase: string;
@@ -79,19 +84,45 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
   const [deletingGroupName, setDeletingGroupName] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isScalingMap, setIsScalingMap] = useState<Record<string, boolean>>({});
+  const [skipOnTimeout, setSkipOnTimeout] = useState(false);
+  const [timeoutMinutes, setTimeoutMinutes] = useState(5);
 
   // Section Collapse State
   const [namespacesCollapsed, setNamespacesCollapsed] = useState(false);
-  const [databasesCollapsed, setDatabasesCollapsed] = useState(false);
+  const [discoveredCollapsed, setDiscoveredCollapsed] = useState(false);
 
-  // External Targets
-  const [availableAuroraClusters, setAvailableAuroraClusters] = useState<any[]>([]);
+  // Discovery State
+  const [discoveredResources, setDiscoveredResources] = useState<Record<string, any[]>>({});
+  const [activeDiscoveryTab, setActiveDiscoveryTab] = useState<string>('');
 
   useEffect(() => {
-    fetch('/api/discovery/aws/aurora')
-      .then(res => res.json())
-      .then(data => setAvailableAuroraClusters(data || []))
-      .catch(err => console.error("Failed to fetch Aurora clusters", err));
+    const fetchDiscovery = async () => {
+      try {
+        const [auroraRes, ec2Res] = await Promise.all([
+          fetch('/api/discovery/aws/aurora'),
+          fetch('/api/discovery/aws/ec2')
+        ]);
+        
+        const aurora = await auroraRes.json() || [];
+        const ec2 = await ec2Res.json() || [];
+        
+        const resources: Record<string, any[]> = {};
+        if (aurora.length > 0) resources['Databases'] = aurora;
+        if (ec2.length > 0) resources['Compute'] = ec2;
+        
+        setDiscoveredResources(resources);
+        
+        // Auto-select first available tab if none selected
+        if (!activeDiscoveryTab || !resources[activeDiscoveryTab]) {
+          const firstTab = Object.keys(resources)[0];
+          if (firstTab) setActiveDiscoveryTab(firstTab);
+        }
+      } catch (err) {
+        console.error("Failed to fetch discovered resources", err);
+      }
+    };
+
+    fetchDiscovery();
   }, []);
 
   useEffect(() => {
@@ -122,7 +153,7 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
     } catch (err) {
       console.error("Failed to fetch scaling data", err);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
@@ -163,7 +194,11 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
             ...(editingGroup?.spec || {}),
             category: newGroupCategory, 
             namespaces: selectedNS,
-            active: editingGroup ? editingGroup.spec.active : true 
+            active: editingGroup ? editingGroup.spec.active : true,
+            featureFlags: {
+              skipOnTimeout,
+              timeoutMinutes: skipOnTimeout ? timeoutMinutes : 5,
+            }
           }
         })
       });
@@ -356,7 +391,7 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
         <button onClick={(e) => { e.stopPropagation(); setEditingPolicy({ mode: 'sequence', name: group.metadata.name, spec: { ...group.spec } }); }}
           className="p-1.5 text-slate-400 hover:bg-indigo-50 hover:text-indigo-500 rounded-lg transition-colors" title="Namespace Scaling Sequence">
           <Settings2 size={14} /></button>
-        <button onClick={(e) => { e.stopPropagation(); setEditingGroup(group); setNewGroupName(group.metadata.name); setNewGroupCategory(group.spec.category); setSelectedNS(group.spec.namespaces); setIsAddingGroup(true); }}
+        <button onClick={(e) => { e.stopPropagation(); setEditingGroup(group); setNewGroupName(group.metadata.name); setNewGroupCategory(group.spec.category); setSelectedNS(group.spec.namespaces); setSkipOnTimeout(group.spec.featureFlags?.skipOnTimeout || false); setTimeoutMinutes(group.spec.featureFlags?.timeoutMinutes || 5); setIsAddingGroup(true); }}
           className="p-1.5 text-slate-400 hover:bg-indigo-50 hover:text-indigo-500 rounded-lg transition-colors" title="Manage Group Namespaces">
           <Layers size={14} /></button>
           <button onClick={(e) => handleDeleteGroup(e, group.metadata.name)}
@@ -501,6 +536,34 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
     );
   };
 
+  const ResourceCard = ({ item }: { item: any }) => (
+    <div className="bg-white border border-slate-200 rounded-2xl p-4 flex flex-col group hover:border-indigo-300 hover:shadow-md transition-all cursor-default relative overflow-hidden">
+      {item.executeAfter && (
+         <div className="absolute top-0 right-0 bg-indigo-100 text-indigo-700 text-[9px] font-black px-2 py-0.5 rounded-bl-lg uppercase">
+           Managed
+         </div>
+      )}
+      <div className="flex items-center gap-3 min-w-0 mb-3 mt-1">
+        <AWSLogo className="grayscale group-hover:grayscale-0 transition-all" />
+        <div className="flex flex-col min-w-0">
+          <span className="font-bold text-slate-700 text-sm whitespace-nowrap overflow-hidden text-ellipsis">{item.name || item.identifier}</span>
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] font-bold text-indigo-500 uppercase tracking-wider">{item.type}</span>
+            {item.status && (
+              <span className={`flex items-center gap-1 text-[10px] font-bold uppercase ${item.status === 'available' || item.status === 'running' ? 'text-emerald-500' : item.status === 'stopped' ? 'text-rose-500' : 'text-amber-500'}`}>
+                <span className={`w-1.5 h-1.5 rounded-full ${item.status === 'available' || item.status === 'running' ? 'bg-emerald-500 animate-pulse' : item.status === 'stopped' ? 'bg-rose-500' : 'bg-amber-500 animate-pulse'}`}></span>
+                {item.status}
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+      <div className="text-xs text-slate-500 font-medium flex items-center gap-1">
+        <Database size={12} className="opacity-50" /> Region: <span className="text-slate-700">{item.region}</span>
+      </div>
+    </div>
+  );
+
   return (
     <div className="p-8 max-w-7xl mx-auto min-h-full">
       <div className="flex justify-between items-center mb-8">
@@ -629,52 +692,54 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
               </div>
               <h2 className="text-xl font-bold text-slate-700">Public Cloud Managed Services</h2>
               <div className="h-px flex-1 bg-slate-200/60 ml-2" />
-              <button onClick={() => setDatabasesCollapsed(!databasesCollapsed)} className="p-1.5 text-slate-400 hover:bg-slate-100 rounded-lg transition-colors" title={databasesCollapsed ? "Expand" : "Collapse"}>
-                {databasesCollapsed ? <ChevronDown size={18} /> : <ChevronUp size={18} />}
+              <button onClick={() => setDiscoveredCollapsed(!discoveredCollapsed)} className="p-1.5 text-slate-400 hover:bg-slate-100 rounded-lg transition-colors" title={discoveredCollapsed ? "Expand" : "Collapse"}>
+                {discoveredCollapsed ? <ChevronDown size={18} /> : <ChevronUp size={18} />}
               </button>
             </div>
 
-            {!databasesCollapsed && (
-              <div className="mb-8 animate-in slide-in-from-top-2 fade-in duration-200">
-                <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-4">Databases</h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                  {availableAuroraClusters.length === 0 ? (
-                    <div className="col-span-full border border-dashed border-slate-200 rounded-2xl p-6 flex flex-col items-center justify-center text-slate-400">
-                      <p className="font-medium text-sm">No databases discovered.</p>
-                      <p className="text-xs mt-1">Ensure AWS provider is enabled and configured correctly.</p>
+            {!discoveredCollapsed && (
+              <div className="animate-in slide-in-from-top-2 fade-in duration-200">
+                {Object.keys(discoveredResources).length > 0 ? (
+                  <div className="space-y-6">
+                    {/* Tabs bar */}
+                    <div className="flex p-1 bg-slate-100/80 rounded-2xl w-fit">
+                      {Object.keys(discoveredResources).map(tab => (
+                        <button
+                          key={tab}
+                          onClick={() => setActiveDiscoveryTab(tab)}
+                          className={`flex items-center gap-2 px-6 py-2 rounded-xl text-sm font-bold transition-all ${
+                            activeDiscoveryTab === tab 
+                              ? 'bg-white text-indigo-900 shadow-sm' 
+                              : 'text-slate-500 hover:text-slate-700 hover:bg-white/50'
+                          }`}
+                        >
+                          {tab === 'Databases' ? <Database size={16} /> : <Layers size={16} />}
+                          {tab}
+                          <span className={`px-1.5 py-0.5 rounded-lg text-[10px] ml-1 ${
+                            activeDiscoveryTab === tab ? 'bg-indigo-50 text-indigo-600' : 'bg-slate-200 text-slate-500'
+                          }`}>
+                            {discoveredResources[tab].length}
+                          </span>
+                        </button>
+                      ))}
                     </div>
-                  ) : (
-                    availableAuroraClusters.map((cluster, i) => (
-                      <div key={i} className="bg-white border border-slate-200 rounded-2xl p-4 flex flex-col group hover:border-amber-300 hover:shadow-sm transition-all cursor-default relative overflow-hidden">
-                        {cluster.executeAfter && (
-                           <div className="absolute top-0 right-0 bg-indigo-100 text-indigo-700 text-[9px] font-black px-2 py-0.5 rounded-bl-lg uppercase">
-                             Managed
-                           </div>
-                        )}
-                        <div className="flex items-center gap-3 min-w-0 mb-3 mt-1">
-                          <div className="w-10 h-10 rounded-xl bg-slate-50 flex items-center justify-center shrink-0">
-                            <img src="https://upload.wikimedia.org/wikipedia/commons/9/93/Amazon_Web_Services_Logo.svg" alt="AWS" className="w-5 opacity-60 grayscale group-hover:grayscale-0 transition-all" />
-                          </div>
-                          <div className="flex flex-col min-w-0">
-                            <span className="font-bold text-slate-700 text-sm whitespace-nowrap overflow-hidden text-ellipsis">{cluster.identifier}</span>
-                            <div className="flex items-center gap-2">
-                              <span className="text-[11px] font-bold text-amber-500 uppercase tracking-wider">{cluster.type}</span>
-                              {cluster.status && (
-                                <span className={`flex items-center gap-1 text-[10px] font-bold uppercase ${cluster.status === 'available' ? 'text-emerald-500' : cluster.status === 'stopped' ? 'text-rose-500' : 'text-amber-500'}`}>
-                                  <span className={`w-1.5 h-1.5 rounded-full ${cluster.status === 'available' ? 'bg-emerald-500 animate-pulse' : cluster.status === 'stopped' ? 'bg-rose-500' : 'bg-amber-500 animate-pulse'}`}></span>
-                                  {cluster.status}
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                        <div className="text-xs text-slate-500 font-medium flex items-center gap-1">
-                          <Database size={12} className="opacity-50" /> Region: <span className="text-slate-700">{cluster.region}</span>
-                        </div>
+
+                    {/* Active tab content */}
+                    {activeDiscoveryTab && discoveredResources[activeDiscoveryTab] && (
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 animate-in fade-in duration-300">
+                        {discoveredResources[activeDiscoveryTab].map((item, i) => (
+                          <ResourceCard key={i} item={item} />
+                        ))}
                       </div>
-                    ))
-                  )}
-                </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="py-12 border border-dashed border-slate-200 rounded-3xl flex flex-col items-center justify-center text-slate-400 gap-2">
+                    <Cloud size={32} className="opacity-20" />
+                    <p className="font-bold text-sm">No resources discovered yet.</p>
+                    <p className="text-[11px]">Check your Cloud Provider settings to enable discovery.</p>
+                  </div>
+                )}
               </div>
             )}
           </section>
@@ -721,7 +786,7 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
                   </div>
                 </div>
                 <div>
-                  <label className="block text-sm font-bold text-slate-500 uppercase tracking-wider mb-4">Select Namespaces</label>
+                  <label className="block text-sm font-bold text-slate-500 uppercase tracking-wider mb-2">Select Namespaces</label>
                   <div className="max-h-48 overflow-y-auto pr-2 grid grid-cols-3 gap-2">
                     {namespaces.filter(ns => {
                       // Hide namespaces already in OTHER groups
@@ -737,7 +802,44 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
                     ))}
                   </div>
                 </div>
+
+                {/* Feature Flags */}
+                <div>
+                  <label className="block text-sm font-bold text-slate-500 uppercase tracking-wider mb-2">Feature Flags</label>
+                  <div className="bg-slate-50 rounded-xl border border-slate-200 px-4 py-3 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-bold text-slate-700">Skip Unresponsive Namespaces</p>
+                      <p className="text-[10px] text-slate-400 mt-0.5">Skip namespaces that fail to reach target state within timeout</p>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input type="checkbox" checked={skipOnTimeout} onChange={e => setSkipOnTimeout(e.target.checked)} className="sr-only peer" />
+                      <div className={`w-11 h-6 rounded-full ${skipOnTimeout ? 'bg-indigo-500' : 'bg-slate-300'}`}>
+                        <div className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-md transition-transform ${skipOnTimeout ? 'translate-x-5' : 'translate-x-0'}`} />
+                      </div>
+                    </label>
+                  </div>
+                  {skipOnTimeout && (
+                    <div className="flex items-center gap-3 pt-2 border-t border-slate-200">
+                      <label className="text-xs font-bold text-slate-500">Timeout:</label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={30}
+                        value={timeoutMinutes}
+                        onChange={e => setTimeoutMinutes(parseInt(e.target.value) || 5)}
+                        className="w-20 px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm text-center focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
+                      />
+                      <span className="text-xs text-slate-400">minutes (1-30)</span>
+                    </div>
+                  )}
+                  {!skipOnTimeout && (
+                    <p className="text-[10px] text-slate-400 italic">Default behavior: wait indefinitely for all services to reach target state</p>
+                  )}
+                </div>
              </div>
+             </div>
+
              <div className="p-8 bg-slate-50/50 border-t border-slate-100 flex gap-4 rounded-b-3xl">
                <button onClick={() => { setIsAddingGroup(false); setEditingGroup(null); }} className="flex-1 px-6 py-3 rounded-xl font-bold text-slate-500 hover:bg-white transition-all">Cancel</button>
                <button onClick={handleUpsertGroup} disabled={!newGroupName || selectedNS.length === 0}

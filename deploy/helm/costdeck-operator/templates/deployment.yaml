@@ -38,27 +38,6 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
-            - name: AWS_PROVIDER_ENABLED
-              value: {{ quote .Values.providers.aws.enabled }}
-            {{- if .Values.providers.aws.enabled }}
-            {{- if and .Values.providers.aws.accessKeyId .Values.providers.aws.secretAccessKey }}
-            - name: AWS_ACCESS_KEY_ID
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "costdeck-operator.fullname" . }}-aws-credentials
-                  key: AWS_ACCESS_KEY_ID
-            - name: AWS_SECRET_ACCESS_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "costdeck-operator.fullname" . }}-aws-credentials
-                  key: AWS_SECRET_ACCESS_KEY
-            - name: AWS_REGION
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "costdeck-operator.fullname" . }}-aws-credentials
-                  key: AWS_REGION
-            {{- end }}
-            {{- end }}
           ports:
             - name: api-ui
               containerPort: 8082

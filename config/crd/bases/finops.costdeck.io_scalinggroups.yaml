@@ -61,6 +61,10 @@ spec:
                     identifier:
                       description: Identifier is the unique ID or ARN of the resource
                       type: string
+                    name:
+                      description: Name is a human-readable name for the resource
+                        (e.g. EC2 "Name" tag)
+                      type: string
                     provider:
                       description: Provider is the cloud provider (e.g., "aws", "gcp",
                         "azure")
@@ -83,6 +87,25 @@ spec:
                   type: object
                 type: array
                 x-kubernetes-list-type: atomic
+              featureFlags:
+                description: FeatureFlags holds optional feature toggles for this
+                  scaling group
+                properties:
+                  skipOnTimeout:
+                    description: |-
+                      SkipOnTimeout if true, namespaces that don't reach target state within TimeoutMinutes
+                      will be skipped instead of blocking the entire pipeline.
+                      Default: false (wait indefinitely for all services to reach target state)
+                    type: boolean
+                  timeoutMinutes:
+                    default: 5
+                    description: |-
+                      TimeoutMinutes is used when SkipOnTimeout is true.
+                      Namespaces not ready within this duration are skipped.
+                    maximum: 30
+                    minimum: 1
+                    type: integer
+                type: object
               namespaces:
                 description: Namespaces is the list of namespaces managed by this
                   group
