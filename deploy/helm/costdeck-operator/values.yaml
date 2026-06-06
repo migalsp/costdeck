@@ -6,7 +6,7 @@ image:
   repository: 741448935696.dkr.ecr.us-east-1.amazonaws.com/migalsp/costdeck/costdeck-operator
   pullPolicy: IfNotPresent
   # Overrides the image tag whose default is the chart appVersion.
-  tag: "1.2.0" # x-release-please-version
+  tag: "1.2.1" # x-release-please-version
 
 serviceAccount:
   # Specifies whether a service account should be created
