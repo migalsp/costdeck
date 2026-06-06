@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -25,7 +26,7 @@ func (s *Server) GetAITools() []AITool {
 	return []AITool{
 		{
 			Name:        "get_namespace_status",
-			Description: "Get CPU/Memory usage, waste, insights, and current scaling phase for a namespace.",
+			Description: "Get CPU/Memory usage, waste, insights, pod errors, and current scaling phase for a namespace.",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -165,6 +166,7 @@ type namespaceReport struct {
 	CurrentCost  float64
 	CurrentWaste float64
 	TotalPods    int
+	Errors       string
 	AIInsight    string
 }
 
@@ -202,12 +204,21 @@ func (s *Server) generateNamespaceReport(ctx context.Context, nsName string) (*n
 	// Calculate from actual pods
 	var totalPods int
 	var monthlyCost float64
+	var podErrors []string
 	pods, podErr := s.K8sClient.CoreV1().Pods(nsName).List(ctx, metav1.ListOptions{})
 	if podErr == nil {
 		var cpuReq, memReq resource.Quantity
 		for _, p := range pods.Items {
 			if p.Status.Phase == corev1.PodSucceeded || p.Status.Phase == corev1.PodFailed {
+				if p.Status.Phase == corev1.PodFailed {
+					podErrors = append(podErrors, fmt.Sprintf("Pod %s failed", p.Name))
+				}
 				continue
+			}
+			for _, containerStatus := range p.Status.ContainerStatuses {
+				if containerStatus.State.Waiting != nil && containerStatus.State.Waiting.Reason == "CrashLoopBackOff" {
+					podErrors = append(podErrors, fmt.Sprintf("Pod %s is in CrashLoopBackOff", p.Name))
+				}
 			}
 			totalPods++
 			for _, c := range p.Spec.Containers {
@@ -227,11 +238,40 @@ func (s *Server) generateNamespaceReport(ctx context.Context, nsName string) (*n
 		monthlyCost = hourlyCost * 730
 	}
 
+	// Calculate waste from recent metrics if available
+	var monthlyWaste float64
+	if len(nsFinOps.Status.History) > 0 {
+		latest := nsFinOps.Status.History[len(nsFinOps.Status.History)-1]
+		cpuReq, _ := resource.ParseQuantity(latest.CPU.Requests)
+		cpuUse, _ := resource.ParseQuantity(latest.CPU.Usage)
+		memReq, _ := resource.ParseQuantity(latest.Memory.Requests)
+		memUse, _ := resource.ParseQuantity(latest.Memory.Usage)
+
+		wasteCPU := float64(cpuReq.MilliValue()-cpuUse.MilliValue()) / 1000.0
+		if wasteCPU < 0 {
+			wasteCPU = 0
+		}
+		wasteMem := float64(memReq.Value()-memUse.Value()) / 1024.0 / 1024.0 / 1024.0
+		if wasteMem < 0 {
+			wasteMem = 0
+		}
+
+		cpuRate, ramRate := 0.035, 0.003 // defaults
+		hourlyWaste := (wasteCPU * cpuRate) + (wasteMem * ramRate)
+		monthlyWaste = hourlyWaste * 730
+	}
+
+	errsStr := "None"
+	if len(podErrors) > 0 {
+		errsStr = strings.Join(podErrors, "; ")
+	}
+
 	return &namespaceReport{
 		ScalingPhase: "Active", 
 		CurrentCost:  monthlyCost,      
-		CurrentWaste: 0.0, // Hard to calculate accurate waste without prometheus
+		CurrentWaste: monthlyWaste,
 		TotalPods:    totalPods, 
+		Errors:       errsStr,
 		AIInsight:    insightsStr,
 	}, nil
 }

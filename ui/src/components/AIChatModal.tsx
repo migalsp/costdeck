@@ -33,10 +33,10 @@ export default function AIChatWidget() {
 
     const userMsg = input.trim();
     setInput('');
-    setMessages(prev => [...prev, { id: Date.now().toString(), role: 'user', content: userMsg }]);
+    setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'user', content: userMsg }]);
     setIsLoading(true);
 
-    const assistantMsgId = (Date.now() + 1).toString();
+    const assistantMsgId = crypto.randomUUID();
     setMessages(prev => [...prev, { id: assistantMsgId, role: 'assistant', content: '' }]);
 
     try {

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -699,7 +700,29 @@ func (s *Server) testAIProvider(w http.ResponseWriter, ctx context.Context, conf
 		apiUrl = strings.TrimSuffix(baseUrl, "/") + "/models"
 	}
 
-	httpReq, _ := http.NewRequest("GET", apiUrl, nil)
+	parsedUrl, err := url.ParseRequestURI(apiUrl)
+	if err != nil || (parsedUrl.Scheme != "http" && parsedUrl.Scheme != "https") {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"connected": false,
+			"error":     "Invalid URL format or scheme (must be http/https)",
+		})
+		return
+	}
+
+	host := parsedUrl.Hostname()
+	if providerType != "local" {
+		if host == "localhost" || host == "127.0.0.1" || host == "::1" || strings.HasPrefix(host, "169.254.") {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"connected": false,
+				"error":     "Invalid host for cloud provider (local/internal IPs are forbidden)",
+			})
+			return
+		}
+	}
+
+	httpReq, _ := http.NewRequest("GET", parsedUrl.String(), nil)
 	if apiKey != "" {
 		if providerType == "gemini" {
 			httpReq.Header.Set("x-goog-api-key", apiKey)

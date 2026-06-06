@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -208,7 +209,21 @@ If you need to ask the user a clarifying question (such as which resource to ins
 			reqPayload = s.buildGeminiRequest(aiConfig, systemPrompt, messages)
 		}
 
-		httpReq, _ := http.NewRequest("POST", apiUrl, bytes.NewReader(reqPayload))
+		parsedUrl, err := url.ParseRequestURI(apiUrl)
+		if err != nil || (parsedUrl.Scheme != "http" && parsedUrl.Scheme != "https") {
+			logf.Log.Error(fmt.Errorf("invalid URL scheme"), "Invalid URL format or scheme (must be http/https)")
+			return
+		}
+
+		host := parsedUrl.Hostname()
+		if aiConfig.Provider != "local" {
+			if host == "localhost" || host == "127.0.0.1" || host == "::1" || strings.HasPrefix(host, "169.254.") {
+				logf.Log.Error(fmt.Errorf("SSRF prevention"), "Invalid host for cloud provider (local/internal IPs are forbidden)")
+				return
+			}
+		}
+
+		httpReq, _ := http.NewRequest("POST", parsedUrl.String(), bytes.NewReader(reqPayload))
 		for k, v := range reqHeaders {
 			httpReq.Header.Set(k, v)
 		}
