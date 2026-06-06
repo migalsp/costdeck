@@ -1164,7 +1164,7 @@ func handleSwaggerUI(w http.ResponseWriter, r *http.Request) {
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Cost Deck API — Swagger UI</title>
+  <title>Cost Deck API - Swagger UI</title>
   <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css">
   <style>
     body { margin: 0; background: #fafafa; }

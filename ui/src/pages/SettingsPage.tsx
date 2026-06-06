@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
-import { 
-  Settings, Cloud, Bot, MessageSquare, Plus, Trash2, RefreshCw, 
-  CheckCircle2, XCircle, AlertTriangle, Eye, EyeOff, ChevronDown, 
+import {
+  Settings, Cloud, Bot, MessageSquare, Plus, Trash2, RefreshCw,
+  CheckCircle2, XCircle, AlertTriangle, Eye, EyeOff, ChevronDown,
   ChevronUp, Sparkles, ExternalLink, Activity, Plug
 } from 'lucide-react'
 import { AWSLogo, AzureLogo, GCPLogo, WebexLogo } from '../components/ProviderLogos'
@@ -88,13 +88,12 @@ interface SettingsData {
 // ─── Sub-Components ─────────────────────────────────────────────────────────
 
 const StatusBadge = ({ connected, error }: { connected: boolean; error?: string }) => (
-  <div className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
-    connected 
-      ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200' 
-      : error 
+  <div className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${connected
+      ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200'
+      : error
         ? 'bg-red-50 text-red-600 ring-1 ring-red-200'
         : 'bg-slate-100 text-slate-500 ring-1 ring-slate-200'
-  }`}>
+    }`}>
     {connected ? <CheckCircle2 size={12} /> : error ? <XCircle size={12} /> : <AlertTriangle size={12} />}
     {connected ? 'Connected' : error ? 'Error' : 'Not configured'}
   </div>
@@ -161,7 +160,7 @@ const TagEditor = ({ tags, onChange }: { tags: Record<string, string>; onChange:
           </div>
         ))}
         {Object.keys(tags).length === 0 && (
-          <span className="text-xs text-slate-400 italic">No tags configured — all resources will be discovered</span>
+          <span className="text-xs text-slate-400 italic">No tags configured - all resources will be discovered</span>
         )}
       </div>
       <div className="flex gap-2">
@@ -205,17 +204,16 @@ const SectionHeader = ({ icon, title, subtitle }: { icon: React.ReactNode; title
   </div>
 )
 
-const ProviderCard = ({ 
-  name, logo, children, enabled, onToggle, comingSoon, expanded, onExpand, status 
-}: { 
-  name: string; logo: React.ReactNode; children: React.ReactNode; enabled: boolean; 
-  onToggle: (v: boolean) => void; comingSoon?: boolean; expanded: boolean; 
+const ProviderCard = ({
+  name, logo, children, enabled, onToggle, comingSoon, expanded, onExpand, status
+}: {
+  name: string; logo: React.ReactNode; children: React.ReactNode; enabled: boolean;
+  onToggle: (v: boolean) => void; comingSoon?: boolean; expanded: boolean;
   onExpand: () => void; status?: ProviderStatus
 }) => (
-  <div className={`bg-white rounded-2xl border shadow-sm transition-all duration-300 ${
-    enabled ? 'border-emerald-200 ring-1 ring-emerald-100' : 'border-slate-200'
-  }`}>
-    <div 
+  <div className={`bg-white rounded-2xl border shadow-sm transition-all duration-300 ${enabled ? 'border-emerald-200 ring-1 ring-emerald-100' : 'border-slate-200'
+    }`}>
+    <div
       className="flex items-center justify-between p-5 cursor-pointer select-none"
       onClick={onExpand}
     >
@@ -241,12 +239,10 @@ const ProviderCard = ({
             className="sr-only peer"
             disabled={comingSoon}
           />
-          <div className={`w-11 h-6 rounded-full peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-emerald-500/20 transition-colors ${
-            enabled ? 'bg-emerald-500' : 'bg-slate-300'
-          } ${comingSoon ? 'opacity-50 cursor-not-allowed' : ''}`}>
-            <div className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-md transition-transform ${
-              enabled ? 'translate-x-5' : 'translate-x-0'
-            }`} />
+          <div className={`w-11 h-6 rounded-full peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-emerald-500/20 transition-colors ${enabled ? 'bg-emerald-500' : 'bg-slate-300'
+            } ${comingSoon ? 'opacity-50 cursor-not-allowed' : ''}`}>
+            <div className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-md transition-transform ${enabled ? 'translate-x-5' : 'translate-x-0'
+              }`} />
           </div>
         </label>
         {expanded ? <ChevronUp size={18} className="text-slate-400" /> : <ChevronDown size={18} className="text-slate-400" />}
@@ -492,7 +488,7 @@ export default function SettingsPage() {
         body.skipSslVerify = aiSkipSslVerify
       }
 
-      const res = await fetch(`/api/settings/providers/${provider}/test`, { 
+      const res = await fetch(`/api/settings/providers/${provider}/test`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -507,7 +503,7 @@ export default function SettingsPage() {
   }
 
   const toggleResourceType = (type: string) => {
-    setAwsResourceTypes(prev => 
+    setAwsResourceTypes(prev =>
       prev.includes(type) ? prev.filter(t => t !== type) : [...prev, type]
     )
   }
@@ -540,9 +536,8 @@ export default function SettingsPage() {
         </div>
         <div className="flex items-center gap-3">
           {saveMessage && (
-            <span className={`text-xs font-bold px-3 py-1.5 rounded-lg animate-in fade-in duration-300 ${
-              saveMessage.includes('success') ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'
-            }`}>
+            <span className={`text-xs font-bold px-3 py-1.5 rounded-lg animate-in fade-in duration-300 ${saveMessage.includes('success') ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'
+              }`}>
               {saveMessage}
             </span>
           )}
@@ -570,11 +565,10 @@ export default function SettingsPage() {
           <button
             key={tab.id}
             onClick={() => setExpandedSection(tab.id)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all ${
-              expandedSection === tab.id 
-                ? 'bg-white text-slate-800 shadow-sm' 
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all ${expandedSection === tab.id
+                ? 'bg-white text-slate-800 shadow-sm'
                 : 'text-slate-500 hover:text-slate-700'
-            }`}
+              }`}
           >
             {tab.icon} {tab.label}
           </button>
@@ -679,11 +673,10 @@ export default function SettingsPage() {
                   ].map(rt => (
                     <label
                       key={rt.id}
-                      className={`flex-1 flex items-start gap-3 p-4 rounded-xl border cursor-pointer transition-all ${
-                        awsResourceTypes.includes(rt.id) 
-                          ? 'border-emerald-300 bg-emerald-50/50 ring-1 ring-emerald-200' 
+                      className={`flex-1 flex items-start gap-3 p-4 rounded-xl border cursor-pointer transition-all ${awsResourceTypes.includes(rt.id)
+                          ? 'border-emerald-300 bg-emerald-50/50 ring-1 ring-emerald-200'
                           : 'border-slate-200 hover:border-slate-300'
-                      }`}
+                        }`}
                     >
                       <input
                         type="checkbox"
@@ -815,21 +808,19 @@ export default function SettingsPage() {
                 <div className="flex gap-2 mb-3">
                   <button
                     onClick={() => setVmAuthMode('bearer')}
-                    className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${
-                      vmAuthMode === 'bearer'
+                    className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${vmAuthMode === 'bearer'
                         ? 'bg-orange-500 text-white shadow-sm'
                         : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                    }`}
+                      }`}
                   >
                     Bearer Token
                   </button>
                   <button
                     onClick={() => setVmAuthMode('basic')}
-                    className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${
-                      vmAuthMode === 'basic'
+                    className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${vmAuthMode === 'basic'
                         ? 'bg-orange-500 text-white shadow-sm'
                         : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                    }`}
+                      }`}
                   >
                     Basic Auth
                   </button>
@@ -935,7 +926,7 @@ export default function SettingsPage() {
                   )}
                 </div>
               </div>
-              
+
               {aiProvider === 'local' ? (
                 <>
                   <div className="grid grid-cols-2 gap-4">
@@ -1040,10 +1031,10 @@ export default function SettingsPage() {
                     <span className="ml-2 text-emerald-500 normal-case font-medium text-xs">✓ Configured</span>
                   )}
                 </label>
-                <SecretInput 
-                  value={webexBotToken} 
-                  onChange={setWebexBotToken} 
-                  placeholder={settings?.integrations?.messenger?.webex?.hasCredentials ? '••••••••••••••••••••' : 'Enter Webex Bot Token'} 
+                <SecretInput
+                  value={webexBotToken}
+                  onChange={setWebexBotToken}
+                  placeholder={settings?.integrations?.messenger?.webex?.hasCredentials ? '••••••••••••••••••••' : 'Enter Webex Bot Token'}
                 />
               </div>
 

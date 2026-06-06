@@ -18,7 +18,7 @@ const guides: GuideSection[] = [
     sections: [
       {
         heading: 'What is CostDeck?',
-        body: 'CostDeck is a Kubernetes-native FinOps operator that helps you understand, control, and reduce cloud spending. It runs inside your cluster and provides real-time cost visibility, automated scaling, AI-powered recommendations, and Webex notifications — all from a single dashboard.',
+        body: 'CostDeck is a Kubernetes-native FinOps operator that helps you understand, control, and reduce cloud spending. It runs inside your cluster and provides real-time cost visibility, automated scaling, AI-powered recommendations, and Webex notifications - all from a single dashboard.',
       },
       {
         heading: 'How it works',
@@ -309,7 +309,7 @@ integrations:
       },
       {
         heading: 'Via UI',
-        body: 'Costs are displayed automatically throughout the UI: on each namespace card (monthly cost estimate), in the Cluster Dashboard (total cluster spend), and in the Node heatmap (per-node cost). No configuration needed — it works out of the box.',
+        body: 'Costs are displayed automatically throughout the UI: on each namespace card (monthly cost estimate), in the Cluster Dashboard (total cluster spend), and in the Node heatmap (per-node cost). No configuration needed - it works out of the box.',
       },
       {
         heading: 'Via API',
@@ -728,12 +728,18 @@ const apiGroups: { section: string; items: Endpoint[] }[] = [
   {
     section: 'System & Settings',
     items: [
-      { method: 'GET', path: '/api/version', description: 'Operator build version', auth: true,
-        responseExample: '{ "version": "1.0.0" }' },
-      { method: 'GET', path: '/api/settings', description: 'Get CostDeck configuration (credentials masked)', auth: true,
-        responseExample: '{\n  "providers": { "aws": { "enabled": true, "region": "us-east-1", "hasCredentials": true } },\n  "integrations": { "ai": { "enabled": true, "provider": "openai" } },\n  "features": { "cloudPricingApi": false }\n}' },
-      { method: 'PUT', path: '/api/settings', description: 'Update CostDeck configuration', auth: true,
-        requestBody: '{\n  "integrations": {\n    "ai": { "enabled": true, "provider": "openai", "apiKey": "sk-..." }\n  }\n}' },
+      {
+        method: 'GET', path: '/api/version', description: 'Operator build version', auth: true,
+        responseExample: '{ "version": "1.0.0" }'
+      },
+      {
+        method: 'GET', path: '/api/settings', description: 'Get CostDeck configuration (credentials masked)', auth: true,
+        responseExample: '{\n  "providers": { "aws": { "enabled": true, "region": "us-east-1", "hasCredentials": true } },\n  "integrations": { "ai": { "enabled": true, "provider": "openai" } },\n  "features": { "cloudPricingApi": false }\n}'
+      },
+      {
+        method: 'PUT', path: '/api/settings', description: 'Update CostDeck configuration', auth: true,
+        requestBody: '{\n  "integrations": {\n    "ai": { "enabled": true, "provider": "openai", "apiKey": "sk-..." }\n  }\n}'
+      },
       { method: 'GET', path: '/api/openapi.yaml', description: 'OpenAPI V3 specification (YAML)', auth: false },
       { method: 'GET', path: '/api/docs', description: 'Swagger UI interactive documentation', auth: false },
     ]
@@ -741,20 +747,28 @@ const apiGroups: { section: string; items: Endpoint[] }[] = [
   {
     section: 'Cluster Metrics',
     items: [
-      { method: 'GET', path: '/api/cluster-info', description: 'Cluster summary (nodes, total CPU, total memory)', auth: true,
-        responseExample: '{\n  "nodes": 3,\n  "totalCPU": "8",\n  "totalMemory": "32Gi"\n}' },
-      { method: 'GET', path: '/api/cluster/nodes', description: 'Per-node resource metrics for the cluster heatmap', auth: true,
-        responseExample: '[\n  {\n    "name": "node-1",\n    "cpuCapacity": "4",\n    "cpuUsage": "1.2",\n    "memoryCapacity": "16Gi",\n    "memoryUsage": "8.5Gi",\n    "pods": 24\n  }\n]' },
-      { method: 'POST', path: '/api/costing', description: 'Calculate estimated hourly and monthly costs for a target', auth: true,
+      {
+        method: 'GET', path: '/api/cluster-info', description: 'Cluster summary (nodes, total CPU, total memory)', auth: true,
+        responseExample: '{\n  "nodes": 3,\n  "totalCPU": "8",\n  "totalMemory": "32Gi"\n}'
+      },
+      {
+        method: 'GET', path: '/api/cluster/nodes', description: 'Per-node resource metrics for the cluster heatmap', auth: true,
+        responseExample: '[\n  {\n    "name": "node-1",\n    "cpuCapacity": "4",\n    "cpuUsage": "1.2",\n    "memoryCapacity": "16Gi",\n    "memoryUsage": "8.5Gi",\n    "pods": 24\n  }\n]'
+      },
+      {
+        method: 'POST', path: '/api/costing', description: 'Calculate estimated hourly and monthly costs for a target', auth: true,
         requestBody: '{\n  "targetType": "namespace",\n  "targetName": "frontend",\n  "totalCpu": 2,\n  "totalMemoryGb": 4\n}',
-        responseExample: '{\n  "hourlyCost": 0.096,\n  "monthlyCost": 70.08,\n  "currency": "USD",\n  "determinedBy": "Heuristic Math Pricing (aws)"\n}' },
+        responseExample: '{\n  "hourlyCost": 0.096,\n  "monthlyCost": 70.08,\n  "currency": "USD",\n  "determinedBy": "Heuristic Math Pricing (aws)"\n}'
+      },
     ]
   },
   {
     section: 'Operator Health',
     items: [
-      { method: 'GET', path: '/api/operator/health', description: 'Runtime metrics, resource usage, and history', auth: true,
-        responseExample: '{\n  "current": {\n    "status": "healthy",\n    "goroutines": 134,\n    "cpuUsage": 0.007,\n    "memoryUsage": 19.0,\n    "managedNamespaces": 4\n  },\n  "history": [...]\n}' },
+      {
+        method: 'GET', path: '/api/operator/health', description: 'Runtime metrics, resource usage, and history', auth: true,
+        responseExample: '{\n  "current": {\n    "status": "healthy",\n    "goroutines": 134,\n    "cpuUsage": 0.007,\n    "memoryUsage": 19.0,\n    "managedNamespaces": 4\n  },\n  "history": [...]\n}'
+      },
       { method: 'GET', path: '/api/operator/logs', description: 'Last 100 lines of operator logs (plain text)', auth: true },
       { method: 'GET', path: '/api/operator/logs/download', description: 'Download full log file as attachment', auth: true },
     ]
@@ -762,13 +776,17 @@ const apiGroups: { section: string; items: Endpoint[] }[] = [
   {
     section: 'Namespace Insights',
     items: [
-      { method: 'GET', path: '/api/namespaces', description: 'List all monitored NamespaceFinOps CRDs', auth: true,
-        responseExample: '[\n  {\n    "metadata": { "name": "default" },\n    "spec": { "targetNamespace": "default" },\n    "status": { "insights": ["Overprovisioned"] }\n  }\n]' },
+      {
+        method: 'GET', path: '/api/namespaces', description: 'List all monitored NamespaceFinOps CRDs', auth: true,
+        responseExample: '[\n  {\n    "metadata": { "name": "default" },\n    "spec": { "targetNamespace": "default" },\n    "status": { "insights": ["Overprovisioned"] }\n  }\n]'
+      },
       { method: 'GET', path: '/api/namespaces/{ns}/history', description: 'Resource usage history (last 60 minutes)', auth: true },
       { method: 'GET', path: '/api/namespaces/{ns}/pods', description: 'Pod-level resource metrics', auth: true },
       { method: 'GET', path: '/api/namespaces/{ns}/workloads', description: 'List Deployments and StatefulSets', auth: true },
-      { method: 'PUT', path: '/api/namespaces/{ns}/workloads/{name}', description: 'Manually scale a specific workload', auth: true,
-        requestBody: '{ "kind": "Deployment", "replicas": 3 }' },
+      {
+        method: 'PUT', path: '/api/namespaces/{ns}/workloads/{name}', description: 'Manually scale a specific workload', auth: true,
+        requestBody: '{ "kind": "Deployment", "replicas": 3 }'
+      },
     ]
   },
   {
@@ -776,21 +794,27 @@ const apiGroups: { section: string; items: Endpoint[] }[] = [
     items: [
       { method: 'POST', path: '/api/namespaces/{ns}/optimize', description: 'Right-size workload resources based on actual usage', auth: true },
       { method: 'POST', path: '/api/namespaces/{ns}/revert', description: 'Revert to original resource values', auth: true },
-      { method: 'GET', path: '/api/namespaces/{ns}/optimization', description: 'Get current optimization status and original values', auth: true,
-        responseExample: '{\n  "active": true,\n  "optimizedAt": "2026-06-01T10:00:00Z",\n  "workloads": [\n    {\n      "name": "nginx",\n      "kind": "Deployment",\n      "original": { "cpuRequest": "100m", "memoryRequest": "128Mi" },\n      "optimized": { "cpuRequest": "50m", "memoryRequest": "64Mi" }\n    }\n  ]\n}' },
+      {
+        method: 'GET', path: '/api/namespaces/{ns}/optimization', description: 'Get current optimization status and original values', auth: true,
+        responseExample: '{\n  "active": true,\n  "optimizedAt": "2026-06-01T10:00:00Z",\n  "workloads": [\n    {\n      "name": "nginx",\n      "kind": "Deployment",\n      "original": { "cpuRequest": "100m", "memoryRequest": "128Mi" },\n      "optimized": { "cpuRequest": "50m", "memoryRequest": "64Mi" }\n    }\n  ]\n}'
+      },
     ]
   },
   {
     section: 'Scaling Management',
     items: [
       { method: 'GET', path: '/api/scaling/groups', description: 'List all scaling groups', auth: true },
-      { method: 'POST', path: '/api/scaling/groups', description: 'Create a new scaling group', auth: true,
-        requestBody: '{\n  "metadata": { "name": "production" },\n  "spec": {\n    "category": "Solution",\n    "namespaces": ["frontend", "backend"],\n    "active": true,\n    "schedules": [{\n      "days": [1,2,3,4,5],\n      "startTime": "08:00",\n      "endTime": "20:00"\n    }]\n  }\n}' },
+      {
+        method: 'POST', path: '/api/scaling/groups', description: 'Create a new scaling group', auth: true,
+        requestBody: '{\n  "metadata": { "name": "production" },\n  "spec": {\n    "category": "Solution",\n    "namespaces": ["frontend", "backend"],\n    "active": true,\n    "schedules": [{\n      "days": [1,2,3,4,5],\n      "startTime": "08:00",\n      "endTime": "20:00"\n    }]\n  }\n}'
+      },
       { method: 'GET', path: '/api/scaling/groups/{name}', description: 'Get a specific group', auth: true },
       { method: 'PUT', path: '/api/scaling/groups/{name}', description: 'Update a group', auth: true },
       { method: 'DELETE', path: '/api/scaling/groups/{name}', description: 'Delete a group', auth: true },
-      { method: 'POST', path: '/api/scaling/groups/{name}/manual', description: 'Manual override: activate or deactivate', auth: true,
-        requestBody: '{ "active": true }' },
+      {
+        method: 'POST', path: '/api/scaling/groups/{name}/manual', description: 'Manual override: activate or deactivate', auth: true,
+        requestBody: '{ "active": true }'
+      },
       { method: 'GET', path: '/api/scaling/configs', description: 'List all scaling configs', auth: true },
       { method: 'POST', path: '/api/scaling/configs', description: 'Create a new scaling config', auth: true },
       { method: 'GET', path: '/api/scaling/configs/{name}', description: 'Get a specific config', auth: true },
@@ -802,12 +826,16 @@ const apiGroups: { section: string; items: Endpoint[] }[] = [
   {
     section: 'AI & Reporting',
     items: [
-      { method: 'POST', path: '/api/ai/chat', description: 'Stream AI assistant response (SSE)', auth: true,
-        requestBody: '{\n  "prompt": "Analyze cluster cost efficiency",\n  "messages": [\n    { "role": "user", "content": "Which namespaces waste money?" }\n  ]\n}' },
+      {
+        method: 'POST', path: '/api/ai/chat', description: 'Stream AI assistant response (SSE)', auth: true,
+        requestBody: '{\n  "prompt": "Analyze cluster cost efficiency",\n  "messages": [\n    { "role": "user", "content": "Which namespaces waste money?" }\n  ]\n}'
+      },
       { method: 'GET', path: '/api/ai/report', description: 'Get the last saved FinOps report', auth: true },
       { method: 'POST', path: '/api/ai/report/generate', description: 'Generate a new FinOps report (streaming)', auth: true },
-      { method: 'PUT', path: '/api/ai/report/save', description: 'Save generated report to ConfigMap for persistence', auth: true,
-        requestBody: '{ "report": "# FinOps Report\\n..." }' },
+      {
+        method: 'PUT', path: '/api/ai/report/save', description: 'Save generated report to ConfigMap for persistence', auth: true,
+        requestBody: '{ "report": "# FinOps Report\\n..." }'
+      },
     ]
   },
   {
@@ -881,11 +909,10 @@ export default function ApiReference() {
                 <button
                   key={g.id}
                   onClick={() => setActiveTab(g.id)}
-                  className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors text-[13px] font-semibold ${
-                    activeTab === g.id
+                  className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors text-[13px] font-semibold ${activeTab === g.id
                       ? 'bg-blue-50 text-blue-600'
                       : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-                  }`}
+                    }`}
                 >
                   <span className={activeTab === g.id ? 'text-blue-500' : 'text-slate-400'}>{g.icon}</span>
                   {g.title}
@@ -899,11 +926,10 @@ export default function ApiReference() {
             <div className="space-y-0.5">
               <button
                 onClick={() => setActiveTab('api-docs')}
-                className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors text-[13px] font-semibold ${
-                  activeTab === 'api-docs'
+                className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors text-[13px] font-semibold ${activeTab === 'api-docs'
                     ? 'bg-blue-50 text-blue-600'
                     : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-                }`}
+                  }`}
               >
                 <Code2 size={18} className={activeTab === 'api-docs' ? 'text-blue-500' : 'text-slate-400'} />
                 REST API

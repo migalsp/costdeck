@@ -16,7 +16,7 @@
 
 <br />
 
-Cost Deck is a lightweight Kubernetes Operator that **finds waste**, **right-sizes workloads**, and **shuts down idle environments** — all from a single dashboard.
+Cost Deck is a lightweight Kubernetes Operator that **finds waste**, **right-sizes workloads**, and **shuts down idle environments** - all from a single dashboard.
 
 ![Cost Deck Dashboard](docs/assets/dashboard.png)
 

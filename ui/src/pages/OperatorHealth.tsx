@@ -1,33 +1,30 @@
 import { useState, useEffect, useRef } from 'react'
 import { Activity, AlertTriangle, Shield, Cpu, Database, Download, RefreshCw, Terminal, Box, Zap, Recycle } from 'lucide-react'
-import { 
-  AreaChart, 
-  Area, 
-  XAxis, 
-  YAxis, 
-  CartesianGrid, 
-  Tooltip, 
+import {
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
   ResponsiveContainer,
   ReferenceLine,
   Legend
 } from 'recharts'
 
 const HealthCard = ({ icon, title, value, subtitle, variant = 'default' }: { icon: React.ReactNode, title: string, value: string | number, subtitle: string, variant?: 'default' | 'warning' }) => (
-  <div className={`p-6 rounded-xl border shadow-sm ${
-    variant === 'warning' 
-      ? 'bg-amber-50 border-amber-200' 
+  <div className={`p-6 rounded-xl border shadow-sm ${variant === 'warning'
+      ? 'bg-amber-50 border-amber-200'
       : 'bg-white border-slate-200'
-  }`}>
+    }`}>
     <div className="flex items-center gap-3 mb-4">
       {icon}
       <span className="font-semibold uppercase tracking-wider text-xs text-slate-500">{title}</span>
     </div>
-    <p className={`text-2xl font-bold ${
-      variant === 'warning' ? 'text-amber-600' : 'text-slate-800'
-    }`}>{value}</p>
-    <p className={`text-[10px] font-medium mt-1 uppercase tracking-tight ${
-      variant === 'warning' ? 'text-amber-500' : 'text-slate-400'
-    }`}>{subtitle}</p>
+    <p className={`text-2xl font-bold ${variant === 'warning' ? 'text-amber-600' : 'text-slate-800'
+      }`}>{value}</p>
+    <p className={`text-[10px] font-medium mt-1 uppercase tracking-tight ${variant === 'warning' ? 'text-amber-500' : 'text-slate-400'
+      }`}>{subtitle}</p>
   </div>
 );
 
@@ -101,7 +98,7 @@ export default function OperatorHealth() {
 
   // Detect errors in logs (look for ERROR level entries)
   const logLines = logs.split('\n');
-  const errorCount = logLines.filter(line => 
+  const errorCount = logLines.filter(line =>
     /\bERROR\b/i.test(line) || /"level":"error"/i.test(line)
   ).length;
   const hasErrors = errorCount > 0;
@@ -125,12 +122,12 @@ export default function OperatorHealth() {
         </button>
       </div>
 
-      {/* Top Cards — Go Runtime Metrics */}
+      {/* Top Cards - Go Runtime Metrics */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-        <HealthCard 
-          icon={hasErrors ? <AlertTriangle className="text-amber-500" /> : <Activity className="text-emerald-500" />} 
-          title="Status" 
-          value={hasErrors ? `${errorCount} error${errorCount > 1 ? 's' : ''}` : (health?.status || 'Unknown')} 
+        <HealthCard
+          icon={hasErrors ? <AlertTriangle className="text-amber-500" /> : <Activity className="text-emerald-500" />}
+          title="Status"
+          value={hasErrors ? `${errorCount} error${errorCount > 1 ? 's' : ''}` : (health?.status || 'Unknown')}
           subtitle={hasErrors ? 'Check operator logs below' : 'Operator is running'}
           variant={hasErrors ? 'warning' : 'default'}
         />
@@ -159,22 +156,22 @@ export default function OperatorHealth() {
               <AreaChart data={history} margin={{ top: 10, right: 20, left: 10, bottom: 20 }}>
                 <defs>
                   <linearGradient id="colorCpu" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#6366f1" stopOpacity={0.15}/>
-                    <stop offset="95%" stopColor="#6366f1" stopOpacity={0}/>
+                    <stop offset="5%" stopColor="#6366f1" stopOpacity={0.15} />
+                    <stop offset="95%" stopColor="#6366f1" stopOpacity={0} />
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                <XAxis 
-                  dataKey="time" 
-                  fontSize={10} 
-                  tick={{ fill: '#94a3b8' }} 
+                <XAxis
+                  dataKey="time"
+                  fontSize={10}
+                  tick={{ fill: '#94a3b8' }}
                   tickLine={false}
                   axisLine={{ stroke: '#e2e8f0' }}
                   label={{ value: 'Time', position: 'insideBottom', offset: -10, fontSize: 10, fill: '#94a3b8' }}
                 />
-                <YAxis 
-                  fontSize={10} 
-                  tick={{ fill: '#94a3b8' }} 
+                <YAxis
+                  fontSize={10}
+                  tick={{ fill: '#94a3b8' }}
                   tickLine={false}
                   axisLine={{ stroke: '#e2e8f0' }}
                   domain={[0, (dataMax: any) => Math.max(dataMax, cpuLim || 0.1) * 1.3]}
@@ -217,28 +214,28 @@ export default function OperatorHealth() {
               <AreaChart data={history} margin={{ top: 10, right: 20, left: 10, bottom: 20 }}>
                 <defs>
                   <linearGradient id="colorMem" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#10b981" stopOpacity={0.15}/>
-                    <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
+                    <stop offset="5%" stopColor="#10b981" stopOpacity={0.15} />
+                    <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                <XAxis 
-                  dataKey="time" 
-                  fontSize={10} 
-                  tick={{ fill: '#94a3b8' }} 
+                <XAxis
+                  dataKey="time"
+                  fontSize={10}
+                  tick={{ fill: '#94a3b8' }}
                   tickLine={false}
                   axisLine={{ stroke: '#e2e8f0' }}
                   label={{ value: 'Time', position: 'insideBottom', offset: -10, fontSize: 10, fill: '#94a3b8' }}
                 />
-                <YAxis 
-                  fontSize={10} 
-                  tick={{ fill: '#94a3b8' }} 
+                <YAxis
+                  fontSize={10}
+                  tick={{ fill: '#94a3b8' }}
                   tickLine={false}
                   axisLine={{ stroke: '#e2e8f0' }}
                   domain={[0, (dataMax: any) => Math.max(dataMax, memLim || 128) * 1.3]}
                   label={{ value: 'MiB', angle: -90, position: 'insideLeft', offset: 5, fontSize: 10, fill: '#94a3b8' }}
                 />
-                <Tooltip 
+                <Tooltip
                   contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', fontSize: '12px' }}
                   formatter={(value: any) => [`${Number(value).toFixed(1)} MiB`, 'Memory Usage']}
                 />
@@ -267,16 +264,16 @@ export default function OperatorHealth() {
           </div>
           <div className="flex items-center gap-4">
             <label className="flex items-center gap-2 text-xs font-mono text-slate-400 cursor-pointer hover:text-white transition-colors">
-              <input 
-                type="checkbox" 
-                checked={autoScroll} 
-                onChange={(e) => setAutoScroll(e.target.checked)} 
-                className="accent-slate-500 rounded-sm bg-slate-800 border-slate-600 w-3 h-3" 
+              <input
+                type="checkbox"
+                checked={autoScroll}
+                onChange={(e) => setAutoScroll(e.target.checked)}
+                className="accent-slate-500 rounded-sm bg-slate-800 border-slate-600 w-3 h-3"
               />
               Auto-scroll
             </label>
-            <a 
-              href="/api/operator/logs/download" 
+            <a
+              href="/api/operator/logs/download"
               className="flex items-center gap-2 px-3 py-1 bg-slate-700 hover:bg-slate-600 text-white rounded text-xs transition-colors"
             >
               <Download size={12} />

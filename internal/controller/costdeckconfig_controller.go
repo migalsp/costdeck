@@ -67,7 +67,7 @@ func (r *CostDeckConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		config.Status.AWS = nil
 	}
 
-	// Azure and GCP are stubs — just report not connected
+	// Azure and GCP are stubs - just report not connected
 	if config.Spec.Providers.Azure != nil && config.Spec.Providers.Azure.Enabled {
 		config.Status.Azure = &finopsv1.ProviderStatus{
 			Connected:   false,
