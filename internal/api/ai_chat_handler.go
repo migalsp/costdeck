@@ -183,10 +183,6 @@ If you need to ask the user a clarifying question (such as which resource to ins
 	// Tool call loop (max 3 iterations)
 	maxIterations := 3
 	for i := 0; i < maxIterations; i++ {
-		toolCallName := ""
-		toolCallArgs := ""
-		toolCallId := ""
-
 		var reqPayload []byte
 		var apiUrl string
 		reqHeaders := map[string]string{"Content-Type": "application/json"}
@@ -230,9 +226,18 @@ If you need to ask the user a clarifying question (such as which resource to ins
 			return
 		}
 
+		type ToolCall struct {
+			ID               string
+			Name             string
+			Args             string
+			ThoughtSignature string
+		}
+
 		scanner := bufio.NewScanner(resp.Body)
 		fullAssistantText := ""
-		var rawGeminiPart map[string]interface{}
+		
+		var toolCalls []*ToolCall
+		
 		for scanner.Scan() {
 			line := scanner.Text()
 			if !strings.HasPrefix(line, "data: ") {
@@ -254,6 +259,7 @@ If you need to ask the user a clarifying question (such as which resource to ins
 						Delta struct {
 							Content   string `json:"content"`
 							ToolCalls []struct {
+								Index    int    `json:"index"`
 								Id       string `json:"id"`
 								Function struct {
 									Name      string `json:"name"`
@@ -269,16 +275,39 @@ If you need to ask the user a clarifying question (such as which resource to ins
 					if delta.Content != "" {
 						chunkText = delta.Content
 					}
-					if len(delta.ToolCalls) > 0 {
-						tc := delta.ToolCalls[0]
+					for _, tc := range delta.ToolCalls {
+						// Find or create
+						var currentTC *ToolCall
+						for _, t := range toolCalls {
+							// Assuming index maps to the position in the array. 
+							// Actually it's easier to just match by index, but we don't store index.
+							// For simplicity, we just use the length or assume sequentially streamed.
+							if t.ID == tc.Id && tc.Id != "" {
+								currentTC = t
+								break
+							} else if t.Name == tc.Function.Name && tc.Function.Name != "" {
+								currentTC = t
+								break
+							}
+						}
+						// If we couldn't find one by ID or Name, but we have enough elements:
+						if currentTC == nil && tc.Index < len(toolCalls) {
+							currentTC = toolCalls[tc.Index]
+						}
+						
+						if currentTC == nil {
+							currentTC = &ToolCall{}
+							toolCalls = append(toolCalls, currentTC)
+						}
+						
 						if tc.Id != "" {
-							toolCallId = tc.Id
+							currentTC.ID = tc.Id
 						}
 						if tc.Function.Name != "" {
-							toolCallName = tc.Function.Name
+							currentTC.Name = tc.Function.Name
 						}
 						if tc.Function.Arguments != "" {
-							toolCallArgs += tc.Function.Arguments
+							currentTC.Args += tc.Function.Arguments
 						}
 					}
 				}
@@ -296,14 +325,18 @@ If you need to ask the user a clarifying question (such as which resource to ins
 				}
 				json.Unmarshal([]byte(data), &sResp)
 				if sResp.Type == "content_block_start" && sResp.ContentBlock.Name != "" {
-					toolCallId = sResp.ContentBlock.Id
-					toolCallName = sResp.ContentBlock.Name
+					toolCalls = append(toolCalls, &ToolCall{
+						ID: sResp.ContentBlock.Id,
+						Name: sResp.ContentBlock.Name,
+					})
 				} else if sResp.Type == "content_block_delta" {
 					if sResp.Delta.Text != "" {
 						chunkText = sResp.Delta.Text
 					}
 					if sResp.Delta.PartialJson != "" {
-						toolCallArgs += sResp.Delta.PartialJson
+						if len(toolCalls) > 0 {
+							toolCalls[len(toolCalls)-1].Args += sResp.Delta.PartialJson
+						}
 					}
 				}
 			} else if aiConfig.Provider == "gemini" {
@@ -316,23 +349,35 @@ If you need to ask the user a clarifying question (such as which resource to ins
 				}
 				json.Unmarshal([]byte(data), &sResp)
 				if len(sResp.Candidates) > 0 && len(sResp.Candidates[0].Content.Parts) > 0 {
-					part := sResp.Candidates[0].Content.Parts[0]
-					
-					if textObj, ok := part["text"]; ok {
-						if textStr, ok := textObj.(string); ok && textStr != "" {
-							chunkText = textStr
-						}
-					}
-					
-					if fcObj, ok := part["functionCall"]; ok && fcObj != nil {
-						if fcMap, ok := fcObj.(map[string]interface{}); ok {
-							rawGeminiPart = part // save the entire part (including thought_signature)
-							if name, ok := fcMap["name"].(string); ok {
-								toolCallName = name
+					for _, part := range sResp.Candidates[0].Content.Parts {
+						if textObj, ok := part["text"]; ok {
+							if textStr, ok := textObj.(string); ok && textStr != "" {
+								chunkText += textStr
 							}
-							if argsMap, ok := fcMap["args"].(map[string]interface{}); ok {
-								argsBytes, _ := json.Marshal(argsMap)
-								toolCallArgs = string(argsBytes)
+						}
+						
+						if fcObj, ok := part["functionCall"]; ok && fcObj != nil {
+							// Each functionCall part is a separate tool call!
+							if fcMap, ok := fcObj.(map[string]interface{}); ok {
+								tc := &ToolCall{}
+								if ts, ok := part["thought_signature"].(string); ok && ts != "" {
+									tc.ThoughtSignature = ts
+								}
+								// Some models might put it as thoughtSignature
+								if ts, ok := part["thoughtSignature"].(string); ok && ts != "" {
+									tc.ThoughtSignature = ts
+								}
+								if id, ok := fcMap["id"].(string); ok && id != "" {
+									tc.ID = id
+								}
+								if name, ok := fcMap["name"].(string); ok {
+									tc.Name = name
+								}
+								if argsMap, ok := fcMap["args"].(map[string]interface{}); ok {
+									argsBytes, _ := json.Marshal(argsMap)
+									tc.Args = string(argsBytes)
+								}
+								toolCalls = append(toolCalls, tc)
 							}
 						}
 					}
@@ -349,7 +394,7 @@ If you need to ask the user a clarifying question (such as which resource to ins
 		resp.Body.Close()
 
 		// If no tool was called, we're done
-		if toolCallName == "" {
+		if len(toolCalls) == 0 {
 			// Append the final assistant message so that history is correct if needed
 			if fullAssistantText != "" {
 				messages = append(messages, map[string]interface{}{
@@ -360,46 +405,54 @@ If you need to ask the user a clarifying question (such as which resource to ins
 			break
 		}
 
-		// Tool was called, execute it
-		statusMsg := fmt.Sprintf("\n\n> ⚙️ Executing tool: `%s`...\n\n", toolCallName)
-		chunkBytes, _ := json.Marshal(statusMsg)
-		fmt.Fprintf(w, "0:%s\n", string(chunkBytes))
-		flusher.Flush()
+		type ToolResult struct {
+			Call   *ToolCall
+			Result string
+		}
+		var results []ToolResult
 
-		toolResult, err := s.ExecuteAITool(ctx, toolCallName, toolCallArgs)
-		if err != nil {
-			toolResult = fmt.Sprintf("Error executing tool: %v", err)
+		// Execute all tools sequentially
+		for _, tc := range toolCalls {
+	
+			toolResult, err := s.ExecuteAITool(ctx, tc.Name, tc.Args)
+			if err != nil {
+				toolResult = fmt.Sprintf("Error executing tool: %v", err)
+			}
+			results = append(results, ToolResult{Call: tc, Result: toolResult})
 		}
 
-		// Append tool call and result to messages for the next iteration
+		// Append tool calls and results to messages for the next iteration
 		if aiConfig.Provider == "openai" || aiConfig.Provider == "local" {
-			if toolCallId == "" {
-				toolCallId = "call_1"
+			var oaiToolCalls []map[string]interface{}
+			for i, tc := range toolCalls {
+				id := tc.ID
+				if id == "" {
+					id = fmt.Sprintf("call_%d", i+1)
+					tc.ID = id
+				}
+				oaiToolCalls = append(oaiToolCalls, map[string]interface{}{
+					"id":   id,
+					"type": "function",
+					"function": map[string]interface{}{
+						"name":      tc.Name,
+						"arguments": tc.Args,
+					},
+				})
 			}
 			messages = append(messages, map[string]interface{}{
 				"role":    "assistant",
 				"content": nil,
-				"tool_calls": []map[string]interface{}{
-					{
-						"id":   toolCallId,
-						"type": "function",
-						"function": map[string]interface{}{
-							"name":      toolCallName,
-							"arguments": toolCallArgs,
-						},
-					},
-				},
+				"tool_calls": oaiToolCalls,
 			})
-			messages = append(messages, map[string]interface{}{
-				"role":         "tool",
-				"tool_call_id": toolCallId,
-				"name":         toolCallName,
-				"content":      toolResult,
-			})
+			for _, res := range results {
+				messages = append(messages, map[string]interface{}{
+					"role":         "tool",
+					"tool_call_id": res.Call.ID,
+					"name":         res.Call.Name,
+					"content":      res.Result,
+				})
+			}
 		} else if aiConfig.Provider == "anthropic" {
-			var args map[string]interface{}
-			json.Unmarshal([]byte(toolCallArgs), &args)
-			
 			contentBlocks := []map[string]interface{}{}
 			if fullAssistantText != "" {
 				contentBlocks = append(contentBlocks, map[string]interface{}{
@@ -407,46 +460,93 @@ If you need to ask the user a clarifying question (such as which resource to ins
 					"text": fullAssistantText,
 				})
 			}
-			contentBlocks = append(contentBlocks, map[string]interface{}{
-				"type":  "tool_use",
-				"id":    toolCallId,
-				"name":  toolCallName,
-				"input": args,
-			})
+			for _, tc := range toolCalls {
+				var parsedArgs map[string]interface{}
+				json.Unmarshal([]byte(tc.Args), &parsedArgs)
+				if parsedArgs == nil {
+					parsedArgs = make(map[string]interface{})
+				}
+				contentBlocks = append(contentBlocks, map[string]interface{}{
+					"type":  "tool_use",
+					"id":    tc.ID,
+					"name":  tc.Name,
+					"input": parsedArgs,
+				})
+			}
 			
 			messages = append(messages, map[string]interface{}{
 				"role":    "assistant",
 				"content": contentBlocks,
 			})
+			
+			userContent := []map[string]interface{}{}
+			for _, res := range results {
+				userContent = append(userContent, map[string]interface{}{
+					"type":        "tool_result",
+					"tool_use_id": res.Call.ID,
+					"content":     res.Result,
+				})
+			}
 			messages = append(messages, map[string]interface{}{
 				"role": "user",
-				"content": []map[string]interface{}{
-					{
-						"type":        "tool_result",
-						"tool_use_id": toolCallId,
-						"content":     toolResult,
-					},
-				},
+				"content": userContent,
 			})
 		} else if aiConfig.Provider == "gemini" {
+			var geminiParts []map[string]interface{}
+			if fullAssistantText != "" {
+				geminiParts = append(geminiParts, map[string]interface{}{"text": fullAssistantText})
+			}
+			
+			for _, tc := range toolCalls {
+				var parsedArgs map[string]interface{}
+				json.Unmarshal([]byte(tc.Args), &parsedArgs)
+				if parsedArgs == nil {
+					parsedArgs = make(map[string]interface{})
+				}
+				
+				fcMap := map[string]interface{}{
+					"name": tc.Name,
+					"args": parsedArgs,
+				}
+				if tc.ID != "" {
+					fcMap["id"] = tc.ID
+				}
+				
+				fcPart := map[string]interface{}{
+					"functionCall": fcMap,
+				}
+				if tc.ThoughtSignature != "" {
+					fcPart["thought_signature"] = tc.ThoughtSignature
+				} else {
+					fcPart["thought_signature"] = "skip_thought_signature_validator"
+				}
+				geminiParts = append(geminiParts, fcPart)
+			}
+			
 			messages = append(messages, map[string]interface{}{
-				"role": "model",
-				"parts": []map[string]interface{}{
-					rawGeminiPart,
-				},
+				"role":  "model",
+				"parts": geminiParts,
 			})
+			
+			var userParts []map[string]interface{}
+			for _, res := range results {
+				frMap := map[string]interface{}{
+					"name": res.Call.Name,
+					"response": map[string]interface{}{
+						"result": res.Result,
+					},
+				}
+				if res.Call.ID != "" {
+					frMap["id"] = res.Call.ID
+				}
+				userParts = append(userParts, map[string]interface{}{
+					"functionResponse": frMap,
+				})
+			}
+			
 			messages = append(messages, map[string]interface{}{
 				"role": "user",
-				"parts": []map[string]interface{}{
-					{
-						"functionResponse": map[string]interface{}{
-							"name": toolCallName,
-							"response": map[string]interface{}{
-								"result": toolResult,
-							},
-						},
-					},
-				},
+				"parts": userParts,
 			})
 		}
 	}

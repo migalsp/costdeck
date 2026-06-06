@@ -7,6 +7,8 @@ import (
 	"os"
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 )
@@ -197,11 +199,39 @@ func (s *Server) generateNamespaceReport(ctx context.Context, nsName string) (*n
 		insightsStr = string(insightsBytes)
 	}
 
+	// Calculate from actual pods
+	var totalPods int
+	var monthlyCost float64
+	pods, podErr := s.K8sClient.CoreV1().Pods(nsName).List(ctx, metav1.ListOptions{})
+	if podErr == nil {
+		var cpuReq, memReq resource.Quantity
+		for _, p := range pods.Items {
+			if p.Status.Phase == corev1.PodSucceeded || p.Status.Phase == corev1.PodFailed {
+				continue
+			}
+			totalPods++
+			for _, c := range p.Spec.Containers {
+				if c.Resources.Requests.Cpu() != nil {
+					cpuReq.Add(*c.Resources.Requests.Cpu())
+				}
+				if c.Resources.Requests.Memory() != nil {
+					memReq.Add(*c.Resources.Requests.Memory())
+				}
+			}
+		}
+		cpuCores := float64(cpuReq.MilliValue()) / 1000.0
+		ramGb := float64(memReq.Value()) / 1024.0 / 1024.0 / 1024.0
+		
+		cpuRate, ramRate := 0.035, 0.003 // defaults
+		hourlyCost := (cpuCores * cpuRate) + (ramGb * ramRate)
+		monthlyCost = hourlyCost * 730
+	}
+
 	return &namespaceReport{
-		ScalingPhase: "Active", // Not tracked directly in this version
-		CurrentCost:  0.0,      // Need to calculate separately or omit
-		CurrentWaste: 0.0,
-		TotalPods:    0, // Not tracked directly in Status
+		ScalingPhase: "Active", 
+		CurrentCost:  monthlyCost,      
+		CurrentWaste: 0.0, // Hard to calculate accurate waste without prometheus
+		TotalPods:    totalPods, 
 		AIInsight:    insightsStr,
 	}, nil
 }

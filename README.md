@@ -9,28 +9,30 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/migalsp/costdeck/actions/workflows/ci.yml"><img src="https://github.com/migalsp/costdeck/actions/workflows/ci.yml/badge.svg" alt="CI"></a><a href="https://github.com/migalsp/costdeck/releases"><img src="https://img.shields.io/github/v/release/migalsp/costdeck" alt="Release"></a><a href="https://goreportcard.com/report/github.com/migalsp/costdeck"><img src="https://goreportcard.com/badge/github.com/migalsp/costdeck" alt="Go Report"></a><a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License"></a><a href="https://codecov.io/gh/migalsp/costdeck"><img src="https://codecov.io/gh/migalsp/costdeck/graph/badge.svg?token=9BJ6GV6K69" alt="codecov"></a>
+  <a href="https://github.com/migalsp/costdeck/actions/workflows/ci.yml"><img src="https://github.com/migalsp/costdeck/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/migalsp/costdeck/releases"><img src="https://img.shields.io/github/v/release/migalsp/costdeck" alt="Release"></a>
+  <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License"></a>
 </p>
 
 <br />
 
-Cost Deck is a lightweight Kubernetes Operator that **finds waste**, **right‑sizes workloads**, and **shuts down idle environments** - all from a single dashboard. Attach cloud services to scale them alongside your k8s workloads.
+Cost Deck is a lightweight Kubernetes Operator that **finds waste**, **right-sizes workloads**, and **shuts down idle environments** — all from a single dashboard.
 
 ![Cost Deck Dashboard](docs/assets/dashboard.png)
 
 ## Features
 
-| | |
-|---|---|
-| **Namespace Insights** | Real‑time CPU/Memory breakdown per namespace with waste detection badges |
-| **One‑Click Optimization** | Right‑size every Deployment and StatefulSet based on actual usage — revert instantly |
-| **Scheduled Scaling** | Scale Dev/Staging environments down outside working hours via `ScalingConfig` (single ns) or `ScalingGroup` (multi‑ns) |
-| **Sequential Pipelines** | Define namespace stages so databases scale before apps, and apps before ingress |
-| **Cloud Scaling** | Start/stop cloud services (AWS, GCP, Azure) as part of your scaling pipeline |
-| **Cluster Node Map** | Visual heat map of node utilization across availability zones |
-| **Three Config Methods** | UI Dashboard, REST API, or Kubernetes CRDs (GitOps‑friendly) |
+- **Namespace Insights**: Real-time CPU/Memory breakdown with waste detection.
+- **One-Click Optimization**: Right-size Deployments and StatefulSets based on actual usage.
+- **Scheduled Scaling**: Scale Dev/Staging environments down outside working hours.
+- **Sequential Pipelines**: Define stages to scale databases before apps, and apps before ingress.
+- **Cloud Scaling**: Start/stop cloud services (AWS, GCP, Azure) as part of scaling pipelines.
+- **Cluster Node Map**: Visual heat map of node utilization across availability zones.
+- **AI FinOps Assistant**: Ask questions and trigger optimizations directly from the UI.
 
 ## Quick Start
+
+Deploy via Helm:
 
 ```bash
 helm upgrade --install costdeck-operator \
@@ -41,21 +43,47 @@ helm upgrade --install costdeck-operator \
 
 Configure Ingress in your `values.yaml` and open the dashboard. See the [Installation Guide](docs/installation.md) for details.
 
-## Documentation
-
-| Resource | Description |
-|---|---|
-| [Installation Guide](docs/installation.md) | Prerequisites, Helm install, post‑install verification, values.yaml reference |
-| [User Guide](docs/user-guide.md) | Full feature walkthrough — ScalingConfig, ScalingGroup, Optimization, AWS, all 3 config methods |
-
 ## Architecture
 
-![Cost Deck Architecture](docs/assets/architecture.png)
+```mermaid
+graph TD
+    subgraph UI["Web Dashboard (React)"]
+        A[Dashboard UI]
+    end
+
+    subgraph Operator["Cost Deck Operator (Go)"]
+        B[REST API Server]
+        C[Reconciliation Loop]
+        D[AI Chat Handler]
+        E[Metrics Poller]
+    end
+
+    subgraph K8s["Kubernetes API"]
+        F[Metrics Server]
+        G[Deployments / StatefulSets]
+        H[CRDs: NamespaceFinOps, ScalingGroup, ScalingConfig]
+    end
+
+    subgraph Cloud["External Providers"]
+        I[AI Provider]
+        J[Cloud APIs]
+        K[Webex]
+    end
+
+    A <-->|HTTP/JSON| B
+    B --> C
+    B <-->|SSE Stream| D
+    
+    C -->|Scale & Optimize| G
+    C -->|Read/Write State| H
+    C -->|Toggle Services| J
+    C -->|Alerts| K
+    
+    D <-->|Function Calling| I
+    E -->|Fetch Stats| F
+    E -->|Update Insights| H
+```
 
 ## License
 
 [Apache 2.0](LICENSE)
-
----
-
-<p align="center">If Cost Deck saves you money, please <strong>⭐ star this repository</strong>.</p>
