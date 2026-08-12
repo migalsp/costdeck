@@ -1,71 +1,48 @@
 version: 2
 
-# Dependabot alerts were already enabled, but without this file every advisory opened its
-# own pull request. Grouping collapses a week of noise into a handful of reviewable PRs.
+# Dependabot alerts were already enabled, but with no configuration every advisory opened
+# its own pull request.
+#
+# This file exists purely to group those security pull requests. Routine version updates
+# stay off: `open-pull-requests-limit: 0` disables them, and that limit does not apply to
+# security updates, so an advisory still produces a PR. Nothing is proposed unless there is
+# an actual vulnerability to fix.
 updates:
   - package-ecosystem: gomod
     directory: /
     schedule:
       interval: weekly
       day: monday
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 0
     commit-message:
       prefix: "chore(deps)"
     groups:
-      # The Kubernetes libraries have to move together or the build breaks on mismatched
+      # Listed first so it wins over the catch-all below: the Kubernetes libraries have to
+      # move together or the build breaks on mismatched
       # apimachinery/client-go/controller-runtime versions.
-      kubernetes:
+      kubernetes-security:
+        applies-to: security-updates
         patterns:
           - "k8s.io/*"
           - "sigs.k8s.io/*"
-      golang-x:
-        patterns:
-          - "golang.org/x/*"
-      go-minor-and-patch:
+      go-security:
+        applies-to: security-updates
         patterns:
           - "*"
-        update-types:
-          - minor
-          - patch
 
   - package-ecosystem: npm
     directory: /ui
     schedule:
       interval: weekly
       day: monday
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 0
     commit-message:
       prefix: "chore(deps)"
     groups:
       # The UI is compiled during the container build and only the emitted static assets
-      # are embedded, so build-time packages never reach the runtime image. They are still
-      # worth updating, just not one PR at a time.
-      dev-toolchain:
-        dependency-type: development
+      # are embedded, so build-time packages never reach the runtime image. Worth fixing on
+      # an advisory, not worth a PR each.
+      npm-security:
+        applies-to: security-updates
         patterns:
           - "*"
-      production:
-        dependency-type: production
-        update-types:
-          - minor
-          - patch
-
-  - package-ecosystem: github-actions
-    directory: /
-    schedule:
-      interval: weekly
-      day: monday
-    commit-message:
-      prefix: "chore(deps)"
-    groups:
-      actions:
-        patterns:
-          - "*"
-
-  - package-ecosystem: docker
-    directory: /
-    schedule:
-      interval: weekly
-      day: monday
-    commit-message:
-      prefix: "chore(deps)"
