@@ -2,11 +2,55 @@ import React, { useState, useEffect } from 'react';
 import { Plus, Clock, Shield, ChevronUp, ChevronDown } from 'lucide-react';
 
 interface ScalingSchedule {
-  days: number[];
+  days?: number[];
+  startDay?: number;
+  endDay?: number;
   startTime: string;
   endTime: string;
   timezone?: string;
 }
+
+const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+const TIMEZONES = [
+  ['UTC', 'UTC (Universal Time)'],
+  ['America/New_York', 'US East (New York)'],
+  ['America/Chicago', 'US Central (Chicago)'],
+  ['America/Los_Angeles', 'US West (Los Angeles)'],
+  ['Europe/London', 'Europe (London)'],
+  ['Europe/Paris', 'Europe (Paris)'],
+  ['Europe/Moscow', 'Europe (Moscow)'],
+  ['Asia/Tokyo', 'Asia (Tokyo)'],
+  ['Asia/Dubai', 'Asia (Dubai)'],
+];
+
+const DEFAULT_DAILY: ScalingSchedule = { days: [1, 2, 3, 4, 5], startTime: '09:00', endTime: '18:00', timezone: 'UTC' };
+// Monday 00:00 -> Friday 23:59: the "run non-stop through the working week" case.
+const DEFAULT_WEEKLY: ScalingSchedule = { startDay: 1, startTime: '00:00', endDay: 5, endTime: '23:59', timezone: 'UTC' };
+
+const isWeeklyWindow = (s: ScalingSchedule) => s.startDay !== undefined && s.endDay !== undefined;
+
+// Mirrors the operator's week-minute evaluation so the modal can warn about a window that
+// never opens, rather than letting it silently keep workloads down.
+const toMinutes = (hhmm: string): number => {
+  const [h, m] = hhmm.split(':').map(Number);
+  return (Number.isFinite(h) ? h : 0) * 60 + (Number.isFinite(m) ? m : 0);
+};
+
+const describeWindow = (s: ScalingSchedule): string => {
+  const tz = s.timezone || 'operator local time';
+  if (isWeeklyWindow(s)) {
+    const start = s.startDay! * 1440 + toMinutes(s.startTime);
+    const end = s.endDay! * 1440 + toMinutes(s.endTime);
+    return `Runs continuously from ${DAY_LABELS[s.startDay!]} ${s.startTime} to ${DAY_LABELS[s.endDay!]} ${s.endTime} (${tz})`
+      + (start > end ? ', wrapping through Sunday' : '');
+  }
+  const overnight = s.endTime < s.startTime;
+  const days = (s.days || []).slice().sort().map(d => DAY_LABELS[d]).join(', ') || 'no days selected';
+  return overnight
+    ? `Runs ${s.startTime} to ${s.endTime} the next morning, starting on: ${days} (${tz})`
+    : `Runs ${s.startTime} to ${s.endTime} on: ${days} (${tz})`;
+};
 
 interface ScalingConfigModalProps {
   name: string;
@@ -50,6 +94,21 @@ const ScalingConfigModal: React.FC<ScalingConfigModalProps> = ({ name, mode, spe
     }
   }, [mode]);
 
+  // The CRD has always accepted a list of windows; the editor now exposes it. An empty
+  // spec renders one unsaved default so the form still has something to show, exactly as
+  // before -- it is only persisted once the user actually touches it.
+  const windows: ScalingSchedule[] = editingSpec.schedules?.length
+    ? editingSpec.schedules
+    : [{ ...DEFAULT_DAILY }];
+
+  const setWindows = (next: ScalingSchedule[]) => setEditingSpec({ ...editingSpec, schedules: next });
+
+  // `replace` swaps the whole window (used by the Daily/Continuous switch, where the
+  // discriminating startDay/endDay keys must be dropped rather than merged).
+  const patchWindow = (idx: number, patch: Partial<ScalingSchedule>, replace = false) => {
+    setWindows(windows.map((w, i) => (i === idx ? (replace ? patch as ScalingSchedule : { ...w, ...patch }) : w)));
+  };
+
   const title = mode === 'schedule' ? 'Schedule Configuration' :
     mode === 'sequence' ? (spec.namespaces ? 'Namespace Scaling Sequence' : 'Resource Scaling Sequence') :
       'Group Settings';
@@ -75,62 +134,135 @@ const ScalingConfigModal: React.FC<ScalingConfigModalProps> = ({ name, mode, spe
           {/* Schedule Editor - shown in 'schedule' and 'group' modes */}
           {(mode === 'schedule' || mode === 'group') && (
             <div>
-              <label className="block text-sm font-bold text-slate-500 uppercase tracking-wider mb-4">Availability Schedule</label>
-              <div className="bg-slate-50 p-6 rounded-2xl space-y-6">
-                <div className="grid grid-cols-[140px,1fr] items-center gap-4">
-                  <span className="text-sm font-bold text-slate-700">Active Hours</span>
-                  <div className="flex items-center gap-3">
-                    <input type="time" className="flex-1 bg-white border-2 border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-indigo-500 transition-colors font-bold text-slate-700"
-                      value={editingSpec.schedules?.[0]?.startTime || '09:00'}
-                      onChange={(e) => {
-                        const base = editingSpec.schedules?.[0] || { days: [1, 2, 3, 4, 5], startTime: '09:00', endTime: '18:00', timezone: 'UTC' };
-                        setEditingSpec({ ...editingSpec, schedules: [{ ...base, startTime: e.target.value }] });
-                      }} />
-                    <span className="text-slate-300 font-black">→</span>
-                    <input type="time" className="flex-1 bg-white border-2 border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-indigo-500 transition-colors font-bold text-slate-700"
-                      value={editingSpec.schedules?.[0]?.endTime || '18:00'}
-                      onChange={(e) => {
-                        const base = editingSpec.schedules?.[0] || { days: [1, 2, 3, 4, 5], startTime: '09:00', endTime: '18:00', timezone: 'UTC' };
-                        setEditingSpec({ ...editingSpec, schedules: [{ ...base, endTime: e.target.value }] });
-                      }} />
-                  </div>
+              <label className="block text-sm font-bold text-slate-500 uppercase tracking-wider mb-4 flex items-center justify-between">
+                Availability Schedule
+                <button onClick={() => setWindows([...windows, { ...DEFAULT_DAILY }])}
+                  className="text-[10px] bg-indigo-50 px-3 py-1.5 rounded-lg text-indigo-600 font-bold hover:bg-indigo-100 transition-colors uppercase tracking-widest">
+                  + Add Window
+                </button>
+              </label>
 
-                  <span className="text-sm font-bold text-slate-700">Timezone</span>
-                  <select
-                    className="bg-white border-2 border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-indigo-500 transition-colors font-bold text-slate-700 w-full"
-                    value={editingSpec.schedules?.[0]?.timezone || 'UTC'}
-                    onChange={(e) => {
-                      const base = editingSpec.schedules?.[0] || { days: [1, 2, 3, 4, 5], startTime: '09:00', endTime: '18:00', timezone: 'UTC' };
-                      setEditingSpec({ ...editingSpec, schedules: [{ ...base, timezone: e.target.value }] });
-                    }}
-                  >
-                    <option value="UTC">UTC (Universal Time)</option>
-                    <option value="America/New_York">US East (New York)</option>
-                    <option value="America/Chicago">US Central (Chicago)</option>
-                    <option value="America/Los_Angeles">US West (Los Angeles)</option>
-                    <option value="Europe/London">Europe (London)</option>
-                    <option value="Europe/Paris">Europe (Paris)</option>
-                    <option value="Europe/Moscow">Europe (Moscow)</option>
-                    <option value="Asia/Tokyo">Asia (Tokyo)</option>
-                    <option value="Asia/Dubai">Asia (Dubai)</option>
-                  </select>
-                </div>
+              <div className="space-y-4">
+                {windows.map((win, idx) => {
+                  const weekly = isWeeklyWindow(win);
+                  return (
+                    <div key={idx} className="bg-slate-50 p-6 rounded-2xl space-y-6 relative">
+                      {/* Window type switch */}
+                      <div className="flex items-center gap-2">
+                        <div className="flex bg-white border-2 border-slate-200 rounded-xl p-1 flex-1">
+                          <button
+                            onClick={() => patchWindow(idx, { ...DEFAULT_DAILY, startTime: win.startTime, endTime: win.endTime, timezone: win.timezone }, true)}
+                            className={`flex-1 py-2 rounded-lg text-[11px] font-black uppercase tracking-wider transition-all ${!weekly ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}>
+                            Daily Window
+                          </button>
+                          <button
+                            onClick={() => patchWindow(idx, { ...DEFAULT_WEEKLY, timezone: win.timezone }, true)}
+                            className={`flex-1 py-2 rounded-lg text-[11px] font-black uppercase tracking-wider transition-all ${weekly ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}>
+                            Continuous (Multi-Day)
+                          </button>
+                        </div>
+                        {windows.length > 1 && (
+                          <button onClick={() => setWindows(windows.filter((_, i) => i !== idx))}
+                            className="p-2 text-slate-300 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-colors" title="Remove window">
+                            <Plus size={18} className="rotate-45" />
+                          </button>
+                        )}
+                      </div>
 
-                <div className="flex gap-2">
-                  {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d, i) => {
-                    const isActive = (editingSpec.schedules?.[0]?.days || []).includes(i);
-                    return (
-                      <button key={d} onClick={() => {
-                        const base = editingSpec.schedules?.[0] || { days: [1, 2, 3, 4, 5], startTime: '09:00', endTime: '18:00', timezone: 'UTC' };
-                        const newDays = isActive ? base.days.filter((day: number) => day !== i) : [...base.days, i];
-                        setEditingSpec({ ...editingSpec, schedules: [{ ...base, days: newDays }] });
-                      }} className={`flex-1 py-3 rounded-xl text-xs font-black border-2 transition-all ${isActive ? 'bg-indigo-600 border-indigo-600 text-white shadow-lg shadow-indigo-600/20' : 'bg-white border-slate-200 text-slate-400 hover:border-slate-300'}`}>
-                        {d}
-                      </button>
-                    );
-                  })}
-                </div>
+                      {weekly ? (
+                        <div className="grid grid-cols-[140px,1fr] items-center gap-4">
+                          <span className="text-sm font-bold text-slate-700">Starts</span>
+                          <div className="flex items-center gap-3">
+                            <select className="flex-1 bg-white border-2 border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-indigo-500 transition-colors font-bold text-slate-700"
+                              value={win.startDay}
+                              onChange={(e) => patchWindow(idx, { startDay: Number(e.target.value) })}>
+                              {DAY_LABELS.map((d, i) => <option key={d} value={i}>{d}</option>)}
+                            </select>
+                            <input type="time" className="flex-1 bg-white border-2 border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-indigo-500 transition-colors font-bold text-slate-700"
+                              value={win.startTime}
+                              onChange={(e) => patchWindow(idx, { startTime: e.target.value })} />
+                          </div>
+
+                          <span className="text-sm font-bold text-slate-700">Ends</span>
+                          <div className="flex items-center gap-3">
+                            <select className="flex-1 bg-white border-2 border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-indigo-500 transition-colors font-bold text-slate-700"
+                              value={win.endDay}
+                              onChange={(e) => patchWindow(idx, { endDay: Number(e.target.value) })}>
+                              {DAY_LABELS.map((d, i) => <option key={d} value={i}>{d}</option>)}
+                            </select>
+                            <input type="time" className="flex-1 bg-white border-2 border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-indigo-500 transition-colors font-bold text-slate-700"
+                              value={win.endTime}
+                              onChange={(e) => patchWindow(idx, { endTime: e.target.value })} />
+                          </div>
+
+                          <span className="text-sm font-bold text-slate-700">Timezone</span>
+                          <select
+                            className="bg-white border-2 border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-indigo-500 transition-colors font-bold text-slate-700 w-full"
+                            value={win.timezone || 'UTC'}
+                            onChange={(e) => patchWindow(idx, { timezone: e.target.value })}>
+                            {TIMEZONES.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
+                          </select>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="grid grid-cols-[140px,1fr] items-center gap-4">
+                            <span className="text-sm font-bold text-slate-700">Active Hours</span>
+                            <div className="flex items-center gap-3">
+                              <input type="time" className="flex-1 bg-white border-2 border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-indigo-500 transition-colors font-bold text-slate-700"
+                                value={win.startTime}
+                                onChange={(e) => patchWindow(idx, { startTime: e.target.value })} />
+                              <span className="text-slate-300 font-black">→</span>
+                              <input type="time" className="flex-1 bg-white border-2 border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-indigo-500 transition-colors font-bold text-slate-700"
+                                value={win.endTime}
+                                onChange={(e) => patchWindow(idx, { endTime: e.target.value })} />
+                            </div>
+
+                            <span className="text-sm font-bold text-slate-700">Timezone</span>
+                            <select
+                              className="bg-white border-2 border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-indigo-500 transition-colors font-bold text-slate-700 w-full"
+                              value={win.timezone || 'UTC'}
+                              onChange={(e) => patchWindow(idx, { timezone: e.target.value })}>
+                              {TIMEZONES.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
+                            </select>
+                          </div>
+
+                          <div className="flex gap-2">
+                            {DAY_LABELS.map((d, i) => {
+                              const isActive = (win.days || []).includes(i);
+                              return (
+                                <button key={d} onClick={() => {
+                                  const days = win.days || [];
+                                  patchWindow(idx, { days: isActive ? days.filter(day => day !== i) : [...days, i] });
+                                }} className={`flex-1 py-3 rounded-xl text-xs font-black border-2 transition-all ${isActive ? 'bg-indigo-600 border-indigo-600 text-white shadow-lg shadow-indigo-600/20' : 'bg-white border-slate-200 text-slate-400 hover:border-slate-300'}`}>
+                                  {d}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </>
+                      )}
+
+                      <p className="text-[11px] font-bold text-slate-500 flex items-start gap-1.5 leading-relaxed">
+                        <Clock size={12} className="mt-0.5 shrink-0" />
+                        {describeWindow(win)}
+                      </p>
+                      {!weekly && (win.days || []).length === 0 && (
+                        <p className="text-[11px] font-bold text-rose-600 leading-relaxed">
+                          Select at least one day, or switch to a continuous window.
+                        </p>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
+
+              <p className="mt-3 text-[10px] text-slate-400 font-medium px-1 leading-relaxed">
+                Outside every window the target is scaled down. Windows are OR-ed: overlapping
+                windows keep the target up. Use <span className="font-bold">Continuous</span> for
+                "up from Monday 00:00 straight through Friday 23:59" — it has no daily boundary,
+                so nothing restarts at midnight. A daily window whose end time is earlier than its
+                start time runs overnight into the next morning.
+              </p>
             </div>
           )}
 
