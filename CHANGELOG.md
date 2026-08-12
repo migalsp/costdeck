@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.3.0](https://github.com/migalsp/costdeck/compare/v1.2.1...v1.3.0) (2026-08-12)
+
+
+### Features
+
+* **scaling:** add continuous multi-day windows and expiring overrides ([f34ec4b](https://github.com/migalsp/costdeck/commit/f34ec4b42ff6b5742202f741f4ec4b2f1bda8b77))
+* **ui:** edit continuous, overnight and multiple schedule windows ([d426549](https://github.com/migalsp/costdeck/commit/d426549671d5fbfc900a1d8f56de9abf47dab5a6))
+
+
+### Bug Fixes
+
+* **scaling:** resolve non-UTC schedule timezones inside the container ([0e66a4c](https://github.com/migalsp/costdeck/commit/0e66a4cc9545c052d8f16201e9e9f72974ac1b80))
+* **ui:** allow clearing a manual override from the dashboard ([c148b10](https://github.com/migalsp/costdeck/commit/c148b10cd82717aec23a98369898b8bf07f72868))
+
 ## [1.2.1](https://github.com/migalsp/costdeck/compare/v1.2.0...v1.2.1) (2026-06-06)
 
 
