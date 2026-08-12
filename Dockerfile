@@ -1,5 +1,5 @@
 # Build the React UI
-FROM node:20 AS ui-builder
+FROM node:26 AS ui-builder
 WORKDIR /app
 COPY ui/package*.json ./ui/
 RUN cd ui && npm ci
