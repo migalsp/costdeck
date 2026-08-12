@@ -178,16 +178,43 @@ spec:
     - staging-frontend`
       },
       {
+        heading: 'Schedule Windows',
+        body: 'A schedule is a list of windows. Outside every window the target is scaled down; overlapping windows keep it up. Two window shapes are available.',
+        code: `schedules:
+  # 1. Daily window, repeated on the listed weekdays.
+  - days: [1, 2, 3, 4, 5]        # 0 = Sunday
+    startTime: "08:00"
+    endTime: "20:00"
+    timezone: "America/New_York"
+
+  # 2. Daily window running overnight: endTime earlier than startTime
+  #    means the window spills into the next morning.
+  - days: [1, 2, 3, 4, 5]
+    startTime: "22:00"
+    endTime: "06:00"
+    timezone: "UTC"
+
+  # 3. Continuous multi-day window. Up from Monday 00:00 straight
+  #    through Friday 23:59 with no daily boundary in between, so
+  #    nothing is restarted at midnight. May wrap through Sunday
+  #    (e.g. startDay 5 -> endDay 1 keeps it up over the weekend).
+  - startDay: 1
+    startTime: "00:00"
+    endDay: 5
+    endTime: "23:59"
+    timezone: "UTC"`
+      },
+      {
         heading: 'Manual Override (Scale Up / Down)',
-        body: 'Force a group or namespace to scale regardless of its schedule.',
+        body: 'Force a group or namespace to scale regardless of its schedule. While an override is set the schedule is fully ignored, so it must be cleared to hand control back.',
       },
       {
         heading: 'Via UI',
-        body: 'On the Scaling Management page, each group and config has an "Activate" and "Deactivate" button. Click them to force scale up or down immediately. A "Reset to Schedule" option returns to automatic behavior.',
+        body: 'On the Scaling Management page, each group and config has a Scale Up and a Scale Down button. While an override is in effect the card shows an "Override" marker and a "Follow schedule" button that clears it.',
       },
       {
         heading: 'Via API',
-        body: 'Send a POST to the /manual endpoint of the group or config.',
+        body: 'Send a POST to the /manual endpoint of the group or config. A null active clears the override. An optional activeUntil makes the override expire on its own.',
         code: `# Force scale up a group
 curl -b cookies.txt -X POST \\
   http://localhost:8082/api/scaling/groups/staging/manual \\
@@ -197,18 +224,33 @@ curl -b cookies.txt -X POST \\
 # Force scale down
 curl -b cookies.txt -X POST \\
   http://localhost:8082/api/scaling/groups/staging/manual \\
-  -d '{ "active": false }'`
+  -d '{ "active": false }'
+
+# Force scale up, but only until 18:00 - after that the
+# schedule takes over again with no manual cleanup
+curl -b cookies.txt -X POST \\
+  http://localhost:8082/api/scaling/groups/staging/manual \\
+  -d '{ "active": true, "activeUntil": "2026-08-12T18:00:00Z" }'
+
+# Clear the override and return to schedule-driven behavior
+curl -b cookies.txt -X POST \\
+  http://localhost:8082/api/scaling/groups/staging/manual \\
+  -d '{ "active": null }'`
       },
       {
         heading: 'Via Custom Resource',
-        body: 'Patch the active field on the CRD. Set to null to return to schedule.',
+        body: 'Patch the active field on the CRD. Removing the field (null) returns to the schedule - setting it to false does NOT, it pins the target permanently down.',
         code: `# Force scale up
 kubectl patch scalinggroup staging -n costdeck \\
   --type merge -p '{"spec":{"active": true}}'
 
-# Return to schedule-driven behavior
+# Force scale up until a deadline, then follow the schedule again
 kubectl patch scalinggroup staging -n costdeck \\
-  --type merge -p '{"spec":{"active": null}}'`
+  --type merge -p '{"spec":{"active": true,"activeUntil":"2026-08-12T18:00:00Z"}}'
+
+# Return to schedule-driven behavior (removes the field)
+kubectl patch scalinggroup staging -n costdeck \\
+  --type merge -p '{"spec":{"active": null,"activeUntil": null}}'`
       },
       {
         heading: 'Scaling Configs (Per-Namespace)',
@@ -806,14 +848,14 @@ const apiGroups: { section: string; items: Endpoint[] }[] = [
       { method: 'GET', path: '/api/scaling/groups', description: 'List all scaling groups', auth: true },
       {
         method: 'POST', path: '/api/scaling/groups', description: 'Create a new scaling group', auth: true,
-        requestBody: '{\n  "metadata": { "name": "production" },\n  "spec": {\n    "category": "Solution",\n    "namespaces": ["frontend", "backend"],\n    "active": true,\n    "schedules": [{\n      "days": [1,2,3,4,5],\n      "startTime": "08:00",\n      "endTime": "20:00"\n    }]\n  }\n}'
+        requestBody: '{\n  "metadata": { "name": "production" },\n  "spec": {\n    "category": "Solution",\n    "namespaces": ["frontend", "backend"],\n    "schedules": [{\n      "startDay": 1,\n      "startTime": "00:00",\n      "endDay": 5,\n      "endTime": "23:59",\n      "timezone": "UTC"\n    }]\n  }\n}'
       },
       { method: 'GET', path: '/api/scaling/groups/{name}', description: 'Get a specific group', auth: true },
       { method: 'PUT', path: '/api/scaling/groups/{name}', description: 'Update a group', auth: true },
       { method: 'DELETE', path: '/api/scaling/groups/{name}', description: 'Delete a group', auth: true },
       {
-        method: 'POST', path: '/api/scaling/groups/{name}/manual', description: 'Manual override: activate or deactivate', auth: true,
-        requestBody: '{ "active": true }'
+        method: 'POST', path: '/api/scaling/groups/{name}/manual', description: 'Manual override: force up, force down, or clear (active: null) to follow the schedule', auth: true,
+        requestBody: '{ "active": true, "activeUntil": "2026-08-12T18:00:00Z" }'
       },
       { method: 'GET', path: '/api/scaling/configs', description: 'List all scaling configs', auth: true },
       { method: 'POST', path: '/api/scaling/configs', description: 'Create a new scaling config', auth: true },
