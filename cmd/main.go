@@ -22,6 +22,11 @@ import (
 	"flag"
 	"os"
 
+	// Embeds the IANA timezone database into the binary. The runtime image is
+	// gcr.io/distroless/static, which ships no /usr/share/zoneinfo, so without this
+	// every non-UTC ScalingSchedule timezone would silently resolve to UTC.
+	_ "time/tzdata"
+
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
 	"k8s.io/apimachinery/pkg/runtime"
