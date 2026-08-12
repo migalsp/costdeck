@@ -33,8 +33,16 @@ type ScalingGroupSpec struct {
 
 	// Active is the manual override for scaling.
 	// If null, the schedule is followed.
+	// If true, the group is forced to Scale Up.
+	// If false, the group is forced to Scale Down.
 	// +optional
 	Active *bool `json:"active,omitempty"`
+
+	// ActiveUntil bounds the manual override in time. When set, Active is honoured only
+	// until this timestamp; afterwards the schedule takes over again without anyone having
+	// to clear the override by hand. Ignored when Active is null.
+	// +optional
+	ActiveUntil *metav1.Time `json:"activeUntil,omitempty"`
 
 	// Schedules define periodic scaling events for the group
 	// +optional

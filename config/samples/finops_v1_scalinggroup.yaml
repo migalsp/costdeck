@@ -5,4 +5,22 @@ metadata:
     app.kubernetes.io/name: costdeck
     app.kubernetes.io/managed-by: kustomize
   name: scalinggroup-sample
-spec: {}
+spec:
+  category: Environment
+  namespaces:
+    - staging-backend
+    - staging-frontend
+  # No `active` field: the group is schedule-driven. Setting `active` here would pin the
+  # group up or down permanently and make the schedules below inert.
+  schedules:
+    # Continuous weekly window: up from Monday 00:00 straight through Friday 23:59 with no
+    # daily boundary in between, so nothing is restarted at midnight.
+    - startDay: 1 # Monday
+      startTime: "00:00"
+      endDay: 5 # Friday
+      endTime: "23:59"
+      timezone: UTC
+  # Scale-up order; reversed automatically on scale-down.
+  sequence:
+    - staging-backend
+    - staging-frontend

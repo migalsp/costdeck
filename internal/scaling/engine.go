@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
@@ -31,64 +33,179 @@ type ExternalProvider interface {
 	Discover(ctx context.Context, resourceType string, tags map[string]string) ([]finopsv1.ExternalTarget, error)
 }
 
+const (
+	minutesPerDay  = 24 * 60
+	minutesPerWeek = 7 * minutesPerDay
+)
+
+// ResolveDesiredState decides whether a group/namespace should be scaled up right now,
+// combining the manual override (bounded by activeUntil, if any) with the schedules.
+func (e *Engine) ResolveDesiredState(schedules []finopsv1.ScalingSchedule, active *bool, activeUntil *metav1.Time) bool {
+	return e.IsActiveAt(time.Now(), schedules, EffectiveOverride(active, activeUntil, time.Now()))
+}
+
+// EffectiveOverride returns the manual override that applies at the given time.
+// An override with an activeUntil deadline in the past is reported as absent, which hands
+// control back to the schedule without anyone having to clear spec.active by hand.
+func EffectiveOverride(active *bool, activeUntil *metav1.Time, now time.Time) *bool {
+	if active == nil {
+		return nil
+	}
+	if activeUntil != nil && !activeUntil.IsZero() && !now.Before(activeUntil.Time) {
+		return nil
+	}
+	return active
+}
+
 // IsActive checks if the namespace/group should be active based on schedules and manual override.
 func (e *Engine) IsActive(schedules []finopsv1.ScalingSchedule, manualActive *bool) bool {
+	return e.IsActiveAt(time.Now(), schedules, manualActive)
+}
+
+// IsActiveAt is the time-injectable core of IsActive.
+func (e *Engine) IsActiveAt(now time.Time, schedules []finopsv1.ScalingSchedule, manualActive *bool) bool {
 	// 1. Manual override takes priority if explicitly set (non-nil)
 	if manualActive != nil {
 		return *manualActive
 	}
 
-	// 2. If no manual override, check schedules
-	if len(schedules) > 0 {
-		hasValidSchedule := false
-		for _, s := range schedules {
-			if len(s.Days) == 0 {
-				continue
-			}
-			hasValidSchedule = true
-
-			now := time.Now()
-			if s.Timezone != "" {
-				loc, err := time.LoadLocation(s.Timezone)
-				if err == nil {
-					now = now.In(loc)
-				}
-			}
-
-			weekday := int(now.Weekday())
-			nowMinutes := now.Hour()*60 + now.Minute()
-
-			matchesDay := false
-			for _, d := range s.Days {
-				if d == weekday {
-					matchesDay = true
-					break
-				}
-			}
-			if !matchesDay {
-				continue
-			}
-
-			startMin := parseMinutes(s.StartTime)
-			endMin := parseMinutes(s.EndTime)
-
-			if nowMinutes >= startMin && nowMinutes <= endMin {
-				return true
-			}
+	// 2. If no manual override, check schedules. Any matching window activates.
+	hasValidSchedule := false
+	for _, s := range schedules {
+		window, ok := parseWindow(s)
+		if !ok {
+			continue
 		}
+		hasValidSchedule = true
 
-		if hasValidSchedule {
-			return false // Valid schedules exist but none are active now
+		if window.contains(weekMinute(now.In(loadLocation(s.Timezone)))) {
+			return true
 		}
 	}
 
-	return true // Default to active if no schedule and no manual override
+	if hasValidSchedule {
+		return false // Valid schedules exist but none are active now
+	}
+
+	// Default to active if there is no usable schedule and no manual override. Staying up
+	// is the fail-safe direction: a malformed schedule must never scale a workload to zero.
+	return true
 }
 
-func parseMinutes(hhmm string) int {
-	var h, m int
-	fmt.Sscanf(hhmm, "%d:%d", &h, &m)
-	return h*60 + m
+// weeklyWindow is a half-open-free interval over minutes of the week (0..10079, Sunday
+// 00:00 being 0). Expressing every schedule form in this single space is what makes
+// overnight and multi-day windows fall out for free: a window that wraps past Sunday
+// midnight simply has end < start.
+type weeklyWindow struct {
+	start int
+	end   int
+}
+
+func (w weeklyWindow) contains(m int) bool {
+	if w.start <= w.end {
+		return m >= w.start && m <= w.end
+	}
+	return m >= w.start || m <= w.end
+}
+
+func weekMinute(t time.Time) int {
+	return int(t.Weekday())*minutesPerDay + t.Hour()*60 + t.Minute()
+}
+
+// parseWindow converts a ScalingSchedule into a set of week-minute windows.
+// It reports false when the schedule carries no usable window at all.
+func parseWindow(s finopsv1.ScalingSchedule) (multiWindow, bool) {
+	startMin, okStart := parseMinutes(s.StartTime)
+	endMin, okEnd := parseMinutes(s.EndTime)
+	if !okStart || !okEnd {
+		return nil, false
+	}
+
+	// Continuous weekly window: Monday 00:00 -> Friday 23:59 is one uninterrupted
+	// interval, so there is no daily boundary left for workloads to flap on.
+	if s.StartDay != nil && s.EndDay != nil {
+		if !isWeekday(*s.StartDay) || !isWeekday(*s.EndDay) {
+			return nil, false
+		}
+		return multiWindow{{
+			start: *s.StartDay*minutesPerDay + startMin,
+			end:   *s.EndDay*minutesPerDay + endMin,
+		}}, true
+	}
+
+	if len(s.Days) == 0 {
+		return nil, false
+	}
+
+	// Daily window, repeated on every listed weekday. When EndTime is earlier than
+	// StartTime the window is overnight and runs into the following day.
+	windows := make(multiWindow, 0, len(s.Days))
+	for _, d := range s.Days {
+		if !isWeekday(d) {
+			continue
+		}
+		start := d*minutesPerDay + startMin
+		end := d*minutesPerDay + endMin
+		if endMin < startMin {
+			end += minutesPerDay
+		}
+		windows = append(windows, weeklyWindow{start: start, end: end % minutesPerWeek})
+	}
+	if len(windows) == 0 {
+		return nil, false
+	}
+	return windows, true
+}
+
+type multiWindow []weeklyWindow
+
+func (m multiWindow) contains(minute int) bool {
+	for _, w := range m {
+		if w.contains(minute) {
+			return true
+		}
+	}
+	return false
+}
+
+func isWeekday(d int) bool { return d >= 0 && d <= 6 }
+
+// parseMinutes converts "HH:MM" to minutes since midnight. It reports false for anything
+// it cannot parse, so a malformed schedule is skipped rather than silently treated as
+// midnight.
+func parseMinutes(hhmm string) (int, bool) {
+	h, m := 0, 0
+	if n, err := fmt.Sscanf(strings.TrimSpace(hhmm), "%d:%d", &h, &m); err != nil || n != 2 {
+		return 0, false
+	}
+	if h < 0 || h > 23 || m < 0 || m > 59 {
+		return 0, false
+	}
+	return h*60 + m, true
+}
+
+// locationCache memoises time.LoadLocation. It is called on every reconcile of every
+// group, and LoadLocation re-reads the embedded tzdata on each call.
+var locationCache sync.Map // string -> *time.Location
+
+// loadLocation resolves a schedule timezone, falling back to the operator's local time.
+// The IANA database is embedded via the time/tzdata import in cmd/main.go, so a failure
+// here means a genuinely unknown timezone name and is logged rather than swallowed.
+func loadLocation(name string) *time.Location {
+	if name == "" {
+		return time.Local
+	}
+	if cached, ok := locationCache.Load(name); ok {
+		return cached.(*time.Location)
+	}
+
+	loc, err := time.LoadLocation(name)
+	if err != nil {
+		log.Log.Error(err, "Could not load schedule timezone, falling back to operator local time", "timezone", name)
+		loc = time.Local
+	}
+	locationCache.Store(name, loc)
+	return loc
 }
 
 // ScaleTarget handles scaling for a specific namespace.
@@ -243,8 +360,8 @@ func isExcluded(name string, exclusions []string) bool {
 		if ex == "*" {
 			return true
 		}
-		if strings.HasSuffix(ex, "*") {
-			if strings.HasPrefix(name, strings.TrimSuffix(ex, "*")) {
+		if before, ok := strings.CutSuffix(ex, "*"); ok {
+			if strings.HasPrefix(name, before) {
 				return true
 			}
 		}
@@ -261,8 +378,8 @@ func getSequenceIndex(obj client.Object, sequence []string) int {
 		if s == "*" {
 			return i
 		}
-		if strings.HasSuffix(s, "*") {
-			if strings.HasPrefix(name, strings.TrimSuffix(s, "*")) {
+		if before, ok := strings.CutSuffix(s, "*"); ok {
+			if strings.HasPrefix(name, before) {
 				return i
 			}
 		}

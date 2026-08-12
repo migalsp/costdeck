@@ -424,6 +424,16 @@ paths:
               properties:
                 active:
                   type: boolean
+                  nullable: true
+                  description: >
+                    true forces scale up, false forces scale down, null clears the override
+                    and hands control back to the schedule.
+                activeUntil:
+                  type: string
+                  format: date-time
+                  description: >
+                    Optional deadline. The override is honoured until this timestamp, after
+                    which the schedule takes over again. Must be in the future.
       responses:
         "200":
           description: Override applied
@@ -497,6 +507,16 @@ paths:
               properties:
                 active:
                   type: boolean
+                  nullable: true
+                  description: >
+                    true forces scale up, false forces scale down, null clears the override
+                    and hands control back to the schedule.
+                activeUntil:
+                  type: string
+                  format: date-time
+                  description: >
+                    Optional deadline. The override is honoured until this timestamp, after
+                    which the schedule takes over again. Must be in the future.
       responses:
         "200":
           description: Override applied
@@ -692,6 +712,12 @@ components:
                 type: string
             active:
               type: boolean
+              nullable: true
+              description: Manual override. Null (absent) means the schedule is followed.
+            activeUntil:
+              type: string
+              format: date-time
+              description: Optional expiry for the manual override.
             schedules:
               type: array
               items:
@@ -716,6 +742,12 @@ components:
               type: string
             active:
               type: boolean
+              nullable: true
+              description: Manual override. Null (absent) means the schedule is followed.
+            activeUntil:
+              type: string
+              format: date-time
+              description: Optional expiry for the manual override.
             schedules:
               type: array
               items:
@@ -723,11 +755,30 @@ components:
 
     ScalingSchedule:
       type: object
+      description: >
+        One availability window. Either a daily window (days + startTime/endTime, where an
+        endTime earlier than startTime runs overnight into the next day) or a continuous
+        multi-day window (startDay/endDay), which may wrap through Sunday.
       properties:
         days:
           type: array
+          description: Weekdays the daily window applies to (0 = Sunday). Ignored when startDay/endDay are set.
           items:
             type: integer
+            minimum: 0
+            maximum: 6
+        startDay:
+          type: integer
+          minimum: 0
+          maximum: 6
+          description: Weekday a continuous window opens on. Must be set together with endDay.
+          example: 1
+        endDay:
+          type: integer
+          minimum: 0
+          maximum: 6
+          description: Weekday a continuous window closes on. Must be set together with startDay.
+          example: 5
         startTime:
           type: string
           example: "08:00"

@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -59,11 +60,12 @@ func (r *ScalingGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 
 	// 2. Determine desired state
-	targetActive := r.Engine.IsActive(group.Spec.Schedules, group.Spec.Active)
+	targetActive := r.Engine.ResolveDesiredState(group.Spec.Schedules, group.Spec.Active, group.Spec.ActiveUntil)
 	if val, ok := group.Annotations["costdeck.io/manual-override"]; ok {
-		if val == "ScaledUp" {
+		switch val {
+		case "ScaledUp":
 			targetActive = true
-		} else if val == "ScaledDown" {
+		case "ScaledDown":
 			targetActive = false
 		}
 	}
@@ -153,11 +155,8 @@ func (r *ScalingGroupReconciler) getScalingStages(group *finopsv1.ScalingGroup, 
 		for _, ns := range managedNamespaces {
 			found := false
 			for _, stage := range stages {
-				for _, sn := range stage {
-					if sn == ns {
-						found = true
-						break
-					}
+				if slices.Contains(stage, ns) {
+					found = true
 				}
 				if found {
 					break
@@ -233,8 +232,8 @@ func (r *ScalingGroupReconciler) reconcileK8sTarget(ctx context.Context, group *
 	nsKeyPrefix := ns + "/"
 	nsReplicas := make(map[string]int32)
 	for k, v := range group.Status.OriginalReplicas {
-		if strings.HasPrefix(k, nsKeyPrefix) {
-			nsReplicas[strings.TrimPrefix(k, nsKeyPrefix)] = v
+		if after, ok := strings.CutPrefix(k, nsKeyPrefix); ok {
+			nsReplicas[after] = v
 		}
 	}
 
@@ -265,11 +264,8 @@ func (r *ScalingGroupReconciler) emitScalingEvents(group *finopsv1.ScalingGroup,
 	if len(blockingNamespaces) > 0 {
 		stageNumber := 0
 		for idx, stage := range stages {
-			for _, sNs := range stage {
-				if sNs == blockingNamespaces[0] {
-					stageNumber = idx + 1
-					break
-				}
+			if slices.Contains(stage, blockingNamespaces[0]) {
+				stageNumber = idx + 1
 			}
 			if stageNumber != 0 {
 				break
