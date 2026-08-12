@@ -26,7 +26,10 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.25"
+          # Read the version from go.mod. setup-go pins GOTOOLCHAIN=local, so a hardcoded
+          # version that drifts below the go directive fails the build outright instead of
+          # transparently fetching a newer toolchain.
+          go-version-file: go.mod
           cache: true
 
       - name: Setup Node
