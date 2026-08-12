@@ -123,7 +123,7 @@ func (s *Server) StartMCPServerLoop(ctx context.Context) {
 // ─── Tool Execution Handlers ────────────────────────────────────────────────
 
 func (s *Server) mcpGetNamespaceStatusHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	args, ok := request.Params.Arguments.(map[string]interface{})
+	args, ok := request.Params.Arguments.(map[string]any)
 	if !ok {
 		return mcp.NewToolResultError("invalid arguments format"), nil
 	}
@@ -144,7 +144,7 @@ func (s *Server) mcpGetNamespaceStatusHandler(ctx context.Context, request mcp.C
 }
 
 func (s *Server) mcpScaleGroupHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	args, ok := request.Params.Arguments.(map[string]interface{})
+	args, ok := request.Params.Arguments.(map[string]any)
 	if !ok {
 		return mcp.NewToolResultError("invalid arguments format"), nil
 	}
@@ -167,7 +167,7 @@ func (s *Server) mcpScaleGroupHandler(ctx context.Context, request mcp.CallToolR
 }
 
 func (s *Server) mcpScaleConfigHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	args, ok := request.Params.Arguments.(map[string]interface{})
+	args, ok := request.Params.Arguments.(map[string]any)
 	if !ok {
 		return mcp.NewToolResultError("invalid arguments format"), nil
 	}
@@ -190,7 +190,7 @@ func (s *Server) mcpScaleConfigHandler(ctx context.Context, request mcp.CallTool
 }
 
 func (s *Server) mcpOptimizeNamespaceHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	args, ok := request.Params.Arguments.(map[string]interface{})
+	args, ok := request.Params.Arguments.(map[string]any)
 	if !ok {
 		return mcp.NewToolResultError("invalid arguments format"), nil
 	}

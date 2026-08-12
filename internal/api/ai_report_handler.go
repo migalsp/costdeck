@@ -265,13 +265,14 @@ Scaling Groups (JSON): ` + string(groupBytes)
 
 	baseUrl := aiConfig.BaseURL
 	if baseUrl == "" {
-		if aiConfig.Provider == "openai" {
+		switch aiConfig.Provider {
+		case "openai":
 			baseUrl = "https://api.openai.com/v1"
-		} else if aiConfig.Provider == "anthropic" {
+		case "anthropic":
 			baseUrl = "https://api.anthropic.com/v1"
-		} else if aiConfig.Provider == "gemini" {
+		case "gemini":
 			baseUrl = "https://generativelanguage.googleapis.com/v1beta"
-		} else {
+		default:
 			baseUrl = "http://localhost:11434/v1"
 		}
 	}
@@ -287,7 +288,8 @@ Scaling Groups (JSON): ` + string(groupBytes)
 	var payloadBytes []byte
 	var reqHeaders map[string]string
 
-	if aiConfig.Provider == "openai" || aiConfig.Provider == "local" {
+	switch aiConfig.Provider {
+	case "openai", "local":
 		apiUrl = strings.TrimSuffix(baseUrl, "/") + "/chat/completions"
 		reqPayload := openAIRequest{
 			Model:  aiConfig.Model,
@@ -305,14 +307,14 @@ Scaling Groups (JSON): ` + string(groupBytes)
 		if apiKey != "" {
 			reqHeaders["Authorization"] = "Bearer " + apiKey
 		}
-	} else if aiConfig.Provider == "anthropic" {
+	case "anthropic":
 		apiUrl = strings.TrimSuffix(baseUrl, "/") + "/messages"
-		reqPayload := map[string]interface{}{
+		reqPayload := map[string]any{
 			"model":      aiConfig.Model,
 			"max_tokens": 4096,
 			"stream":     true,
 			"system":     systemPrompt,
-			"messages": []map[string]interface{}{
+			"messages": []map[string]any{
 				{"role": "user", "content": userPrompt},
 			},
 		}
@@ -325,18 +327,18 @@ Scaling Groups (JSON): ` + string(groupBytes)
 			"x-api-key":         apiKey,
 			"anthropic-version": "2023-06-01",
 		}
-	} else if aiConfig.Provider == "gemini" {
+	case "gemini":
 		modelName := aiConfig.Model
 		if modelName == "" {
 			modelName = "gemini-1.5-pro"
 		}
 		apiUrl = fmt.Sprintf("%s/models/%s:streamGenerateContent?alt=sse", strings.TrimSuffix(baseUrl, "/"), modelName)
-		reqPayload := map[string]interface{}{
-			"system_instruction": map[string]interface{}{
-				"parts": map[string]interface{}{"text": systemPrompt},
+		reqPayload := map[string]any{
+			"system_instruction": map[string]any{
+				"parts": map[string]any{"text": systemPrompt},
 			},
-			"contents": []map[string]interface{}{
-				{"role": "user", "parts": []map[string]interface{}{{"text": userPrompt}}},
+			"contents": []map[string]any{
+				{"role": "user", "parts": []map[string]any{{"text": userPrompt}}},
 			},
 		}
 		payloadBytes, _ = json.Marshal(reqPayload)
@@ -387,25 +389,26 @@ Scaling Groups (JSON): ` + string(groupBytes)
 			continue
 		}
 
-		if strings.HasPrefix(line, "data: ") {
-			dataStr := strings.TrimPrefix(line, "data: ")
+		if after, ok0 := strings.CutPrefix(line, "data: "); ok0 {
+			dataStr := after
 			var textChunk string
 
-			if aiConfig.Provider == "openai" || aiConfig.Provider == "local" {
+			switch aiConfig.Provider {
+			case "openai", "local":
 				var chunk openAIStreamResp
 				if err := json.Unmarshal([]byte(dataStr), &chunk); err == nil {
 					if len(chunk.Choices) > 0 {
 						textChunk = chunk.Choices[0].Delta.Content
 					}
 				}
-			} else if aiConfig.Provider == "anthropic" {
+			case "anthropic":
 				var chunk anthropicStreamResp
 				if err := json.Unmarshal([]byte(dataStr), &chunk); err == nil {
 					if chunk.Type == "content_block_delta" {
 						textChunk = chunk.Delta.Text
 					}
 				}
-			} else if aiConfig.Provider == "gemini" {
+			case "gemini":
 				var chunk geminiStreamResp
 				if err := json.Unmarshal([]byte(dataStr), &chunk); err == nil {
 					if len(chunk.Candidates) > 0 && len(chunk.Candidates[0].Content.Parts) > 0 {

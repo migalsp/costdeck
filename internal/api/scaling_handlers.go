@@ -2,12 +2,15 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -118,26 +121,75 @@ func (s *Server) handleScalingGroupActions(w http.ResponseWriter, r *http.Reques
 	}
 }
 
-func (s *Server) handleScalingGroupManual(w http.ResponseWriter, r *http.Request, group *finopsv1.ScalingGroup) {
+// manualOverrideRequest is the payload of the /manual endpoints.
+//
+// A null (or omitted) "active" clears the override and hands control back to the
+// schedule -- this is the only way out of a forced state, so it must stay supported.
+// An optional "activeUntil" bounds the override in time.
+type manualOverrideRequest struct {
+	Active      *bool        `json:"active"`
+	ActiveUntil *metav1.Time `json:"activeUntil,omitempty"`
+}
+
+// resolve normalises the request: an override deadline is meaningless without an
+// override, and a deadline already in the past would be a no-op the user cannot see.
+func (req manualOverrideRequest) resolve() (*bool, *metav1.Time, error) {
+	if req.Active == nil {
+		return nil, nil, nil
+	}
+	if req.ActiveUntil == nil || req.ActiveUntil.IsZero() {
+		return req.Active, nil, nil
+	}
+	if !req.ActiveUntil.After(time.Now()) {
+		return nil, nil, fmt.Errorf("activeUntil must be in the future")
+	}
+	return req.Active, req.ActiveUntil, nil
+}
+
+func decodeManualOverride(w http.ResponseWriter, r *http.Request) (*bool, *metav1.Time, bool) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
+		return nil, nil, false
 	}
 
-	var req struct {
-		Active *bool `json:"active"`
-	}
+	var req manualOverrideRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
+		return nil, nil, false
+	}
+
+	active, until, err := req.resolve()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return nil, nil, false
+	}
+	return active, until, true
+}
+
+func (s *Server) handleScalingGroupManual(w http.ResponseWriter, r *http.Request, group *finopsv1.ScalingGroup) {
+	active, until, ok := decodeManualOverride(w, r)
+	if !ok {
 		return
 	}
 
-	group.Spec.Active = req.Active
-	if err := s.Client.Update(r.Context(), group); err != nil {
+	ctx := r.Context()
+	key := client.ObjectKeyFromObject(group)
+	updated := &finopsv1.ScalingGroup{}
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		if err := s.Client.Get(ctx, key, updated); err != nil {
+			return err
+		}
+		updated.Spec.Active = active
+		updated.Spec.ActiveUntil = until
+		return s.Client.Update(ctx, updated)
+	})
+	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	json.NewEncoder(w).Encode(group)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(updated)
 }
 
 func (s *Server) handleScalingGroupEvents(w http.ResponseWriter, r *http.Request, group *finopsv1.ScalingGroup) {
@@ -272,25 +324,29 @@ func (s *Server) handleScalingConfigActions(w http.ResponseWriter, r *http.Reque
 }
 
 func (s *Server) handleScalingConfigManual(w http.ResponseWriter, r *http.Request, config *finopsv1.ScalingConfig) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	active, until, ok := decodeManualOverride(w, r)
+	if !ok {
 		return
 	}
 
-	var req struct {
-		Active *bool `json:"active"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	config.Spec.Active = req.Active
-	if err := s.Client.Update(r.Context(), config); err != nil {
+	ctx := r.Context()
+	key := client.ObjectKeyFromObject(config)
+	updated := &finopsv1.ScalingConfig{}
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		if err := s.Client.Get(ctx, key, updated); err != nil {
+			return err
+		}
+		updated.Spec.Active = active
+		updated.Spec.ActiveUntil = until
+		return s.Client.Update(ctx, updated)
+	})
+	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	json.NewEncoder(w).Encode(config)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(updated)
 }
 
 func getOperatorNamespace() string {

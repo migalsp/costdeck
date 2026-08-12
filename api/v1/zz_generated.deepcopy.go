@@ -676,6 +676,10 @@ func (in *ScalingConfigSpec) DeepCopyInto(out *ScalingConfigSpec) {
 		*out = new(bool)
 		**out = **in
 	}
+	if in.ActiveUntil != nil {
+		in, out := &in.ActiveUntil, &out.ActiveUntil
+		*out = (*in).DeepCopy()
+	}
 	if in.Schedules != nil {
 		in, out := &in.Schedules, &out.Schedules
 		*out = make([]ScalingSchedule, len(*in))
@@ -822,6 +826,10 @@ func (in *ScalingGroupSpec) DeepCopyInto(out *ScalingGroupSpec) {
 		*out = new(bool)
 		**out = **in
 	}
+	if in.ActiveUntil != nil {
+		in, out := &in.ActiveUntil, &out.ActiveUntil
+		*out = (*in).DeepCopy()
+	}
 	if in.Schedules != nil {
 		in, out := &in.Schedules, &out.Schedules
 		*out = make([]ScalingSchedule, len(*in))
@@ -898,6 +906,16 @@ func (in *ScalingSchedule) DeepCopyInto(out *ScalingSchedule) {
 		in, out := &in.Days, &out.Days
 		*out = make([]int, len(*in))
 		copy(*out, *in)
+	}
+	if in.StartDay != nil {
+		in, out := &in.StartDay, &out.StartDay
+		*out = new(int)
+		**out = **in
+	}
+	if in.EndDay != nil {
+		in, out := &in.EndDay, &out.EndDay
+		*out = new(int)
+		**out = **in
 	}
 }
 

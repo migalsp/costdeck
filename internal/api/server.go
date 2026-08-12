@@ -33,7 +33,7 @@ type Server struct {
 	K8sClient     kubernetes.Interface
 	MetricsClient metricsv.Interface
 	Port          string
-	history       []map[string]interface{}
+	history       []map[string]any
 }
 
 //go:embed ui/*
@@ -157,7 +157,7 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request) {
 	// Check if AWS is enabled from CostDeckConfig CR
 	if config.Spec.Providers.AWS == nil || !config.Spec.Providers.AWS.Enabled {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode([]interface{}{})
+		json.NewEncoder(w).Encode([]any{})
 		return
 	}
 
@@ -318,8 +318,8 @@ func (s *Server) servePods(w http.ResponseWriter, r *http.Request, nsName string
 			memLim.Add(*c.Resources.Limits.Memory())
 		}
 
-		cpuU, _ := podMetricsMapCPU[p.Name]
-		memU, _ := podMetricsMapMem[p.Name]
+		cpuU := podMetricsMapCPU[p.Name]
+		memU := podMetricsMapMem[p.Name]
 		if cpuU == "" {
 			cpuU = "0"
 		}
@@ -391,7 +391,7 @@ func (s *Server) handleClusterNodes(w http.ResponseWriter, r *http.Request) {
 	var totalCapacityCPU, totalCapacityMem resource.Quantity
 	var totalUsageCPU, totalUsageMem resource.Quantity
 	var totalRequestedCPU, totalRequestedMem resource.Quantity
-	var nodeInfos []map[string]interface{}
+	var nodeInfos []map[string]any
 
 	for _, n := range nodes.Items {
 		info := s.gatherNodeInfo(n, nodeMetricsMap, nodeReqCPU, nodeReqMem)
@@ -413,17 +413,17 @@ func (s *Server) handleClusterNodes(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	response := map[string]interface{}{
+	response := map[string]any{
 		"k8sVersion": k8sVer,
-		"totalCapacity": map[string]interface{}{
+		"totalCapacity": map[string]any{
 			"cpu": totalCapacityCPU.AsApproximateFloat64(),
 			"mem": totalCapacityMem.Value(),
 		},
-		"totalUsage": map[string]interface{}{
+		"totalUsage": map[string]any{
 			"cpu": totalUsageCPU.AsApproximateFloat64(),
 			"mem": totalUsageMem.Value(),
 		},
-		"totalRequested": map[string]interface{}{
+		"totalRequested": map[string]any{
 			"cpu": totalRequestedCPU.AsApproximateFloat64(),
 			"mem": totalRequestedMem.Value(),
 		},
@@ -514,7 +514,7 @@ func (s *Server) calculatePodRequests(pod corev1.Pod) (*resource.Quantity, *reso
 	return reqCPU, reqMem
 }
 
-func (s *Server) gatherNodeInfo(n corev1.Node, nodeMetricsMap map[string]corev1.ResourceList, nodeReqCPU, nodeReqMem map[string]*resource.Quantity) map[string]interface{} {
+func (s *Server) gatherNodeInfo(n corev1.Node, nodeMetricsMap map[string]corev1.ResourceList, nodeReqCPU, nodeReqMem map[string]*resource.Quantity) map[string]any {
 	capacity := n.Status.Allocatable
 	var uCPU, uMem resource.Quantity
 	if usage, ok := nodeMetricsMap[n.Name]; ok {
@@ -541,15 +541,15 @@ func (s *Server) gatherNodeInfo(n corev1.Node, nodeMetricsMap map[string]corev1.
 		}
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"name":   n.Name,
 		"status": status,
-		"cpu": map[string]interface{}{
+		"cpu": map[string]any{
 			"used":      uCPU.AsApproximateFloat64(),
 			"requested": rCPU.AsApproximateFloat64(),
 			"capacity":  capacity.Cpu().AsApproximateFloat64(),
 		},
-		"mem": map[string]interface{}{
+		"mem": map[string]any{
 			"used":      uMem.Value(),
 			"requested": rMem.Value(),
 			"capacity":  capacity.Memory().Value(),
@@ -629,7 +629,7 @@ func (s *Server) handleOperatorHealth(w http.ResponseWriter, r *http.Request) {
 		managedNamespaces = len(list.Items)
 	}
 
-	health := map[string]interface{}{
+	health := map[string]any{
 		"status":            "healthy",
 		"managedNamespaces": managedNamespaces,
 		"memoryUsage":       usageMem,
@@ -651,7 +651,7 @@ func (s *Server) handleOperatorHealth(w http.ResponseWriter, r *http.Request) {
 		s.history = s.history[1:]
 	}
 
-	response := map[string]interface{}{
+	response := map[string]any{
 		"current": health,
 		"history": s.history,
 	}
@@ -902,7 +902,8 @@ func (s *Server) getCurrentUsage(ctx context.Context, nsName string) (float64, f
 
 func (s *Server) getWorkloadOwner(ctx context.Context, nsName string, ownerReferences []metav1.OwnerReference) (string, string) {
 	for _, or := range ownerReferences {
-		if or.Kind == "ReplicaSet" {
+		switch or.Kind {
+		case "ReplicaSet":
 			var rs appsv1.ReplicaSet
 			if err := s.Client.Get(ctx, client.ObjectKey{Name: or.Name, Namespace: nsName}, &rs); err == nil {
 				for _, rsor := range rs.OwnerReferences {
@@ -911,7 +912,7 @@ func (s *Server) getWorkloadOwner(ctx context.Context, nsName string, ownerRefer
 					}
 				}
 			}
-		} else if or.Kind == "StatefulSet" {
+		case "StatefulSet":
 			return or.Name, "StatefulSet"
 		}
 	}
@@ -1086,7 +1087,8 @@ func (s *Server) handleNamespaceRevert(w http.ResponseWriter, r *http.Request, n
 	}
 
 	for _, w := range opt.Status.Workloads {
-		if w.Kind == "Deployment" {
+		switch w.Kind {
+		case "Deployment":
 			deploy := &appsv1.Deployment{}
 			if err := s.Client.Get(ctx, client.ObjectKey{Name: w.Name, Namespace: nsName}, deploy); err == nil {
 				if len(deploy.Spec.Template.Spec.Containers) > 0 {
@@ -1101,7 +1103,7 @@ func (s *Server) handleNamespaceRevert(w http.ResponseWriter, r *http.Request, n
 					s.Client.Update(ctx, deploy)
 				}
 			}
-		} else if w.Kind == "StatefulSet" {
+		case "StatefulSet":
 			sts := &appsv1.StatefulSet{}
 			if err := s.Client.Get(ctx, client.ObjectKey{Name: w.Name, Namespace: nsName}, sts); err == nil {
 				if len(sts.Spec.Template.Spec.Containers) > 0 {
@@ -1133,7 +1135,7 @@ func (s *Server) handleNamespaceOptimizationInfo(w http.ResponseWriter, r *http.
 	if err := s.Client.Get(ctx, client.ObjectKey{Name: nsName, Namespace: operatorNs}, &opt); err != nil {
 		if errors.IsNotFound(err) {
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]interface{}{"active": false})
+			json.NewEncoder(w).Encode(map[string]any{"active": false})
 			return
 		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)

@@ -45,3 +45,6 @@ ui/node_modules/
 
 # Agent specific documentation
 AGENTS.md
+
+# Locally built manager binary (see the deployment workflow in AGENTS.md)
+/manager

@@ -1,0 +1,71 @@
+version: 2
+
+# Dependabot alerts were already enabled, but without this file every advisory opened its
+# own pull request. Grouping collapses a week of noise into a handful of reviewable PRs.
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      # The Kubernetes libraries have to move together or the build breaks on mismatched
+      # apimachinery/client-go/controller-runtime versions.
+      kubernetes:
+        patterns:
+          - "k8s.io/*"
+          - "sigs.k8s.io/*"
+      golang-x:
+        patterns:
+          - "golang.org/x/*"
+      go-minor-and-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: npm
+    directory: /ui
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      # The UI is compiled during the container build and only the emitted static assets
+      # are embedded, so build-time packages never reach the runtime image. They are still
+      # worth updating, just not one PR at a time.
+      dev-toolchain:
+        dependency-type: development
+        patterns:
+          - "*"
+      production:
+        dependency-type: production
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      actions:
+        patterns:
+          - "*"
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: "chore(deps)"

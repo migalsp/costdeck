@@ -54,7 +54,7 @@ type promResponse struct {
 		ResultType string `json:"resultType"`
 		Result     []struct {
 			Metric map[string]string `json:"metric"`
-			Value  [2]interface{}    `json:"value"` // [timestamp, "value"]
+			Value  [2]any            `json:"value"` // [timestamp, "value"]
 		} `json:"result"`
 	} `json:"data"`
 	Error    string `json:"error,omitempty"`

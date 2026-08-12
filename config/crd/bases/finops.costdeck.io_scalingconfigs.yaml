@@ -46,6 +46,13 @@ spec:
                   If true, the namespace is forced to Scale Up.
                   If false, the namespace is forced to Scale Down.
                 type: boolean
+              activeUntil:
+                description: |-
+                  ActiveUntil bounds the manual override in time. When set, Active is honoured only
+                  until this timestamp; afterwards the schedule takes over again without anyone having
+                  to clear the override by hand. Ignored when Active is null.
+                format: date-time
+                type: string
               exclusions:
                 description: Exclusions lists resources that should never be scaled
                   down
@@ -56,34 +63,66 @@ spec:
               schedules:
                 description: Schedules define periodic scaling events
                 items:
-                  description: ScalingSchedule defines when a namespace should be
-                    active
+                  description: |-
+                    ScalingSchedule defines when a namespace should be active.
+
+                    It supports two mutually exclusive forms:
+
+                      - Daily window (legacy, default): "days" lists the weekdays the window applies to and
+                        the window runs from StartTime to EndTime. If EndTime is earlier than StartTime the
+                        window is treated as overnight and spills into the following day.
+                      - Continuous weekly window: set StartDay and EndDay to define a single uninterrupted
+                        window such as Monday 00:00 -> Friday 23:59. "days" is ignored in this form. The
+                        window may wrap through Sunday midnight (e.g. Friday 20:00 -> Monday 08:00).
                   properties:
                     days:
-                      description: Days of week (0-6, 0=Sunday)
+                      description: |-
+                        Days of week the daily window applies to (0-6, 0=Sunday).
+                        Required unless StartDay/EndDay are used.
                       items:
                         type: integer
                       maxItems: 7
-                      minItems: 1
                       type: array
+                      x-kubernetes-list-type: atomic
+                    endDay:
+                      description: |-
+                        EndDay is the weekday a continuous weekly window closes on (0-6, 0=Sunday).
+                        Must be set together with StartDay. When set, Days is ignored.
+                      maximum: 6
+                      minimum: 0
+                      type: integer
                     endTime:
-                      description: EndTime in HH:MM format (local operator time)
+                      description: EndTime in HH:MM format
                       pattern: ^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$
                       type: string
+                    startDay:
+                      description: |-
+                        StartDay is the weekday a continuous weekly window opens on (0-6, 0=Sunday).
+                        Must be set together with EndDay. When set, Days is ignored.
+                      maximum: 6
+                      minimum: 0
+                      type: integer
                     startTime:
-                      description: StartTime in HH:MM format (local operator time)
+                      description: StartTime in HH:MM format
                       pattern: ^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$
                       type: string
                     timezone:
                       description: |-
-                        Timezone for the schedule (e.g. "UTC", "America/New_York")
+                        Timezone for the schedule (e.g. "UTC", "America/New_York").
                         If empty, local operator time is used.
                       type: string
                   required:
-                  - days
                   - endTime
                   - startTime
                   type: object
+                  x-kubernetes-validations:
+                  - message: startDay and endDay must be set together to define a
+                      continuous weekly window
+                    rule: has(self.startDay) == has(self.endDay)
+                  - message: a schedule needs either days (daily window) or startDay
+                      and endDay (continuous weekly window)
+                    rule: has(self.startDay) || (has(self.days) && size(self.days)
+                      > 0)
                 type: array
                 x-kubernetes-list-type: atomic
               sequence:

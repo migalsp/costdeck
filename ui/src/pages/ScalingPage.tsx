@@ -12,14 +12,17 @@ import {
   Cloud,
   Database,
   ChevronUp,
-  ChevronDown
+  ChevronDown,
+  RotateCcw
 } from 'lucide-react'
 import ScalingConfigModal from '../components/ScalingConfigModal'
 import ScalingPipelineModal from '../components/ScalingPipelineModal'
 import { AWSLogo } from '../components/ProviderLogos'
 
 interface ScalingSchedule {
-  days: number[];
+  days?: number[];
+  startDay?: number;
+  endDay?: number;
   startTime: string;
   endTime: string;
   timezone?: string;
@@ -33,6 +36,7 @@ interface ScalingGroup {
     category: string;
     namespaces: string[];
     active?: boolean;
+    activeUntil?: string;
     schedules?: ScalingSchedule[];
     sequence?: string[];
     exclusions?: string[];
@@ -57,6 +61,7 @@ interface ScalingConfig {
   spec: {
     targetNamespace: string;
     active?: boolean;
+    activeUntil?: string;
     schedules?: ScalingSchedule[];
     sequence?: string[];
     exclusions?: string[];
@@ -190,11 +195,13 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           metadata: { name: sanitizedGroupUrlName },
-          spec: { 
+          spec: {
             ...(editingGroup?.spec || {}),
-            category: newGroupCategory, 
+            category: newGroupCategory,
             namespaces: selectedNS,
-            active: editingGroup ? editingGroup.spec.active : true,
+            // A new group must start schedule-driven. Pinning active:true here used to
+            // make every freshly created group permanently immune to its own schedule.
+            ...(editingGroup?.spec.active !== undefined ? { active: editingGroup.spec.active } : {}),
             featureFlags: {
               skipOnTimeout,
               timeoutMinutes: skipOnTimeout ? timeoutMinutes : 5,
@@ -218,7 +225,9 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
     }
   };
 
-  const handleManualScale = async (type: 'group' | 'config', name: string, active: boolean) => {
+  // `active` of null clears spec.active so the schedule takes control again. Without it
+  // a single Scale Up / Scale Down click pins the target forever.
+  const handleManualScale = async (type: 'group' | 'config', name: string, active: boolean | null) => {
     const key = `${type}-${name}`;
     if (isScalingMap[key]) return;
     
@@ -271,9 +280,12 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
     const isGroup = groups.some(g => g.metadata.name === editingPolicy.name);
     const endpoint = isGroup ? `/api/scaling/groups/${editingPolicy.name}` : `/api/scaling/configs/${editingPolicy.name}`;
     
-    // When saving schedule, clear manual override so schedule takes control
+    // When saving schedule, clear manual override so schedule takes control.
+    // activeUntil has to go with it: a deadline without an override is meaningless and
+    // the API rejects it.
     if (editingPolicy.mode === 'schedule') {
       delete updatedSpec.active;
+      delete updatedSpec.activeUntil;
     }
     
     try {
@@ -329,8 +341,10 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          // No `active` override: the config starts schedule-driven, and with no schedule
+          // yet defined the operator keeps the namespace up by default.
           metadata: { name: `config-${ns}` },
-          spec: { targetNamespace: ns, active: true }
+          spec: { targetNamespace: ns }
         })
       });
       fetchData();
@@ -342,6 +356,43 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
   const toggleNS = (ns: string) => {
     setSelectedNS(prev => 
       prev.includes(ns) ? prev.filter(n => n !== ns) : [...prev, ns]
+    );
+  };
+
+  // A manual override (spec.active) fully disables the schedule until it is cleared.
+  // That state has to be visible, and it has to be reversible from the UI.
+  const OverrideBanner = ({ spec, onClear, busy }: {
+    spec: { active?: boolean; activeUntil?: string };
+    onClear: () => void;
+    busy?: boolean;
+  }) => {
+    if (spec.active === undefined || spec.active === null) return null;
+    const expiry = spec.activeUntil ? new Date(spec.activeUntil) : null;
+    const expired = expiry !== null && expiry.getTime() <= Date.now();
+    return (
+      <div className={`mb-3 flex items-center gap-2 px-3 py-2 rounded-xl border text-[11px] font-bold ${
+        expired ? 'bg-slate-50 border-slate-200 text-slate-500' : 'bg-amber-50 border-amber-200 text-amber-700'
+      }`}>
+        <Power size={13} className="shrink-0" />
+        <span className="flex-1 leading-snug">
+          {expired ? (
+            <>Override expired — schedule is back in control</>
+          ) : (
+            <>
+              Manual override: forced {spec.active ? 'UP' : 'DOWN'} — schedule ignored
+              {expiry && <> until {expiry.toLocaleString()}</>}
+            </>
+          )}
+        </span>
+        <button
+          onClick={(e) => { e.stopPropagation(); onClear(); }}
+          disabled={busy}
+          className="shrink-0 flex items-center gap-1 px-2 py-1 rounded-lg bg-white/70 hover:bg-white border border-current/20 uppercase tracking-wider transition-colors disabled:opacity-50"
+          title="Clear the override and follow the schedule again"
+        >
+          <RotateCcw size={11} /> Follow schedule
+        </button>
+      </div>
     );
   };
 
@@ -399,6 +450,12 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
             <Plus size={14} className="rotate-45" /></button>
         </div>
       </div>
+
+      <OverrideBanner
+        spec={group.spec}
+        busy={isScalingMap[`group-${group.metadata.name}`]}
+        onClear={() => handleManualScale('group', group.metadata.name, null)}
+      />
 
       {/* Namespaces */}
       <div className="mb-3">
@@ -469,7 +526,8 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
   const ConfigCard = ({ config }: { config: ScalingConfig }) => {
     const managedBy = getGroupForNamespace(config.spec.targetNamespace);
     const phase = getPhaseColor(config.status?.phase);
-    
+    const overridden = config.spec.active !== undefined && config.spec.active !== null;
+
     // Convert CamelCase to spaced strings e.g., ScaledUp -> Scaled Up
     const parsePhase = (phaseStr?: string) => {
       if (!phaseStr) return 'Idle';
@@ -489,11 +547,19 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
         <h4 className="font-bold text-slate-800 text-[15px] leading-tight break-words" title={config.spec.targetNamespace}>
           {config.spec.targetNamespace}
         </h4>
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 flex-wrap">
           <div className={`w-2 h-2 rounded-full shrink-0 ${phase.dot}`} />
           <span className={`text-[12px] font-bold tracking-wide ${phase.text}`}>
             {parsePhase(config.status?.phase)}
           </span>
+          {overridden && (
+            <span
+              className="px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 text-[10px] font-black uppercase tracking-wider"
+              title={`Manual override: forced ${config.spec.active ? 'up' : 'down'}, schedule ignored${config.spec.activeUntil ? ` until ${new Date(config.spec.activeUntil).toLocaleString()}` : ''}`}
+            >
+              Override
+            </span>
+          )}
         </div>
         <span className={`text-[12px] font-bold leading-none block break-words ${managedBy ? 'text-slate-800' : 'text-slate-400'}`}>
           {managedBy ? `Managed by: ${managedBy}` : 'Self-managed'}
@@ -524,6 +590,13 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
           </button>
         </div>
         <div className="flex gap-1">
+          {overridden && (
+            <button onClick={() => handleManualScale('config', config.metadata.name, null)}
+              disabled={isScalingMap[`config-${config.metadata.name}`]}
+              className="p-1.5 rounded-lg bg-amber-50 text-amber-600 hover:bg-amber-100 transition-colors disabled:opacity-50"
+              title="Clear the manual override and follow the schedule again">
+              <RotateCcw size={14} /></button>
+          )}
           <button onClick={() => setEditingPolicy({ mode: 'schedule', name: config.metadata.name, spec: config.spec })}
             className="p-1.5 text-slate-400 hover:bg-indigo-50 hover:text-indigo-500 rounded-lg transition-colors" title="Schedule">
             <CalendarClock size={14} /></button>

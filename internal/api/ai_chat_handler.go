@@ -144,13 +144,14 @@ If you need to ask the user a clarifying question (such as which resource to ins
 
 	baseUrl := aiConfig.BaseURL
 	if baseUrl == "" {
-		if aiConfig.Provider == "openai" {
+		switch aiConfig.Provider {
+		case "openai":
 			baseUrl = "https://api.openai.com/v1"
-		} else if aiConfig.Provider == "anthropic" {
+		case "anthropic":
 			baseUrl = "https://api.anthropic.com/v1"
-		} else if aiConfig.Provider == "gemini" {
+		case "gemini":
 			baseUrl = "https://generativelanguage.googleapis.com/v1beta"
-		} else {
+		default:
 			baseUrl = "http://localhost:11434/v1"
 		}
 	}
@@ -172,35 +173,36 @@ If you need to ask the user a clarifying question (such as which resource to ins
 	}
 
 	// Prepare initial generic messages
-	var messages []map[string]interface{}
+	var messages []map[string]any
 	for _, m := range req.Messages {
 		if m.Role != "system" {
-			messages = append(messages, map[string]interface{}{"role": m.Role, "content": m.Content})
+			messages = append(messages, map[string]any{"role": m.Role, "content": m.Content})
 		}
 	}
 	if len(req.Messages) == 0 {
-		messages = append(messages, map[string]interface{}{"role": "user", "content": req.Prompt})
+		messages = append(messages, map[string]any{"role": "user", "content": req.Prompt})
 	}
 
 	// Tool call loop (max 3 iterations)
 	maxIterations := 3
-	for i := 0; i < maxIterations; i++ {
+	for range maxIterations {
 		var reqPayload []byte
 		var apiUrl string
 		reqHeaders := map[string]string{"Content-Type": "application/json"}
 
-		if aiConfig.Provider == "openai" || aiConfig.Provider == "local" {
+		switch aiConfig.Provider {
+		case "openai", "local":
 			apiUrl = strings.TrimSuffix(baseUrl, "/") + "/chat/completions"
 			if apiKey != "" {
 				reqHeaders["Authorization"] = "Bearer " + apiKey
 			}
 			reqPayload = s.buildOpenAIRequest(aiConfig, systemPrompt, messages)
-		} else if aiConfig.Provider == "anthropic" {
+		case "anthropic":
 			apiUrl = strings.TrimSuffix(baseUrl, "/") + "/messages"
 			reqHeaders["x-api-key"] = apiKey
 			reqHeaders["anthropic-version"] = "2023-06-01"
 			reqPayload = s.buildAnthropicRequest(aiConfig, systemPrompt, messages)
-		} else if aiConfig.Provider == "gemini" {
+		case "gemini":
 			modelName := aiConfig.Model
 			if modelName == "" {
 				modelName = "gemini-1.5-flash"
@@ -265,9 +267,9 @@ If you need to ask the user a clarifying question (such as which resource to ins
 
 		scanner := bufio.NewScanner(resp.Body)
 		fullAssistantText := ""
-		
+
 		var toolCalls []*ToolCall
-		
+
 		for scanner.Scan() {
 			line := scanner.Text()
 			if !strings.HasPrefix(line, "data: ") {
@@ -309,7 +311,7 @@ If you need to ask the user a clarifying question (such as which resource to ins
 						// Find or create
 						var currentTC *ToolCall
 						for _, t := range toolCalls {
-							// Assuming index maps to the position in the array. 
+							// Assuming index maps to the position in the array.
 							// Actually it's easier to just match by index, but we don't store index.
 							// For simplicity, we just use the length or assume sequentially streamed.
 							if t.ID == tc.Id && tc.Id != "" {
@@ -324,12 +326,12 @@ If you need to ask the user a clarifying question (such as which resource to ins
 						if currentTC == nil && tc.Index < len(toolCalls) {
 							currentTC = toolCalls[tc.Index]
 						}
-						
+
 						if currentTC == nil {
 							currentTC = &ToolCall{}
 							toolCalls = append(toolCalls, currentTC)
 						}
-						
+
 						if tc.Id != "" {
 							currentTC.ID = tc.Id
 						}
@@ -356,7 +358,7 @@ If you need to ask the user a clarifying question (such as which resource to ins
 				json.Unmarshal([]byte(data), &sResp)
 				if sResp.Type == "content_block_start" && sResp.ContentBlock.Name != "" {
 					toolCalls = append(toolCalls, &ToolCall{
-						ID: sResp.ContentBlock.Id,
+						ID:   sResp.ContentBlock.Id,
 						Name: sResp.ContentBlock.Name,
 					})
 				} else if sResp.Type == "content_block_delta" {
@@ -373,7 +375,7 @@ If you need to ask the user a clarifying question (such as which resource to ins
 				var sResp struct {
 					Candidates []struct {
 						Content struct {
-							Parts []map[string]interface{} `json:"parts"`
+							Parts []map[string]any `json:"parts"`
 						} `json:"content"`
 					} `json:"candidates"`
 				}
@@ -385,10 +387,10 @@ If you need to ask the user a clarifying question (such as which resource to ins
 								chunkText += textStr
 							}
 						}
-						
+
 						if fcObj, ok := part["functionCall"]; ok && fcObj != nil {
 							// Each functionCall part is a separate tool call!
-							if fcMap, ok := fcObj.(map[string]interface{}); ok {
+							if fcMap, ok := fcObj.(map[string]any); ok {
 								tc := &ToolCall{}
 								if ts, ok := part["thought_signature"].(string); ok && ts != "" {
 									tc.ThoughtSignature = ts
@@ -403,7 +405,7 @@ If you need to ask the user a clarifying question (such as which resource to ins
 								if name, ok := fcMap["name"].(string); ok {
 									tc.Name = name
 								}
-								if argsMap, ok := fcMap["args"].(map[string]interface{}); ok {
+								if argsMap, ok := fcMap["args"].(map[string]any); ok {
 									argsBytes, _ := json.Marshal(argsMap)
 									tc.Args = string(argsBytes)
 								}
@@ -427,7 +429,7 @@ If you need to ask the user a clarifying question (such as which resource to ins
 		if len(toolCalls) == 0 {
 			// Append the final assistant message so that history is correct if needed
 			if fullAssistantText != "" {
-				messages = append(messages, map[string]interface{}{
+				messages = append(messages, map[string]any{
 					"role":    "assistant",
 					"content": fullAssistantText,
 				})
@@ -443,7 +445,7 @@ If you need to ask the user a clarifying question (such as which resource to ins
 
 		// Execute all tools sequentially
 		for _, tc := range toolCalls {
-	
+
 			toolResult, err := s.ExecuteAITool(ctx, tc.Name, tc.Args)
 			if err != nil {
 				toolResult = fmt.Sprintf("Error executing tool: %v", err)
@@ -452,97 +454,98 @@ If you need to ask the user a clarifying question (such as which resource to ins
 		}
 
 		// Append tool calls and results to messages for the next iteration
-		if aiConfig.Provider == "openai" || aiConfig.Provider == "local" {
-			var oaiToolCalls []map[string]interface{}
+		switch aiConfig.Provider {
+		case "openai", "local":
+			var oaiToolCalls []map[string]any
 			for i, tc := range toolCalls {
 				id := tc.ID
 				if id == "" {
 					id = fmt.Sprintf("call_%d", i+1)
 					tc.ID = id
 				}
-				oaiToolCalls = append(oaiToolCalls, map[string]interface{}{
+				oaiToolCalls = append(oaiToolCalls, map[string]any{
 					"id":   id,
 					"type": "function",
-					"function": map[string]interface{}{
+					"function": map[string]any{
 						"name":      tc.Name,
 						"arguments": tc.Args,
 					},
 				})
 			}
-			messages = append(messages, map[string]interface{}{
-				"role":    "assistant",
-				"content": nil,
+			messages = append(messages, map[string]any{
+				"role":       "assistant",
+				"content":    nil,
 				"tool_calls": oaiToolCalls,
 			})
 			for _, res := range results {
-				messages = append(messages, map[string]interface{}{
+				messages = append(messages, map[string]any{
 					"role":         "tool",
 					"tool_call_id": res.Call.ID,
 					"name":         res.Call.Name,
 					"content":      res.Result,
 				})
 			}
-		} else if aiConfig.Provider == "anthropic" {
-			contentBlocks := []map[string]interface{}{}
+		case "anthropic":
+			contentBlocks := []map[string]any{}
 			if fullAssistantText != "" {
-				contentBlocks = append(contentBlocks, map[string]interface{}{
+				contentBlocks = append(contentBlocks, map[string]any{
 					"type": "text",
 					"text": fullAssistantText,
 				})
 			}
 			for _, tc := range toolCalls {
-				var parsedArgs map[string]interface{}
+				var parsedArgs map[string]any
 				json.Unmarshal([]byte(tc.Args), &parsedArgs)
 				if parsedArgs == nil {
-					parsedArgs = make(map[string]interface{})
+					parsedArgs = make(map[string]any)
 				}
-				contentBlocks = append(contentBlocks, map[string]interface{}{
+				contentBlocks = append(contentBlocks, map[string]any{
 					"type":  "tool_use",
 					"id":    tc.ID,
 					"name":  tc.Name,
 					"input": parsedArgs,
 				})
 			}
-			
-			messages = append(messages, map[string]interface{}{
+
+			messages = append(messages, map[string]any{
 				"role":    "assistant",
 				"content": contentBlocks,
 			})
-			
-			userContent := []map[string]interface{}{}
+
+			userContent := []map[string]any{}
 			for _, res := range results {
-				userContent = append(userContent, map[string]interface{}{
+				userContent = append(userContent, map[string]any{
 					"type":        "tool_result",
 					"tool_use_id": res.Call.ID,
 					"content":     res.Result,
 				})
 			}
-			messages = append(messages, map[string]interface{}{
-				"role": "user",
+			messages = append(messages, map[string]any{
+				"role":    "user",
 				"content": userContent,
 			})
-		} else if aiConfig.Provider == "gemini" {
-			var geminiParts []map[string]interface{}
+		case "gemini":
+			var geminiParts []map[string]any
 			if fullAssistantText != "" {
-				geminiParts = append(geminiParts, map[string]interface{}{"text": fullAssistantText})
+				geminiParts = append(geminiParts, map[string]any{"text": fullAssistantText})
 			}
-			
+
 			for _, tc := range toolCalls {
-				var parsedArgs map[string]interface{}
+				var parsedArgs map[string]any
 				json.Unmarshal([]byte(tc.Args), &parsedArgs)
 				if parsedArgs == nil {
-					parsedArgs = make(map[string]interface{})
+					parsedArgs = make(map[string]any)
 				}
-				
-				fcMap := map[string]interface{}{
+
+				fcMap := map[string]any{
 					"name": tc.Name,
 					"args": parsedArgs,
 				}
 				if tc.ID != "" {
 					fcMap["id"] = tc.ID
 				}
-				
-				fcPart := map[string]interface{}{
+
+				fcPart := map[string]any{
 					"functionCall": fcMap,
 				}
 				if tc.ThoughtSignature != "" {
@@ -552,30 +555,30 @@ If you need to ask the user a clarifying question (such as which resource to ins
 				}
 				geminiParts = append(geminiParts, fcPart)
 			}
-			
-			messages = append(messages, map[string]interface{}{
+
+			messages = append(messages, map[string]any{
 				"role":  "model",
 				"parts": geminiParts,
 			})
-			
-			var userParts []map[string]interface{}
+
+			var userParts []map[string]any
 			for _, res := range results {
-				frMap := map[string]interface{}{
+				frMap := map[string]any{
 					"name": res.Call.Name,
-					"response": map[string]interface{}{
+					"response": map[string]any{
 						"result": res.Result,
 					},
 				}
 				if res.Call.ID != "" {
 					frMap["id"] = res.Call.ID
 				}
-				userParts = append(userParts, map[string]interface{}{
+				userParts = append(userParts, map[string]any{
 					"functionResponse": frMap,
 				})
 			}
-			
-			messages = append(messages, map[string]interface{}{
-				"role": "user",
+
+			messages = append(messages, map[string]any{
+				"role":  "user",
 				"parts": userParts,
 			})
 		}
@@ -584,30 +587,28 @@ If you need to ask the user a clarifying question (such as which resource to ins
 
 // ─── Builders for requests ──────────────────────────────────────────────────
 
-func (s *Server) buildOpenAIRequest(config *finopsv1.AIIntegrationConfig, systemPrompt string, msgs []map[string]interface{}) []byte {
+func (s *Server) buildOpenAIRequest(config *finopsv1.AIIntegrationConfig, systemPrompt string, msgs []map[string]any) []byte {
 	model := config.Model
 	if model == "" {
 		model = "gpt-4o"
 	}
 
-	req := map[string]interface{}{
+	req := map[string]any{
 		"model":  model,
 		"stream": true,
 	}
 
-	var formattedMsgs []map[string]interface{}
-	formattedMsgs = append(formattedMsgs, map[string]interface{}{"role": "system", "content": systemPrompt})
-	for _, m := range msgs {
-		formattedMsgs = append(formattedMsgs, m)
-	}
+	var formattedMsgs []map[string]any
+	formattedMsgs = append(formattedMsgs, map[string]any{"role": "system", "content": systemPrompt})
+	formattedMsgs = append(formattedMsgs, msgs...)
 	req["messages"] = formattedMsgs
 
 	// Add tools
-	var tools []map[string]interface{}
+	var tools []map[string]any
 	for _, t := range s.GetAITools() {
-		tools = append(tools, map[string]interface{}{
+		tools = append(tools, map[string]any{
 			"type": "function",
-			"function": map[string]interface{}{
+			"function": map[string]any{
 				"name":        t.Name,
 				"description": t.Description,
 				"parameters":  t.Parameters,
@@ -620,20 +621,20 @@ func (s *Server) buildOpenAIRequest(config *finopsv1.AIIntegrationConfig, system
 	return b
 }
 
-func (s *Server) buildAnthropicRequest(config *finopsv1.AIIntegrationConfig, systemPrompt string, msgs []map[string]interface{}) []byte {
+func (s *Server) buildAnthropicRequest(config *finopsv1.AIIntegrationConfig, systemPrompt string, msgs []map[string]any) []byte {
 	model := config.Model
 	if model == "" {
 		model = "claude-3-5-sonnet-20241022"
 	}
 
-	req := map[string]interface{}{
+	req := map[string]any{
 		"model":      model,
 		"stream":     true,
 		"max_tokens": 4096,
 		"system":     systemPrompt,
 	}
 
-	var formattedMsgs []map[string]interface{}
+	var formattedMsgs []map[string]any
 	for _, m := range msgs {
 		if m["role"] == "system" {
 			continue
@@ -643,9 +644,9 @@ func (s *Server) buildAnthropicRequest(config *finopsv1.AIIntegrationConfig, sys
 	req["messages"] = formattedMsgs
 
 	// Add tools
-	var tools []map[string]interface{}
+	var tools []map[string]any
 	for _, t := range s.GetAITools() {
-		tools = append(tools, map[string]interface{}{
+		tools = append(tools, map[string]any{
 			"name":         t.Name,
 			"description":  t.Description,
 			"input_schema": t.Parameters,
@@ -657,8 +658,8 @@ func (s *Server) buildAnthropicRequest(config *finopsv1.AIIntegrationConfig, sys
 	return b
 }
 
-func (s *Server) buildGeminiRequest(config *finopsv1.AIIntegrationConfig, systemPrompt string, msgs []map[string]interface{}) []byte {
-	var contents []map[string]interface{}
+func (s *Server) buildGeminiRequest(config *finopsv1.AIIntegrationConfig, systemPrompt string, msgs []map[string]any) []byte {
+	var contents []map[string]any
 	for _, m := range msgs {
 		role := m["role"]
 		if role == "system" {
@@ -668,51 +669,51 @@ func (s *Server) buildGeminiRequest(config *finopsv1.AIIntegrationConfig, system
 			role = "model"
 		}
 
-		var parts []map[string]interface{}
+		var parts []map[string]any
 
 		if contentStr, ok := m["content"].(string); ok && contentStr != "" {
-			parts = append(parts, map[string]interface{}{"text": contentStr})
-		} else if partsArr, ok := m["parts"].([]map[string]interface{}); ok {
+			parts = append(parts, map[string]any{"text": contentStr})
+		} else if partsArr, ok := m["parts"].([]map[string]any); ok {
 			parts = partsArr
 		}
 
 		if len(parts) > 0 {
-			contents = append(contents, map[string]interface{}{
+			contents = append(contents, map[string]any{
 				"role":  role,
 				"parts": parts,
 			})
 		}
 	}
 
-	req := map[string]interface{}{
-		"system_instruction": map[string]interface{}{
-			"parts": map[string]interface{}{"text": systemPrompt},
+	req := map[string]any{
+		"system_instruction": map[string]any{
+			"parts": map[string]any{"text": systemPrompt},
 		},
 		"contents": contents,
 	}
 
 	// Add tools
-	var funcDecls []map[string]interface{}
+	var funcDecls []map[string]any
 	for _, t := range s.GetAITools() {
 		// Convert standard schema to Gemini schema slightly
 		params := t.Parameters
 		params["type"] = "OBJECT" // Gemini needs uppercase
-		if props, ok := params["properties"].(map[string]interface{}); ok {
+		if props, ok := params["properties"].(map[string]any); ok {
 			for _, p := range props {
-				if propMap, ok := p.(map[string]interface{}); ok {
+				if propMap, ok := p.(map[string]any); ok {
 					if propType, ok := propMap["type"].(string); ok {
 						propMap["type"] = strings.ToUpper(propType)
 					}
 				}
 			}
 		}
-		funcDecls = append(funcDecls, map[string]interface{}{
+		funcDecls = append(funcDecls, map[string]any{
 			"name":        t.Name,
 			"description": t.Description,
 			"parameters":  params,
 		})
 	}
-	req["tools"] = []map[string]interface{}{
+	req["tools"] = []map[string]any{
 		{
 			"functionDeclarations": funcDecls,
 		},

@@ -561,13 +561,13 @@ func (s *Server) handleTestProvider(w http.ResponseWriter, r *http.Request, prov
 		s.testAIProvider(w, ctx, config, r)
 	case "azure":
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		json.NewEncoder(w).Encode(map[string]any{
 			"connected": false,
 			"error":     "Azure provider is not yet implemented",
 		})
 	case "gcp":
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		json.NewEncoder(w).Encode(map[string]any{
 			"connected": false,
 			"error":     "GCP provider is not yet implemented",
 		})
@@ -588,7 +588,7 @@ func (s *Server) testAWSProvider(w http.ResponseWriter, ctx context.Context, con
 			provider, err = scaling.NewAWSProviderFromCredentials(ctx, req.AccessKeyID, req.SecretAccessKey, req.Region)
 			if err != nil {
 				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(map[string]interface{}{
+				json.NewEncoder(w).Encode(map[string]any{
 					"connected": false,
 					"error":     fmt.Sprintf("Failed to initialize with provided credentials: %v", err),
 				})
@@ -601,7 +601,7 @@ func (s *Server) testAWSProvider(w http.ResponseWriter, ctx context.Context, con
 	if provider == nil {
 		if config.Spec.Providers.AWS == nil || config.Spec.Providers.AWS.SecretRef == "" {
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			json.NewEncoder(w).Encode(map[string]any{
 				"connected": false,
 				"error":     "No AWS credentials configured",
 			})
@@ -615,7 +615,7 @@ func (s *Server) testAWSProvider(w http.ResponseWriter, ctx context.Context, con
 		)
 		if err != nil {
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			json.NewEncoder(w).Encode(map[string]any{
 				"connected": false,
 				"error":     err.Error(),
 			})
@@ -625,7 +625,7 @@ func (s *Server) testAWSProvider(w http.ResponseWriter, ctx context.Context, con
 
 	if err := provider.ValidateConnectivity(ctx); err != nil {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		json.NewEncoder(w).Encode(map[string]any{
 			"connected": false,
 			"error":     err.Error(),
 		})
@@ -633,7 +633,7 @@ func (s *Server) testAWSProvider(w http.ResponseWriter, ctx context.Context, con
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	json.NewEncoder(w).Encode(map[string]any{
 		"connected": true,
 	})
 }
@@ -679,22 +679,23 @@ func (s *Server) testAIProvider(w http.ResponseWriter, ctx context.Context, conf
 	// Mock ping for test connectivity logic.
 
 	var apiUrl string
-	if providerType == "openai" {
+	switch providerType {
+	case "openai":
 		if baseUrl == "" {
 			baseUrl = "https://api.openai.com/v1"
 		}
 		apiUrl = strings.TrimSuffix(baseUrl, "/") + "/models"
-	} else if providerType == "anthropic" {
+	case "anthropic":
 		if baseUrl == "" {
 			baseUrl = "https://api.anthropic.com/v1"
 		}
 		apiUrl = strings.TrimSuffix(baseUrl, "/") + "/messages"
-	} else if providerType == "gemini" {
+	case "gemini":
 		if baseUrl == "" {
 			baseUrl = "https://generativelanguage.googleapis.com/v1beta"
 		}
 		apiUrl = strings.TrimSuffix(baseUrl, "/") + "/models"
-	} else {
+	default:
 		if baseUrl == "" {
 			baseUrl = "http://localhost:11434/v1"
 		}
@@ -704,7 +705,7 @@ func (s *Server) testAIProvider(w http.ResponseWriter, ctx context.Context, conf
 	parsedUrl, err := url.ParseRequestURI(apiUrl)
 	if err != nil || (parsedUrl.Scheme != "http" && parsedUrl.Scheme != "https") {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		json.NewEncoder(w).Encode(map[string]any{
 			"connected": false,
 			"error":     "Invalid URL format or scheme (must be http/https)",
 		})
@@ -715,7 +716,7 @@ func (s *Server) testAIProvider(w http.ResponseWriter, ctx context.Context, conf
 	if providerType != "local" {
 		if host == "localhost" || host == "127.0.0.1" || host == "::1" || strings.HasPrefix(host, "169.254.") {
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			json.NewEncoder(w).Encode(map[string]any{
 				"connected": false,
 				"error":     "Invalid host for cloud provider (local/internal IPs are forbidden)",
 			})
@@ -737,12 +738,13 @@ func (s *Server) testAIProvider(w http.ResponseWriter, ctx context.Context, conf
 
 	httpReq, _ := http.NewRequest("GET", decodedUrl, nil)
 	if apiKey != "" {
-		if providerType == "gemini" {
+		switch providerType {
+		case "gemini":
 			httpReq.Header.Set("x-goog-api-key", apiKey)
-		} else if providerType == "anthropic" {
+		case "anthropic":
 			httpReq.Header.Set("x-api-key", apiKey)
 			httpReq.Header.Set("anthropic-version", "2023-06-01")
-		} else {
+		default:
 			httpReq.Header.Set("Authorization", "Bearer "+apiKey)
 		}
 	}
@@ -760,7 +762,7 @@ func (s *Server) testAIProvider(w http.ResponseWriter, ctx context.Context, conf
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		json.NewEncoder(w).Encode(map[string]any{
 			"connected": false,
 			"error":     "Failed to reach AI endpoint: " + err.Error(),
 		})
@@ -770,7 +772,7 @@ func (s *Server) testAIProvider(w http.ResponseWriter, ctx context.Context, conf
 
 	if resp.StatusCode >= 400 && resp.StatusCode != 404 && resp.StatusCode != 405 {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		json.NewEncoder(w).Encode(map[string]any{
 			"connected": false,
 			"error":     fmt.Sprintf("AI provider returned error status: %d", resp.StatusCode),
 		})
@@ -778,7 +780,7 @@ func (s *Server) testAIProvider(w http.ResponseWriter, ctx context.Context, conf
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	json.NewEncoder(w).Encode(map[string]any{
 		"connected": true,
 	})
 }

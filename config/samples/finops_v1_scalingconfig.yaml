@@ -10,4 +10,25 @@ metadata:
   name: scalingconfig-sample
 spec:
   targetNamespace: default
-  active: true
+  # No `active` field: the namespace follows the schedules below. Use `active` only as a
+  # temporary manual override, ideally together with `activeUntil` so it expires on its own:
+  #
+  #   active: true
+  #   activeUntil: "2026-08-12T18:00:00Z"
+  #
+  # Removing `active` (setting it to null) is what hands control back to the schedule.
+  # Setting it to false does NOT -- that pins the namespace down permanently.
+  schedules:
+    # Daily business-hours window.
+    - days: [1, 2, 3, 4, 5] # 0 = Sunday
+      startTime: "08:00"
+      endTime: "20:00"
+      timezone: UTC
+    # Overnight batch window: an endTime earlier than startTime runs into the next morning.
+    - days: [1, 2, 3, 4, 5]
+      startTime: "22:00"
+      endTime: "06:00"
+      timezone: UTC
+  # Workloads that must never be scaled down.
+  exclusions:
+    - redis-*

@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"slices"
 	"time"
 
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -62,11 +63,12 @@ func (r *ScalingConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	// 2. Determine desired state
-	targetActive := r.Engine.IsActive(config.Spec.Schedules, config.Spec.Active)
+	targetActive := r.Engine.ResolveDesiredState(config.Spec.Schedules, config.Spec.Active, config.Spec.ActiveUntil)
 	if val, ok := config.Annotations["costdeck.io/manual-override"]; ok {
-		if val == "ScaledUp" {
+		switch val {
+		case "ScaledUp":
 			targetActive = true
-		} else if val == "ScaledDown" {
+		case "ScaledDown":
 			targetActive = false
 		}
 	}
@@ -106,10 +108,8 @@ func (r *ScalingConfigReconciler) isManagedByGroup(ctx context.Context, ns strin
 		return false, "", err
 	}
 	for _, g := range groups.Items {
-		for _, managedNs := range g.Spec.Namespaces {
-			if managedNs == ns {
-				return true, g.Name, nil
-			}
+		if slices.Contains(g.Spec.Namespaces, ns) {
+			return true, g.Name, nil
 		}
 	}
 	return false, "", nil
