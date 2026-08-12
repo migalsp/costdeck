@@ -18,7 +18,7 @@ import (
 type AITool struct {
 	Name        string
 	Description string
-	Parameters  map[string]interface{} // JSON Schema
+	Parameters  map[string]any // JSON Schema
 }
 
 // GetAITools returns the available tools for the AI
@@ -27,10 +27,10 @@ func (s *Server) GetAITools() []AITool {
 		{
 			Name:        "get_namespace_status",
 			Description: "Get CPU/Memory usage, waste, insights, pod errors, and current scaling phase for a namespace.",
-			Parameters: map[string]interface{}{
+			Parameters: map[string]any{
 				"type": "object",
-				"properties": map[string]interface{}{
-					"namespace": map[string]interface{}{
+				"properties": map[string]any{
+					"namespace": map[string]any{
 						"type":        "string",
 						"description": "The target Kubernetes namespace.",
 					},
@@ -41,10 +41,10 @@ func (s *Server) GetAITools() []AITool {
 		{
 			Name:        "get_scaling_group_status",
 			Description: "Get the current status, schedule, and active namespaces of a ScalingGroup.",
-			Parameters: map[string]interface{}{
+			Parameters: map[string]any{
 				"type": "object",
-				"properties": map[string]interface{}{
-					"group_name": map[string]interface{}{
+				"properties": map[string]any{
+					"group_name": map[string]any{
 						"type":        "string",
 						"description": "The name of the ScalingGroup.",
 					},
@@ -55,14 +55,14 @@ func (s *Server) GetAITools() []AITool {
 		{
 			Name:        "scale_group",
 			Description: "Force a ScalingGroup to scale up, down, or reset its state.",
-			Parameters: map[string]interface{}{
+			Parameters: map[string]any{
 				"type": "object",
-				"properties": map[string]interface{}{
-					"group_name": map[string]interface{}{
+				"properties": map[string]any{
+					"group_name": map[string]any{
 						"type":        "string",
 						"description": "The name of the ScalingGroup.",
 					},
-					"action": map[string]interface{}{
+					"action": map[string]any{
 						"type":        "string",
 						"description": "Action to perform: 'up', 'down', or 'reset'.",
 						"enum":        []string{"up", "down", "reset"},
@@ -74,14 +74,14 @@ func (s *Server) GetAITools() []AITool {
 		{
 			Name:        "scale_config",
 			Description: "Force a ScalingConfig (namespace level) to scale up, down, or reset its state.",
-			Parameters: map[string]interface{}{
+			Parameters: map[string]any{
 				"type": "object",
-				"properties": map[string]interface{}{
-					"namespace": map[string]interface{}{
+				"properties": map[string]any{
+					"namespace": map[string]any{
 						"type":        "string",
 						"description": "The target Kubernetes namespace.",
 					},
-					"action": map[string]interface{}{
+					"action": map[string]any{
 						"type":        "string",
 						"description": "Action to perform: 'up', 'down', or 'reset'.",
 						"enum":        []string{"up", "down", "reset"},
@@ -93,10 +93,10 @@ func (s *Server) GetAITools() []AITool {
 		{
 			Name:        "optimize_namespace",
 			Description: "Trigger a one-click optimization for a namespace to reduce resource waste based on AI recommendations.",
-			Parameters: map[string]interface{}{
+			Parameters: map[string]any{
 				"type": "object",
-				"properties": map[string]interface{}{
-					"namespace": map[string]interface{}{
+				"properties": map[string]any{
+					"namespace": map[string]any{
 						"type":        "string",
 						"description": "The target Kubernetes namespace.",
 					},
@@ -109,7 +109,7 @@ func (s *Server) GetAITools() []AITool {
 
 // ExecuteAITool executes a tool by name with JSON arguments
 func (s *Server) ExecuteAITool(ctx context.Context, name string, argsJSON string) (string, error) {
-	var args map[string]interface{}
+	var args map[string]any
 	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
 		return "", fmt.Errorf("failed to parse tool arguments: %w", err)
 	}
@@ -232,7 +232,7 @@ func (s *Server) generateNamespaceReport(ctx context.Context, nsName string) (*n
 		}
 		cpuCores := float64(cpuReq.MilliValue()) / 1000.0
 		ramGb := float64(memReq.Value()) / 1024.0 / 1024.0 / 1024.0
-		
+
 		cpuRate, ramRate := 0.035, 0.003 // defaults
 		hourlyCost := (cpuCores * cpuRate) + (ramGb * ramRate)
 		monthlyCost = hourlyCost * 730
@@ -267,10 +267,10 @@ func (s *Server) generateNamespaceReport(ctx context.Context, nsName string) (*n
 	}
 
 	return &namespaceReport{
-		ScalingPhase: "Active", 
-		CurrentCost:  monthlyCost,      
+		ScalingPhase: "Active",
+		CurrentCost:  monthlyCost,
 		CurrentWaste: monthlyWaste,
-		TotalPods:    totalPods, 
+		TotalPods:    totalPods,
 		Errors:       errsStr,
 		AIInsight:    insightsStr,
 	}, nil
@@ -321,11 +321,12 @@ func (s *Server) executeScalingGroupAction(ctx context.Context, groupName string
 		group.Annotations = make(map[string]string)
 	}
 
-	if action == "reset" {
+	switch action {
+	case "reset":
 		delete(group.Annotations, "costdeck.io/manual-override")
-	} else if action == "up" {
+	case "up":
 		group.Annotations["costdeck.io/manual-override"] = "ScaledUp"
-	} else if action == "down" {
+	case "down":
 		group.Annotations["costdeck.io/manual-override"] = "ScaledDown"
 	}
 
@@ -342,11 +343,12 @@ func (s *Server) executeScalingConfigAction(ctx context.Context, nsName string, 
 		config.Annotations = make(map[string]string)
 	}
 
-	if action == "reset" {
+	switch action {
+	case "reset":
 		delete(config.Annotations, "costdeck.io/manual-override")
-	} else if action == "up" {
+	case "up":
 		config.Annotations["costdeck.io/manual-override"] = "ScaledUp"
-	} else if action == "down" {
+	case "down":
 		config.Annotations["costdeck.io/manual-override"] = "ScaledDown"
 	}
 

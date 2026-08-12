@@ -61,12 +61,12 @@ func TestHandleOperatorHealth(t *testing.T) {
 		t.Errorf("handler returned wrong status code: got %v want %v", status, http.StatusOK)
 	}
 
-	var response map[string]interface{}
+	var response map[string]any
 	if err := json.NewDecoder(rr.Body).Decode(&response); err != nil {
 		t.Fatal(err)
 	}
 
-	current, ok := response["current"].(map[string]interface{})
+	current, ok := response["current"].(map[string]any)
 	if !ok {
 		t.Fatalf("expected 'current' object in response")
 	}
@@ -156,7 +156,7 @@ func TestHandleDiscovery(t *testing.T) {
 		t.Errorf("expected 200 OK for disabled AWS, got %v", rr.Code)
 	}
 
-	var parsed []interface{}
+	var parsed []any
 	if err := json.NewDecoder(rr.Body).Decode(&parsed); err != nil {
 		t.Fatal(err)
 	}
@@ -391,12 +391,12 @@ func TestHandleClusterNodes(t *testing.T) {
 		t.Errorf("expected 200 OK, got %v", rr.Code)
 	}
 
-	var parsed map[string]interface{}
+	var parsed map[string]any
 	if err := json.NewDecoder(rr.Body).Decode(&parsed); err != nil {
 		t.Fatal(err)
 	}
 
-	nodes, ok := parsed["nodes"].([]interface{})
+	nodes, ok := parsed["nodes"].([]any)
 	if !ok || len(nodes) != 1 {
 		t.Errorf("expected 1 node in response, got %v", parsed)
 	}

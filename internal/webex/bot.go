@@ -99,7 +99,7 @@ func (b *Bot) ProcessMessage(ctx context.Context, msg *Message, operatorNamespac
 	isGlobalHelp := len(parts) > 0 && strings.ToLower(parts[0]) == "help"
 
 	if b.ClusterName != "" && !isGlobalHelp {
-		if len(parts) == 0 || strings.ToLower(parts[0]) != strings.ToLower(b.ClusterName) {
+		if len(parts) == 0 || !strings.EqualFold(parts[0], b.ClusterName) {
 			// This message is not intended for this cluster. Silently ignore.
 			return nil
 		}
@@ -113,20 +113,22 @@ func (b *Bot) ProcessMessage(ctx context.Context, msg *Message, operatorNamespac
 		targetType := parts[1]
 		targetName := parts[2]
 
-		if targetType == "group" {
+		switch targetType {
+		case "group":
 			var group finopsv1.ScalingGroup
 			if err := b.K8sClient.Get(ctx, types.NamespacedName{Name: targetName, Namespace: operatorNamespace}, &group); err == nil {
-				outMsg := fmt.Sprintf("**Group `%s`**\nStatus: `%s`\nNamespaces: %d/%d ready\nManaged Namespaces:\n", targetName, group.Status.Phase, group.Status.NamespacesReady, group.Status.NamespacesTotal)
+				var outMsg strings.Builder
+				outMsg.WriteString(fmt.Sprintf("**Group `%s`**\nStatus: `%s`\nNamespaces: %d/%d ready\nManaged Namespaces:\n", targetName, group.Status.Phase, group.Status.NamespacesReady, group.Status.NamespacesTotal))
 				for _, ns := range group.Spec.Namespaces {
-					outMsg += fmt.Sprintf("- `%s`\n", ns)
+					outMsg.WriteString(fmt.Sprintf("- `%s`\n", ns))
 				}
-				b.SendMessage(ctx, msg.RoomID, outMsg)
+				b.SendMessage(ctx, msg.RoomID, outMsg.String())
 				return nil
 			} else {
 				b.SendMessage(ctx, msg.RoomID, fmt.Sprintf("Group `%s` not found.", targetName))
 				return nil
 			}
-		} else if targetType == "config" {
+		case "config":
 			var conf finopsv1.ScalingConfig
 			if err := b.K8sClient.Get(ctx, types.NamespacedName{Name: targetName, Namespace: operatorNamespace}, &conf); err == nil {
 				b.SendMessage(ctx, msg.RoomID, fmt.Sprintf("**Config `%s`**\nStatus: `%s`", targetName, conf.Status.Phase))
@@ -149,15 +151,16 @@ func (b *Bot) ProcessMessage(ctx context.Context, msg *Message, operatorNamespac
 					activeNS = append(activeNS, ns.Name)
 				}
 			}
-			outMsg := "**Namespaces Status**\n\n**Active:**\n"
+			var outMsg strings.Builder
+			outMsg.WriteString("**Namespaces Status**\n\n**Active:**\n")
 			for _, ns := range activeNS {
-				outMsg += fmt.Sprintf("- `%s`\n", ns)
+				outMsg.WriteString(fmt.Sprintf("- `%s`\n", ns))
 			}
-			outMsg += "\n**Inactive (Scaled Down):**\n"
+			outMsg.WriteString("\n**Inactive (Scaled Down):**\n")
 			for _, ns := range inactiveNS {
-				outMsg += fmt.Sprintf("- `%s`\n", ns)
+				outMsg.WriteString(fmt.Sprintf("- `%s`\n", ns))
 			}
-			b.SendMessage(ctx, msg.RoomID, outMsg)
+			b.SendMessage(ctx, msg.RoomID, outMsg.String())
 			return nil
 		}
 	}
@@ -168,11 +171,12 @@ func (b *Bot) ProcessMessage(ctx context.Context, msg *Message, operatorNamespac
 		action := parts[3] // "up" or "down"
 
 		var active bool
-		if action == "up" {
+		switch action {
+		case "up":
 			active = true
-		} else if action == "down" {
+		case "down":
 			active = false
-		} else {
+		default:
 			return b.SendMessage(ctx, msg.RoomID, "Invalid action. Use 'up' or 'down'.")
 		}
 
@@ -210,7 +214,8 @@ func (b *Bot) ProcessMessage(ctx context.Context, msg *Message, operatorNamespac
 					var progress string
 					var overridden bool
 
-					if targetType == "group" {
+					switch targetType {
+					case "group":
 						var group finopsv1.ScalingGroup
 						if err := b.K8sClient.Get(context.Background(), types.NamespacedName{Name: targetName, Namespace: operatorNamespace}, &group); err == nil {
 							if group.Spec.Active != nil && *group.Spec.Active != active {
@@ -221,7 +226,7 @@ func (b *Bot) ProcessMessage(ctx context.Context, msg *Message, operatorNamespac
 								progress = fmt.Sprintf(" - %d/%d namespaces ready", group.Status.NamespacesReady, group.Status.NamespacesTotal)
 							}
 						}
-					} else if targetType == "config" {
+					case "config":
 						var conf finopsv1.ScalingConfig
 						if err := b.K8sClient.Get(context.Background(), types.NamespacedName{Name: targetName, Namespace: operatorNamespace}, &conf); err == nil {
 							if conf.Spec.Active != nil && *conf.Spec.Active != active {
@@ -275,7 +280,7 @@ func (b *Bot) ProcessMessage(ctx context.Context, msg *Message, operatorNamespac
 			fmt.Sprintf("- `%sstatus group <group-name>` : Show status of a scaling group.\n", prefix) +
 			fmt.Sprintf("- `%sstatus config <namespace>` : Show status of a namespace config.\n", prefix) +
 			fmt.Sprintf("- `%sstatus namespaces` : Show up/down status of all managed namespaces.\n", prefix) +
-			fmt.Sprintf("- `help` : Show this help message (all clusters will respond).\n\n") +
+			"- `help` : Show this help message (all clusters will respond).\n\n" +
 			"*(Tip: If there are multiple CostDeck clusters in this room, prefix your command with the cluster name to target a specific one, as shown in the examples above!)*"
 		b.SendMessage(context.Background(), msg.RoomID, helpMsg)
 	}
@@ -374,7 +379,7 @@ func (b *Bot) getMessage(ctx context.Context, messageID string) (*Message, error
 
 // SendMessage sends a markdown message to the specified Webex Room.
 func (b *Bot) SendMessage(ctx context.Context, roomID, markdown string) error {
-	payload := map[string]interface{}{
+	payload := map[string]any{
 		"roomId":   roomID,
 		"markdown": markdown,
 	}
