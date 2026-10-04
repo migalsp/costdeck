@@ -24,12 +24,15 @@ import (
 	"time"
 
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
 	"github.com/migalsp/costdeck-operator/internal/scaling"
@@ -60,8 +63,13 @@ func (r *ScalingGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, err
 	}
 
-	// 2. Determine desired state
-	decision := r.Engine.Decide(time.Now(), group.Spec.Schedules, group.Spec.Active, group.Spec.ActiveUntil, group.Annotations)
+	// 2. Determine the desired state against every group in the namespace, so that
+	// dependsOn edges and namespace ownership are taken into account.
+	plan, err := r.planFor(ctx, group)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	decision := plan.Decision
 	targetActive := decision.Active
 	l.Info("Reconciling ScalingGroup", "category", group.Spec.Category, "namespaces", group.Spec.Namespaces, "targetActive", targetActive, "mode", decision.Mode)
 
@@ -69,9 +77,18 @@ func (r *ScalingGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if group.Status.OriginalReplicas == nil {
 		group.Status.OriginalReplicas = make(map[string]int32)
 	}
+	group.Status.RequiredBy = plan.RequiredBy
+	group.Status.ConflictingNamespaces = plan.ConflictingNamespaces
+	setDependencyConditions(group, plan)
 
-	// 3. Define stages from group.Spec.Sequence
-	stages := r.getScalingStages(group, targetActive)
+	// 2.5 A group that wants to come up holds back until its dependencies are ScaledUp.
+	// One that is already up keeps running even if a dependency briefly degrades.
+	if plan.BlockedOnDependencies() && group.Status.Phase != scaling.PhaseScaledUp {
+		return r.waitForDependencies(ctx, group, plan)
+	}
+
+	// 3. Define stages from group.Spec.Sequence, skipping namespaces an older group owns.
+	stages := r.getScalingStages(group, targetActive, plan.ConflictingNamespaces)
 
 	allReady := true
 	managedCount := 0
@@ -136,6 +153,7 @@ func (r *ScalingGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 	return r.updateStatusAndPhase(ctx, group, allReady, managedCount, namespacesReady, namespacesTotal, readyNamespaces, decision, detail)
 }
+
 // stageTimeoutMinutes returns the configured skip-on-timeout window, defaulting to five.
 func stageTimeoutMinutes(group *finopsv1.ScalingGroup) int {
 	if group.Spec.FeatureFlags != nil && group.Spec.FeatureFlags.TimeoutMinutes > 0 {
@@ -144,14 +162,105 @@ func stageTimeoutMinutes(group *finopsv1.ScalingGroup) int {
 	return 5
 }
 
-func (r *ScalingGroupReconciler) getScalingStages(group *finopsv1.ScalingGroup, targetActive bool) [][]string {
-	managedNamespaces := group.Spec.Namespaces
+// planFor resolves this group within the dependency graph of its namespace.
+func (r *ScalingGroupReconciler) planFor(ctx context.Context, group *finopsv1.ScalingGroup) (scaling.GroupPlan, error) {
+	var all finopsv1.ScalingGroupList
+	if err := r.List(ctx, &all, client.InNamespace(group.Namespace)); err != nil {
+		return scaling.GroupPlan{}, err
+	}
+	// Plan with the freshly read object; the cache may lag behind or miss a new group,
+	// and a missing entry would read as "desired down".
+	found := false
+	for i := range all.Items {
+		if all.Items[i].Name == group.Name {
+			all.Items[i] = *group.DeepCopy()
+			found = true
+		}
+	}
+	if !found {
+		all.Items = append(all.Items, *group.DeepCopy())
+	}
+	return r.Engine.PlanGroups(time.Now(), all.Items)[group.Name], nil
+}
+
+// waitForDependencies records that the group is held back and checks again shortly.
+func (r *ScalingGroupReconciler) waitForDependencies(ctx context.Context, group *finopsv1.ScalingGroup, plan scaling.GroupPlan) (ctrl.Result, error) {
+	waiting := append(append([]string{}, plan.WaitingFor...), plan.MissingDependencies...)
+	msg := "Waiting for ScalingGroup(s) to be ScaledUp: " + strings.Join(waiting, ", ")
+	if group.Status.Phase != scaling.PhaseWaitingForDependencies {
+		group.Status.Phase = scaling.PhaseWaitingForDependencies
+		group.Status.LastAction = metav1.Now()
+		r.Recorder.Event(group, "Normal", "WaitingForDependencies", msg)
+	}
+	applyDecision(&group.Status.ScheduleStatus, &group.Status.Conditions, plan.Decision, group.Generation, "group")
+	setReadyCondition(&group.Status.Conditions, group.Status.Phase, true, group.Generation, msg)
+	if err := r.Status().Update(ctx, group); err != nil {
+		return ctrl.Result{}, err
+	}
+	return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+}
+
+// setDependencyConditions reports dependency and namespace-ownership problems.
+func setDependencyConditions(group *finopsv1.ScalingGroup, plan scaling.GroupPlan) {
+	conds := &group.Status.Conditions
+	gen := group.Generation
+
+	if len(group.Spec.DependsOn) == 0 {
+		meta.RemoveStatusCondition(conds, ConditionDependenciesReady)
+	} else {
+		cond := metav1.Condition{Type: ConditionDependenciesReady, ObservedGeneration: gen}
+		switch {
+		case plan.InCycle:
+			cond.Status, cond.Reason = metav1.ConditionFalse, "Cycle"
+			cond.Message = "dependsOn forms a cycle and is ignored: " + strings.Join(group.Spec.DependsOn, ", ")
+		case len(plan.MissingDependencies) > 0:
+			cond.Status, cond.Reason = metav1.ConditionFalse, "NotFound"
+			cond.Message = "No such ScalingGroup: " + strings.Join(plan.MissingDependencies, ", ")
+		case len(plan.WaitingFor) > 0:
+			cond.Status, cond.Reason = metav1.ConditionFalse, "NotScaledUp"
+			cond.Message = "Not ScaledUp yet: " + strings.Join(plan.WaitingFor, ", ")
+		default:
+			cond.Status, cond.Reason = metav1.ConditionTrue, "ScaledUp"
+			cond.Message = "All dependencies are ScaledUp: " + strings.Join(group.Spec.DependsOn, ", ")
+		}
+		meta.SetStatusCondition(conds, cond)
+	}
+
+	if len(plan.ConflictingNamespaces) == 0 {
+		meta.RemoveStatusCondition(conds, ConditionNamespaceConflict)
+		return
+	}
+	parts := make([]string, 0, len(plan.ConflictingNamespaces))
+	for _, ns := range plan.ConflictingNamespaces {
+		parts = append(parts, fmt.Sprintf("%s (owned by %s)", ns, plan.NamespaceOwners[ns]))
+	}
+	meta.SetStatusCondition(conds, metav1.Condition{
+		Type: ConditionNamespaceConflict, Status: metav1.ConditionTrue, Reason: "OwnedByOlderGroup",
+		ObservedGeneration: gen,
+		Message:            "Skipping namespaces already managed by another ScalingGroup: " + strings.Join(parts, ", "),
+	})
+}
+
+func (r *ScalingGroupReconciler) getScalingStages(group *finopsv1.ScalingGroup, targetActive bool, skip []string) [][]string {
+	var managedNamespaces []string
+	for _, ns := range group.Spec.Namespaces {
+		if !slices.Contains(skip, ns) {
+			managedNamespaces = append(managedNamespaces, ns)
+		}
+	}
 	var stages [][]string
 
 	if len(group.Spec.Sequence) > 0 {
 		for _, s := range group.Spec.Sequence {
-			nsInStage := strings.Fields(s)
-			stages = append(stages, nsInStage)
+			var nsInStage []string
+			for _, target := range strings.Fields(s) {
+				if !slices.Contains(skip, target) {
+					nsInStage = append(nsInStage, target)
+				}
+			}
+			if len(nsInStage) > 0 {
+				stages = append(stages, nsInStage)
+			}
 		}
 		// Add namespaces not mentioned in sequence as the last stage
 		var missing []string
@@ -347,6 +456,36 @@ func (r *ScalingGroupReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&finopsv1.ScalingGroup{}).
+		// A group's desired state depends on its dependents' and dependencies' state, and
+		// namespace ownership on the other groups listing the same namespace.
+		Watches(&finopsv1.ScalingGroup{}, handler.EnqueueRequestsFromMapFunc(r.relatedGroups)).
 		Named("scalinggroup").
 		Complete(r)
+}
+
+// relatedGroups maps a ScalingGroup event to the groups whose plan it can change: its
+// dependencies, its dependents, and groups sharing one of its namespaces.
+func (r *ScalingGroupReconciler) relatedGroups(ctx context.Context, obj client.Object) []reconcile.Request {
+	changed, ok := obj.(*finopsv1.ScalingGroup)
+	if !ok {
+		return nil
+	}
+	var all finopsv1.ScalingGroupList
+	if err := r.List(ctx, &all, client.InNamespace(changed.Namespace)); err != nil {
+		return nil
+	}
+	var reqs []reconcile.Request
+	for _, g := range all.Items {
+		if g.Name == changed.Name {
+			continue
+		}
+		related := slices.Contains(changed.Spec.DependsOn, g.Name) || slices.Contains(g.Spec.DependsOn, changed.Name)
+		for _, ns := range g.Spec.Namespaces {
+			related = related || slices.Contains(changed.Spec.Namespaces, ns)
+		}
+		if related {
+			reqs = append(reqs, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&g)})
+		}
+	}
+	return reqs
 }

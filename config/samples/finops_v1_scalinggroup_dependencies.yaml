@@ -1,0 +1,65 @@
+# A shared platform that no environment can run without, and environments on very
+# different schedules. The platform has no schedule of its own (activation: OnDemand):
+# it comes up whenever at least one environment needs it, every environment waits for it
+# to be fully up before starting, and it is only scaled down after the last environment
+# is down. Only the platform plus the environments that are actually in use run.
+apiVersion: finops.costdeck.io/v1
+kind: ScalingGroup
+metadata:
+  name: platform
+spec:
+  category: Platform
+  activation: OnDemand
+  namespaces: [logging, platform-monitoring, postgresql, zookeeper-streaming, consul, kafka-streaming, rabbitmq]
+  sequence:
+    - logging platform-monitoring postgresql zookeeper-streaming
+    - consul kafka-streaming rabbitmq
+---
+# pps1: non-stop Monday to Friday.
+apiVersion: finops.costdeck.io/v1
+kind: ScalingGroup
+metadata:
+  name: pps1
+spec:
+  category: Solution
+  dependsOn: [platform]
+  namespaces: [pps1-boss, pps1-genai, app-deployer, pps1-data-management]
+  sequence:
+    - pps1-boss pps1-genai
+    - app-deployer pps1-data-management
+  schedules:
+    - startDay: 1
+      startTime: "00:00"
+      endDay: 5
+      endTime: "23:59"
+      timezone: Europe/Berlin
+---
+# stag1: business hours, seven days a week.
+apiVersion: finops.costdeck.io/v1
+kind: ScalingGroup
+metadata:
+  name: stag1
+spec:
+  category: Solution
+  dependsOn: [platform]
+  namespaces: [stag1-boss, stag1-genai, stag1-data-management]
+  schedules:
+    - days: [0, 1, 2, 3, 4, 5, 6]
+      startTime: "08:00"
+      endTime: "19:00"
+      timezone: Europe/Berlin
+---
+# e2e1: non-stop on three days a week.
+apiVersion: finops.costdeck.io/v1
+kind: ScalingGroup
+metadata:
+  name: e2e1
+spec:
+  category: Solution
+  dependsOn: [platform]
+  namespaces: [e2e1-boss]
+  schedules:
+    - days: [1, 3, 5]
+      startTime: "00:00"
+      endTime: "23:59"
+      timezone: Europe/Berlin

@@ -53,6 +53,8 @@ interface ScalingGroup {
       skipOnTimeout: boolean;
       timeoutMinutes: number;
     };
+    dependsOn?: string[];
+    activation?: 'Schedule' | 'OnDemand';
   };
   status?: ScheduleStatus & {
     phase: string;
@@ -60,6 +62,8 @@ interface ScalingGroup {
     managedCount: number;
     namespacesReady?: number;
     namespacesTotal?: number;
+    requiredBy?: string[];
+    conflictingNamespaces?: string[];
   };
 }
 
@@ -100,6 +104,8 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
   const [isScalingMap, setIsScalingMap] = useState<Record<string, boolean>>({});
   const [skipOnTimeout, setSkipOnTimeout] = useState(false);
   const [timeoutMinutes, setTimeoutMinutes] = useState(5);
+  const [dependsOn, setDependsOn] = useState<string[]>([]);
+  const [onDemand, setOnDemand] = useState(false);
   const [overridePrompt, setOverridePrompt] = useState<{ type: 'group' | 'config'; name: string; active: boolean; hasSchedule: boolean } | null>(null);
 
   // Section Collapse State
@@ -215,7 +221,9 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
             featureFlags: {
               skipOnTimeout,
               timeoutMinutes: skipOnTimeout ? timeoutMinutes : 5,
-            }
+            },
+            dependsOn: dependsOn.length > 0 ? dependsOn : undefined,
+            activation: onDemand ? 'OnDemand' : undefined,
           }
         })
       });
@@ -228,6 +236,8 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
       setEditingGroup(null);
       setNewGroupName('');
       setSelectedNS([]);
+      setDependsOn([]);
+      setOnDemand(false);
       fetchData();
     } catch (err: any) {
       console.error("Failed to save group", err);
@@ -485,7 +495,7 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
         <button onClick={(e) => { e.stopPropagation(); setEditingPolicy({ mode: 'sequence', name: group.metadata.name, spec: { ...group.spec } }); }}
           className="p-1.5 text-slate-400 hover:bg-indigo-50 hover:text-indigo-500 rounded-lg transition-colors" title="Namespace Scaling Sequence">
           <Settings2 size={14} /></button>
-        <button onClick={(e) => { e.stopPropagation(); setEditingGroup(group); setNewGroupName(group.metadata.name); setNewGroupCategory(group.spec.category); setSelectedNS(group.spec.namespaces); setSkipOnTimeout(group.spec.featureFlags?.skipOnTimeout || false); setTimeoutMinutes(group.spec.featureFlags?.timeoutMinutes || 5); setIsAddingGroup(true); }}
+        <button onClick={(e) => { e.stopPropagation(); setEditingGroup(group); setNewGroupName(group.metadata.name); setNewGroupCategory(group.spec.category); setSelectedNS(group.spec.namespaces); setSkipOnTimeout(group.spec.featureFlags?.skipOnTimeout || false); setTimeoutMinutes(group.spec.featureFlags?.timeoutMinutes || 5); setDependsOn(group.spec.dependsOn || []); setOnDemand(group.spec.activation === 'OnDemand'); setIsAddingGroup(true); }}
           className="p-1.5 text-slate-400 hover:bg-indigo-50 hover:text-indigo-500 rounded-lg transition-colors" title="Manage Group Namespaces">
           <Layers size={14} /></button>
           <button onClick={(e) => handleDeleteGroup(e, group.metadata.name)}
@@ -495,6 +505,38 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
       </div>
 
       <ScheduleLine status={group.status} />
+
+      {((group.spec.dependsOn?.length || 0) > 0 || (group.status?.requiredBy?.length || 0) > 0) && (
+        <div className="mb-3 space-y-1.5 text-[10px] font-bold">
+          {(group.spec.dependsOn?.length || 0) > 0 && (
+            <div className="flex items-center gap-1.5 flex-wrap text-slate-400">
+              <span className="uppercase tracking-wider">Depends on</span>
+              {group.spec.dependsOn!.map(dep => {
+                const depPhase = groups.find(g => g.metadata.name === dep)?.status?.phase;
+                return (
+                  <span key={dep} className={`px-2 py-0.5 rounded-md border ${depPhase === 'ScaledUp' ? 'bg-emerald-50 border-emerald-100 text-emerald-600' : 'bg-slate-50 border-slate-200 text-slate-500'}`} title={depPhase || 'unknown'}>
+                    {dep}
+                  </span>
+                );
+              })}
+            </div>
+          )}
+          {(group.status?.requiredBy?.length || 0) > 0 && (
+            <div className="flex items-center gap-1.5 flex-wrap text-violet-500">
+              <span className="uppercase tracking-wider">Kept up for</span>
+              {group.status!.requiredBy!.map(d => (
+                <span key={d} className="px-2 py-0.5 rounded-md border bg-violet-50 border-violet-100">{d}</span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {(group.status?.conflictingNamespaces?.length || 0) > 0 && (
+        <div className="mb-3 px-3 py-2 rounded-xl border bg-rose-50 border-rose-200 text-rose-600 text-[11px] font-bold">
+          Skipped (managed by another group): {group.status!.conflictingNamespaces!.join(', ')}
+        </div>
+      )}
 
       <OverrideBanner
         spec={group.spec}
@@ -564,6 +606,7 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
       case 'ScalingDown': return { dot: 'bg-amber-400 animate-pulse', text: 'text-amber-500' };
       case 'PartlyScaled': return { dot: 'bg-amber-500', text: 'text-amber-600' };
       case 'OverriddenByGroup': return { dot: 'bg-indigo-300', text: 'text-indigo-500' };
+      case 'WaitingForDependencies': return { dot: 'bg-violet-400 animate-pulse', text: 'text-violet-500' };
       case 'Scaling...': return { dot: 'bg-blue-400 animate-pulse', text: 'text-blue-500' };
       default: return { dot: 'bg-slate-300', text: 'text-slate-400' };
     }
@@ -876,7 +919,7 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
           <div className="bg-white rounded-3xl shadow-2xl w-full max-w-xl border border-white/20 animate-in fade-in zoom-in duration-300">
              <div className="p-8 border-b border-slate-100 flex justify-between items-center bg-slate-50/50 rounded-t-3xl">
                <h2 className="text-2xl font-black text-slate-800 tracking-tight">{editingGroup ? 'Edit Group' : 'Create New Group'}</h2>
-               <button onClick={() => { setIsAddingGroup(false); setEditingGroup(null); }} className="p-2 hover:bg-white rounded-full transition-colors text-slate-400">
+               <button onClick={() => { setIsAddingGroup(false); setEditingGroup(null); setDependsOn([]); setOnDemand(false); }} className="p-2 hover:bg-white rounded-full transition-colors text-slate-400">
                  <Plus size={20} className="rotate-45" />
                </button>
              </div>
@@ -928,6 +971,36 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
                   </div>
                 </div>
 
+                {/* Dependencies */}
+                <div>
+                  <label className="block text-sm font-bold text-slate-500 uppercase tracking-wider mb-2">Depends on</label>
+                  <p className="text-[11px] text-slate-400 mb-2">
+                    This group starts only after the selected groups are fully up, and they stay up while this group needs them.
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {groups.filter(g => g.metadata.name !== editingGroup?.metadata.name).map(g => {
+                      const selected = dependsOn.includes(g.metadata.name);
+                      return (
+                        <button key={g.metadata.name} type="button"
+                          onClick={() => setDependsOn(prev => selected ? prev.filter(d => d !== g.metadata.name) : [...prev, g.metadata.name])}
+                          className={`px-3 py-1.5 rounded-xl text-xs font-bold border-2 transition-all ${selected ? 'bg-violet-600 border-violet-600 text-white' : 'bg-slate-50 border-slate-200 text-slate-500 hover:border-slate-300'}`}>
+                          {g.metadata.name}
+                        </button>
+                      );
+                    })}
+                    {groups.filter(g => g.metadata.name !== editingGroup?.metadata.name).length === 0 && (
+                      <span className="text-xs text-slate-400 italic">Create another group (for example a shared platform) to depend on it.</span>
+                    )}
+                  </div>
+                  <label className="mt-4 flex items-start gap-3 p-3 rounded-xl border border-slate-200 bg-slate-50 cursor-pointer">
+                    <input type="checkbox" checked={onDemand} onChange={e => setOnDemand(e.target.checked)} className="mt-0.5 accent-violet-600" />
+                    <span>
+                      <span className="block text-sm font-bold text-slate-700">Run on demand only</span>
+                      <span className="block text-[11px] text-slate-400">No schedule of its own: up only while a group that depends on it is up. Ideal for a shared platform.</span>
+                    </span>
+                  </label>
+                </div>
+
                 {/* Feature Flags */}
                 <div>
                   <label className="block text-sm font-bold text-slate-500 uppercase tracking-wider mb-2">Feature Flags</label>
@@ -966,7 +1039,7 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
              </div>
 
              <div className="p-8 bg-slate-50/50 border-t border-slate-100 flex gap-4 rounded-b-3xl">
-               <button onClick={() => { setIsAddingGroup(false); setEditingGroup(null); }} className="flex-1 px-6 py-3 rounded-xl font-bold text-slate-500 hover:bg-white transition-all">Cancel</button>
+               <button onClick={() => { setIsAddingGroup(false); setEditingGroup(null); setDependsOn([]); setOnDemand(false); }} className="flex-1 px-6 py-3 rounded-xl font-bold text-slate-500 hover:bg-white transition-all">Cancel</button>
                <button onClick={handleUpsertGroup} disabled={!newGroupName || selectedNS.length === 0}
                  className="flex-1 px-6 py-3 rounded-xl bg-indigo-600 text-white font-bold shadow-lg shadow-indigo-600/20 hover:bg-indigo-700 transition-all disabled:opacity-50">Save Group</button>
              </div>

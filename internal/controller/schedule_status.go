@@ -18,6 +18,11 @@ const (
 	// ConditionManualOverride is True while spec.active (or the legacy annotation)
 	// overrides the schedule.
 	ConditionManualOverride = "ManualOverride"
+	// ConditionDependenciesReady reports whether every dependsOn group is ScaledUp.
+	ConditionDependenciesReady = "DependenciesReady"
+	// ConditionNamespaceConflict is True when the group skips namespaces that an older
+	// group already manages.
+	ConditionNamespaceConflict = "NamespaceConflict"
 )
 
 // settledRequeue is the requeue interval once a target has converged: a minute, or less
@@ -62,6 +67,12 @@ func applyDecision(st *finopsv1.ScheduleStatus, conds *[]metav1.Condition, d sca
 			until = "until " + d.OverrideExpiresAt.UTC().Format(time.RFC3339)
 		}
 		cond.Message = fmt.Sprintf("The %s is forced %s and its schedule is ignored %s.", kind, d.State(), until)
+	case scaling.ModeDependency:
+		cond.Status, cond.Reason = metav1.ConditionFalse, "RequiredByDependents"
+		cond.Message = fmt.Sprintf("The %s is kept up for the groups that depend on it (status.requiredBy).", kind)
+	case scaling.ModeOnDemand:
+		cond.Status, cond.Reason = metav1.ConditionFalse, "OnDemand"
+		cond.Message = fmt.Sprintf("The %s only runs while a group that depends on it needs it.", kind)
 	case scaling.ModeAlwaysOn:
 		cond.Status, cond.Reason = metav1.ConditionFalse, "NoSchedule"
 		cond.Message = fmt.Sprintf("The %s has no usable schedule and is kept up as a fail-safe.", kind)

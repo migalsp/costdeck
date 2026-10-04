@@ -65,7 +65,31 @@ type ScalingGroupSpec struct {
 	// FeatureFlags holds optional feature toggles for this scaling group
 	// +optional
 	FeatureFlags *ScalingGroupFeatureFlags `json:"featureFlags,omitempty"`
+
+	// DependsOn lists ScalingGroups (in the same namespace) this group needs, for example
+	// a shared platform. This group only starts scaling up once every dependency reports
+	// ScaledUp. In turn, a dependency is kept up while any group that depends on it wants
+	// to be up, and is only scaled down after all of its dependents are fully down.
+	// A manual override on the dependency itself still wins.
+	// +kubebuilder:validation:MaxItems=32
+	// +listType=set
+	// +optional
+	DependsOn []string `json:"dependsOn,omitempty"`
+
+	// Activation decides what drives this group's own desired state.
+	// Schedule (default): spec.schedules and spec.active; dependents can additionally
+	// keep the group up. OnDemand: the group has no schedule of its own and is up only
+	// while a group that depends on it needs it (or a manual override forces it).
+	// +kubebuilder:validation:Enum=Schedule;OnDemand
+	// +optional
+	Activation string `json:"activation,omitempty"`
 }
+
+// Activation modes for ScalingGroupSpec.Activation.
+const (
+	ActivationSchedule = "Schedule"
+	ActivationOnDemand = "OnDemand"
+)
 
 // ScalingGroupFeatureFlags defines optional behavior toggles for a scaling group.
 type ScalingGroupFeatureFlags struct {
@@ -146,6 +170,15 @@ type ScalingGroupStatus struct {
 	// +optional
 	ReadyNamespaces []string `json:"readyNamespaces,omitempty"`
 
+	// RequiredBy lists the dependent groups that currently keep this group up.
+	// +optional
+	RequiredBy []string `json:"requiredBy,omitempty"`
+
+	// ConflictingNamespaces lists namespaces this group skips because an older
+	// ScalingGroup already manages them. A namespace is never scaled by two groups.
+	// +optional
+	ConflictingNamespaces []string `json:"conflictingNamespaces,omitempty"`
+
 	ScheduleStatus `json:",inline"`
 
 	// Conditions represent the current state of the ScalingGroup resource.
@@ -158,6 +191,7 @@ type ScalingGroupStatus struct {
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Mode",type=string,JSONPath=".status.mode"
+// +kubebuilder:printcolumn:name="Depends on",type=string,JSONPath=".spec.dependsOn",priority=1
 // +kubebuilder:printcolumn:name="Desired",type=string,JSONPath=".status.desiredState"
 // +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=".status.phase"
 // +kubebuilder:printcolumn:name="Ready",type=integer,JSONPath=".status.namespacesReady"
