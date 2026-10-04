@@ -142,22 +142,30 @@ spec:
                 description: Integrations holds AI and messenger configurations
                 properties:
                   ai:
-                    description: AI model integration (coming soon)
+                    description: AI assistant and reports
                     properties:
                       baseUrl:
-                        description: BaseURL is the optional API base URL, used primarily
-                          for local or custom endpoints.
+                        description: |-
+                          BaseURL overrides the provider endpoint (gateways, proxies, self-hosted models).
+                          Cloud providers may not point at loopback or link-local addresses.
                         type: string
                       enabled:
                         description: Enabled toggles the AI integration on/off
                         type: boolean
                       model:
-                        description: Model is the specific model to use (e.g. "gpt-4",
-                          "claude-3-opus")
+                        description: |-
+                          Model is the model ID, e.g. "claude-opus-5-5". Defaults per provider when empty;
+                          the settings page lists the models the configured key can use.
                         type: string
                       provider:
-                        description: Provider is the AI service provider (e.g. "openai",
-                          "anthropic", "gemini")
+                        description: |-
+                          Provider is anthropic, openai, gemini, or local (any OpenAI-compatible endpoint such
+                          as Ollama, vLLM or an internal gateway).
+                        enum:
+                        - anthropic
+                        - openai
+                        - gemini
+                        - local
                         type: string
                       secretRef:
                         description: SecretRef is the name of the K8s Secret holding
@@ -184,7 +192,7 @@ spec:
                     description: Messenger integrations
                     properties:
                       webex:
-                        description: Webex messenger integration (coming soon)
+                        description: Webex bot
                         properties:
                           enabled:
                             description: Enabled toggles the Webex integration on/off

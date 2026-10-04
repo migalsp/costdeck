@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // CostResponse describes the cost calculated
@@ -26,6 +28,53 @@ type CostRequest struct {
 	TotalCPU     float64 `json:"totalCpu"` // Extracted in UI or backend
 	TotalMemory  float64 `json:"totalMemoryGb"`
 	ProviderType string  `json:"providerType,omitempty"`
+}
+
+// priceRates converts resources into money.
+type priceRates struct {
+	CPUHour   float64 // per core-hour
+	MemGBHour float64 // per GiB-hour
+	Currency  string
+	// Basis says where the rates come from, so estimates are never presented as quotes.
+	Basis string
+}
+
+const hoursPerMonth = 730
+
+func (r priceRates) hourly(cpu, mem resource.Quantity) float64 {
+	return cpu.AsApproximateFloat64()*r.CPUHour + mem.AsApproximateFloat64()/(1<<30)*r.MemGBHour
+}
+
+func (r priceRates) monthly(cpu, mem resource.Quantity) float64 {
+	return r.hourly(cpu, mem) * hoursPerMonth
+}
+
+// costRates returns the rates for the cluster's cloud, detected from the node provider IDs.
+func (s *Server) costRates(ctx context.Context) priceRates {
+	provider := s.detectCloud(ctx)
+	cpu, mem := getDefaultRates(provider)
+	basis := "Heuristic list-price estimate"
+	if provider != "local" {
+		basis += " (" + provider + ")"
+	}
+	return priceRates{CPUHour: cpu, MemGBHour: mem, Currency: "USD", Basis: basis}
+}
+
+// detectCloud names the cloud the nodes run on: aws, azure, gcp or local.
+func (s *Server) detectCloud(ctx context.Context) string {
+	var nodes corev1.NodeList
+	if err := s.Client.List(ctx, &nodes, client.Limit(1)); err == nil && len(nodes.Items) > 0 {
+		id := strings.ToLower(nodes.Items[0].Spec.ProviderID)
+		switch {
+		case strings.HasPrefix(id, "aws://"):
+			return "aws"
+		case strings.HasPrefix(id, "azure://"):
+			return "azure"
+		case strings.HasPrefix(id, "gce://"):
+			return "gcp"
+		}
+	}
+	return "local"
 }
 
 // Fixed mock prices based on provider since full AI fallback takes too long to spin up synchronous responses for nodes

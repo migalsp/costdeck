@@ -255,42 +255,58 @@ func (s *Server) serveWorkloadAction(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleNamespaceOptimize(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	nsName := r.PathValue("ns")
+	basis, workloads, err := s.optimize(r.Context(), r.PathValue("ns"))
+	if err != nil {
+		var bad badRequest
+		if errors.As(err, &bad) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"basis": basis, "workloads": workloads})
+}
 
+// optimizeNamespace right-sizes a namespace and describes the result for the assistant.
+func (s *Server) optimizeNamespace(ctx context.Context, nsName string) (string, error) {
+	basis, workloads, err := s.optimize(ctx, nsName)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("Right-sized %d workload(s) in %s based on %s. Use revert to restore the previous values.", len(workloads), nsName, basis), nil
+}
+
+// optimize sets requests and limits from observed usage and records the previous values.
+func (s *Server) optimize(ctx context.Context, nsName string) (string, []finopsv1.WorkloadOptimization, error) {
 	// 1. Average namespace usage: over the configured lookback window when VictoriaMetrics
 	// is available, otherwise over the last hour of NamespaceFinOps history.
 	avgCpuNs, avgMemNs, basis, err := s.averageUsage(ctx, nsName)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
+		return "", nil, badRequest{err}
 	}
 
-	// 2. Get current individual usage from Metrics API
+	// 2. Current per-workload usage.
 	currentCpuNs, currentMemNs, workloadUsage, workloadMemUsage, err := s.getCurrentUsage(ctx, nsName)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
+		return "", nil, err
 	}
 
-	// 3. Compute Correction Factor
+	// 3. Scale current per-workload usage to the namespace average.
 	cpuFactor := computeFactor(avgCpuNs, currentCpuNs)
 	memFactor := computeFactor(avgMemNs, currentMemNs)
 
-	// 4. Update Workloads and Store Optimization Info
+	// 4. Patch the workloads.
 	optimizedWorkloads, err := s.optimizeWorkloads(ctx, nsName, cpuFactor, memFactor, workloadUsage, workloadMemUsage)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
+		return "", nil, err
 	}
 
-	// 5. Store/Update NamespaceOptimization CR
+	// 5. Record what changed so it can be reverted.
 	if err := s.updateOptimizationCR(ctx, nsName, optimizedWorkloads); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
+		return "", nil, err
 	}
-
-	writeJSON(w, http.StatusOK, map[string]any{"basis": basis, "workloads": optimizedWorkloads})
+	return basis, optimizedWorkloads, nil
 }
 
 // averageUsage returns the average CPU (cores) and memory (bytes) of a namespace and a
@@ -571,13 +587,22 @@ func originalResources(cpu, mem string) corev1.ResourceList {
 }
 
 func (s *Server) handleNamespaceRevert(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	nsName := r.PathValue("ns")
+	if err := s.revertNamespace(r.Context(), r.PathValue("ns")); err != nil {
+		if apierrors.IsNotFound(err) {
+			writeError(w, http.StatusNotFound, "Optimization info not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
 
+// revertNamespace restores the requests and limits recorded before right-sizing.
+func (s *Server) revertNamespace(ctx context.Context, nsName string) error {
 	var opt finopsv1.NamespaceOptimization
 	if err := s.Client.Get(ctx, client.ObjectKey{Name: nsName, Namespace: config.OperatorNamespace()}, &opt); err != nil {
-		writeError(w, http.StatusNotFound, "Optimization info not found")
-		return
+		return err
 	}
 
 	for _, wl := range opt.Status.Workloads {
@@ -607,17 +632,12 @@ func (s *Server) handleNamespaceRevert(w http.ResponseWriter, r *http.Request) {
 		containers[0].Resources.Requests = originalResources(wl.Original.CPURequest, wl.Original.MemoryRequest)
 		containers[0].Resources.Limits = originalResources(wl.Original.CPULimit, wl.Original.MemoryLimit)
 		if err := s.Client.Patch(ctx, obj, patch); err != nil {
-			writeErrorf(w, http.StatusInternalServerError, "could not restore %s %s: %v", wl.Kind, wl.Name, err)
-			return
+			return fmt.Errorf("could not restore %s %s: %w", wl.Kind, wl.Name, err)
 		}
 	}
 
 	opt.Status.Active = false
-	if err := s.Client.Status().Update(ctx, &opt); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	w.WriteHeader(http.StatusOK)
+	return s.Client.Status().Update(ctx, &opt)
 }
 
 func (s *Server) handleNamespaceOptimizationInfo(w http.ResponseWriter, r *http.Request) {

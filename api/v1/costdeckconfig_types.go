@@ -101,21 +101,25 @@ type ProvidersConfig struct {
 
 // ─── Integrations ────────────────────────────────────────────────────────────
 
-// AIIntegrationConfig holds configuration for AI model integrations (stub).
+// AIIntegrationConfig configures the assistant and AI reports.
 type AIIntegrationConfig struct {
 	// Enabled toggles the AI integration on/off
 	// +optional
 	Enabled bool `json:"enabled,omitempty"`
 
-	// Provider is the AI service provider (e.g. "openai", "anthropic", "gemini")
+	// Provider is anthropic, openai, gemini, or local (any OpenAI-compatible endpoint such
+	// as Ollama, vLLM or an internal gateway).
+	// +kubebuilder:validation:Enum=anthropic;openai;gemini;local
 	// +optional
 	Provider string `json:"provider,omitempty"`
 
-	// Model is the specific model to use (e.g. "gpt-4", "claude-3-opus")
+	// Model is the model ID, e.g. "claude-opus-5-5". Defaults per provider when empty;
+	// the settings page lists the models the configured key can use.
 	// +optional
 	Model string `json:"model,omitempty"`
 
-	// BaseURL is the optional API base URL, used primarily for local or custom endpoints.
+	// BaseURL overrides the provider endpoint (gateways, proxies, self-hosted models).
+	// Cloud providers may not point at loopback or link-local addresses.
 	// +optional
 	BaseURL string `json:"baseUrl,omitempty"`
 
@@ -128,7 +132,7 @@ type AIIntegrationConfig struct {
 	SkipSSLVerify bool `json:"skipSslVerify,omitempty"`
 }
 
-// WebexConfig holds configuration for the Webex messenger integration (stub).
+// WebexConfig configures the Webex bot.
 type WebexConfig struct {
 	// Enabled toggles the Webex integration on/off
 	// +optional
@@ -147,7 +151,7 @@ type WebexConfig struct {
 
 // MessengerIntegrationConfig groups all messenger configurations.
 type MessengerIntegrationConfig struct {
-	// Webex messenger integration (coming soon)
+	// Webex bot
 	// +optional
 	Webex *WebexConfig `json:"webex,omitempty"`
 }
@@ -202,7 +206,7 @@ type MCPConfig struct {
 
 // IntegrationsConfig groups all integration configurations.
 type IntegrationsConfig struct {
-	// AI model integration (coming soon)
+	// AI assistant and reports
 	// +optional
 	AI *AIIntegrationConfig `json:"ai,omitempty"`
 

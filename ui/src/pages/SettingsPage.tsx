@@ -288,33 +288,20 @@ const ProviderCard = ({
 
 // ─── Main Component ─────────────────────────────────────────────────────────
 
-const AI_MODELS = {
-  openai: [
-    { id: 'gpt-5', name: 'GPT-5' },
-    { id: 'gpt-5-turbo', name: 'GPT-5 Turbo' },
-    { id: 'gpt-5-mini', name: 'GPT-5 Mini' },
-    { id: 'o4', name: 'o4' },
-    { id: 'o3', name: 'o3' },
-    { id: 'o3-mini', name: 'o3 Mini' },
-    { id: 'gpt-4o', name: 'GPT-4o' }
-  ],
-  anthropic: [
-    { id: 'claude-4-opus-20260228', name: 'Claude 4 Opus' },
-    { id: 'claude-4-sonnet-20260415', name: 'Claude 4 Sonnet' },
-    { id: 'claude-4-haiku-20260501', name: 'Claude 4 Haiku' },
-    { id: 'claude-3-7-sonnet-20250219', name: 'Claude 3.7 Sonnet' },
-    { id: 'claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet' }
-  ],
-  gemini: [
-    { id: 'gemini-3.5-flash', name: 'Gemini 3.5 Flash' },
-    { id: 'gemini-3.1-pro', name: 'Gemini 3.1 Pro' },
-    { id: 'gemini-3.1-flash', name: 'Gemini 3.1 Flash' },
-    { id: 'gemini-3.0-pro', name: 'Gemini 3.0 Pro' },
-    { id: 'gemini-3.0-flash', name: 'Gemini 3.0 Flash' },
-    { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro' },
-    { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash' }
-  ]
-};
+// Suggestions only: "Load models" asks the provider which models the key can actually use.
+const MODEL_SUGGESTIONS: Record<string, string[]> = {
+  anthropic: ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-4-5', 'claude-fable-5-1'],
+  openai: [],
+  gemini: ['gemini-2.5-flash', 'gemini-2.5-pro'],
+  local: [],
+}
+
+const DEFAULT_MODEL: Record<string, string> = {
+  anthropic: 'claude-opus-5-5',
+  openai: 'gpt-4o',
+  gemini: 'gemini-2.5-flash',
+  local: '',
+}
 
 export default function SettingsPage() {
   const [settings, setSettings] = useState<SettingsData | null>(null)
@@ -350,6 +337,9 @@ export default function SettingsPage() {
   const [cloudPricingApi, setCloudPricingApi] = useState(false)
   const [aiApiKey, setAiApiKey] = useState('')
   const [aiSkipSslVerify, setAiSkipSslVerify] = useState(false)
+  const [aiModels, setAiModels] = useState<string[]>([])
+  const [aiModelsLoading, setAiModelsLoading] = useState(false)
+  const [aiModelsError, setAiModelsError] = useState<string | null>(null)
 
   // Webex form state
   const [webexEnabled, setWebexEnabled] = useState(false)
@@ -602,6 +592,25 @@ export default function SettingsPage() {
       setTestResult({ provider, connected: false, error: String(err) })
     } finally {
       setTesting(null)
+    }
+  }
+
+  const loadAIModels = async () => {
+    setAiModelsLoading(true)
+    setAiModelsError(null)
+    try {
+      const res = await fetch('/api/settings/ai/models', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider: aiProvider, baseUrl: aiBaseUrl, skipSslVerify: aiSkipSslVerify, ...(aiApiKey ? { apiKey: aiApiKey } : {}) }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || res.statusText)
+      setAiModels(data.models || [])
+    } catch (err) {
+      setAiModelsError((err as Error).message)
+    } finally {
+      setAiModelsLoading(false)
     }
   }
 
@@ -1043,80 +1052,62 @@ export default function SettingsPage() {
                     onChange={e => {
                       setAiProvider(e.target.value)
                       setAiModel('')
+                      setAiModels([])
                     }}
                     className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm appearance-none focus:outline-none focus:ring-2 focus:ring-violet-500/30 focus:border-violet-400 transition-all"
                   >
+                    <option value="anthropic">Anthropic (Claude)</option>
                     <option value="openai">OpenAI</option>
-                    <option value="anthropic">Anthropic</option>
                     <option value="gemini">Google Gemini</option>
-                    <option value="local">Local / Custom Endpoint</option>
+                    <option value="local">OpenAI-compatible (Ollama, vLLM, gateway)</option>
                   </select>
                 </div>
                 <div>
-                  <label className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5 block">Model</label>
-                  {aiProvider === 'local' ? (
-                    <input
-                      value={aiModel}
-                      onChange={e => setAiModel(e.target.value)}
-                      placeholder="e.g. llama3, mixtral"
-                      className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/30 focus:border-violet-400 transition-all"
-                    />
-                  ) : (
-                    <select
-                      value={aiModel}
-                      onChange={e => setAiModel(e.target.value)}
-                      className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm appearance-none focus:outline-none focus:ring-2 focus:ring-violet-500/30 focus:border-violet-400 transition-all cursor-pointer"
-                    >
-                      <option value="" disabled>Select a model...</option>
-                      {AI_MODELS[aiProvider as keyof typeof AI_MODELS]?.map(m => (
-                        <option key={m.id} value={m.id}>{m.name}</option>
-                      ))}
-                    </select>
-                  )}
+                  <label className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5 flex items-center justify-between">
+                    <span>Model</span>
+                    <button type="button" onClick={loadAIModels} disabled={aiModelsLoading}
+                      className="normal-case tracking-normal text-[10px] font-bold text-violet-600 hover:text-violet-800 disabled:opacity-50">
+                      {aiModelsLoading ? 'Loading…' : 'Load available models'}
+                    </button>
+                  </label>
+                  <input
+                    list="ai-model-options"
+                    value={aiModel}
+                    onChange={e => setAiModel(e.target.value)}
+                    placeholder={DEFAULT_MODEL[aiProvider] ? `${DEFAULT_MODEL[aiProvider]} (default)` : 'e.g. llama3.1'}
+                    className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-violet-500/30 focus:border-violet-400 transition-all"
+                  />
+                  <datalist id="ai-model-options">
+                    {(aiModels.length > 0 ? aiModels : MODEL_SUGGESTIONS[aiProvider] || []).map(m => <option key={m} value={m} />)}
+                  </datalist>
+                  {aiModelsError && <p className="text-[10px] text-red-500 mt-1">{aiModelsError}</p>}
+                  {aiModels.length > 0 && <p className="text-[10px] text-slate-400 mt-1">{aiModels.length} models available to this key</p>}
                 </div>
               </div>
 
-              {aiProvider === 'local' ? (
-                <>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1 block">API Base URL <span className="text-[10px] lowercase text-slate-400 font-normal">(Optional)</span></label>
-                      <p className="text-[10px] text-slate-400 mb-1.5">Enter URL to override the default provider API endpoint (e.g., http://localhost:11434).</p>
-                      <input
-                        value={aiBaseUrl}
-                        onChange={e => setAiBaseUrl(e.target.value)}
-                        placeholder="https://api.openai.com/v1"
-                        className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/30 focus:border-violet-400 transition-all"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1 block">API Key</label>
-                      <p className="text-[10px] text-slate-400 mb-1.5">Leave blank if using a local model that doesn't require auth.</p>
-                      <SecretInput value={aiApiKey} onChange={setAiApiKey} placeholder={settings?.integrations.ai?.hasCredentials ? '••••••••••••••••••••' : 'Enter API key'} />
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2 mt-2 mb-4">
-                    <input
-                      type="checkbox"
-                      id="skipSslVerify"
-                      checked={aiSkipSslVerify}
-                      onChange={(e) => setAiSkipSslVerify(e.target.checked)}
-                      className="rounded border-slate-300 text-violet-500 focus:ring-violet-500"
-                    />
-                    <label htmlFor="skipSslVerify" className="text-xs font-bold text-slate-500 cursor-pointer">
-                      Skip SSL Verification (Insecure)
-                    </label>
-                  </div>
-                </>
-              ) : (
-                <div className="grid grid-cols-1 gap-4">
-                  <div>
-                    <label className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1 block">API Key</label>
-                    <p className="text-[10px] text-slate-400 mb-1.5">Required API Key for the selected provider.</p>
-                    <SecretInput value={aiApiKey} onChange={setAiApiKey} placeholder={settings?.integrations.ai?.hasCredentials ? '••••••••••••••••••••' : 'Enter API key'} />
-                  </div>
+              <div>
+                <label className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1 block">API Key</label>
+                <p className="text-[10px] text-slate-400 mb-1.5">{aiProvider === 'local' ? 'Leave blank if the endpoint needs no authentication.' : 'Stored in a Kubernetes Secret; leave empty to keep the current key.'}</p>
+                <SecretInput value={aiApiKey} onChange={setAiApiKey} placeholder={settings?.integrations.ai?.hasCredentials ? '••••••••••••••••••••' : 'Enter API key'} />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1 block">
+                    API base URL <span className="text-[10px] normal-case text-slate-400 font-normal">({aiProvider === 'local' ? 'required' : 'optional — gateways and proxies'})</span>
+                  </label>
+                  <input
+                    value={aiBaseUrl}
+                    onChange={e => setAiBaseUrl(e.target.value)}
+                    placeholder={aiProvider === 'local' ? 'http://ollama.ai.svc:11434/v1' : aiProvider === 'anthropic' ? 'https://api.anthropic.com' : aiProvider === 'gemini' ? 'https://generativelanguage.googleapis.com/v1beta' : 'https://api.openai.com/v1'}
+                    className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-violet-500/30 focus:border-violet-400 transition-all"
+                  />
                 </div>
-              )}
+                <label className="flex items-center gap-2 mt-6 text-xs font-bold text-slate-500 cursor-pointer">
+                  <input type="checkbox" checked={aiSkipSslVerify} onChange={e => setAiSkipSslVerify(e.target.checked)} className="accent-violet-500" />
+                  Skip TLS verification (insecure)
+                </label>
+              </div>
 
               {/* Test Connection */}
               <div className="flex items-center gap-3 mt-4">
@@ -1131,7 +1122,7 @@ export default function SettingsPage() {
                 {testResult?.provider === 'ai' && (
                   <span className={`text-xs font-bold flex items-center gap-1 ${testResult.connected ? 'text-emerald-600' : 'text-red-500'}`}>
                     {testResult.connected ? <CheckCircle2 size={14} /> : <XCircle size={14} />}
-                    {testResult.connected ? 'Connection successful' : testResult.error || 'Connection failed'}
+                    {testResult.connected ? testResult.message || 'Connection successful' : testResult.error || 'Connection failed'}
                   </span>
                 )}
               </div>
@@ -1140,7 +1131,7 @@ export default function SettingsPage() {
             {aiEnabled && (
               <div className="flex items-center gap-3 mt-6 pt-4 border-t border-slate-100 justify-center text-violet-500">
                 <Sparkles size={16} />
-                <span className="text-xs font-medium">AI-powered cost optimization and chatbot are active.</span>
+                <span className="text-xs font-medium">The assistant reads live cluster data through tools; changes it proposes run only after a user with the operator role confirms them.</span>
               </div>
             )}
           </div>

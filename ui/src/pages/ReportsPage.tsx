@@ -1,12 +1,17 @@
 import { useState, useEffect } from 'react'
 import { FileText, Download, Loader2, RefreshCw } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
+import { apiError } from '../lib/api'
+import { useAuth } from '../lib/auth'
 import remarkGfm from 'remark-gfm'
 
 export default function ReportsPage() {
+  const { can } = useAuth()
   const [report, setReport] = useState<string>('')
   const [isGenerating, setIsGenerating] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [generatedAt, setGeneratedAt] = useState<string | null>(null)
 
   useEffect(() => {
     fetch('/api/ai/report')
@@ -15,6 +20,7 @@ export default function ReportsPage() {
         if (d.report) {
           setReport(d.report)
         }
+        if (d.generatedAt) setGeneratedAt(d.generatedAt)
         setIsLoading(false)
       })
       .catch(e => {
@@ -25,59 +31,59 @@ export default function ReportsPage() {
 
   const handleGenerate = async () => {
     setIsGenerating(true)
+    setError(null)
     setReport('')
 
     try {
-      const response = await fetch('/api/ai/report/generate', {
-        method: 'POST'
-      })
-
+      const response = await fetch('/api/ai/report/generate', { method: 'POST' })
       if (!response.ok) {
-        throw new Error('Failed to generate report')
+        throw new Error(await apiError(response))
       }
 
       const reader = response.body?.getReader()
-      if (!reader) throw new Error('No reader available')
+      if (!reader) throw new Error('Streaming is not supported by this browser')
 
       const decoder = new TextDecoder()
+      let buffer = ''
       let fullReport = ''
+      let streamError: string | null = null
 
-      while (true) {
+      for (;;) {
         const { done, value } = await reader.read()
         if (done) break
-
-        const chunk = decoder.decode(value, { stream: true })
-        const lines = chunk.split('\n')
-        
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const dataStr = line.slice(6)
-            if (dataStr === '[DONE]') continue
+        buffer += decoder.decode(value, { stream: true })
+        let sep
+        while ((sep = buffer.indexOf('\n\n')) !== -1) {
+          const frame = buffer.slice(0, sep)
+          buffer = buffer.slice(sep + 2)
+          for (const line of frame.split('\n')) {
+            if (!line.startsWith('data:')) continue
             try {
-              const textChunk = JSON.parse(dataStr)
-              fullReport += textChunk
-              setReport(fullReport)
-            } catch (e) {
-              console.error('Failed to parse stream chunk:', e)
+              const ev = JSON.parse(line.slice(5).trim())
+              if (ev.type === 'text') {
+                fullReport += ev.text
+                setReport(fullReport)
+              } else if (ev.type === 'reset') {
+                fullReport = ''
+                setReport('')
+              } else if (ev.type === 'error') {
+                streamError = ev.text
+              }
+            } catch {
+              // Ignore keep-alives and malformed frames.
             }
           }
         }
       }
 
+      if (streamError) throw new Error(streamError)
       if (!fullReport.trim()) {
-        throw new Error('Received empty response from the AI server. Please check the operator logs.')
+        throw new Error('The AI provider returned an empty report. Check Settings → AI Models and the operator logs.')
       }
-
-      // Save the generated report
-      await fetch('/api/ai/report/save', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ report: fullReport })
-      })
-
+      // The server saves the finished report itself.
+      setGeneratedAt(new Date().toISOString())
     } catch (e) {
-      console.error(e)
-      setReport('**Error generating report.** Please make sure the AI integration is enabled in Settings and valid credentials are provided.')
+      setError((e as Error).message)
     } finally {
       setIsGenerating(false)
     }
@@ -98,17 +104,20 @@ export default function ReportsPage() {
           <p className="text-slate-500 mt-2 font-medium">
             AI-driven insights &mdash; Discover hidden bottlenecks, eliminate waste
           </p>
+          {generatedAt && (
+            <p className="text-xs text-slate-400 mt-1">Last generated {new Date(generatedAt).toLocaleString()}</p>
+          )}
         </div>
 
         <div className="flex gap-3">
-          <button
+          {can('operator') && <button
             onClick={handleGenerate}
             disabled={isGenerating}
             className="flex items-center gap-2 bg-emerald-500 text-white px-5 py-2.5 rounded-xl font-bold shadow-lg shadow-emerald-500/20 hover:bg-emerald-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isGenerating ? <Loader2 size={18} className="animate-spin" /> : <RefreshCw size={18} />}
             {isGenerating ? 'Generating...' : 'Generate New Report'}
-          </button>
+          </button>}
           
           <button
             onClick={handleExportPDF}
@@ -120,6 +129,10 @@ export default function ReportsPage() {
           </button>
         </div>
       </div>
+
+      {error && (
+        <div className="mb-6 p-4 bg-red-50 border border-red-100 rounded-2xl text-sm font-medium text-red-600 print-hide">{error}</div>
+      )}
 
       <div className="bg-white rounded-2xl shadow-xl shadow-slate-200/50 border border-slate-100 min-h-[600px] print-container">
         {isLoading ? (

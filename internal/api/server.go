@@ -193,10 +193,12 @@ func (s *Server) routes() *http.ServeMux {
 	admin("PUT /api/settings", s.handleUpdateSettings)
 	admin("POST /api/settings/providers/{provider}/test", s.handleTestProvider)
 	viewer("GET /api/settings/providers/{provider}/status", s.handleProviderStatus)
+	admin("POST /api/settings/ai/models", s.handleAIModels)
 
 	// Integrations
 	mux.HandleFunc("POST /api/webex/webhook", s.handleWebexWebhook) // HMAC-authenticated
 	viewer("POST /api/ai/chat", s.handleAIChat)
+	operator("POST /api/ai/tools/{name}", s.handleAIExecuteTool) // runs an action the user confirmed
 	viewer("GET /api/ai/report", s.handleAIReportGet)
 	operator("POST /api/ai/report/save", s.handleAIReportSave)
 	operator("POST /api/ai/report/generate", s.handleAIReportGenerate)

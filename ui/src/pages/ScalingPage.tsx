@@ -19,7 +19,8 @@ import ScalingConfigModal from '../components/ScalingConfigModal'
 import ScalingPipelineModal from '../components/ScalingPipelineModal'
 import { AWSLogo } from '../components/ProviderLogos'
 import { useAuth } from '../lib/auth'
-import OverrideDialog, { relativeTime, type OverrideUntil } from '../components/OverrideDialog'
+import OverrideDialog, { type OverrideUntil } from '../components/OverrideDialog'
+import { relativeTime } from '../lib/time'
 
 interface ScalingSchedule {
   days?: number[];

@@ -26,10 +26,18 @@ const SSO_ERRORS: Record<string, string> = {
   access_denied: 'The Microsoft sign-in was cancelled.',
 }
 
+// ssoErrorFromURL reads the error a failed Microsoft sign-in appends to the URL.
+function ssoErrorFromURL(): string {
+  const params = new URLSearchParams(window.location.search)
+  const code = params.get('sso_error')
+  if (!code) return ''
+  return SSO_ERRORS[code] || params.get('sso_detail') || 'Microsoft sign-in failed.'
+}
+
 export default function LoginPage({ onLogin }: LoginPageProps) {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
-  const [error, setError] = useState('')
+  const [error, setError] = useState(ssoErrorFromURL)
   const [loading, setLoading] = useState(false)
   const [config, setConfig] = useState<AuthConfig>({ localLogin: true, entra: { enabled: false } })
 
@@ -39,11 +47,9 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
       .then(d => { if (d) setConfig(d) })
       .catch(() => {})
 
-    // A failed Microsoft sign-in comes back with ?sso_error=<code>&sso_detail=<text>.
+    // Drop ?sso_error=… from the address bar once it has been read.
     const params = new URLSearchParams(window.location.search)
-    const code = params.get('sso_error')
-    if (code) {
-      setError(SSO_ERRORS[code] || params.get('sso_detail') || 'Microsoft sign-in failed.')
+    if (params.has('sso_error')) {
       params.delete('sso_error')
       params.delete('sso_detail')
       const rest = params.toString()

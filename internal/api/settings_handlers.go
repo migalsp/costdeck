@@ -2,16 +2,12 @@ package api
 
 import (
 	"context"
-	"crypto/tls"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
 	"net/http"
-	"net/url"
 	"strings"
-	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -696,7 +692,7 @@ func (s *Server) handleTestProvider(w http.ResponseWriter, r *http.Request) {
 	case "aws":
 		s.testAWSProvider(w, ctx, cfg, r)
 	case "ai":
-		s.testAIProvider(w, ctx, cfg, r)
+		s.testAIProvider(w, r)
 	case "victoriametrics":
 		s.testVictoriaMetrics(w, ctx, cfg, r)
 	case "webex":
@@ -878,153 +874,6 @@ func (s *Server) testVictoriaMetrics(w http.ResponseWriter, ctx context.Context,
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"connected": true, "endpoint": vmClient.Endpoint()})
-}
-
-func (s *Server) testAIProvider(w http.ResponseWriter, ctx context.Context, cfg *finopsv1.CostDeckConfig, r *http.Request) {
-	var req AIUpdateRequest
-
-	providerType := ""
-	baseUrl := ""
-	apiKey := ""
-	skipSslVerify := false
-
-	// Try load from request body
-	if r.Body != nil {
-		json.NewDecoder(r.Body).Decode(&req)
-		providerType = req.Provider
-		baseUrl = req.BaseURL
-		apiKey = req.APIKey
-		if req.SkipSSLVerify != nil {
-			skipSslVerify = *req.SkipSSLVerify
-		}
-	}
-
-	// Fallback to config if not provided in UI body
-	if providerType == "" && cfg.Spec.Integrations.AI != nil {
-		providerType = cfg.Spec.Integrations.AI.Provider
-		baseUrl = cfg.Spec.Integrations.AI.BaseURL
-		skipSslVerify = cfg.Spec.Integrations.AI.SkipSSLVerify
-
-		if apiKey == "" && cfg.Spec.Integrations.AI.SecretRef != "" {
-			secret := &corev1.Secret{}
-			err := s.Client.Get(ctx, client.ObjectKey{Name: cfg.Spec.Integrations.AI.SecretRef, Namespace: cfg.Namespace}, secret)
-			if err == nil {
-				apiKey = string(secret.Data["API_KEY"])
-			}
-		}
-	}
-
-	if providerType == "" {
-		providerType = "openai"
-	}
-
-	// Mock ping for test connectivity logic.
-
-	var apiUrl string
-	switch providerType {
-	case "openai":
-		if baseUrl == "" {
-			baseUrl = "https://api.openai.com/v1"
-		}
-		apiUrl = strings.TrimSuffix(baseUrl, "/") + "/models"
-	case "anthropic":
-		if baseUrl == "" {
-			baseUrl = "https://api.anthropic.com/v1"
-		}
-		apiUrl = strings.TrimSuffix(baseUrl, "/") + "/messages"
-	case "gemini":
-		if baseUrl == "" {
-			baseUrl = "https://generativelanguage.googleapis.com/v1beta"
-		}
-		apiUrl = strings.TrimSuffix(baseUrl, "/") + "/models"
-	default:
-		if baseUrl == "" {
-			baseUrl = "http://localhost:11434/v1"
-		}
-		apiUrl = strings.TrimSuffix(baseUrl, "/") + "/models"
-	}
-
-	parsedUrl, err := url.ParseRequestURI(apiUrl)
-	if err != nil || (parsedUrl.Scheme != "http" && parsedUrl.Scheme != "https") {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
-			"connected": false,
-			"error":     "Invalid URL format or scheme (must be http/https)",
-		})
-		return
-	}
-
-	host := parsedUrl.Hostname()
-	if providerType != "local" {
-		if host == "localhost" || host == "127.0.0.1" || host == "::1" || strings.HasPrefix(host, "169.254.") {
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]any{
-				"connected": false,
-				"error":     "Invalid host for cloud provider (local/internal IPs are forbidden)",
-			})
-			return
-		}
-	}
-
-	safeUrl := &url.URL{
-		Scheme:   parsedUrl.Scheme,
-		Host:     parsedUrl.Host,
-		Path:     parsedUrl.Path,
-		RawQuery: parsedUrl.RawQuery,
-	}
-
-	// Break CodeQL taint tracking using base64 encode/decode
-	encodedUrl := base64.StdEncoding.EncodeToString([]byte(safeUrl.String()))
-	decodedUrlBytes, _ := base64.StdEncoding.DecodeString(encodedUrl)
-	decodedUrl := string(decodedUrlBytes)
-
-	httpReq, _ := http.NewRequest("GET", decodedUrl, nil)
-	if apiKey != "" {
-		switch providerType {
-		case "gemini":
-			httpReq.Header.Set("x-goog-api-key", apiKey)
-		case "anthropic":
-			httpReq.Header.Set("x-api-key", apiKey)
-			httpReq.Header.Set("anthropic-version", "2023-06-01")
-		default:
-			httpReq.Header.Set("Authorization", "Bearer "+apiKey)
-		}
-	}
-
-	httpClient := &http.Client{Timeout: 10 * time.Second}
-
-	if skipSslVerify {
-		httpClient.Transport = &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-		}
-	}
-
-	// lgtm [go/request-forgery]
-	// codeql[go/request-forgery]
-	resp, err := httpClient.Do(httpReq)
-	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
-			"connected": false,
-			"error":     "Failed to reach AI endpoint: " + err.Error(),
-		})
-		return
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 && resp.StatusCode != 404 && resp.StatusCode != 405 {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
-			"connected": false,
-			"error":     fmt.Sprintf("AI provider returned error status: %d", resp.StatusCode),
-		})
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
-		"connected": true,
-	})
 }
 
 // ─── Provider Status ────────────────────────────────────────────────────────
