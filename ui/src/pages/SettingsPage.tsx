@@ -12,6 +12,7 @@ interface ProviderStatus {
   connected: boolean
   lastChecked?: string
   error?: string
+  message?: string
   discoveredResources?: number
 }
 
@@ -52,6 +53,7 @@ interface WebexSettings {
   enabled: boolean
   roomId?: string
   hasCredentials: boolean
+  status?: ProviderStatus
 }
 
 interface VictoriaMetricsSettings {
@@ -302,7 +304,7 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState<string | null>(null)
-  const [testResult, setTestResult] = useState<{ provider: string; connected: boolean; error?: string } | null>(null)
+  const [testResult, setTestResult] = useState<{ provider: string; connected: boolean; error?: string; message?: string } | null>(null)
   const [saveMessage, setSaveMessage] = useState<string | null>(null)
   const [expandedProvider, setExpandedProvider] = useState<string | null>('aws')
   const [expandedSection, setExpandedSection] = useState<string>('providers')
@@ -336,6 +338,7 @@ export default function SettingsPage() {
   const [webexEnabled, setWebexEnabled] = useState(false)
   const [webexRoomId, setWebexRoomId] = useState('')
   const [webexBotToken, setWebexBotToken] = useState('')
+  const [webexWebhookSecret, setWebexWebhookSecret] = useState('')
 
   // VictoriaMetrics form state
   const [vmEnabled, setVmEnabled] = useState(false)
@@ -430,7 +433,8 @@ export default function SettingsPage() {
             webex: {
               enabled: webexEnabled,
               roomId: webexRoomId,
-              ...(webexBotToken ? { botToken: webexBotToken } : {})
+              ...(webexBotToken ? { botToken: webexBotToken } : {}),
+              ...(webexWebhookSecret ? { webhookSecret: webexWebhookSecret } : {})
             }
           },
           victoriaMetrics: {
@@ -464,6 +468,7 @@ export default function SettingsPage() {
         setAwsSecretKey('')
         setAiApiKey('')
         setWebexBotToken('')
+        setWebexWebhookSecret('')
         setVmBearerToken('')
         setVmUsername('')
         setVmPassword('')
@@ -503,6 +508,11 @@ export default function SettingsPage() {
         body.baseUrl = aiBaseUrl
         body.apiKey = aiApiKey
         body.skipSslVerify = aiSkipSslVerify
+      } else if (provider === 'webex') {
+        Object.assign(body, {
+          roomId: webexRoomId,
+          ...(webexBotToken ? { botToken: webexBotToken } : {}),
+        })
       } else if (provider === 'victoriametrics') {
         Object.assign(body, {
           endpoint: vmEndpoint,
@@ -518,7 +528,7 @@ export default function SettingsPage() {
         body: JSON.stringify(body),
       })
       const data = await res.json()
-      setTestResult({ provider, connected: data.connected, error: data.error })
+      setTestResult({ provider, connected: data.connected, error: data.error, message: data.message })
     } catch (err) {
       setTestResult({ provider, connected: false, error: String(err) })
     } finally {
@@ -1082,7 +1092,20 @@ export default function SettingsPage() {
                 <WebexLogo />
                 <div>
                   <span className="font-bold text-slate-800">Cisco Webex</span>
+                  {webexEnabled && settings?.integrations?.messenger?.webex?.status && (
+                    <p className="text-[10px] text-slate-400 mt-0.5">
+                      {settings.integrations.messenger.webex.status.connected
+                        ? settings.integrations.messenger.webex.status.message
+                        : settings.integrations.messenger.webex.status.error}
+                    </p>
+                  )}
                 </div>
+                {webexEnabled && settings?.integrations?.messenger?.webex?.status && (
+                  <StatusBadge
+                    connected={settings.integrations.messenger.webex.status.connected}
+                    error={settings.integrations.messenger.webex.status.error}
+                  />
+                )}
               </div>
               <label className="relative inline-flex items-center cursor-pointer">
                 <input type="checkbox" checked={webexEnabled} onChange={e => setWebexEnabled(e.target.checked)} className="sr-only peer" />
@@ -1108,20 +1131,47 @@ export default function SettingsPage() {
               </div>
 
               <div>
-                <label className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5 block">Room ID</label>
+                <label className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5 block">Space ID <span className="normal-case font-normal text-slate-400">(optional)</span></label>
                 <input
                   value={webexRoomId}
                   onChange={e => setWebexRoomId(e.target.value)}
-                  placeholder="Webex Room/Space ID"
+                  placeholder="Leave empty to answer in every space the bot is added to"
                   className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm"
                 />
+              </div>
+
+              <div>
+                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5 block">
+                  Webhook secret <span className="normal-case font-normal text-slate-400">(optional — switches from polling to signed webhooks)</span>
+                </label>
+                <SecretInput value={webexWebhookSecret} onChange={setWebexWebhookSecret} placeholder="Secret used when registering the webhook" />
+                <p className="text-[10px] text-slate-400 mt-1.5">
+                  Register a webhook for <code>messages:created</code> pointing to <code>https://&lt;costdeck-host&gt;/api/webex/webhook</code> with this secret. Without it, CostDeck polls Webex every 10 seconds.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => handleTestConnection('webex')}
+                  disabled={testing === 'webex'}
+                  className="flex items-center gap-2 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-bold transition-all disabled:opacity-50"
+                >
+                  {testing === 'webex' ? <RefreshCw size={14} className="animate-spin" /> : <ExternalLink size={14} />}
+                  Test Connection
+                </button>
+                {testResult?.provider === 'webex' && (
+                  <span className={`text-xs font-bold flex items-center gap-1 ${testResult.connected ? 'text-emerald-600' : 'text-red-500'}`}>
+                    {testResult.connected ? <CheckCircle2 size={14} /> : <XCircle size={14} />}
+                    {testResult.connected ? testResult.message : testResult.error || 'Connection failed'}
+                  </span>
+                )}
               </div>
             </div>
 
             {webexEnabled && (
               <div className="flex items-center gap-3 mt-6 pt-4 border-t border-slate-100 justify-center text-emerald-500">
                 <MessageSquare size={16} />
-                <span className="text-xs font-medium">Webex integration is active. Use /scale commands in the configured room.</span>
+                <span className="text-xs font-medium">Mention the bot with <code>help</code>, <code>list</code>, <code>scale group &lt;name&gt; up [for 4h]</code> or <code>resume group &lt;name&gt;</code>.</span>
               </div>
             )}
           </div>

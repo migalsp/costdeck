@@ -147,7 +147,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	webexPoller := &webex.WebexPoller{
+	webexPoller := &webex.Poller{
 		Client: mgr.GetClient(),
 	}
 	if err := mgr.Add(webexPoller); err != nil {

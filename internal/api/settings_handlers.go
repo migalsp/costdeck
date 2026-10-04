@@ -21,6 +21,7 @@ import (
 	"github.com/migalsp/costdeck-operator/internal/config"
 	"github.com/migalsp/costdeck-operator/internal/metrics"
 	"github.com/migalsp/costdeck-operator/internal/scaling"
+	"github.com/migalsp/costdeck-operator/internal/webex"
 )
 
 // ─── Settings API Data Types ─────────────────────────────────────────────────
@@ -87,9 +88,10 @@ type MessengerSettingsResponse struct {
 }
 
 type WebexSettingsResponse struct {
-	Enabled        bool   `json:"enabled"`
-	RoomID         string `json:"roomId,omitempty"`
-	HasCredentials bool   `json:"hasCredentials"`
+	Enabled        bool                     `json:"enabled"`
+	RoomID         string                   `json:"roomId,omitempty"`
+	HasCredentials bool                     `json:"hasCredentials"`
+	Status         *finopsv1.ProviderStatus `json:"status,omitempty"`
 }
 
 type VictoriaMetricsSettingsResponse struct {
@@ -163,9 +165,10 @@ type MessengerUpdateRequest struct {
 }
 
 type WebexUpdateRequest struct {
-	Enabled  *bool  `json:"enabled,omitempty"`
-	RoomID   string `json:"roomId,omitempty"`
-	BotToken string `json:"botToken,omitempty"`
+	Enabled       *bool   `json:"enabled,omitempty"`
+	RoomID        *string `json:"roomId,omitempty"`
+	BotToken      string  `json:"botToken,omitempty"`
+	WebhookSecret *string `json:"webhookSecret,omitempty"`
 }
 
 type VictoriaMetricsUpdateRequest struct {
@@ -271,6 +274,7 @@ func (s *Server) buildSettingsResponse(ctx context.Context, cfg *finopsv1.CostDe
 				Enabled:        cfg.Spec.Integrations.Messenger.Webex.Enabled,
 				RoomID:         cfg.Spec.Integrations.Messenger.Webex.RoomID,
 				HasCredentials: cfg.Spec.Integrations.Messenger.Webex.SecretRef != "",
+				Status:         cfg.Status.Webex,
 			},
 		}
 	}
@@ -455,14 +459,27 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		if wxReq.Enabled != nil {
 			cfg.Spec.Integrations.Messenger.Webex.Enabled = *wxReq.Enabled
 		}
-		if wxReq.RoomID != "" {
-			cfg.Spec.Integrations.Messenger.Webex.RoomID = wxReq.RoomID
+		if wxReq.RoomID != nil {
+			cfg.Spec.Integrations.Messenger.Webex.RoomID = strings.TrimSpace(*wxReq.RoomID)
 		}
-		if wxReq.BotToken != "" {
+		if wxReq.BotToken != "" || wxReq.WebhookSecret != nil {
 			secretName := "costdeck-webex-credentials"
-			if err := s.upsertSecret(ctx, operatorNs, secretName, map[string][]byte{
-				"BOT_TOKEN": []byte(wxReq.BotToken),
-			}); err != nil {
+			data, err := s.secretDataOrEmpty(ctx, secretName)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "Failed to read credentials: "+err.Error())
+				return
+			}
+			if wxReq.BotToken != "" {
+				data[webex.SecretKeyBotToken] = []byte(wxReq.BotToken)
+			}
+			if wxReq.WebhookSecret != nil {
+				if *wxReq.WebhookSecret == "" {
+					delete(data, webex.SecretKeyWebhookSecret)
+				} else {
+					data[webex.SecretKeyWebhookSecret] = []byte(*wxReq.WebhookSecret)
+				}
+			}
+			if err := s.upsertSecret(ctx, operatorNs, secretName, data); err != nil {
 				writeError(w, http.StatusInternalServerError, "Failed to store credentials: "+err.Error())
 				return
 			}
@@ -563,6 +580,8 @@ func (s *Server) handleTestProvider(w http.ResponseWriter, r *http.Request) {
 		s.testAIProvider(w, ctx, cfg, r)
 	case "victoriametrics":
 		s.testVictoriaMetrics(w, ctx, cfg, r)
+	case "webex":
+		s.testWebex(w, ctx, r)
 	case "azure":
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{
@@ -640,6 +659,32 @@ func (s *Server) testAWSProvider(w http.ResponseWriter, ctx context.Context, cfg
 	json.NewEncoder(w).Encode(map[string]any{
 		"connected": true,
 	})
+}
+
+// testWebex validates the bot token (unsaved form value first, stored Secret otherwise)
+// and that the bot can see the configured space.
+func (s *Server) testWebex(w http.ResponseWriter, ctx context.Context, r *http.Request) {
+	var req WebexUpdateRequest
+	if err := decodeJSON(w, r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	settings, err := webex.LoadSettings(ctx, s.Client)
+	if err != nil || settings == nil {
+		settings = &webex.Settings{}
+	}
+	if req.BotToken != "" {
+		settings.Token = req.BotToken
+	}
+	if req.RoomID != nil {
+		settings.RoomID = strings.TrimSpace(*req.RoomID)
+	}
+	msg, err := webex.Check(ctx, webex.NewClient(settings.Token), settings)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"connected": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"connected": true, "message": msg})
 }
 
 // testVictoriaMetrics validates the VictoriaMetrics settings in the request body (so unsaved
@@ -843,6 +888,8 @@ func (s *Server) handleProviderStatus(w http.ResponseWriter, r *http.Request) {
 		status = cfg.Status.GCP
 	case "victoriametrics":
 		status = cfg.Status.VictoriaMetrics
+	case "webex":
+		status = cfg.Status.Webex
 	default:
 		writeError(w, http.StatusBadRequest, "Unknown provider")
 		return
@@ -886,6 +933,23 @@ func (s *Server) getOrCreateDefaultConfig(ctx context.Context) (*finopsv1.CostDe
 		return nil, err
 	}
 	return cfg, nil
+}
+
+// secretDataOrEmpty returns a copy of a Secret's data, or an empty map if it does not exist,
+// so that updating one key keeps the others.
+func (s *Server) secretDataOrEmpty(ctx context.Context, name string) (map[string][]byte, error) {
+	data, err := config.SecretData(ctx, s.Client, name)
+	if errors.IsNotFound(err) {
+		return map[string][]byte{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string][]byte, len(data))
+	for k, v := range data {
+		out[k] = v
+	}
+	return out, nil
 }
 
 func (s *Server) secretExists(ctx context.Context, name, namespace string) bool {

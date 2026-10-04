@@ -114,8 +114,10 @@ spec:
                             description: RoomID is the Webex room/space ID for notifications
                             type: string
                           secretRef:
-                            description: SecretRef is the name of the K8s Secret holding
-                              the Webex bot token
+                            description: |-
+                              SecretRef is the name of the K8s Secret holding the Webex bot token (key BOT_TOKEN).
+                              Adding a WEBHOOK_SECRET key switches delivery from polling to signed webhooks
+                              (POST /api/webex/webhook).
                             type: string
                         type: object
                     type: object
@@ -246,6 +248,10 @@ spec:
                     description: LastChecked is when connectivity was last verified
                     format: date-time
                     type: string
+                  message:
+                    description: Message describes a successful check, e.g. which
+                      identity the credentials map to.
+                    type: string
                 required:
                 - connected
                 type: object
@@ -267,6 +273,10 @@ spec:
                   lastChecked:
                     description: LastChecked is when connectivity was last verified
                     format: date-time
+                    type: string
+                  message:
+                    description: Message describes a successful check, e.g. which
+                      identity the credentials map to.
                     type: string
                 required:
                 - connected
@@ -348,6 +358,10 @@ spec:
                     description: LastChecked is when connectivity was last verified
                     format: date-time
                     type: string
+                  message:
+                    description: Message describes a successful check, e.g. which
+                      identity the credentials map to.
+                    type: string
                 required:
                 - connected
                 type: object
@@ -371,6 +385,37 @@ spec:
                   lastChecked:
                     description: LastChecked is when connectivity was last verified
                     format: date-time
+                    type: string
+                  message:
+                    description: Message describes a successful check, e.g. which
+                      identity the credentials map to.
+                    type: string
+                required:
+                - connected
+                type: object
+              webex:
+                description: Webex reports whether the bot token is valid and the
+                  bot can see its space.
+                properties:
+                  connected:
+                    description: Connected indicates whether the provider credentials
+                      are valid and the provider is reachable
+                    type: boolean
+                  discoveredResources:
+                    description: DiscoveredResources is the count of resources found
+                      during the last discovery
+                    type: integer
+                  error:
+                    description: Error contains the last error message if connection
+                      failed
+                    type: string
+                  lastChecked:
+                    description: LastChecked is when connectivity was last verified
+                    format: date-time
+                    type: string
+                  message:
+                    description: Message describes a successful check, e.g. which
+                      identity the credentials map to.
                     type: string
                 required:
                 - connected

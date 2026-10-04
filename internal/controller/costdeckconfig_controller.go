@@ -34,6 +34,7 @@ import (
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
 	"github.com/migalsp/costdeck-operator/internal/metrics"
 	"github.com/migalsp/costdeck-operator/internal/scaling"
+	"github.com/migalsp/costdeck-operator/internal/webex"
 )
 
 // Label that marks the credentials Secrets CostDeck created from the settings UI.
@@ -102,6 +103,7 @@ func (r *CostDeckConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	}
 
 	config.Status.VictoriaMetrics = r.reconcileVictoriaMetrics(ctx, &config)
+	config.Status.Webex = r.reconcileWebex(ctx)
 
 	// Update status
 	if err := r.Status().Update(ctx, &config); err != nil {
@@ -191,6 +193,27 @@ func (r *CostDeckConfigReconciler) reconcileVictoriaMetrics(ctx context.Context,
 		return status
 	}
 	status.Connected = true
+	return status
+}
+
+// reconcileWebex checks the bot token and, when a room is configured, that the bot can see
+// it. "The bot receives messages but never answers" is almost always one of the two.
+func (r *CostDeckConfigReconciler) reconcileWebex(ctx context.Context) *finopsv1.ProviderStatus {
+	settings, err := webex.LoadSettings(ctx, r.Client)
+	if settings == nil && err == nil {
+		return nil
+	}
+	status := &finopsv1.ProviderStatus{LastChecked: metav1.Now()}
+	if err != nil {
+		status.Error = err.Error()
+		return status
+	}
+	msg, err := webex.Check(ctx, webex.NewClient(settings.Token), settings)
+	if err != nil {
+		status.Error = err.Error()
+		return status
+	}
+	status.Connected, status.Message = true, msg
 	return status
 }
 

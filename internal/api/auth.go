@@ -42,8 +42,9 @@ func AuthMiddleware(next http.Handler) http.Handler {
 
 		path := r.URL.Path
 
-		// Always allow these endpoints without auth
-		if path == "/api/login" || path == "/api/logout" || path == "/api/docs" || path == "/api/openapi.yaml" {
+		// Always allow these endpoints without auth. The Webex webhook authenticates every
+		// request with its HMAC signature instead of a session.
+		if path == "/api/login" || path == "/api/logout" || path == "/api/docs" || path == "/api/openapi.yaml" || path == "/api/webex/webhook" {
 			next.ServeHTTP(w, r)
 			return
 		}

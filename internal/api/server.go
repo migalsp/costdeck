@@ -40,6 +40,9 @@ type Server struct {
 
 	healthMu      sync.Mutex
 	healthHistory []map[string]any
+
+	// rootCtx lives as long as the server; background work started by a request uses it.
+	rootCtx context.Context
 }
 
 //go:embed ui/*
@@ -56,6 +59,7 @@ func (s *Server) NeedLeaderElection() bool { return false }
 // Start implements manager.Runnable.
 func (s *Server) Start(ctx context.Context) error {
 	log := logf.FromContext(ctx).WithName("api-server")
+	s.rootCtx = ctx
 
 	go s.StartMCPServerLoop(ctx)
 

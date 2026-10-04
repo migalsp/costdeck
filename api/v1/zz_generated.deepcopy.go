@@ -182,6 +182,11 @@ func (in *CostDeckConfigStatus) DeepCopyInto(out *CostDeckConfigStatus) {
 		*out = new(ProviderStatus)
 		(*in).DeepCopyInto(*out)
 	}
+	if in.Webex != nil {
+		in, out := &in.Webex, &out.Webex
+		*out = new(ProviderStatus)
+		(*in).DeepCopyInto(*out)
+	}
 	if in.Conditions != nil {
 		in, out := &in.Conditions, &out.Conditions
 		*out = make([]metav1.Condition, len(*in))

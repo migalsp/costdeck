@@ -138,7 +138,9 @@ type WebexConfig struct {
 	// +optional
 	RoomID string `json:"roomId,omitempty"`
 
-	// SecretRef is the name of the K8s Secret holding the Webex bot token
+	// SecretRef is the name of the K8s Secret holding the Webex bot token (key BOT_TOKEN).
+	// Adding a WEBHOOK_SECRET key switches delivery from polling to signed webhooks
+	// (POST /api/webex/webhook).
 	// +optional
 	SecretRef string `json:"secretRef,omitempty"`
 }
@@ -261,6 +263,10 @@ type ProviderStatus struct {
 	// +optional
 	Error string `json:"error,omitempty"`
 
+	// Message describes a successful check, e.g. which identity the credentials map to.
+	// +optional
+	Message string `json:"message,omitempty"`
+
 	// DiscoveredResources is the count of resources found during the last discovery
 	// +optional
 	DiscoveredResources int `json:"discoveredResources,omitempty"`
@@ -284,6 +290,10 @@ type CostDeckConfigStatus struct {
 	// actually holds the container metrics CostDeck queries.
 	// +optional
 	VictoriaMetrics *ProviderStatus `json:"victoriaMetrics,omitempty"`
+
+	// Webex reports whether the bot token is valid and the bot can see its space.
+	// +optional
+	Webex *ProviderStatus `json:"webex,omitempty"`
 
 	// Conditions represent the current state of the CostDeckConfig resource.
 	// +optional
