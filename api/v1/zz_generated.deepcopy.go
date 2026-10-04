@@ -177,6 +177,11 @@ func (in *CostDeckConfigStatus) DeepCopyInto(out *CostDeckConfigStatus) {
 		*out = new(ProviderStatus)
 		(*in).DeepCopyInto(*out)
 	}
+	if in.VictoriaMetrics != nil {
+		in, out := &in.VictoriaMetrics, &out.VictoriaMetrics
+		*out = new(ProviderStatus)
+		(*in).DeepCopyInto(*out)
+	}
 	if in.Conditions != nil {
 		in, out := &in.Conditions, &out.Conditions
 		*out = make([]metav1.Condition, len(*in))

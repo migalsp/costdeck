@@ -17,7 +17,6 @@ limitations under the License.
 package main
 
 import (
-	"context"
 	"crypto/tls"
 	"flag"
 	"os"
@@ -132,10 +131,15 @@ func main() {
 		os.Exit(1)
 	}
 
+	// The metrics source is resolved from the live CostDeckConfig on every query, so
+	// VictoriaMetrics settings saved in the UI apply without a restart.
+	metricsProvider := metrics.NewProvider(mgr.GetClient(), &metrics.MetricsServerSource{Client: metricsClient})
+
 	apiServer := &api.Server{
 		Client:        mgr.GetClient(),
 		K8sClient:     k8sClient,
 		MetricsClient: metricsClient,
+		Metrics:       metricsProvider,
 		Port:          "8082",
 	}
 	if err := mgr.Add(apiServer); err != nil {
@@ -151,36 +155,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Try to initialize VictoriaMetrics client from CostDeckConfig
-	var vmClient *metrics.VMClient
-	{
-		operatorNs := os.Getenv("POD_NAMESPACE")
-		if operatorNs == "" {
-			operatorNs = "costdeck"
-		}
-		var cdConfig finopsv1.CostDeckConfig
-		configKey := client.ObjectKey{Name: "default", Namespace: operatorNs}
-		ctx := context.Background()
-		if err := mgr.GetAPIReader().Get(ctx, configKey, &cdConfig); err == nil {
-			if cdConfig.Spec.Integrations.VictoriaMetrics != nil && cdConfig.Spec.Integrations.VictoriaMetrics.Enabled && cdConfig.Spec.Integrations.VictoriaMetrics.Endpoint != "" {
-				vm, err := metrics.NewVMClient(ctx, mgr.GetClient(), cdConfig.Spec.Integrations.VictoriaMetrics.Endpoint, cdConfig.Spec.Integrations.VictoriaMetrics.SecretRef, operatorNs)
-				if err != nil {
-					setupLog.Error(err, "Failed to initialize VictoriaMetrics client, falling back to metrics-server")
-				} else {
-					vmClient = vm
-					setupLog.Info("VictoriaMetrics client initialized", "endpoint", cdConfig.Spec.Integrations.VictoriaMetrics.Endpoint)
-				}
-			}
-		} else {
-			setupLog.Info("No CostDeckConfig found at startup, using metrics-server")
-		}
-	}
-
 	if err := (&controller.NamespaceFinOpsReconciler{
-		Client:        mgr.GetClient(),
-		Scheme:        mgr.GetScheme(),
-		MetricsClient: metricsClient,
-		VMClient:      vmClient,
+		Client:  mgr.GetClient(),
+		Scheme:  mgr.GetScheme(),
+		Metrics: metricsProvider,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "NamespaceFinOps")
 		os.Exit(1)

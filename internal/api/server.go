@@ -15,6 +15,8 @@ import (
 	metricsv "k8s.io/metrics/pkg/client/clientset/versioned"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+
+	"github.com/migalsp/costdeck-operator/internal/metrics"
 )
 
 // Version is set at build time via ldflags
@@ -33,6 +35,7 @@ type Server struct {
 	Client        client.Client
 	K8sClient     kubernetes.Interface
 	MetricsClient metricsv.Interface
+	Metrics       *metrics.Provider
 	Port          string
 
 	healthMu      sync.Mutex

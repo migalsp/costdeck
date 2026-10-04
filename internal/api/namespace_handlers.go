@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -15,6 +16,7 @@ import (
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
 	"github.com/migalsp/costdeck-operator/internal/config"
+	"github.com/migalsp/costdeck-operator/internal/metrics"
 )
 
 // Workload kinds CostDeck scales and right-sizes.
@@ -98,23 +100,12 @@ func (s *Server) servePods(w http.ResponseWriter, r *http.Request) {
 	}
 	cpuRate, ramRate := getDefaultRates(provider)
 
-	podMetricsMapCPU := make(map[string]string)
-	podMetricsMapMem := make(map[string]string)
-
-	if s.MetricsClient != nil {
-		pmList, err := s.MetricsClient.MetricsV1beta1().PodMetricses(nsName).List(ctx, metav1.ListOptions{})
-		if err == nil {
-			for _, pm := range pmList.Items {
-				var cpuUsage, memUsage resource.Quantity
-				for _, c := range pm.Containers {
-					cpuUsage.Add(*c.Usage.Cpu())
-					memUsage.Add(*c.Usage.Memory())
-				}
-				podMetricsMapCPU[pm.Name] = cpuUsage.String()
-				podMetricsMapMem[pm.Name] = memUsage.String()
-			}
-		}
+	podUsage, source, err := s.metricsProvider().PodUsage(ctx, nsName)
+	if err != nil {
+		// Requests, limits and cost are still useful without live usage.
+		logf.Log.Error(err, "Could not read pod usage", "namespace", nsName)
 	}
+	w.Header().Set("X-Metrics-Source", source.Source)
 
 	var podList corev1.PodList
 	if err := s.Client.List(ctx, &podList, client.InNamespace(nsName)); err != nil {
@@ -132,14 +123,8 @@ func (s *Server) servePods(w http.ResponseWriter, r *http.Request) {
 			memLim.Add(*c.Resources.Limits.Memory())
 		}
 
-		cpuU := podMetricsMapCPU[p.Name]
-		memU := podMetricsMapMem[p.Name]
-		if cpuU == "" {
-			cpuU = "0"
-		}
-		if memU == "" {
-			memU = "0"
-		}
+		u := podUsage[p.Name]
+		cpuU, memU := u.CPU.String(), u.Memory.String()
 
 		var podCost *CostResponse
 		if p.Status.Phase != corev1.PodSucceeded && p.Status.Phase != corev1.PodFailed {
@@ -273,8 +258,9 @@ func (s *Server) handleNamespaceOptimize(w http.ResponseWriter, r *http.Request)
 	ctx := r.Context()
 	nsName := r.PathValue("ns")
 
-	// 1. Calculate Average Usage from NamespaceFinOps (last 60 mins)
-	avgCpuNs, avgMemNs, err := s.calculateAverageUsage(ctx, nsName)
+	// 1. Average namespace usage: over the configured lookback window when VictoriaMetrics
+	// is available, otherwise over the last hour of NamespaceFinOps history.
+	avgCpuNs, avgMemNs, basis, err := s.averageUsage(ctx, nsName)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -304,7 +290,31 @@ func (s *Server) handleNamespaceOptimize(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
+	writeJSON(w, http.StatusOK, map[string]any{"basis": basis, "workloads": optimizedWorkloads})
+}
+
+// averageUsage returns the average CPU (cores) and memory (bytes) of a namespace and a
+// human-readable description of what the average is based on.
+func (s *Server) averageUsage(ctx context.Context, nsName string) (float64, float64, string, error) {
+	avg, window, err := s.metricsProvider().NamespaceAverage(ctx, nsName)
+	if err == nil {
+		return avg.CPU.AsApproximateFloat64(), avg.Memory.AsApproximateFloat64(),
+			fmt.Sprintf("VictoriaMetrics average over %s", window), nil
+	}
+	if !errors.Is(err, metrics.ErrUnsupported) {
+		logf.Log.Error(err, "Could not read average usage from VictoriaMetrics, using in-cluster history", "namespace", nsName)
+	}
+	cpu, mem, err := s.calculateAverageUsage(ctx, nsName)
+	return cpu, mem, "NamespaceFinOps history (last 60 minutes)", err
+}
+
+// metricsProvider returns the configured metrics provider, or a metrics-server-only one
+// when the server was built without it (tests).
+func (s *Server) metricsProvider() *metrics.Provider {
+	if s.Metrics != nil {
+		return s.Metrics
+	}
+	return metrics.NewProvider(s.Client, &metrics.MetricsServerSource{Client: s.MetricsClient})
 }
 
 func (s *Server) calculateAverageUsage(ctx context.Context, nsName string) (float64, float64, error) {
@@ -330,33 +340,35 @@ func (s *Server) calculateAverageUsage(ctx context.Context, nsName string) (floa
 }
 
 func (s *Server) getCurrentUsage(ctx context.Context, nsName string) (float64, float64, map[string]float64, map[string]float64, error) {
-	if s.MetricsClient == nil {
-		return 0, 0, nil, nil, fmt.Errorf("metrics API is not available")
-	}
-	podMetricsList, err := s.MetricsClient.MetricsV1beta1().PodMetricses(nsName).List(ctx, metav1.ListOptions{})
+	usage, _, err := s.metricsProvider().PodUsage(ctx, nsName)
 	if err != nil {
-		return 0, 0, nil, nil, fmt.Errorf("failed to get metrics: %w", err)
+		return 0, 0, nil, nil, fmt.Errorf("could not read pod usage: %w", err)
+	}
+
+	var pods corev1.PodList
+	if err := s.Client.List(ctx, &pods, client.InNamespace(nsName)); err != nil {
+		return 0, 0, nil, nil, err
 	}
 
 	var currentCpuNs, currentMemNs float64
 	workloadUsage := make(map[string]float64)
 	workloadMemUsage := make(map[string]float64)
 
-	for _, pm := range podMetricsList.Items {
-		workloadName, workloadKind := s.getWorkloadOwner(ctx, nsName, pm.OwnerReferences)
+	for _, p := range pods.Items {
+		u, ok := usage[p.Name]
+		if !ok {
+			continue
+		}
+		workloadName, workloadKind := s.getWorkloadOwner(ctx, nsName, p.OwnerReferences)
 		if workloadName == "" {
 			continue
 		}
-
 		key := workloadKind + "/" + workloadName
-		for _, c := range pm.Containers {
-			cpu := c.Usage.Cpu().AsApproximateFloat64()
-			mem := float64(c.Usage.Memory().Value())
-			currentCpuNs += cpu
-			currentMemNs += mem
-			workloadUsage[key] += cpu
-			workloadMemUsage[key] += mem
-		}
+		cpu, mem := u.CPU.AsApproximateFloat64(), u.Memory.AsApproximateFloat64()
+		currentCpuNs += cpu
+		currentMemNs += mem
+		workloadUsage[key] += cpu
+		workloadMemUsage[key] += mem
 	}
 	return currentCpuNs, currentMemNs, workloadUsage, workloadMemUsage, nil
 }

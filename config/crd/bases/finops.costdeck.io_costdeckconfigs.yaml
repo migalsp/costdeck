@@ -130,18 +130,30 @@ spec:
                           Endpoint is the PromQL-compatible query URL
                           e.g. "http://vmselect.monitoring.svc:8481/select/0/prometheus"
                         type: string
+                      labelSelector:
+                        description: |-
+                          LabelSelector is added to every query as extra PromQL label matchers, e.g.
+                          `cluster="prod-eu"`. Required when one VictoriaMetrics instance stores several
+                          clusters: without it, namespaces with the same name are summed across clusters.
+                        maxLength: 512
+                        type: string
                       retentionDays:
                         default: 7
                         description: |-
-                          RetentionDays is the lookback period for metrics queries.
+                          RetentionDays is the lookback window for historical queries.
                           Used by the Optimize feature to compute resource recommendations.
                         minimum: 1
                         type: integer
                       secretRef:
                         description: |-
                           SecretRef is the name of the K8s Secret holding VictoriaMetrics credentials
-                          (keys: BEARER_TOKEN or USERNAME/PASSWORD)
+                          (keys: BEARER_TOKEN or USERNAME/PASSWORD, and optionally CA_CERT with a PEM bundle)
                         type: string
+                      skipSslVerify:
+                        description: |-
+                          SkipSSLVerify disables TLS certificate verification for the endpoint.
+                          Prefer adding CA_CERT to the credentials Secret instead.
+                        type: boolean
                     type: object
                 type: object
               providers:
@@ -318,6 +330,30 @@ spec:
                 type: array
               gcp:
                 description: GCP provider status
+                properties:
+                  connected:
+                    description: Connected indicates whether the provider credentials
+                      are valid and the provider is reachable
+                    type: boolean
+                  discoveredResources:
+                    description: DiscoveredResources is the count of resources found
+                      during the last discovery
+                    type: integer
+                  error:
+                    description: Error contains the last error message if connection
+                      failed
+                    type: string
+                  lastChecked:
+                    description: LastChecked is when connectivity was last verified
+                    format: date-time
+                    type: string
+                required:
+                - connected
+                type: object
+              victoriaMetrics:
+                description: |-
+                  VictoriaMetrics reports whether the configured metrics endpoint is reachable and
+                  actually holds the container metrics CostDeck queries.
                 properties:
                   connected:
                     description: Connected indicates whether the provider credentials

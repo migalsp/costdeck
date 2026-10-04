@@ -18,17 +18,20 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	metricsv "k8s.io/metrics/pkg/client/clientset/versioned"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
 	"github.com/migalsp/costdeck-operator/internal/metrics"
@@ -37,10 +40,12 @@ import (
 // NamespaceFinOpsReconciler reconciles a NamespaceFinOps object
 type NamespaceFinOpsReconciler struct {
 	client.Client
-	Scheme        *runtime.Scheme
-	MetricsClient metricsv.Interface
-	VMClient      *metrics.VMClient
+	Scheme  *runtime.Scheme
+	Metrics *metrics.Provider
 }
+
+// ConditionMetricsAvailable reports whether usage could be collected and from where.
+const ConditionMetricsAvailable = "MetricsAvailable"
 
 // +kubebuilder:rbac:groups=finops.costdeck.io,namespace=costdeck,resources=namespacefinops,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=finops.costdeck.io,namespace=costdeck,resources=namespacefinops/status,verbs=get;update;patch
@@ -63,38 +68,31 @@ func (r *NamespaceFinOpsReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 	targetNs := nsFinOps.Spec.TargetNamespace
 
-	// 1. Get current usage from metrics API (VictoriaMetrics or metrics-server)
-	var totalCpuUsage resource.Quantity
-	var totalMemUsage resource.Quantity
-
-	if r.VMClient != nil {
-		// Use VictoriaMetrics as the metrics source
-		cpu, mem, err := r.VMClient.QueryNamespaceUsage(ctx, targetNs)
-		if err != nil {
-			log.Error(err, "Unable to fetch metrics from VictoriaMetrics", "namespace", targetNs)
-			return ctrl.Result{RequeueAfter: time.Minute}, nil // Soft fail
+	// 1. Current usage from the configured source. VictoriaMetrics is preferred when it is
+	// enabled; metrics-server steps in when it fails, and the condition says so.
+	usage, source, err := r.Metrics.NamespaceUsage(ctx, targetNs)
+	if err != nil {
+		log.Error(err, "Could not collect namespace usage", "namespace", targetNs, "degraded", source.Degraded)
+		msg := err.Error()
+		if source.Degraded != nil {
+			msg = fmt.Sprintf("VictoriaMetrics: %v; metrics-server: %v", source.Degraded, err)
 		}
-		totalCpuUsage = cpu
-		totalMemUsage = mem
-	} else {
-		// Fallback to metrics-server
-		podMetricsList, err := r.MetricsClient.MetricsV1beta1().PodMetricses(targetNs).List(ctx, metav1.ListOptions{})
-		if err != nil {
-			log.Error(err, "Unable to fetch pod metrics from metrics-server", "namespace", targetNs)
-			return ctrl.Result{RequeueAfter: time.Minute}, nil // Soft fail
+		meta.SetStatusCondition(&nsFinOps.Status.Conditions, metav1.Condition{
+			Type: ConditionMetricsAvailable, Status: metav1.ConditionFalse,
+			Reason: "Unavailable", Message: msg, ObservedGeneration: nsFinOps.Generation,
+		})
+		if uerr := r.Status().Update(ctx, &nsFinOps); uerr != nil {
+			return ctrl.Result{}, uerr
 		}
-		for _, pm := range podMetricsList.Items {
-			for _, c := range pm.Containers {
-				totalCpuUsage.Add(*c.Usage.Cpu())
-				totalMemUsage.Add(*c.Usage.Memory())
-			}
-		}
+		return ctrl.Result{RequeueAfter: time.Minute}, nil
 	}
+	meta.SetStatusCondition(&nsFinOps.Status.Conditions, metricsCondition(source, nsFinOps.Generation))
+	totalCpuUsage, totalMemUsage := usage.CPU, usage.Memory
 
 	// 2. Get current limits and requests from regular pods
 	var podList corev1.PodList
 	if err := r.List(ctx, &podList, client.InNamespace(targetNs)); err != nil {
-		log.Error(err, "unable to list pods", "namespace", targetNs)
+		log.Error(err, "Could not list Pods", "namespace", targetNs)
 		return ctrl.Result{RequeueAfter: time.Minute}, nil
 	}
 
@@ -184,17 +182,36 @@ func (r *NamespaceFinOpsReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	nsFinOps.Status.Insights = insights
 
 	if err := r.Status().Update(ctx, &nsFinOps); err != nil {
-		log.Error(err, "unable to update status")
+		log.Error(err, "Could not update NamespaceFinOps status")
 		return ctrl.Result{}, err
 	}
 
 	return ctrl.Result{RequeueAfter: time.Minute}, nil
 }
 
+// metricsCondition describes which source answered the last usage query.
+func metricsCondition(source metrics.Result, generation int64) metav1.Condition {
+	cond := metav1.Condition{
+		Type: ConditionMetricsAvailable, Status: metav1.ConditionTrue, ObservedGeneration: generation,
+	}
+	switch {
+	case source.Source == metrics.SourceVictoriaMetrics:
+		cond.Reason, cond.Message = "VictoriaMetrics", "Usage collected from VictoriaMetrics"
+	case source.Degraded != nil:
+		cond.Reason = "MetricsServerFallback"
+		cond.Message = fmt.Sprintf("VictoriaMetrics is enabled but failed, using metrics-server: %v", source.Degraded)
+	default:
+		cond.Reason, cond.Message = "MetricsServer", "Usage collected from metrics-server"
+	}
+	return cond
+}
+
 // SetupWithManager sets up the controller with the Manager.
 func (r *NamespaceFinOpsReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	// Only spec changes trigger a reconcile; the periodic requeue drives sampling. Without
+	// the predicate every status write would immediately enqueue another reconcile.
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&finopsv1.NamespaceFinOps{}).
+		For(&finopsv1.NamespaceFinOps{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Named("namespacefinops").
 		Complete(r)
 }

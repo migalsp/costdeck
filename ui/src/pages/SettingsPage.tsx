@@ -57,8 +57,11 @@ interface WebexSettings {
 interface VictoriaMetricsSettings {
   enabled: boolean
   endpoint?: string
+  labelSelector?: string
+  skipSslVerify?: boolean
   retentionDays: number
   hasCredentials: boolean
+  status?: ProviderStatus
 }
 
 interface MCPSettings {
@@ -342,6 +345,9 @@ export default function SettingsPage() {
   const [vmUsername, setVmUsername] = useState('')
   const [vmPassword, setVmPassword] = useState('')
   const [vmAuthMode, setVmAuthMode] = useState<'bearer' | 'basic'>('bearer')
+  const [vmLabelSelector, setVmLabelSelector] = useState('')
+  const [vmSkipSsl, setVmSkipSsl] = useState(false)
+  const [vmCaCert, setVmCaCert] = useState('')
 
   // MCP form state
   const [mcpEnabled, setMcpEnabled] = useState(false)
@@ -377,6 +383,8 @@ export default function SettingsPage() {
           setVmEnabled(data.integrations.victoriaMetrics.enabled)
           setVmEndpoint(data.integrations.victoriaMetrics.endpoint || '')
           setVmRetentionDays(data.integrations.victoriaMetrics.retentionDays || 7)
+          setVmLabelSelector(data.integrations.victoriaMetrics.labelSelector || '')
+          setVmSkipSsl(data.integrations.victoriaMetrics.skipSslVerify || false)
         }
         if (data.integrations.mcp) {
           setMcpEnabled(data.integrations.mcp.enabled)
@@ -429,8 +437,9 @@ export default function SettingsPage() {
             enabled: vmEnabled,
             endpoint: vmEndpoint,
             retentionDays: vmRetentionDays,
-            ...(vmAuthMode === 'bearer' && vmBearerToken ? { bearerToken: vmBearerToken } : {}),
-            ...(vmAuthMode === 'basic' && vmUsername ? { username: vmUsername, password: vmPassword } : {}),
+            labelSelector: vmLabelSelector,
+            skipSslVerify: vmSkipSsl,
+            ...vmCredentials(),
           },
           mcp: {
             enabled: mcpEnabled,
@@ -458,6 +467,7 @@ export default function SettingsPage() {
         setVmBearerToken('')
         setVmUsername('')
         setVmPassword('')
+        setVmCaCert('')
         setSaveMessage('Settings saved successfully')
         setTimeout(() => setSaveMessage(null), 3000)
       } else {
@@ -470,6 +480,13 @@ export default function SettingsPage() {
       setSaving(false)
     }
   }
+
+  // Only credentials the user actually typed are sent; empty fields keep the stored Secret.
+  const vmCredentials = () => ({
+    ...(vmAuthMode === 'bearer' && vmBearerToken ? { bearerToken: vmBearerToken } : {}),
+    ...(vmAuthMode === 'basic' && vmUsername ? { username: vmUsername, password: vmPassword } : {}),
+    ...(vmCaCert ? { caCert: vmCaCert } : {}),
+  })
 
   const handleTestConnection = async (provider: string) => {
     setTesting(provider)
@@ -486,6 +503,13 @@ export default function SettingsPage() {
         body.baseUrl = aiBaseUrl
         body.apiKey = aiApiKey
         body.skipSslVerify = aiSkipSslVerify
+      } else if (provider === 'victoriametrics') {
+        Object.assign(body, {
+          endpoint: vmEndpoint,
+          labelSelector: vmLabelSelector,
+          skipSslVerify: vmSkipSsl,
+          ...vmCredentials(),
+        })
       }
 
       const res = await fetch(`/api/settings/providers/${provider}/test`, {
@@ -730,11 +754,7 @@ export default function SettingsPage() {
         <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
           <SectionHeader
             icon={<Activity className="text-orange-500" size={20} />}
-            title={
-              <div className="flex items-center gap-2">
-                Monitoring <span className="text-[10px] font-bold text-emerald-600 bg-emerald-500/10 px-2 py-0.5 rounded-full">(Experimental)</span>
-              </div>
-            }
+            title="Monitoring"
             subtitle="Configure metrics data source for namespace insights and optimization"
           />
 
@@ -750,9 +770,12 @@ export default function SettingsPage() {
                 </div>
               </div>
               <div className="flex items-center gap-3">
-                {vmEnabled && settings?.integrations.victoriaMetrics?.hasCredentials && (
-                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-600 ring-1 ring-emerald-200">
-                    <CheckCircle2 size={10} /> Configured
+                {vmEnabled && settings?.integrations.victoriaMetrics?.status && (
+                  <span title={settings.integrations.victoriaMetrics.status.error || ''}>
+                    <StatusBadge
+                      connected={settings.integrations.victoriaMetrics.status.connected}
+                      error={settings.integrations.victoriaMetrics.status.error}
+                    />
                   </span>
                 )}
                 <label className="relative inline-flex items-center cursor-pointer">
@@ -770,7 +793,7 @@ export default function SettingsPage() {
                 <AlertTriangle size={16} className="text-orange-500 mt-0.5 flex-shrink-0" />
                 <div className="text-xs text-orange-700">
                   <p className="font-bold mb-1">Metrics Source Override</p>
-                  <p>When enabled, namespace insights will be collected from VictoriaMetrics instead of the Kubernetes Metrics Server. This provides historical data retention and more accurate resource recommendations.</p>
+                  <p>When enabled, namespace insights, pod usage and Optimize recommendations come from VictoriaMetrics instead of the Kubernetes Metrics Server. Changes apply immediately — no operator restart. If VictoriaMetrics is unreachable, CostDeck falls back to metrics-server and reports why.</p>
                 </div>
               </div>
 
@@ -783,12 +806,24 @@ export default function SettingsPage() {
                   placeholder="http://vmselect.monitoring.svc:8481/select/0/prometheus"
                   className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-orange-500/30 focus:border-orange-400 transition-all"
                 />
-                <p className="text-[10px] text-slate-400 mt-1">In-cluster: http://service.namespace.svc:port/path • External: https://vm.example.com</p>
+                <p className="text-[10px] text-slate-400 mt-1">Single node: http://vmsingle.monitoring.svc:8428 • Cluster: http://vmselect.monitoring.svc:8481/select/0/prometheus • Prometheus also works</p>
+              </div>
+
+              {/* Label selector */}
+              <div>
+                <label className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5 block">Cluster label selector <span className="normal-case font-normal text-slate-400">(optional)</span></label>
+                <input
+                  value={vmLabelSelector}
+                  onChange={e => setVmLabelSelector(e.target.value)}
+                  placeholder='cluster="prod-eu"'
+                  className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-orange-500/30 focus:border-orange-400 transition-all"
+                />
+                <p className="text-[10px] text-slate-400 mt-1">Required when one VictoriaMetrics stores several clusters — otherwise namespaces with the same name are summed across clusters.</p>
               </div>
 
               {/* Retention Days */}
               <div>
-                <label className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5 block">Retention Period (days)</label>
+                <label className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5 block">Lookback window (days)</label>
                 <div className="flex items-center gap-3">
                   <input
                     type="number"
@@ -845,6 +880,40 @@ export default function SettingsPage() {
                   </div>
                 )}
                 <p className="text-[10px] text-slate-400 mt-1.5">Optional. Leave empty if your VictoriaMetrics does not require authentication.</p>
+              </div>
+
+              {/* TLS */}
+              <div>
+                <label className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5 block">TLS</label>
+                <textarea
+                  value={vmCaCert}
+                  onChange={e => setVmCaCert(e.target.value)}
+                  rows={3}
+                  placeholder="-----BEGIN CERTIFICATE----- (optional custom CA, PEM)"
+                  className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-mono focus:outline-none focus:ring-2 focus:ring-orange-500/30 focus:border-orange-400 transition-all"
+                />
+                <label className="flex items-center gap-2 mt-2 text-xs font-bold text-slate-500 cursor-pointer">
+                  <input type="checkbox" checked={vmSkipSsl} onChange={e => setVmSkipSsl(e.target.checked)} className="accent-orange-500" />
+                  Skip TLS verification (insecure — prefer a custom CA)
+                </label>
+              </div>
+
+              {/* Test Connection */}
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => handleTestConnection('victoriametrics')}
+                  disabled={testing === 'victoriametrics' || !vmEndpoint}
+                  className="flex items-center gap-2 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-bold transition-all disabled:opacity-50"
+                >
+                  {testing === 'victoriametrics' ? <RefreshCw size={14} className="animate-spin" /> : <ExternalLink size={14} />}
+                  Test Connection
+                </button>
+                {testResult?.provider === 'victoriametrics' && (
+                  <span className={`text-xs font-bold flex items-center gap-1 ${testResult.connected ? 'text-emerald-600' : 'text-red-500'}`}>
+                    {testResult.connected ? <CheckCircle2 size={14} /> : <XCircle size={14} />}
+                    {testResult.connected ? 'Connected — container metrics found' : testResult.error || 'Connection failed'}
+                  </span>
+                )}
               </div>
             </div>
 

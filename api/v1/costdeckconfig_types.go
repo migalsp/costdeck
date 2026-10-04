@@ -162,11 +162,23 @@ type VictoriaMetricsConfig struct {
 	Endpoint string `json:"endpoint,omitempty"`
 
 	// SecretRef is the name of the K8s Secret holding VictoriaMetrics credentials
-	// (keys: BEARER_TOKEN or USERNAME/PASSWORD)
+	// (keys: BEARER_TOKEN or USERNAME/PASSWORD, and optionally CA_CERT with a PEM bundle)
 	// +optional
 	SecretRef string `json:"secretRef,omitempty"`
 
-	// RetentionDays is the lookback period for metrics queries.
+	// LabelSelector is added to every query as extra PromQL label matchers, e.g.
+	// `cluster="prod-eu"`. Required when one VictoriaMetrics instance stores several
+	// clusters: without it, namespaces with the same name are summed across clusters.
+	// +kubebuilder:validation:MaxLength=512
+	// +optional
+	LabelSelector string `json:"labelSelector,omitempty"`
+
+	// SkipSSLVerify disables TLS certificate verification for the endpoint.
+	// Prefer adding CA_CERT to the credentials Secret instead.
+	// +optional
+	SkipSSLVerify bool `json:"skipSslVerify,omitempty"`
+
+	// RetentionDays is the lookback window for historical queries.
 	// Used by the Optimize feature to compute resource recommendations.
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:default=7
@@ -267,6 +279,11 @@ type CostDeckConfigStatus struct {
 	// GCP provider status
 	// +optional
 	GCP *ProviderStatus `json:"gcp,omitempty"`
+
+	// VictoriaMetrics reports whether the configured metrics endpoint is reachable and
+	// actually holds the container metrics CostDeck queries.
+	// +optional
+	VictoriaMetrics *ProviderStatus `json:"victoriaMetrics,omitempty"`
 
 	// Conditions represent the current state of the CostDeckConfig resource.
 	// +optional

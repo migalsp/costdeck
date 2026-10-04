@@ -32,6 +32,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
+	"github.com/migalsp/costdeck-operator/internal/metrics"
 	"github.com/migalsp/costdeck-operator/internal/scaling"
 )
 
@@ -100,6 +101,8 @@ func (r *CostDeckConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		config.Status.GCP = nil
 	}
 
+	config.Status.VictoriaMetrics = r.reconcileVictoriaMetrics(ctx, &config)
+
 	// Update status
 	if err := r.Status().Update(ctx, &config); err != nil {
 		l.Error(err, "Failed to update CostDeckConfig status")
@@ -167,6 +170,27 @@ func (r *CostDeckConfigReconciler) reconcileAWSProvider(ctx context.Context, con
 	status.Connected = true
 	status.DiscoveredResources = totalDiscovered
 	l.Info("AWS provider validated successfully", "discoveredResources", totalDiscovered)
+	return status
+}
+
+// reconcileVictoriaMetrics validates the metrics endpoint so a misconfiguration shows up
+// in the CostDeckConfig status and the settings page instead of only in the operator log.
+func (r *CostDeckConfigReconciler) reconcileVictoriaMetrics(ctx context.Context, config *finopsv1.CostDeckConfig) *finopsv1.ProviderStatus {
+	vm := config.Spec.Integrations.VictoriaMetrics
+	if vm == nil || !vm.Enabled {
+		return nil
+	}
+	status := &finopsv1.ProviderStatus{LastChecked: metav1.Now()}
+	vmClient, err := metrics.BuildVMClient(ctx, r.Client, vm, nil)
+	if err == nil {
+		err = vmClient.Validate(ctx)
+	}
+	if err != nil {
+		status.Error = err.Error()
+		log.FromContext(ctx).Info("VictoriaMetrics validation failed", "error", err.Error())
+		return status
+	}
+	status.Connected = true
 	return status
 }
 

@@ -19,6 +19,7 @@ import (
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
 	"github.com/migalsp/costdeck-operator/internal/config"
+	"github.com/migalsp/costdeck-operator/internal/metrics"
 	"github.com/migalsp/costdeck-operator/internal/scaling"
 )
 
@@ -92,10 +93,13 @@ type WebexSettingsResponse struct {
 }
 
 type VictoriaMetricsSettingsResponse struct {
-	Enabled        bool   `json:"enabled"`
-	Endpoint       string `json:"endpoint,omitempty"`
-	RetentionDays  int    `json:"retentionDays"`
-	HasCredentials bool   `json:"hasCredentials"`
+	Enabled        bool                     `json:"enabled"`
+	Endpoint       string                   `json:"endpoint,omitempty"`
+	LabelSelector  string                   `json:"labelSelector,omitempty"`
+	SkipSSLVerify  bool                     `json:"skipSslVerify"`
+	RetentionDays  int                      `json:"retentionDays"`
+	HasCredentials bool                     `json:"hasCredentials"`
+	Status         *finopsv1.ProviderStatus `json:"status,omitempty"`
 }
 
 // SettingsUpdateRequest is the payload for updating settings.
@@ -165,12 +169,34 @@ type WebexUpdateRequest struct {
 }
 
 type VictoriaMetricsUpdateRequest struct {
-	Enabled       *bool  `json:"enabled,omitempty"`
-	Endpoint      string `json:"endpoint,omitempty"`
-	RetentionDays *int   `json:"retentionDays,omitempty"`
-	BearerToken   string `json:"bearerToken,omitempty"`
-	Username      string `json:"username,omitempty"`
-	Password      string `json:"password,omitempty"`
+	Enabled       *bool   `json:"enabled,omitempty"`
+	Endpoint      string  `json:"endpoint,omitempty"`
+	LabelSelector *string `json:"labelSelector,omitempty"`
+	SkipSSLVerify *bool   `json:"skipSslVerify,omitempty"`
+	RetentionDays *int    `json:"retentionDays,omitempty"`
+	BearerToken   string  `json:"bearerToken,omitempty"`
+	Username      string  `json:"username,omitempty"`
+	Password      string  `json:"password,omitempty"`
+	CACert        string  `json:"caCert,omitempty"`
+}
+
+// credentials returns the Secret data carried by the request, or nil when it carries none.
+func (r *VictoriaMetricsUpdateRequest) credentials() map[string][]byte {
+	data := map[string][]byte{}
+	if r.BearerToken != "" {
+		data[metrics.SecretKeyBearerToken] = []byte(r.BearerToken)
+	}
+	if r.Username != "" {
+		data[metrics.SecretKeyUsername] = []byte(r.Username)
+		data[metrics.SecretKeyPassword] = []byte(r.Password)
+	}
+	if r.CACert != "" {
+		data[metrics.SecretKeyCACert] = []byte(r.CACert)
+	}
+	if len(data) == 0 {
+		return nil
+	}
+	return data
 }
 
 // ─── Handlers ────────────────────────────────────────────────────────────────
@@ -259,8 +285,11 @@ func (s *Server) buildSettingsResponse(ctx context.Context, cfg *finopsv1.CostDe
 		resp.Integrations.VictoriaMetrics = &VictoriaMetricsSettingsResponse{
 			Enabled:        cfg.Spec.Integrations.VictoriaMetrics.Enabled,
 			Endpoint:       cfg.Spec.Integrations.VictoriaMetrics.Endpoint,
+			LabelSelector:  cfg.Spec.Integrations.VictoriaMetrics.LabelSelector,
+			SkipSSLVerify:  cfg.Spec.Integrations.VictoriaMetrics.SkipSSLVerify,
 			RetentionDays:  retentionDays,
 			HasCredentials: hasCreds,
+			Status:         cfg.Status.VictoriaMetrics,
 		}
 	}
 
@@ -451,24 +480,24 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 			cfg.Spec.Integrations.VictoriaMetrics.Enabled = *vmReq.Enabled
 		}
 		if vmReq.Endpoint != "" {
-			cfg.Spec.Integrations.VictoriaMetrics.Endpoint = vmReq.Endpoint
+			if _, err := metrics.NormalizeEndpoint(vmReq.Endpoint); err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			cfg.Spec.Integrations.VictoriaMetrics.Endpoint = strings.TrimSpace(vmReq.Endpoint)
+		}
+		if vmReq.LabelSelector != nil {
+			cfg.Spec.Integrations.VictoriaMetrics.LabelSelector = strings.TrimSpace(*vmReq.LabelSelector)
+		}
+		if vmReq.SkipSSLVerify != nil {
+			cfg.Spec.Integrations.VictoriaMetrics.SkipSSLVerify = *vmReq.SkipSSLVerify
 		}
 		if vmReq.RetentionDays != nil {
 			cfg.Spec.Integrations.VictoriaMetrics.RetentionDays = *vmReq.RetentionDays
 		}
 		// Store credentials if provided
-		if vmReq.BearerToken != "" || (vmReq.Username != "" && vmReq.Password != "") {
+		if data := vmReq.credentials(); data != nil {
 			secretName := "costdeck-vm-credentials"
-			data := map[string][]byte{}
-			if vmReq.BearerToken != "" {
-				data["BEARER_TOKEN"] = []byte(vmReq.BearerToken)
-			}
-			if vmReq.Username != "" {
-				data["USERNAME"] = []byte(vmReq.Username)
-			}
-			if vmReq.Password != "" {
-				data["PASSWORD"] = []byte(vmReq.Password)
-			}
 			if err := s.upsertSecret(ctx, operatorNs, secretName, data); err != nil {
 				writeError(w, http.StatusInternalServerError, "Failed to store VM credentials: "+err.Error())
 				return
@@ -532,6 +561,8 @@ func (s *Server) handleTestProvider(w http.ResponseWriter, r *http.Request) {
 		s.testAWSProvider(w, ctx, cfg, r)
 	case "ai":
 		s.testAIProvider(w, ctx, cfg, r)
+	case "victoriametrics":
+		s.testVictoriaMetrics(w, ctx, cfg, r)
 	case "azure":
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{
@@ -609,6 +640,40 @@ func (s *Server) testAWSProvider(w http.ResponseWriter, ctx context.Context, cfg
 	json.NewEncoder(w).Encode(map[string]any{
 		"connected": true,
 	})
+}
+
+// testVictoriaMetrics validates the VictoriaMetrics settings in the request body (so unsaved
+// form values can be checked before saving), falling back to the stored configuration.
+func (s *Server) testVictoriaMetrics(w http.ResponseWriter, ctx context.Context, cfg *finopsv1.CostDeckConfig, r *http.Request) {
+	var req VictoriaMetricsUpdateRequest
+	if err := decodeJSON(w, r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	vm := finopsv1.VictoriaMetricsConfig{}
+	if stored := cfg.Spec.Integrations.VictoriaMetrics; stored != nil {
+		vm = *stored
+	}
+	if req.Endpoint != "" {
+		vm.Endpoint = req.Endpoint
+	}
+	if req.LabelSelector != nil {
+		vm.LabelSelector = *req.LabelSelector
+	}
+	if req.SkipSSLVerify != nil {
+		vm.SkipSSLVerify = *req.SkipSSLVerify
+	}
+
+	vmClient, err := metrics.BuildVMClient(ctx, s.Client, &vm, req.credentials())
+	if err == nil {
+		err = vmClient.Validate(ctx)
+	}
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"connected": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"connected": true, "endpoint": vmClient.Endpoint()})
 }
 
 func (s *Server) testAIProvider(w http.ResponseWriter, ctx context.Context, cfg *finopsv1.CostDeckConfig, r *http.Request) {
@@ -776,6 +841,8 @@ func (s *Server) handleProviderStatus(w http.ResponseWriter, r *http.Request) {
 		status = cfg.Status.Azure
 	case "gcp":
 		status = cfg.Status.GCP
+	case "victoriametrics":
+		status = cfg.Status.VictoriaMetrics
 	default:
 		writeError(w, http.StatusBadRequest, "Unknown provider")
 		return
