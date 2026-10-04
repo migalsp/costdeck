@@ -434,9 +434,19 @@ paths:
                   description: >
                     Optional deadline. The override is honoured until this timestamp, after
                     which the schedule takes over again. Must be in the future.
+                until:
+                  type: string
+                  example: nextTransition
+                  description: >
+                    Relative alternative to activeUntil: "nextTransition" holds the override
+                    until the schedule would change state on its own, or a Go duration such
+                    as "4h". Clearing the override (active null) also removes the legacy
+                    costdeck.io/manual-override annotation.
       responses:
         "200":
           description: Override applied
+        "400":
+          description: Invalid deadline or duration
 
   /api/scaling/configs:
     get:
@@ -517,9 +527,19 @@ paths:
                   description: >
                     Optional deadline. The override is honoured until this timestamp, after
                     which the schedule takes over again. Must be in the future.
+                until:
+                  type: string
+                  example: nextTransition
+                  description: >
+                    Relative alternative to activeUntil: "nextTransition" holds the override
+                    until the schedule would change state on its own, or a Go duration such
+                    as "4h". Clearing the override (active null) also removes the legacy
+                    costdeck.io/manual-override annotation.
       responses:
         "200":
           description: Override applied
+        "400":
+          description: Invalid deadline or duration
 
 components:
   parameters:

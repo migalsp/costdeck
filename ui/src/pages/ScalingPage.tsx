@@ -18,6 +18,7 @@ import {
 import ScalingConfigModal from '../components/ScalingConfigModal'
 import ScalingPipelineModal from '../components/ScalingPipelineModal'
 import { AWSLogo } from '../components/ProviderLogos'
+import OverrideDialog, { relativeTime, type OverrideUntil } from '../components/OverrideDialog'
 
 interface ScalingSchedule {
   days?: number[];
@@ -26,6 +27,14 @@ interface ScalingSchedule {
   startTime: string;
   endTime: string;
   timezone?: string;
+}
+
+// ScheduleStatus mirrors what the operator reports about who is in control.
+interface ScheduleStatus {
+  mode?: 'Schedule' | 'ManualUp' | 'ManualDown' | 'AlwaysOn' | 'Dependency';
+  desiredState?: 'Up' | 'Down';
+  overrideExpiresAt?: string;
+  nextTransition?: { time: string; desiredState: 'Up' | 'Down' };
 }
 
 interface ScalingGroup {
@@ -45,7 +54,7 @@ interface ScalingGroup {
       timeoutMinutes: number;
     };
   };
-  status?: {
+  status?: ScheduleStatus & {
     phase: string;
     lastAction: string;
     managedCount: number;
@@ -66,7 +75,7 @@ interface ScalingConfig {
     sequence?: string[];
     exclusions?: string[];
   };
-  status?: {
+  status?: ScheduleStatus & {
     phase: string;
     lastAction: string;
   };
@@ -91,6 +100,7 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
   const [isScalingMap, setIsScalingMap] = useState<Record<string, boolean>>({});
   const [skipOnTimeout, setSkipOnTimeout] = useState(false);
   const [timeoutMinutes, setTimeoutMinutes] = useState(5);
+  const [overridePrompt, setOverridePrompt] = useState<{ type: 'group' | 'config'; name: string; active: boolean; hasSchedule: boolean } | null>(null);
 
   // Section Collapse State
   const [namespacesCollapsed, setNamespacesCollapsed] = useState(false);
@@ -225,9 +235,9 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
     }
   };
 
-  // `active` of null clears spec.active so the schedule takes control again. Without it
-  // a single Scale Up / Scale Down click pins the target forever.
-  const handleManualScale = async (type: 'group' | 'config', name: string, active: boolean | null) => {
+  // `active` of null clears spec.active so the schedule takes control again. `until`
+  // bounds the override so a single click no longer pins the target forever.
+  const handleManualScale = async (type: 'group' | 'config', name: string, active: boolean | null, until?: OverrideUntil) => {
     const key = `${type}-${name}`;
     if (isScalingMap[key]) return;
     
@@ -251,7 +261,7 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
       await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ active })
+        body: JSON.stringify({ active, ...(active !== null && until && until !== 'forever' ? { until } : {}) })
       });
       fetchData(true);
       
@@ -361,12 +371,15 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
 
   // A manual override (spec.active) fully disables the schedule until it is cleared.
   // That state has to be visible, and it has to be reversible from the UI.
-  const OverrideBanner = ({ spec, onClear, busy }: {
+  const OverrideBanner = ({ spec, status, onClear, busy }: {
     spec: { active?: boolean; activeUntil?: string };
+    status?: ScheduleStatus;
     onClear: () => void;
     busy?: boolean;
   }) => {
-    if (spec.active === undefined || spec.active === null) return null;
+    const manualByStatus = status?.mode === 'ManualUp' || status?.mode === 'ManualDown';
+    if ((spec.active === undefined || spec.active === null) && !manualByStatus) return null;
+    const forcedUp = spec.active ?? status?.mode === 'ManualUp';
     const expiry = spec.activeUntil ? new Date(spec.activeUntil) : null;
     const expired = expiry !== null && expiry.getTime() <= Date.now();
     return (
@@ -379,8 +392,8 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
             <>Override expired — schedule is back in control</>
           ) : (
             <>
-              Manual override: forced {spec.active ? 'UP' : 'DOWN'} — schedule ignored
-              {expiry && <> until {expiry.toLocaleString()}</>}
+              Manual override: forced {forcedUp ? 'UP' : 'DOWN'} — schedule ignored
+              {expiry ? <> until {expiry.toLocaleString()} ({relativeTime(expiry.toISOString())})</> : <> until you resume it</>}
             </>
           )}
         </span>
@@ -395,6 +408,36 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
       </div>
     );
   };
+
+  // ScheduleLine answers "who is in control, and what happens next?" at a glance.
+  const ScheduleLine = ({ status }: { status?: ScheduleStatus }) => {
+    if (!status?.mode) return null;
+    const label: Record<string, string> = {
+      Schedule: 'Schedule', ManualUp: 'Manual · up', ManualDown: 'Manual · down',
+      AlwaysOn: 'No schedule · always on', Dependency: 'Kept up by dependents',
+    };
+    const tone: Record<string, string> = {
+      Schedule: 'bg-indigo-50 text-indigo-600 border-indigo-100',
+      ManualUp: 'bg-amber-50 text-amber-700 border-amber-200',
+      ManualDown: 'bg-amber-50 text-amber-700 border-amber-200',
+      AlwaysOn: 'bg-slate-50 text-slate-500 border-slate-200',
+      Dependency: 'bg-violet-50 text-violet-600 border-violet-100',
+    };
+    const next = status.nextTransition;
+    return (
+      <div className="flex items-center gap-2 flex-wrap text-[10px] font-bold mb-3">
+        <span className={`px-2 py-0.5 rounded-md border uppercase tracking-wider ${tone[status.mode] || tone.Schedule}`}>{label[status.mode] || status.mode}</span>
+        {next && (
+          <span className="text-slate-400 flex items-center gap-1" title={new Date(next.time).toLocaleString()}>
+            <CalendarClock size={11} /> {next.desiredState === 'Up' ? 'Up' : 'Down'} {relativeTime(next.time)}
+          </span>
+        )}
+      </div>
+    );
+  };
+
+  const promptOverride = (type: 'group' | 'config', name: string, active: boolean, schedules?: ScalingSchedule[]) =>
+    setOverridePrompt({ type, name, active, hasSchedule: (schedules?.length || 0) > 0 });
 
   const GroupOfNamespaces = ({ group }: { group: ScalingGroup }) => {
     const phase = getPhaseColor(group.status?.phase);
@@ -416,7 +459,7 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
           </div>
         </div>
         <div className="flex items-center gap-1">
-          <button onClick={(e) => { e.stopPropagation(); handleManualScale('group', group.metadata.name, true); }}
+          <button onClick={(e) => { e.stopPropagation(); promptOverride('group', group.metadata.name, true, group.spec.schedules); }}
             disabled={isScalingMap[`group-${group.metadata.name}`]}
             className={`p-1.5 rounded-lg transition-colors ${group.status?.phase === 'ScaledUp' ? 'bg-emerald-50 text-emerald-500' : 'bg-slate-50 text-slate-400 hover:bg-slate-100'} ${isScalingMap[`group-${group.metadata.name}`] ? 'opacity-50 cursor-not-allowed' : ''}`}
             title="Scale Up">
@@ -426,7 +469,7 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
                 <Play size={14} fill={group.status?.phase === 'ScaledUp' ? "currentColor" : "none"} />
               )}
           </button>
-          <button onClick={(e) => { e.stopPropagation(); handleManualScale('group', group.metadata.name, false); }}
+          <button onClick={(e) => { e.stopPropagation(); promptOverride('group', group.metadata.name, false, group.spec.schedules); }}
             disabled={isScalingMap[`group-${group.metadata.name}`]}
             className={`p-1.5 rounded-lg transition-colors ${group.status?.phase === 'ScaledDown' ? 'bg-rose-50 text-rose-500' : 'bg-slate-50 text-slate-400 hover:bg-slate-100'} ${isScalingMap[`group-${group.metadata.name}`] ? 'opacity-50 cursor-not-allowed' : ''}`}
             title="Scale Down">
@@ -451,8 +494,11 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
         </div>
       </div>
 
+      <ScheduleLine status={group.status} />
+
       <OverrideBanner
         spec={group.spec}
+        status={group.status}
         busy={isScalingMap[`group-${group.metadata.name}`]}
         onClear={() => handleManualScale('group', group.metadata.name, null)}
       />
@@ -526,7 +572,8 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
   const ConfigCard = ({ config }: { config: ScalingConfig }) => {
     const managedBy = getGroupForNamespace(config.spec.targetNamespace);
     const phase = getPhaseColor(config.status?.phase);
-    const overridden = config.spec.active !== undefined && config.spec.active !== null;
+    const overridden = (config.spec.active !== undefined && config.spec.active !== null)
+      || config.status?.mode === 'ManualUp' || config.status?.mode === 'ManualDown';
 
     // Convert CamelCase to spaced strings e.g., ScaledUp -> Scaled Up
     const parsePhase = (phaseStr?: string) => {
@@ -555,7 +602,7 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
           {overridden && (
             <span
               className="px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 text-[10px] font-black uppercase tracking-wider"
-              title={`Manual override: forced ${config.spec.active ? 'up' : 'down'}, schedule ignored${config.spec.activeUntil ? ` until ${new Date(config.spec.activeUntil).toLocaleString()}` : ''}`}
+              title={`Manual override: forced ${(config.spec.active ?? config.status?.mode === 'ManualUp') ? 'up' : 'down'}, schedule ignored${config.spec.activeUntil ? ` until ${new Date(config.spec.activeUntil).toLocaleString()}` : ' until resumed'}`}
             >
               Override
             </span>
@@ -564,11 +611,16 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
         <span className={`text-[12px] font-bold leading-none block break-words ${managedBy ? 'text-slate-800' : 'text-slate-400'}`}>
           {managedBy ? `Managed by: ${managedBy}` : 'Self-managed'}
         </span>
+        {!managedBy && config.status?.nextTransition && (
+          <span className="text-[10px] font-bold text-slate-400" title={new Date(config.status.nextTransition.time).toLocaleString()}>
+            {config.status.nextTransition.desiredState} {relativeTime(config.status.nextTransition.time)}
+          </span>
+        )}
       </div>
       
       <div className="flex flex-col gap-1 items-end shrink-0" onClick={(e) => e.stopPropagation()}>
         <div className="flex gap-1">
-          <button onClick={() => handleManualScale('config', config.metadata.name, true)}
+          <button onClick={() => promptOverride('config', config.metadata.name, true, config.spec.schedules)}
             disabled={isScalingMap[`config-${config.metadata.name}`]}
             className={`p-1.5 rounded-lg transition-colors ${config.status?.phase === 'ScaledUp' ? 'bg-emerald-50 text-emerald-500' : 'bg-slate-50 text-slate-400 hover:bg-slate-100'} ${isScalingMap[`config-${config.metadata.name}`] ? 'opacity-50 cursor-not-allowed' : ''}`}
             title="Scale Up">
@@ -578,7 +630,7 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
                 <Play size={14} fill={config.status?.phase === 'ScaledUp' ? "currentColor" : "none"} />
               )}
           </button>
-          <button onClick={() => handleManualScale('config', config.metadata.name, false)}
+          <button onClick={() => promptOverride('config', config.metadata.name, false, config.spec.schedules)}
             disabled={isScalingMap[`config-${config.metadata.name}`]}
             className={`p-1.5 rounded-lg transition-colors ${config.status?.phase === 'ScaledDown' ? 'bg-rose-50 text-rose-500' : 'bg-slate-50 text-slate-400 hover:bg-slate-100'} ${isScalingMap[`config-${config.metadata.name}`] ? 'opacity-50 cursor-not-allowed' : ''}`}
             title="Scale Down">
@@ -937,6 +989,21 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
             </div>
           </div>
         </div>
+      )}
+
+      {overridePrompt && (
+        <OverrideDialog
+          name={overridePrompt.name}
+          kind={overridePrompt.type}
+          active={overridePrompt.active}
+          hasSchedule={overridePrompt.hasSchedule}
+          onCancel={() => setOverridePrompt(null)}
+          onConfirm={(until) => {
+            const { type, name, active } = overridePrompt;
+            setOverridePrompt(null);
+            handleManualScale(type, name, active, until);
+          }}
+        />
       )}
 
       {editingPolicy && (

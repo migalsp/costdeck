@@ -61,16 +61,9 @@ func (r *ScalingGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 
 	// 2. Determine desired state
-	targetActive := r.Engine.ResolveDesiredState(group.Spec.Schedules, group.Spec.Active, group.Spec.ActiveUntil)
-	if val, ok := group.Annotations["costdeck.io/manual-override"]; ok {
-		switch val {
-		case "ScaledUp":
-			targetActive = true
-		case "ScaledDown":
-			targetActive = false
-		}
-	}
-	l.Info("Reconciling ScalingGroup", "category", group.Spec.Category, "namespaces", group.Spec.Namespaces, "targetActive", targetActive)
+	decision := r.Engine.Decide(time.Now(), group.Spec.Schedules, group.Spec.Active, group.Spec.ActiveUntil, group.Annotations)
+	targetActive := decision.Active
+	l.Info("Reconciling ScalingGroup", "category", group.Spec.Category, "namespaces", group.Spec.Namespaces, "targetActive", targetActive, "mode", decision.Mode)
 
 	// Initialize status maps if nil
 	if group.Status.OriginalReplicas == nil {
@@ -136,7 +129,12 @@ func (r *ScalingGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	r.emitScalingEvents(group, stages, blockingNamespaces, namespacesReady, namespacesTotal, timeoutPassed)
 
 	// 5. Update Status
-	return r.updateStatusAndPhase(ctx, group, allReady, managedCount, namespacesReady, namespacesTotal, readyNamespaces, targetActive)
+	applyDecision(&group.Status.ScheduleStatus, &group.Status.Conditions, decision, group.Generation, "group")
+	detail := ""
+	if len(blockingNamespaces) > 0 {
+		detail = "Waiting for: " + strings.Join(blockingNamespaces, ", ")
+	}
+	return r.updateStatusAndPhase(ctx, group, allReady, managedCount, namespacesReady, namespacesTotal, readyNamespaces, decision, detail)
 }
 // stageTimeoutMinutes returns the configured skip-on-timeout window, defaulting to five.
 func stageTimeoutMinutes(group *finopsv1.ScalingGroup) int {
@@ -262,7 +260,7 @@ func (r *ScalingGroupReconciler) reconcileK8sTarget(ctx context.Context, group *
 	}
 
 	phase := r.Engine.ComputePhase(ctx, ns, targetActive)
-	return (targetActive && phase == "ScaledUp") || (!targetActive && phase == "ScaledDown"), nil
+	return (targetActive && phase == scaling.PhaseScaledUp) || (!targetActive && phase == scaling.PhaseScaledDown), nil
 }
 
 func (r *ScalingGroupReconciler) emitScalingEvents(group *finopsv1.ScalingGroup, stages [][]string, blockingNamespaces []string, namespacesReady, namespacesTotal int, timeoutPassed bool) {
@@ -291,21 +289,22 @@ func (r *ScalingGroupReconciler) emitScalingEvents(group *finopsv1.ScalingGroup,
 	}
 }
 
-func (r *ScalingGroupReconciler) updateStatusAndPhase(ctx context.Context, group *finopsv1.ScalingGroup, allReady bool, managedCount, namespacesReady, namespacesTotal int, readyNamespaces []string, targetActive bool) (ctrl.Result, error) {
+func (r *ScalingGroupReconciler) updateStatusAndPhase(ctx context.Context, group *finopsv1.ScalingGroup, allReady bool, managedCount, namespacesReady, namespacesTotal int, readyNamespaces []string, decision scaling.Decision, detail string) (ctrl.Result, error) {
+	targetActive := decision.Active
 	group.Status.ManagedCount = managedCount
 	group.Status.NamespacesReady = namespacesReady
 	group.Status.NamespacesTotal = namespacesTotal
 	group.Status.ReadyNamespaces = readyNamespaces
 
-	newPhase := "ScalingUp"
+	newPhase := scaling.PhaseScalingUp
 	if allReady {
 		if targetActive {
-			newPhase = "ScaledUp"
+			newPhase = scaling.PhaseScaledUp
 		} else {
-			newPhase = "ScaledDown"
+			newPhase = scaling.PhaseScaledDown
 		}
 	} else if !targetActive {
-		newPhase = "ScalingDown"
+		newPhase = scaling.PhaseScalingDown
 	}
 
 	if group.Status.Phase != newPhase {
@@ -317,6 +316,8 @@ func (r *ScalingGroupReconciler) updateStatusAndPhase(ctx context.Context, group
 		group.Status.LastAction = metav1.Now()
 	}
 
+	setReadyCondition(&group.Status.Conditions, newPhase, targetActive, group.Generation, detail)
+
 	if err := r.Status().Update(ctx, group); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -324,7 +325,7 @@ func (r *ScalingGroupReconciler) updateStatusAndPhase(ctx context.Context, group
 	if !allReady {
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	}
-	return ctrl.Result{RequeueAfter: time.Minute}, nil
+	return ctrl.Result{RequeueAfter: settledRequeue(decision, time.Now())}, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.

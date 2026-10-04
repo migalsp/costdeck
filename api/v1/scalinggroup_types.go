@@ -31,10 +31,10 @@ type ScalingGroupSpec struct {
 	// +listType=set
 	Namespaces []string `json:"namespaces"`
 
-	// Active is the manual override for scaling.
-	// If null, the schedule is followed.
-	// If true, the group is forced to Scale Up.
-	// If false, the group is forced to Scale Down.
+	// Active is a manual override. While it is set the schedule is ignored completely:
+	// true forces the group up, false forces it down. Remove the field (null) to return
+	// to the schedule, or set ActiveUntil so that happens automatically.
+	// status.mode shows which of the two is in control.
 	// +optional
 	Active *bool `json:"active,omitempty"`
 
@@ -146,12 +146,24 @@ type ScalingGroupStatus struct {
 	// +optional
 	ReadyNamespaces []string `json:"readyNamespaces,omitempty"`
 
+	ScheduleStatus `json:",inline"`
+
 	// Conditions represent the current state of the ScalingGroup resource.
+	// +listType=map
+	// +listMapKey=type
+	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:printcolumn:name="Mode",type=string,JSONPath=".status.mode"
+// +kubebuilder:printcolumn:name="Desired",type=string,JSONPath=".status.desiredState"
+// +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=".status.phase"
+// +kubebuilder:printcolumn:name="Ready",type=integer,JSONPath=".status.namespacesReady"
+// +kubebuilder:printcolumn:name="Total",type=integer,JSONPath=".status.namespacesTotal",priority=1
+// +kubebuilder:printcolumn:name="Next change",type=date,JSONPath=".status.nextTransition.time"
+// +kubebuilder:printcolumn:name="Age",type=date,JSONPath=".metadata.creationTimestamp"
 
 // ScalingGroup is the Schema for the scalinggroups API
 type ScalingGroup struct {

@@ -14,7 +14,26 @@ spec:
     singular: scalingconfig
   scope: Namespaced
   versions:
-  - name: v1
+  - additionalPrinterColumns:
+    - jsonPath: .spec.targetNamespace
+      name: Namespace
+      type: string
+    - jsonPath: .status.mode
+      name: Mode
+      type: string
+    - jsonPath: .status.desiredState
+      name: Desired
+      type: string
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.nextTransition.time
+      name: Next change
+      type: date
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1
     schema:
       openAPIV3Schema:
         description: ScalingConfig is the Schema for the scalingconfigs API
@@ -41,10 +60,10 @@ spec:
             properties:
               active:
                 description: |-
-                  Active is the manual override for scaling.
-                  If null, the schedule is followed.
-                  If true, the namespace is forced to Scale Up.
-                  If false, the namespace is forced to Scale Down.
+                  Active is a manual override. While it is set the schedule is ignored completely:
+                  true forces the namespace up, false forces it down. Remove the field (null) to
+                  return to the schedule, or set ActiveUntil so that happens automatically.
+                  status.mode shows which of the two is in control.
                 type: boolean
               activeUntil:
                 description: |-
@@ -127,7 +146,9 @@ spec:
                 x-kubernetes-list-type: atomic
               sequence:
                 description: |-
-                  Sequence defines the order of scaling resources.
+                  Sequence defines the order of scaling resources. Each entry is a stage: a space
+                  separated list of workload name globs ("db", "api-*"), optionally qualified as
+                  "Kind/name" or "group/version:Kind/name". "*" matches every workload.
                   Format: "Group/Version:Kind/Name" (e.g. "apps/v1:Deployment/my-app" or "apps/v1:Deployment/*")
                 items:
                   type: string
@@ -201,10 +222,39 @@ spec:
                   - type
                   type: object
                 type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              desiredState:
+                description: DesiredState is Up or Down.
+                type: string
               lastAction:
                 description: LastAction is the timestamp of the last scaling event
                 format: date-time
                 type: string
+              mode:
+                description: |-
+                  Mode is what currently decides the desired state:
+                  Schedule (spec.schedules), ManualUp / ManualDown (spec.active is set and the
+                  schedule is ignored), AlwaysOn (no usable schedule, kept up as a fail-safe) or
+                  Dependency (a ScalingGroup kept up for a group that depends on it).
+                type: string
+              nextTransition:
+                description: |-
+                  NextTransition is when the desired state next changes on its own, either at a
+                  schedule boundary or when the override expires. Unset when it never does.
+                properties:
+                  desiredState:
+                    description: 'DesiredState after the change: Up or Down.'
+                    type: string
+                  time:
+                    description: Time of the change.
+                    format: date-time
+                    type: string
+                required:
+                - desiredState
+                - time
+                type: object
               originalReplicas:
                 additionalProperties:
                   format: int32
@@ -213,6 +263,12 @@ spec:
                   OriginalReplicas stores the previous replica counts for restoration
                   Key format: "Kind/Name"
                 type: object
+              overrideExpiresAt:
+                description: |-
+                  OverrideExpiresAt is when the manual override hands control back to the schedule.
+                  Unset while an override without spec.activeUntil is in force.
+                format: date-time
+                type: string
               phase:
                 description: Phase is the current state of the config (ScaledUp, ScalingDown,
                   ScaledDown)

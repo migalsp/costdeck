@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -13,6 +14,7 @@ import (
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
 	"github.com/migalsp/costdeck-operator/internal/config"
+	"github.com/migalsp/costdeck-operator/internal/scaling"
 )
 
 // writeK8sError maps an API server error onto the matching HTTP status.
@@ -113,44 +115,64 @@ func (s *Server) scalingKey(r *http.Request) client.ObjectKey {
 //
 // A null (or omitted) "active" clears the override and hands control back to the
 // schedule -- this is the only way out of a forced state, so it must stay supported.
-// An optional "activeUntil" bounds the override in time.
+// The override can be bounded in time either with an absolute "activeUntil" or with
+// "until": "nextTransition" (hold it until the schedule would change state on its own)
+// or a duration such as "4h".
 type manualOverrideRequest struct {
 	Active      *bool        `json:"active"`
 	ActiveUntil *metav1.Time `json:"activeUntil,omitempty"`
+	Until       string       `json:"until,omitempty"`
 }
 
-// resolve normalises the request: an override deadline is meaningless without an
-// override, and a deadline already in the past would be a no-op the user cannot see.
-func (req manualOverrideRequest) resolve() (*bool, *metav1.Time, error) {
-	if req.Active == nil {
+// UntilNextTransition holds an override until the next schedule change.
+const UntilNextTransition = "nextTransition"
+
+// ResolveOverride normalises an override request against the schedules: an override
+// deadline is meaningless without an override, and a deadline already in the past would be
+// a no-op the user cannot see.
+func ResolveOverride(active *bool, activeUntil *metav1.Time, until string, schedules []finopsv1.ScalingSchedule, now time.Time) (*bool, *metav1.Time, error) {
+	if active == nil {
 		return nil, nil, nil
 	}
-	if req.ActiveUntil == nil || req.ActiveUntil.IsZero() {
-		return req.Active, nil, nil
+	switch {
+	case until == UntilNextTransition:
+		next := (&scaling.Engine{}).NextScheduleChange(now, schedules)
+		if next == nil {
+			return nil, nil, fmt.Errorf("the schedule never changes state on its own; use a duration or an explicit activeUntil")
+		}
+		t := metav1.NewTime(*next)
+		activeUntil = &t
+	case until != "":
+		d, err := time.ParseDuration(until)
+		if err != nil || d <= 0 {
+			return nil, nil, fmt.Errorf("until must be %q or a positive duration such as 4h", UntilNextTransition)
+		}
+		t := metav1.NewTime(now.Add(d).Truncate(time.Second))
+		activeUntil = &t
 	}
-	if !req.ActiveUntil.After(time.Now()) {
+	if activeUntil == nil || activeUntil.IsZero() {
+		return active, nil, nil
+	}
+	if !activeUntil.After(now) {
 		return nil, nil, fmt.Errorf("activeUntil must be in the future")
 	}
-	return req.Active, req.ActiveUntil, nil
+	return active, activeUntil, nil
 }
 
-func decodeManualOverride(w http.ResponseWriter, r *http.Request) (*bool, *metav1.Time, bool) {
+func decodeManualOverride(w http.ResponseWriter, r *http.Request) (manualOverrideRequest, bool) {
 	var req manualOverrideRequest
 	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
-		return nil, nil, false
+		return req, false
 	}
-
-	active, until, err := req.resolve()
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return nil, nil, false
-	}
-	return active, until, true
+	return req, true
 }
 
+// errBadOverride marks override validation failures inside a retry loop.
+type errBadOverride struct{ error }
+
 func (s *Server) handleScalingGroupManual(w http.ResponseWriter, r *http.Request) {
-	active, until, ok := decodeManualOverride(w, r)
+	req, ok := decodeManualOverride(w, r)
 	if !ok {
 		return
 	}
@@ -160,15 +182,30 @@ func (s *Server) handleScalingGroupManual(w http.ResponseWriter, r *http.Request
 		if err := s.Client.Get(r.Context(), s.scalingKey(r), updated); err != nil {
 			return err
 		}
+		active, until, err := ResolveOverride(req.Active, req.ActiveUntil, req.Until, updated.Spec.Schedules, time.Now())
+		if err != nil {
+			return errBadOverride{err}
+		}
 		updated.Spec.Active = active
 		updated.Spec.ActiveUntil = until
+		if active == nil {
+			delete(updated.Annotations, scaling.LegacyOverrideAnnotation)
+		}
 		return s.Client.Update(r.Context(), updated)
 	})
-	if err != nil {
+	writeOverrideResult(w, err, updated)
+}
+
+func writeOverrideResult(w http.ResponseWriter, err error, obj any) {
+	var bad errBadOverride
+	switch {
+	case errors.As(err, &bad):
+		writeError(w, http.StatusBadRequest, bad.Error())
+	case err != nil:
 		writeK8sError(w, err)
-		return
+	default:
+		writeJSON(w, http.StatusOK, obj)
 	}
-	writeJSON(w, http.StatusOK, updated)
 }
 
 func (s *Server) handleScalingGroupEvents(w http.ResponseWriter, r *http.Request) {
@@ -260,7 +297,7 @@ func (s *Server) deleteScalingConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleScalingConfigManual(w http.ResponseWriter, r *http.Request) {
-	active, until, ok := decodeManualOverride(w, r)
+	req, ok := decodeManualOverride(w, r)
 	if !ok {
 		return
 	}
@@ -270,13 +307,16 @@ func (s *Server) handleScalingConfigManual(w http.ResponseWriter, r *http.Reques
 		if err := s.Client.Get(r.Context(), s.scalingKey(r), updated); err != nil {
 			return err
 		}
+		active, until, err := ResolveOverride(req.Active, req.ActiveUntil, req.Until, updated.Spec.Schedules, time.Now())
+		if err != nil {
+			return errBadOverride{err}
+		}
 		updated.Spec.Active = active
 		updated.Spec.ActiveUntil = until
+		if active == nil {
+			delete(updated.Annotations, scaling.LegacyOverrideAnnotation)
+		}
 		return s.Client.Update(r.Context(), updated)
 	})
-	if err != nil {
-		writeK8sError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, updated)
+	writeOverrideResult(w, err, updated)
 }

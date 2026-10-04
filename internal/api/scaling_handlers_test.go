@@ -11,6 +11,7 @@ import (
 	"time"
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
+	"github.com/migalsp/costdeck-operator/internal/scaling"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -283,5 +284,64 @@ func TestHandleScalingGroupManualActiveUntil(t *testing.T) {
 	}
 	if rr := postManual(t, server, "temp-group", string(stale)); rr.Code != http.StatusBadRequest {
 		t.Errorf("POST /manual with a past deadline returned %d, want %d", rr.Code, http.StatusBadRequest)
+	}
+}
+
+func TestHandleScalingGroupManualUntilNextTransition(t *testing.T) {
+	t.Setenv("POD_NAMESPACE", "costdeck")
+	server := buildMockServer()
+	seedGroup(t, server, "night-group")
+
+	before := time.Now()
+	if rr := postManual(t, server, "night-group", `{"active": true, "until": "nextTransition"}`); rr.Code != http.StatusOK {
+		t.Fatalf("POST /manual returned %d: %s", rr.Code, rr.Body.String())
+	}
+	got := fetchGroup(t, server, "night-group")
+	if got.Spec.ActiveUntil == nil {
+		t.Fatal("until=nextTransition must set spec.activeUntil")
+	}
+	// The seeded schedule is Mon-Fri 09:00-18:00 UTC, so the next change is at most a
+	// weekend away and always on a minute boundary.
+	want := (&scaling.Engine{}).NextScheduleChange(before, got.Spec.Schedules)
+	if want == nil || !got.Spec.ActiveUntil.Time.Equal(*want) {
+		t.Errorf("activeUntil = %v, want the next schedule change %v", got.Spec.ActiveUntil, want)
+	}
+}
+
+func TestHandleScalingGroupManualDurationAndValidation(t *testing.T) {
+	t.Setenv("POD_NAMESPACE", "costdeck")
+	server := buildMockServer()
+	seedGroup(t, server, "dur-group")
+
+	if rr := postManual(t, server, "dur-group", `{"active": false, "until": "2h"}`); rr.Code != http.StatusOK {
+		t.Fatalf("POST /manual returned %d: %s", rr.Code, rr.Body.String())
+	}
+	got := fetchGroup(t, server, "dur-group")
+	if got.Spec.ActiveUntil == nil || time.Until(got.Spec.ActiveUntil.Time) < 119*time.Minute {
+		t.Errorf("activeUntil = %v, want about two hours from now", got.Spec.ActiveUntil)
+	}
+
+	for _, body := range []string{`{"active": true, "until": "soon"}`, `{"active": true, "until": "-1h"}`} {
+		if rr := postManual(t, server, "dur-group", body); rr.Code != http.StatusBadRequest {
+			t.Errorf("POST /manual %s returned %d, want 400", body, rr.Code)
+		}
+	}
+}
+
+func TestHandleScalingGroupManualNullClearsLegacyAnnotation(t *testing.T) {
+	t.Setenv("POD_NAMESPACE", "costdeck")
+	server := buildMockServer()
+	seedGroup(t, server, "legacy-group")
+	group := fetchGroup(t, server, "legacy-group")
+	group.Annotations = map[string]string{scaling.LegacyOverrideAnnotation: "ScaledUp"}
+	if err := server.Client.Update(context.Background(), group); err != nil {
+		t.Fatal(err)
+	}
+
+	if rr := postManual(t, server, "legacy-group", `{"active": null}`); rr.Code != http.StatusOK {
+		t.Fatalf("POST /manual returned %d", rr.Code)
+	}
+	if _, ok := fetchGroup(t, server, "legacy-group").Annotations[scaling.LegacyOverrideAnnotation]; ok {
+		t.Error("following the schedule must also drop the legacy override annotation")
 	}
 }

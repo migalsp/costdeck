@@ -18,10 +18,12 @@ package controller
 
 import (
 	"context"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -99,6 +101,42 @@ var _ = Describe("ScalingGroup Controller", func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 
+		})
+
+		It("should explain in the status what drives the desired state", func() {
+			controllerReconciler := &ScalingGroupReconciler{
+				Client:   k8sClient,
+				Scheme:   k8sClient.Scheme(),
+				Engine:   &scaling.Engine{Client: k8sClient},
+				Recorder: record.NewFakeRecorder(100),
+			}
+
+			By("reporting the fail-safe when there is no schedule")
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+			var group finopsv1.ScalingGroup
+			Expect(k8sClient.Get(ctx, typeNamespacedName, &group)).To(Succeed())
+			Expect(group.Status.Mode).To(Equal(scaling.ModeAlwaysOn))
+			Expect(group.Status.DesiredState).To(Equal(scaling.StateUp))
+			Expect(meta.FindStatusCondition(group.Status.Conditions, ConditionReady)).NotTo(BeNil())
+
+			By("reporting a manual override and when it ends")
+			down := false
+			until := metav1.NewTime(time.Now().Add(time.Hour).Truncate(time.Second))
+			group.Spec.Active = &down
+			group.Spec.ActiveUntil = &until
+			Expect(k8sClient.Update(ctx, &group)).To(Succeed())
+
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(k8sClient.Get(ctx, typeNamespacedName, &group)).To(Succeed())
+			Expect(group.Status.Mode).To(Equal(scaling.ModeManualDown))
+			Expect(group.Status.OverrideExpiresAt).NotTo(BeNil())
+			Expect(group.Status.OverrideExpiresAt.Time.Equal(until.Time)).To(BeTrue())
+			override := meta.FindStatusCondition(group.Status.Conditions, ConditionManualOverride)
+			Expect(override).NotTo(BeNil())
+			Expect(override.Status).To(Equal(metav1.ConditionTrue))
+			Expect(override.Message).To(ContainSubstring("schedule is ignored"))
 		})
 	})
 })

@@ -18,10 +18,12 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"time"
 
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -31,6 +33,9 @@ import (
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
 	"github.com/migalsp/costdeck-operator/internal/scaling"
 )
+
+// PhaseOverriddenByGroup marks a ScalingConfig whose namespace belongs to a ScalingGroup.
+const PhaseOverriddenByGroup = "OverriddenByGroup"
 
 // ScalingConfigReconciler reconciles a ScalingConfig object
 type ScalingConfigReconciler struct {
@@ -59,21 +64,14 @@ func (r *ScalingConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	// 1.5 Conflict Resolution: "Group Wins"
 	if managed, groupName, err := r.isManagedByGroup(ctx, config.Spec.TargetNamespace); err == nil && managed {
 		l.Info("Namespace managed by group, overriding individual config", "namespace", config.Spec.TargetNamespace, "group", groupName)
-		return r.markAsOverridden(ctx, config)
+		return r.markAsOverridden(ctx, config, groupName)
 	}
 
 	// 2. Determine desired state
-	targetActive := r.Engine.ResolveDesiredState(config.Spec.Schedules, config.Spec.Active, config.Spec.ActiveUntil)
-	if val, ok := config.Annotations["costdeck.io/manual-override"]; ok {
-		switch val {
-		case "ScaledUp":
-			targetActive = true
-		case "ScaledDown":
-			targetActive = false
-		}
-	}
+	decision := r.Engine.Decide(time.Now(), config.Spec.Schedules, config.Spec.Active, config.Spec.ActiveUntil, config.Annotations)
+	targetActive := decision.Active
 
-	l.Info("Reconciling ScalingConfig", "targetNamespace", config.Spec.TargetNamespace, "targetActive", targetActive)
+	l.Info("Reconciling ScalingConfig", "targetNamespace", config.Spec.TargetNamespace, "targetActive", targetActive, "mode", decision.Mode)
 
 	// 2.5 Phase and Timeout Logic
 	timeoutPassed := r.updateStatusPhase(ctx, config, targetActive)
@@ -88,6 +86,14 @@ func (r *ScalingConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	// 4. Update Status
 	config.Status.OriginalReplicas = newReplicas
 	// Phase and LastAction are tracked before ScaleTarget so the timeout window starts immediately.
+	applyDecision(&config.Status.ScheduleStatus, &config.Status.Conditions, decision, config.Generation, "namespace")
+	if ready {
+		config.Status.Phase = scaling.PhaseScaledDown
+		if targetActive {
+			config.Status.Phase = scaling.PhaseScaledUp
+		}
+	}
+	setReadyCondition(&config.Status.Conditions, config.Status.Phase, targetActive, config.Generation, "")
 
 	if err := r.Status().Update(ctx, config); err != nil {
 		return ctrl.Result{}, err
@@ -97,9 +103,7 @@ func (r *ScalingConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	if !ready {
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	}
-
-	// Check again in 1 minute for schedule changes
-	return ctrl.Result{RequeueAfter: time.Minute}, nil
+	return ctrl.Result{RequeueAfter: settledRequeue(decision, time.Now())}, nil
 }
 
 func (r *ScalingConfigReconciler) isManagedByGroup(ctx context.Context, ns string) (bool, string, error) {
@@ -115,9 +119,18 @@ func (r *ScalingConfigReconciler) isManagedByGroup(ctx context.Context, ns strin
 	return false, "", nil
 }
 
-func (r *ScalingConfigReconciler) markAsOverridden(ctx context.Context, config *finopsv1.ScalingConfig) (ctrl.Result, error) {
-	config.Status.Phase = "OverriddenByGroup"
-	config.Status.LastAction = metav1.Now()
+func (r *ScalingConfigReconciler) markAsOverridden(ctx context.Context, config *finopsv1.ScalingConfig, groupName string) (ctrl.Result, error) {
+	if config.Status.Phase != PhaseOverriddenByGroup {
+		config.Status.LastAction = metav1.Now()
+	}
+	config.Status.Phase = PhaseOverriddenByGroup
+	config.Status.ScheduleStatus = finopsv1.ScheduleStatus{}
+	meta.SetStatusCondition(&config.Status.Conditions, metav1.Condition{
+		Type: ConditionReady, Status: metav1.ConditionFalse, Reason: PhaseOverriddenByGroup,
+		ObservedGeneration: config.Generation,
+		Message: fmt.Sprintf("Namespace %s is managed by ScalingGroup %s; this config only contributes its sequence and exclusions.",
+			config.Spec.TargetNamespace, groupName),
+	})
 	if err := r.Status().Update(ctx, config); err != nil {
 		return ctrl.Result{}, err
 	}
