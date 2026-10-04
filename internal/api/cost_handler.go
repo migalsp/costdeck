@@ -52,7 +52,7 @@ func (s *Server) handleCosting(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	config := s.getOrCreateDefaultConfig(ctx)
+	config := s.currentConfig(ctx)
 
 	// Pricing is a core feature now. No need to check AI integration status.
 

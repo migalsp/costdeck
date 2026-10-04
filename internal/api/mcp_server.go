@@ -77,7 +77,7 @@ func (s *Server) StartMCPServerLoop(ctx context.Context) {
 			}
 			return
 		case <-ticker.C:
-			config := s.getOrCreateDefaultConfig(ctx)
+			config := s.currentConfig(ctx)
 			enabled := false
 			port := 8083
 

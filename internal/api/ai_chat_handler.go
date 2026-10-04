@@ -73,7 +73,7 @@ func (s *Server) handleAIChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	config := s.getOrCreateDefaultConfig(ctx)
+	config := s.currentConfig(ctx)
 
 	if config.Spec.Integrations.AI == nil || !config.Spec.Integrations.AI.Enabled {
 		http.Error(w, "AI features are disabled", http.StatusBadRequest)

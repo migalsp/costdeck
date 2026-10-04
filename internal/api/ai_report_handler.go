@@ -32,7 +32,7 @@ func (s *Server) handleAIReportGet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	config := s.getOrCreateDefaultConfig(ctx)
+	config := s.currentConfig(ctx)
 	operatorNs := config.Namespace
 
 	cm, err := s.K8sClient.CoreV1().ConfigMaps(operatorNs).Get(ctx, "costdeck-ai-report", metav1.GetOptions{})
@@ -63,7 +63,7 @@ func (s *Server) handleAIReportSave(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	config := s.getOrCreateDefaultConfig(ctx)
+	config := s.currentConfig(ctx)
 	operatorNs := config.Namespace
 
 	cm, err := s.K8sClient.CoreV1().ConfigMaps(operatorNs).Get(ctx, "costdeck-ai-report", metav1.GetOptions{})
@@ -108,7 +108,7 @@ func (s *Server) handleAIReportGenerate(w http.ResponseWriter, r *http.Request) 
 	}
 
 	ctx := r.Context()
-	config := s.getOrCreateDefaultConfig(ctx)
+	config := s.currentConfig(ctx)
 
 	if config.Spec.Integrations.AI == nil || !config.Spec.Integrations.AI.Enabled {
 		http.Error(w, "AI features are disabled", http.StatusBadRequest)

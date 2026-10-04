@@ -26,7 +26,10 @@ func buildMockServerWithK8s() *Server {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	utilruntime.Must(finopsv1.AddToScheme(scheme))
 
-	client := fakeclient.NewClientBuilder().WithScheme(scheme).Build()
+	// NamespaceOptimization status is written through the status subresource, exactly as
+	// the real CRD requires.
+	client := fakeclient.NewClientBuilder().WithScheme(scheme).
+		WithStatusSubresource(&finopsv1.NamespaceOptimization{}).Build()
 	k8sClient := fake.NewSimpleClientset()
 
 	k8sClient.Discovery().(*fakediscovery.FakeDiscovery).FakedServerVersion = &version.Info{
@@ -54,7 +57,7 @@ func TestHandleOperatorHealth(t *testing.T) {
 	}
 
 	rr := httptest.NewRecorder()
-	handler := http.HandlerFunc(server.handleOperatorHealth)
+	handler := server.routes()
 	handler.ServeHTTP(rr, req)
 
 	if status := rr.Code; status != http.StatusOK {
@@ -85,7 +88,7 @@ func TestHandleClusterInfo(t *testing.T) {
 	}
 
 	rr := httptest.NewRecorder()
-	handler := http.HandlerFunc(server.handleClusterInfo)
+	handler := server.routes()
 	handler.ServeHTTP(rr, req)
 
 	if status := rr.Code; status != http.StatusOK {
@@ -116,7 +119,7 @@ func TestHandleNamespaces(t *testing.T) {
 	}
 
 	rr := httptest.NewRecorder()
-	handler := http.HandlerFunc(server.handleNamespaces)
+	handler := server.routes()
 	handler.ServeHTTP(rr, req)
 
 	if status := rr.Code; status != http.StatusOK {
@@ -139,7 +142,7 @@ func TestHandleDiscovery(t *testing.T) {
 	// Test 1: Unsupported provider
 	req, _ := http.NewRequest("GET", "/api/discovery/gcp/aurora", nil)
 	rr := httptest.NewRecorder()
-	server.handleDiscovery(rr, req)
+	server.routes().ServeHTTP(rr, req)
 	if rr.Code != http.StatusNotImplemented {
 		t.Errorf("expected 501 Not Implemented for gcp, got %v", rr.Code)
 	}
@@ -150,7 +153,7 @@ func TestHandleDiscovery(t *testing.T) {
 
 	req, _ = http.NewRequest("GET", "/api/discovery/aws/aurora", nil)
 	rr = httptest.NewRecorder()
-	server.handleDiscovery(rr, req)
+	server.routes().ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusOK {
 		t.Errorf("expected 200 OK for disabled AWS, got %v", rr.Code)
@@ -183,7 +186,7 @@ func TestServeHistory(t *testing.T) {
 
 	req, _ := http.NewRequest("GET", "/api/namespaces/test-ns/history", nil)
 	rr := httptest.NewRecorder()
-	server.handleNamespaceRouting(rr, req)
+	server.routes().ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusOK {
 		t.Errorf("expected 200 OK, got %v", rr.Code)
@@ -203,7 +206,7 @@ func TestServePods(t *testing.T) {
 
 	req, _ := http.NewRequest("GET", "/api/namespaces/test-ns/pods", nil)
 	rr := httptest.NewRecorder()
-	server.handleNamespaceRouting(rr, req)
+	server.routes().ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusOK {
 		t.Errorf("expected 200 OK, got %v", rr.Code)
@@ -223,7 +226,7 @@ func TestServeWorkloads(t *testing.T) {
 
 	req, _ := http.NewRequest("GET", "/api/namespaces/test-ns/workloads", nil)
 	rr := httptest.NewRecorder()
-	server.handleNamespaceRouting(rr, req)
+	server.routes().ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusOK {
 		t.Errorf("expected 200 OK, got %v", rr.Code)
@@ -257,7 +260,7 @@ func TestHandleNamespaceOptimize(t *testing.T) {
 
 	req, _ := http.NewRequest("POST", "/api/namespaces/test-ns/optimize", nil)
 	rr := httptest.NewRecorder()
-	server.handleNamespaceRouting(rr, req)
+	server.routes().ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusInternalServerError {
 		t.Errorf("expected 500 InternalsServerError when no metrics client exists, got %v", rr.Code)
@@ -289,7 +292,7 @@ func TestHandleNamespaceRevert(t *testing.T) {
 
 	req, _ := http.NewRequest("POST", "/api/namespaces/test-ns/revert", nil)
 	rr := httptest.NewRecorder()
-	server.handleNamespaceRouting(rr, req)
+	server.routes().ServeHTTP(rr, req)
 
 	// Will likely return Ok as finding no deployment gracefully skips
 	if rr.Code != http.StatusOK {
@@ -313,7 +316,7 @@ func TestHandleScalingGroups(t *testing.T) {
 
 	req, _ := http.NewRequest("GET", "/api/scaling/groups", nil)
 	rr := httptest.NewRecorder()
-	server.handleScalingGroups(rr, req)
+	server.routes().ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusOK {
 		t.Errorf("expected 200 OK, got %v", rr.Code)
@@ -344,7 +347,7 @@ func TestHandleScalingConfigs(t *testing.T) {
 
 	req, _ := http.NewRequest("GET", "/api/scaling/configs", nil)
 	rr := httptest.NewRecorder()
-	server.handleScalingConfigs(rr, req)
+	server.routes().ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusOK {
 		t.Errorf("expected 200 OK, got %v", rr.Code)
@@ -385,7 +388,7 @@ func TestHandleClusterNodes(t *testing.T) {
 
 	req, _ := http.NewRequest("GET", "/api/cluster/nodes", nil)
 	rr := httptest.NewRecorder()
-	server.handleClusterNodes(rr, req)
+	server.routes().ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusOK {
 		t.Errorf("expected 200 OK, got %v", rr.Code)

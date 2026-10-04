@@ -18,6 +18,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
+	"github.com/migalsp/costdeck-operator/internal/config"
 	"github.com/migalsp/costdeck-operator/internal/scaling"
 )
 
@@ -174,122 +175,90 @@ type VictoriaMetricsUpdateRequest struct {
 
 // ─── Handlers ────────────────────────────────────────────────────────────────
 
-func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		s.handleGetSettings(w, r)
-	case http.MethodPut:
-		s.handleUpdateSettings(w, r)
-	default:
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-	}
-}
-
-func (s *Server) handleSettingsProviderActions(w http.ResponseWriter, r *http.Request) {
-	parts := strings.Split(r.URL.Path, "/")
-	// /api/settings/providers/{name}/test → parts: ["", "api", "settings", "providers", name, "test"]
-	if len(parts) < 6 {
-		http.Error(w, "Invalid path", http.StatusBadRequest)
-		return
-	}
-
-	providerName := parts[4]
-	action := parts[5]
-
-	switch action {
-	case "test":
-		s.handleTestProvider(w, r, providerName)
-	case "status":
-		s.handleProviderStatus(w, r, providerName)
-	default:
-		http.Error(w, "Unknown action", http.StatusBadRequest)
-	}
-}
-
 // ─── GET /api/settings ──────────────────────────────────────────────────────
 
 func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	config := s.getOrCreateDefaultConfig(ctx)
-
-	resp := s.buildSettingsResponse(ctx, config)
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	cfg, err := config.Get(ctx, s.Client)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, s.buildSettingsResponse(ctx, cfg))
 }
 
-func (s *Server) buildSettingsResponse(ctx context.Context, config *finopsv1.CostDeckConfig) SettingsResponse {
+func (s *Server) buildSettingsResponse(ctx context.Context, cfg *finopsv1.CostDeckConfig) SettingsResponse {
 	resp := SettingsResponse{}
 
 	// AWS
-	if config.Spec.Providers.AWS != nil {
-		hasCreds := config.Spec.Providers.AWS.SecretRef != "" && s.secretExists(ctx, config.Spec.Providers.AWS.SecretRef, config.Namespace)
+	if cfg.Spec.Providers.AWS != nil {
+		hasCreds := cfg.Spec.Providers.AWS.SecretRef != "" && s.secretExists(ctx, cfg.Spec.Providers.AWS.SecretRef, cfg.Namespace)
 		resp.Providers.AWS = &AWSSettingsResponse{
-			Enabled:        config.Spec.Providers.AWS.Enabled,
-			Region:         config.Spec.Providers.AWS.Region,
+			Enabled:        cfg.Spec.Providers.AWS.Enabled,
+			Region:         cfg.Spec.Providers.AWS.Region,
 			HasCredentials: hasCreds,
-			DiscoveryTags:  config.Spec.Providers.AWS.DiscoveryTags,
-			ResourceTypes:  config.Spec.Providers.AWS.ResourceTypes,
-			Status:         config.Status.AWS,
+			DiscoveryTags:  cfg.Spec.Providers.AWS.DiscoveryTags,
+			ResourceTypes:  cfg.Spec.Providers.AWS.ResourceTypes,
+			Status:         cfg.Status.AWS,
 		}
 	}
 
 	// Azure (stub)
-	if config.Spec.Providers.Azure != nil {
-		hasCreds := config.Spec.Providers.Azure.SecretRef != "" && s.secretExists(ctx, config.Spec.Providers.Azure.SecretRef, config.Namespace)
+	if cfg.Spec.Providers.Azure != nil {
+		hasCreds := cfg.Spec.Providers.Azure.SecretRef != "" && s.secretExists(ctx, cfg.Spec.Providers.Azure.SecretRef, cfg.Namespace)
 		resp.Providers.Azure = &AzureSettingsResponse{
-			Enabled:        config.Spec.Providers.Azure.Enabled,
-			SubscriptionID: config.Spec.Providers.Azure.SubscriptionID,
-			TenantID:       config.Spec.Providers.Azure.TenantID,
+			Enabled:        cfg.Spec.Providers.Azure.Enabled,
+			SubscriptionID: cfg.Spec.Providers.Azure.SubscriptionID,
+			TenantID:       cfg.Spec.Providers.Azure.TenantID,
 			HasCredentials: hasCreds,
-			Status:         config.Status.Azure,
+			Status:         cfg.Status.Azure,
 		}
 	}
 
 	// GCP (stub)
-	if config.Spec.Providers.GCP != nil {
-		hasCreds := config.Spec.Providers.GCP.SecretRef != "" && s.secretExists(ctx, config.Spec.Providers.GCP.SecretRef, config.Namespace)
+	if cfg.Spec.Providers.GCP != nil {
+		hasCreds := cfg.Spec.Providers.GCP.SecretRef != "" && s.secretExists(ctx, cfg.Spec.Providers.GCP.SecretRef, cfg.Namespace)
 		resp.Providers.GCP = &GCPSettingsResponse{
-			Enabled:        config.Spec.Providers.GCP.Enabled,
-			ProjectID:      config.Spec.Providers.GCP.ProjectID,
+			Enabled:        cfg.Spec.Providers.GCP.Enabled,
+			ProjectID:      cfg.Spec.Providers.GCP.ProjectID,
 			HasCredentials: hasCreds,
-			Status:         config.Status.GCP,
+			Status:         cfg.Status.GCP,
 		}
 	}
 
 	// AI (stub)
-	if config.Spec.Integrations.AI != nil {
+	if cfg.Spec.Integrations.AI != nil {
 		resp.Integrations.AI = &AISettingsResponse{
-			Enabled:        config.Spec.Integrations.AI.Enabled,
-			Provider:       config.Spec.Integrations.AI.Provider,
-			Model:          config.Spec.Integrations.AI.Model,
-			BaseURL:        config.Spec.Integrations.AI.BaseURL,
-			SkipSSLVerify:  config.Spec.Integrations.AI.SkipSSLVerify,
-			HasCredentials: config.Spec.Integrations.AI.SecretRef != "",
+			Enabled:        cfg.Spec.Integrations.AI.Enabled,
+			Provider:       cfg.Spec.Integrations.AI.Provider,
+			Model:          cfg.Spec.Integrations.AI.Model,
+			BaseURL:        cfg.Spec.Integrations.AI.BaseURL,
+			SkipSSLVerify:  cfg.Spec.Integrations.AI.SkipSSLVerify,
+			HasCredentials: cfg.Spec.Integrations.AI.SecretRef != "",
 		}
 	}
 
 	// Messenger / Webex
-	if config.Spec.Integrations.Messenger != nil && config.Spec.Integrations.Messenger.Webex != nil {
+	if cfg.Spec.Integrations.Messenger != nil && cfg.Spec.Integrations.Messenger.Webex != nil {
 		resp.Integrations.Messenger = &MessengerSettingsResponse{
 			Webex: &WebexSettingsResponse{
-				Enabled:        config.Spec.Integrations.Messenger.Webex.Enabled,
-				RoomID:         config.Spec.Integrations.Messenger.Webex.RoomID,
-				HasCredentials: config.Spec.Integrations.Messenger.Webex.SecretRef != "",
+				Enabled:        cfg.Spec.Integrations.Messenger.Webex.Enabled,
+				RoomID:         cfg.Spec.Integrations.Messenger.Webex.RoomID,
+				HasCredentials: cfg.Spec.Integrations.Messenger.Webex.SecretRef != "",
 			},
 		}
 	}
 
 	// VictoriaMetrics
-	if config.Spec.Integrations.VictoriaMetrics != nil {
-		hasCreds := config.Spec.Integrations.VictoriaMetrics.SecretRef != "" && s.secretExists(ctx, config.Spec.Integrations.VictoriaMetrics.SecretRef, config.Namespace)
-		retentionDays := config.Spec.Integrations.VictoriaMetrics.RetentionDays
+	if cfg.Spec.Integrations.VictoriaMetrics != nil {
+		hasCreds := cfg.Spec.Integrations.VictoriaMetrics.SecretRef != "" && s.secretExists(ctx, cfg.Spec.Integrations.VictoriaMetrics.SecretRef, cfg.Namespace)
+		retentionDays := cfg.Spec.Integrations.VictoriaMetrics.RetentionDays
 		if retentionDays == 0 {
 			retentionDays = 7
 		}
 		resp.Integrations.VictoriaMetrics = &VictoriaMetricsSettingsResponse{
-			Enabled:        config.Spec.Integrations.VictoriaMetrics.Enabled,
-			Endpoint:       config.Spec.Integrations.VictoriaMetrics.Endpoint,
+			Enabled:        cfg.Spec.Integrations.VictoriaMetrics.Enabled,
+			Endpoint:       cfg.Spec.Integrations.VictoriaMetrics.Endpoint,
 			RetentionDays:  retentionDays,
 			HasCredentials: hasCreds,
 		}
@@ -297,7 +266,7 @@ func (s *Server) buildSettingsResponse(ctx context.Context, config *finopsv1.Cos
 
 	// Features
 	resp.Features = &FeaturesSettingsResponse{
-		CloudPricingAPI: config.Spec.Features.CloudPricingAPI,
+		CloudPricingAPI: cfg.Spec.Features.CloudPricingAPI,
 	}
 
 	return resp
@@ -309,32 +278,36 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	var req SettingsUpdateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body: "+err.Error(), http.StatusBadRequest)
+	if err := decodeJSON(w, r, &req); err != nil {
+		writeErrorf(w, http.StatusBadRequest, "Invalid request body: %v", err)
 		return
 	}
 
-	config := s.getOrCreateDefaultConfig(ctx)
-	operatorNs := config.Namespace
+	cfg, err := s.getOrCreateDefaultConfig(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	operatorNs := cfg.Namespace
 
 	// ─── Process AWS ─────────────────────────────────────────────────────────
 	if req.Providers != nil && req.Providers.AWS != nil {
 		awsReq := req.Providers.AWS
-		if config.Spec.Providers.AWS == nil {
-			config.Spec.Providers.AWS = &finopsv1.AWSProviderConfig{}
+		if cfg.Spec.Providers.AWS == nil {
+			cfg.Spec.Providers.AWS = &finopsv1.AWSProviderConfig{}
 		}
 
 		if awsReq.Enabled != nil {
-			config.Spec.Providers.AWS.Enabled = *awsReq.Enabled
+			cfg.Spec.Providers.AWS.Enabled = *awsReq.Enabled
 		}
 		if awsReq.Region != "" {
-			config.Spec.Providers.AWS.Region = awsReq.Region
+			cfg.Spec.Providers.AWS.Region = awsReq.Region
 		}
 		if awsReq.DiscoveryTags != nil {
-			config.Spec.Providers.AWS.DiscoveryTags = awsReq.DiscoveryTags
+			cfg.Spec.Providers.AWS.DiscoveryTags = awsReq.DiscoveryTags
 		}
 		if awsReq.ResourceTypes != nil {
-			config.Spec.Providers.AWS.ResourceTypes = awsReq.ResourceTypes
+			cfg.Spec.Providers.AWS.ResourceTypes = awsReq.ResourceTypes
 		}
 
 		// If credentials are provided, create/update the K8s Secret
@@ -345,27 +318,27 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 				"AWS_SECRET_ACCESS_KEY": []byte(awsReq.SecretAccessKey),
 				"AWS_REGION":            []byte(awsReq.Region),
 			}); err != nil {
-				http.Error(w, "Failed to store credentials: "+err.Error(), http.StatusInternalServerError)
+				writeError(w, http.StatusInternalServerError, "Failed to store credentials: "+err.Error())
 				return
 			}
-			config.Spec.Providers.AWS.SecretRef = secretName
+			cfg.Spec.Providers.AWS.SecretRef = secretName
 		}
 	}
 
 	// ─── Process Azure (stub) ────────────────────────────────────────────────
 	if req.Providers != nil && req.Providers.Azure != nil {
 		azureReq := req.Providers.Azure
-		if config.Spec.Providers.Azure == nil {
-			config.Spec.Providers.Azure = &finopsv1.AzureProviderConfig{}
+		if cfg.Spec.Providers.Azure == nil {
+			cfg.Spec.Providers.Azure = &finopsv1.AzureProviderConfig{}
 		}
 		if azureReq.Enabled != nil {
-			config.Spec.Providers.Azure.Enabled = *azureReq.Enabled
+			cfg.Spec.Providers.Azure.Enabled = *azureReq.Enabled
 		}
 		if azureReq.SubscriptionID != "" {
-			config.Spec.Providers.Azure.SubscriptionID = azureReq.SubscriptionID
+			cfg.Spec.Providers.Azure.SubscriptionID = azureReq.SubscriptionID
 		}
 		if azureReq.TenantID != "" {
-			config.Spec.Providers.Azure.TenantID = azureReq.TenantID
+			cfg.Spec.Providers.Azure.TenantID = azureReq.TenantID
 		}
 		if azureReq.ClientID != "" && azureReq.ClientSecret != "" {
 			secretName := "costdeck-azure-credentials"
@@ -374,114 +347,114 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 				"AZURE_CLIENT_SECRET": []byte(azureReq.ClientSecret),
 				"AZURE_TENANT_ID":     []byte(azureReq.TenantID),
 			}); err != nil {
-				http.Error(w, "Failed to store credentials: "+err.Error(), http.StatusInternalServerError)
+				writeError(w, http.StatusInternalServerError, "Failed to store credentials: "+err.Error())
 				return
 			}
-			config.Spec.Providers.Azure.SecretRef = secretName
+			cfg.Spec.Providers.Azure.SecretRef = secretName
 		}
 	}
 
 	// ─── Process GCP (stub) ──────────────────────────────────────────────────
 	if req.Providers != nil && req.Providers.GCP != nil {
 		gcpReq := req.Providers.GCP
-		if config.Spec.Providers.GCP == nil {
-			config.Spec.Providers.GCP = &finopsv1.GCPProviderConfig{}
+		if cfg.Spec.Providers.GCP == nil {
+			cfg.Spec.Providers.GCP = &finopsv1.GCPProviderConfig{}
 		}
 		if gcpReq.Enabled != nil {
-			config.Spec.Providers.GCP.Enabled = *gcpReq.Enabled
+			cfg.Spec.Providers.GCP.Enabled = *gcpReq.Enabled
 		}
 		if gcpReq.ProjectID != "" {
-			config.Spec.Providers.GCP.ProjectID = gcpReq.ProjectID
+			cfg.Spec.Providers.GCP.ProjectID = gcpReq.ProjectID
 		}
 		if gcpReq.ServiceAccountJSON != "" {
 			secretName := "costdeck-gcp-credentials"
 			if err := s.upsertSecret(ctx, operatorNs, secretName, map[string][]byte{
 				"credentials.json": []byte(gcpReq.ServiceAccountJSON),
 			}); err != nil {
-				http.Error(w, "Failed to store credentials: "+err.Error(), http.StatusInternalServerError)
+				writeError(w, http.StatusInternalServerError, "Failed to store credentials: "+err.Error())
 				return
 			}
-			config.Spec.Providers.GCP.SecretRef = secretName
+			cfg.Spec.Providers.GCP.SecretRef = secretName
 		}
 	}
 
 	// ─── Process AI (stub) ───────────────────────────────────────────────────
 	if req.Integrations != nil && req.Integrations.AI != nil {
 		aiReq := req.Integrations.AI
-		if config.Spec.Integrations.AI == nil {
-			config.Spec.Integrations.AI = &finopsv1.AIIntegrationConfig{}
+		if cfg.Spec.Integrations.AI == nil {
+			cfg.Spec.Integrations.AI = &finopsv1.AIIntegrationConfig{}
 		}
 		if aiReq.Enabled != nil {
-			config.Spec.Integrations.AI.Enabled = *aiReq.Enabled
+			cfg.Spec.Integrations.AI.Enabled = *aiReq.Enabled
 		}
 		if aiReq.Provider != "" {
-			config.Spec.Integrations.AI.Provider = aiReq.Provider
+			cfg.Spec.Integrations.AI.Provider = aiReq.Provider
 		}
 		if aiReq.Model != "" {
-			config.Spec.Integrations.AI.Model = aiReq.Model
+			cfg.Spec.Integrations.AI.Model = aiReq.Model
 		}
 		// BaseURL can be explicitly empty.
 		if aiReq.BaseURL != "" {
-			config.Spec.Integrations.AI.BaseURL = aiReq.BaseURL
+			cfg.Spec.Integrations.AI.BaseURL = aiReq.BaseURL
 		} else {
-			config.Spec.Integrations.AI.BaseURL = ""
+			cfg.Spec.Integrations.AI.BaseURL = ""
 		}
 		if aiReq.SkipSSLVerify != nil {
-			config.Spec.Integrations.AI.SkipSSLVerify = *aiReq.SkipSSLVerify
+			cfg.Spec.Integrations.AI.SkipSSLVerify = *aiReq.SkipSSLVerify
 		}
 		if aiReq.APIKey != "" {
 			secretName := "costdeck-ai-credentials"
 			if err := s.upsertSecret(ctx, operatorNs, secretName, map[string][]byte{
 				"API_KEY": []byte(aiReq.APIKey),
 			}); err != nil {
-				http.Error(w, "Failed to store credentials: "+err.Error(), http.StatusInternalServerError)
+				writeError(w, http.StatusInternalServerError, "Failed to store credentials: "+err.Error())
 				return
 			}
-			config.Spec.Integrations.AI.SecretRef = secretName
+			cfg.Spec.Integrations.AI.SecretRef = secretName
 		}
 	}
 
 	// ─── Process Webex ────────────────────────────────────────────────────
 	if req.Integrations != nil && req.Integrations.Messenger != nil && req.Integrations.Messenger.Webex != nil {
 		wxReq := req.Integrations.Messenger.Webex
-		if config.Spec.Integrations.Messenger == nil {
-			config.Spec.Integrations.Messenger = &finopsv1.MessengerIntegrationConfig{}
+		if cfg.Spec.Integrations.Messenger == nil {
+			cfg.Spec.Integrations.Messenger = &finopsv1.MessengerIntegrationConfig{}
 		}
-		if config.Spec.Integrations.Messenger.Webex == nil {
-			config.Spec.Integrations.Messenger.Webex = &finopsv1.WebexConfig{}
+		if cfg.Spec.Integrations.Messenger.Webex == nil {
+			cfg.Spec.Integrations.Messenger.Webex = &finopsv1.WebexConfig{}
 		}
 		if wxReq.Enabled != nil {
-			config.Spec.Integrations.Messenger.Webex.Enabled = *wxReq.Enabled
+			cfg.Spec.Integrations.Messenger.Webex.Enabled = *wxReq.Enabled
 		}
 		if wxReq.RoomID != "" {
-			config.Spec.Integrations.Messenger.Webex.RoomID = wxReq.RoomID
+			cfg.Spec.Integrations.Messenger.Webex.RoomID = wxReq.RoomID
 		}
 		if wxReq.BotToken != "" {
 			secretName := "costdeck-webex-credentials"
 			if err := s.upsertSecret(ctx, operatorNs, secretName, map[string][]byte{
 				"BOT_TOKEN": []byte(wxReq.BotToken),
 			}); err != nil {
-				http.Error(w, "Failed to store credentials: "+err.Error(), http.StatusInternalServerError)
+				writeError(w, http.StatusInternalServerError, "Failed to store credentials: "+err.Error())
 				return
 			}
-			config.Spec.Integrations.Messenger.Webex.SecretRef = secretName
+			cfg.Spec.Integrations.Messenger.Webex.SecretRef = secretName
 		}
 	}
 
 	// ─── Process VictoriaMetrics ────────────────────────────────────────────
 	if req.Integrations != nil && req.Integrations.VictoriaMetrics != nil {
 		vmReq := req.Integrations.VictoriaMetrics
-		if config.Spec.Integrations.VictoriaMetrics == nil {
-			config.Spec.Integrations.VictoriaMetrics = &finopsv1.VictoriaMetricsConfig{}
+		if cfg.Spec.Integrations.VictoriaMetrics == nil {
+			cfg.Spec.Integrations.VictoriaMetrics = &finopsv1.VictoriaMetricsConfig{}
 		}
 		if vmReq.Enabled != nil {
-			config.Spec.Integrations.VictoriaMetrics.Enabled = *vmReq.Enabled
+			cfg.Spec.Integrations.VictoriaMetrics.Enabled = *vmReq.Enabled
 		}
 		if vmReq.Endpoint != "" {
-			config.Spec.Integrations.VictoriaMetrics.Endpoint = vmReq.Endpoint
+			cfg.Spec.Integrations.VictoriaMetrics.Endpoint = vmReq.Endpoint
 		}
 		if vmReq.RetentionDays != nil {
-			config.Spec.Integrations.VictoriaMetrics.RetentionDays = *vmReq.RetentionDays
+			cfg.Spec.Integrations.VictoriaMetrics.RetentionDays = *vmReq.RetentionDays
 		}
 		// Store credentials if provided
 		if vmReq.BearerToken != "" || (vmReq.Username != "" && vmReq.Password != "") {
@@ -497,39 +470,39 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 				data["PASSWORD"] = []byte(vmReq.Password)
 			}
 			if err := s.upsertSecret(ctx, operatorNs, secretName, data); err != nil {
-				http.Error(w, "Failed to store VM credentials: "+err.Error(), http.StatusInternalServerError)
+				writeError(w, http.StatusInternalServerError, "Failed to store VM credentials: "+err.Error())
 				return
 			}
-			config.Spec.Integrations.VictoriaMetrics.SecretRef = secretName
+			cfg.Spec.Integrations.VictoriaMetrics.SecretRef = secretName
 		}
 	}
 
 	// ─── Process Features ────────────────────────────────────────────────────
 	if req.Features != nil {
 		if req.Features.CloudPricingAPI != nil {
-			config.Spec.Features.CloudPricingAPI = *req.Features.CloudPricingAPI
+			cfg.Spec.Features.CloudPricingAPI = *req.Features.CloudPricingAPI
 		}
 	}
 
 	// Save the config
-	if config.Spec.Integrations.AI != nil {
+	if cfg.Spec.Integrations.AI != nil {
 		logf.Log.Info("Saving AI config",
-			"enabled", config.Spec.Integrations.AI.Enabled,
-			"provider", config.Spec.Integrations.AI.Provider,
-			"model", config.Spec.Integrations.AI.Model,
-			"baseUrl", config.Spec.Integrations.AI.BaseURL,
-			"secretRef", config.Spec.Integrations.AI.SecretRef,
-			"skipSslVerify", config.Spec.Integrations.AI.SkipSSLVerify,
+			"enabled", cfg.Spec.Integrations.AI.Enabled,
+			"provider", cfg.Spec.Integrations.AI.Provider,
+			"model", cfg.Spec.Integrations.AI.Model,
+			"baseUrl", cfg.Spec.Integrations.AI.BaseURL,
+			"secretRef", cfg.Spec.Integrations.AI.SecretRef,
+			"skipSslVerify", cfg.Spec.Integrations.AI.SkipSSLVerify,
 		)
 	}
-	if err := s.Client.Update(ctx, config); err != nil {
-		http.Error(w, "Failed to update config: "+err.Error(), http.StatusInternalServerError)
+	if err := s.Client.Update(ctx, cfg); err != nil {
+		writeError(w, http.StatusInternalServerError, "Failed to update config: "+err.Error())
 		return
 	}
 
 	// Re-fetch to confirm persistence
 	updated := &finopsv1.CostDeckConfig{}
-	if err := s.Client.Get(ctx, client.ObjectKey{Name: config.Name, Namespace: config.Namespace}, updated); err == nil {
+	if err := s.Client.Get(ctx, client.ObjectKey{Name: cfg.Name, Namespace: cfg.Namespace}, updated); err == nil {
 		if updated.Spec.Integrations.AI != nil {
 			logf.Log.Info("Verified AI config after save",
 				"baseUrl", updated.Spec.Integrations.AI.BaseURL,
@@ -538,27 +511,27 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	resp := s.buildSettingsResponse(ctx, config)
+	resp := s.buildSettingsResponse(ctx, cfg)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
 }
 
 // ─── Test Provider Connectivity ─────────────────────────────────────────────
 
-func (s *Server) handleTestProvider(w http.ResponseWriter, r *http.Request, providerName string) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+func (s *Server) handleTestProvider(w http.ResponseWriter, r *http.Request) {
+	providerName := r.PathValue("provider")
+	ctx := r.Context()
+	cfg, err := config.Get(ctx, s.Client)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	ctx := r.Context()
-	config := s.getOrCreateDefaultConfig(ctx)
-
 	switch providerName {
 	case "aws":
-		s.testAWSProvider(w, ctx, config, r)
+		s.testAWSProvider(w, ctx, cfg, r)
 	case "ai":
-		s.testAIProvider(w, ctx, config, r)
+		s.testAIProvider(w, ctx, cfg, r)
 	case "azure":
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{
@@ -572,11 +545,11 @@ func (s *Server) handleTestProvider(w http.ResponseWriter, r *http.Request, prov
 			"error":     "GCP provider is not yet implemented",
 		})
 	default:
-		http.Error(w, fmt.Sprintf("Unknown provider: %s", providerName), http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("Unknown provider: %s", providerName))
 	}
 }
 
-func (s *Server) testAWSProvider(w http.ResponseWriter, ctx context.Context, config *finopsv1.CostDeckConfig, r *http.Request) {
+func (s *Server) testAWSProvider(w http.ResponseWriter, ctx context.Context, cfg *finopsv1.CostDeckConfig, r *http.Request) {
 	var provider *scaling.AWSProvider
 	var err error
 
@@ -599,7 +572,7 @@ func (s *Server) testAWSProvider(w http.ResponseWriter, ctx context.Context, con
 
 	// Fallback to stored credentials if no body or body belongs to another provider
 	if provider == nil {
-		if config.Spec.Providers.AWS == nil || config.Spec.Providers.AWS.SecretRef == "" {
+		if cfg.Spec.Providers.AWS == nil || cfg.Spec.Providers.AWS.SecretRef == "" {
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]any{
 				"connected": false,
@@ -609,9 +582,9 @@ func (s *Server) testAWSProvider(w http.ResponseWriter, ctx context.Context, con
 		}
 
 		provider, err = scaling.NewAWSProviderFromSecret(ctx, s.Client,
-			config.Spec.Providers.AWS.SecretRef,
-			config.Namespace,
-			config.Spec.Providers.AWS.Region,
+			cfg.Spec.Providers.AWS.SecretRef,
+			cfg.Namespace,
+			cfg.Spec.Providers.AWS.Region,
 		)
 		if err != nil {
 			w.Header().Set("Content-Type", "application/json")
@@ -638,7 +611,7 @@ func (s *Server) testAWSProvider(w http.ResponseWriter, ctx context.Context, con
 	})
 }
 
-func (s *Server) testAIProvider(w http.ResponseWriter, ctx context.Context, config *finopsv1.CostDeckConfig, r *http.Request) {
+func (s *Server) testAIProvider(w http.ResponseWriter, ctx context.Context, cfg *finopsv1.CostDeckConfig, r *http.Request) {
 	var req AIUpdateRequest
 
 	providerType := ""
@@ -658,14 +631,14 @@ func (s *Server) testAIProvider(w http.ResponseWriter, ctx context.Context, conf
 	}
 
 	// Fallback to config if not provided in UI body
-	if providerType == "" && config.Spec.Integrations.AI != nil {
-		providerType = config.Spec.Integrations.AI.Provider
-		baseUrl = config.Spec.Integrations.AI.BaseURL
-		skipSslVerify = config.Spec.Integrations.AI.SkipSSLVerify
+	if providerType == "" && cfg.Spec.Integrations.AI != nil {
+		providerType = cfg.Spec.Integrations.AI.Provider
+		baseUrl = cfg.Spec.Integrations.AI.BaseURL
+		skipSslVerify = cfg.Spec.Integrations.AI.SkipSSLVerify
 
-		if apiKey == "" && config.Spec.Integrations.AI.SecretRef != "" {
+		if apiKey == "" && cfg.Spec.Integrations.AI.SecretRef != "" {
 			secret := &corev1.Secret{}
-			err := s.Client.Get(ctx, client.ObjectKey{Name: config.Spec.Integrations.AI.SecretRef, Namespace: config.Namespace}, secret)
+			err := s.Client.Get(ctx, client.ObjectKey{Name: cfg.Spec.Integrations.AI.SecretRef, Namespace: cfg.Namespace}, secret)
 			if err == nil {
 				apiKey = string(secret.Data["API_KEY"])
 			}
@@ -749,17 +722,17 @@ func (s *Server) testAIProvider(w http.ResponseWriter, ctx context.Context, conf
 		}
 	}
 
-	client := &http.Client{Timeout: 10 * time.Second}
+	httpClient := &http.Client{Timeout: 10 * time.Second}
 
 	if skipSslVerify {
-		client.Transport = &http.Transport{
+		httpClient.Transport = &http.Transport{
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 		}
 	}
 
 	// lgtm [go/request-forgery]
 	// codeql[go/request-forgery]
-	resp, err := client.Do(httpReq)
+	resp, err := httpClient.Do(httpReq)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{
@@ -787,25 +760,24 @@ func (s *Server) testAIProvider(w http.ResponseWriter, ctx context.Context, conf
 
 // ─── Provider Status ────────────────────────────────────────────────────────
 
-func (s *Server) handleProviderStatus(w http.ResponseWriter, r *http.Request, providerName string) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+func (s *Server) handleProviderStatus(w http.ResponseWriter, r *http.Request) {
+	providerName := r.PathValue("provider")
+	cfg, err := config.Get(r.Context(), s.Client)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-
-	ctx := r.Context()
-	config := s.getOrCreateDefaultConfig(ctx)
 
 	var status *finopsv1.ProviderStatus
 	switch providerName {
 	case "aws":
-		status = config.Status.AWS
+		status = cfg.Status.AWS
 	case "azure":
-		status = config.Status.Azure
+		status = cfg.Status.Azure
 	case "gcp":
-		status = config.Status.GCP
+		status = cfg.Status.GCP
 	default:
-		http.Error(w, "Unknown provider", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "Unknown provider")
 		return
 	}
 
@@ -819,29 +791,34 @@ func (s *Server) handleProviderStatus(w http.ResponseWriter, r *http.Request, pr
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-func (s *Server) getOrCreateDefaultConfig(ctx context.Context) *finopsv1.CostDeckConfig {
-	operatorNs := getOperatorNamespace()
-
-	config := &finopsv1.CostDeckConfig{}
-	err := s.Client.Get(ctx, client.ObjectKey{Name: "default", Namespace: operatorNs}, config)
+// currentConfig returns the CostDeckConfig singleton for read-only use. A read failure is
+// logged and reported as an empty configuration so that dependent features degrade to
+// "not configured" instead of failing the whole request.
+func (s *Server) currentConfig(ctx context.Context) *finopsv1.CostDeckConfig {
+	cfg, err := config.Get(ctx, s.Client)
 	if err != nil {
-		if errors.IsNotFound(err) {
-			// Create the default singleton
-			config = &finopsv1.CostDeckConfig{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "default",
-					Namespace: operatorNs,
-				},
-				Spec: finopsv1.CostDeckConfigSpec{},
-			}
-			if createErr := s.Client.Create(ctx, config); createErr != nil {
-				logf.Log.Error(createErr, "Failed to create default CostDeckConfig")
-			}
-		} else {
-			logf.Log.Error(err, "Failed to get CostDeckConfig")
-		}
+		logf.Log.Error(err, "Could not read CostDeckConfig")
+		return config.Empty()
 	}
-	return config
+	return cfg
+}
+
+// getOrCreateDefaultConfig returns the CostDeckConfig singleton, creating it on first use
+// so that settings can be saved on a fresh installation.
+func (s *Server) getOrCreateDefaultConfig(ctx context.Context) (*finopsv1.CostDeckConfig, error) {
+	cfg := &finopsv1.CostDeckConfig{}
+	err := s.Client.Get(ctx, config.Key(), cfg)
+	if errors.IsNotFound(err) {
+		cfg = config.Empty()
+		if err := s.Client.Create(ctx, cfg); err != nil && !errors.IsAlreadyExists(err) {
+			return nil, fmt.Errorf("create CostDeckConfig: %w", err)
+		}
+		return cfg, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return cfg, nil
 }
 
 func (s *Server) secretExists(ctx context.Context, name, namespace string) bool {

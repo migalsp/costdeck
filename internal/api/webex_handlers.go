@@ -32,7 +32,7 @@ func (s *Server) handleWebexWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 1. Check if Webex integration is enabled
-	config := s.getOrCreateDefaultConfig(ctx)
+	config := s.currentConfig(ctx)
 	if config.Spec.Integrations.Messenger == nil || config.Spec.Integrations.Messenger.Webex == nil || !config.Spec.Integrations.Messenger.Webex.Enabled {
 		log.Info("Webex integration is disabled, ignoring webhook")
 		w.WriteHeader(http.StatusOK)

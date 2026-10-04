@@ -2,7 +2,6 @@ package controller
 
 import (
 	"context"
-	"os"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -16,6 +15,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
+	"github.com/migalsp/costdeck-operator/internal/config"
 )
 
 // NamespaceDiscoveryReconciler watches namespaces and creates NamespaceFinOps CRs
@@ -54,10 +54,7 @@ func (r *NamespaceDiscoveryReconciler) Reconcile(ctx context.Context, req ctrl.R
 	}
 
 	// It has pods! Check if NamespaceFinOps already exists for it in the operator namespace.
-	operatorNs := os.Getenv("POD_NAMESPACE")
-	if operatorNs == "" {
-		operatorNs = "costdeck"
-	}
+	operatorNs := config.OperatorNamespace()
 
 	finOpsName := ns.Name // Use namespace name as CR name
 	var existing finopsv1.NamespaceFinOps

@@ -54,7 +54,7 @@ func TestHandleScalingGroupsGET(t *testing.T) {
 	}
 
 	rr := httptest.NewRecorder()
-	handler := http.HandlerFunc(server.handleScalingGroups)
+	handler := server.routes()
 	handler.ServeHTTP(rr, req)
 
 	if status := rr.Code; status != http.StatusOK {
@@ -84,7 +84,7 @@ func TestHandleScalingGroupsPOST(t *testing.T) {
 	}
 
 	rr := httptest.NewRecorder()
-	handler := http.HandlerFunc(server.handleScalingGroups)
+	handler := server.routes()
 	handler.ServeHTTP(rr, req)
 
 	if status := rr.Code; status != http.StatusCreated {
@@ -122,7 +122,7 @@ func TestHandleScalingConfigsGET(t *testing.T) {
 	}
 
 	rr := httptest.NewRecorder()
-	handler := http.HandlerFunc(server.handleScalingConfigs)
+	handler := server.routes()
 	handler.ServeHTTP(rr, req)
 
 	if status := rr.Code; status != http.StatusOK {
@@ -156,7 +156,7 @@ func TestHandleScalingConfigActionsGETAndDELETE(t *testing.T) {
 	// GET
 	reqGet, _ := http.NewRequest("GET", "/api/scaling/configs/test-config-action", nil)
 	rrGet := httptest.NewRecorder()
-	handler := http.HandlerFunc(server.handleScalingConfigActions)
+	handler := server.routes()
 	handler.ServeHTTP(rrGet, reqGet)
 
 	if status := rrGet.Code; status != http.StatusOK {
@@ -199,7 +199,7 @@ func postManual(t *testing.T, server *Server, name, body string) *httptest.Respo
 		t.Fatal(err)
 	}
 	rr := httptest.NewRecorder()
-	http.HandlerFunc(server.handleScalingGroupActions).ServeHTTP(rr, req)
+	server.routes().ServeHTTP(rr, req)
 	return rr
 }
 
