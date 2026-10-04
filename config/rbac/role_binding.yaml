@@ -13,3 +13,21 @@ subjects:
 - kind: ServiceAccount
   name: controller-manager
   namespace: system
+---
+# Binds the namespaced half of manager-role: CostDeck's own resources, its credentials
+# Secrets and Events, all confined to the operator namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  labels:
+    app.kubernetes.io/name: costdeck
+    app.kubernetes.io/managed-by: kustomize
+  name: manager-rolebinding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: manager-role
+subjects:
+- kind: ServiceAccount
+  name: controller-manager
+  namespace: system

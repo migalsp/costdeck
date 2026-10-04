@@ -20,6 +20,14 @@ import (
 // Version is set at build time via ldflags
 var Version = "dev"
 
+// Permissions used by the REST API beyond what the controllers already request.
+// +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
+// +kubebuilder:rbac:groups=metrics.k8s.io,resources=nodes,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",namespace=costdeck,resources=pods/log,verbs=get
+// +kubebuilder:rbac:groups=finops.costdeck.io,namespace=costdeck,resources=namespaceoptimizations,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=finops.costdeck.io,namespace=costdeck,resources=namespaceoptimizations/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=coordination.k8s.io,namespace=costdeck,resources=leases,verbs=get;list;watch;create;update;patch;delete
+
 // Server serves the REST API and the embedded dashboard.
 type Server struct {
 	Client        client.Client

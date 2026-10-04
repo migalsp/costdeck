@@ -42,10 +42,11 @@ type ScalingGroupReconciler struct {
 	Recorder record.EventRecorder
 }
 
-// +kubebuilder:rbac:groups=finops.costdeck.io,resources=scalinggroups,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=finops.costdeck.io,resources=scalinggroups/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=finops.costdeck.io,resources=scalinggroups/finalizers,verbs=update
-// +kubebuilder:rbac:groups=finops.costdeck.io,resources=scalingpolicies,verbs=get;list;watch
+// +kubebuilder:rbac:groups=finops.costdeck.io,namespace=costdeck,resources=scalinggroups,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=finops.costdeck.io,namespace=costdeck,resources=scalinggroups/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=finops.costdeck.io,namespace=costdeck,resources=scalinggroups/finalizers,verbs=update
+// +kubebuilder:rbac:groups="",namespace=costdeck,resources=events,verbs=create;patch;get;list;watch
+// +kubebuilder:rbac:groups=events.k8s.io,namespace=costdeck,resources=events,verbs=create;patch
 
 func (r *ScalingGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	l := logf.FromContext(ctx)

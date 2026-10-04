@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -34,17 +35,28 @@ import (
 	"github.com/migalsp/costdeck-operator/internal/scaling"
 )
 
+// Label that marks the credentials Secrets CostDeck created from the settings UI.
+const (
+	managedByLabel = "app.kubernetes.io/managed-by"
+	managedByValue = "costdeck-operator"
+)
+
 // CostDeckConfigReconciler reconciles a CostDeckConfig object
 type CostDeckConfigReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
 }
 
-// +kubebuilder:rbac:groups=finops.costdeck.io,resources=costdeckconfigs,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=finops.costdeck.io,resources=costdeckconfigs/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=finops.costdeck.io,resources=costdeckconfigs/finalizers,verbs=update
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=finops.costdeck.io,namespace=costdeck,resources=costdeckconfigs,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=finops.costdeck.io,namespace=costdeck,resources=costdeckconfigs/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=finops.costdeck.io,namespace=costdeck,resources=costdeckconfigs/finalizers,verbs=update
+
+// Credentials Secrets and the AI report ConfigMap are only ever read by name in the
+// operator namespace, and both kinds bypass the informer cache (see cmd/main.go). That is
+// why neither list nor watch is requested, and why the grant is a Role rather than a
+// ClusterRole: CostDeck has no business enumerating Secrets anywhere.
+// +kubebuilder:rbac:groups="",namespace=costdeck,resources=secrets,verbs=get;create;update;patch;delete
+// +kubebuilder:rbac:groups="",namespace=costdeck,resources=configmaps,verbs=get;create;update;patch
 
 func (r *CostDeckConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	l := log.FromContext(ctx)
@@ -95,7 +107,7 @@ func (r *CostDeckConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	}
 
 	// Requeue every 5 minutes to refresh provider connectivity
-	return ctrl.Result{RequeueAfter: 300_000_000_000}, nil // 5 minutes
+	return ctrl.Result{RequeueAfter: 5 * time.Minute}, nil
 }
 
 func (r *CostDeckConfigReconciler) reconcileAWSProvider(ctx context.Context, config *finopsv1.CostDeckConfig) *finopsv1.ProviderStatus {
@@ -158,10 +170,13 @@ func (r *CostDeckConfigReconciler) reconcileAWSProvider(ctx context.Context, con
 	return status
 }
 
-// ensureSecretOwnership sets the CostDeckConfig as the owner of the secret
-// so it gets garbage-collected when the config is deleted.
+// ensureSecretOwnership sets the CostDeckConfig as the owner of a credentials Secret that
+// CostDeck itself created, so it is garbage-collected together with the config. Secrets
+// the user brought (for example from external-secrets or sealed-secrets) are left alone:
+// adopting them would delete the user's Secret when the config goes away, and would fight
+// the controller that already owns them.
 func (r *CostDeckConfigReconciler) ensureSecretOwnership(ctx context.Context, config *finopsv1.CostDeckConfig, secret *corev1.Secret) error {
-	if metav1.IsControlledBy(secret, config) {
+	if secret.Labels[managedByLabel] != managedByValue || metav1.IsControlledBy(secret, config) {
 		return nil
 	}
 
@@ -174,9 +189,10 @@ func (r *CostDeckConfigReconciler) ensureSecretOwnership(ctx context.Context, co
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *CostDeckConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	// Secrets are deliberately not watched: that would need list/watch on Secrets.
+	// Provider connectivity is re-validated on every periodic reconcile instead.
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&finopsv1.CostDeckConfig{}).
-		Owns(&corev1.Secret{}).
 		Named("costdeckconfig").
 		Complete(r)
 }

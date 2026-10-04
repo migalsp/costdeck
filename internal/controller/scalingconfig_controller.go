@@ -39,9 +39,9 @@ type ScalingConfigReconciler struct {
 	Engine *scaling.Engine
 }
 
-// +kubebuilder:rbac:groups=finops.costdeck.io,resources=scalingconfigs,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=finops.costdeck.io,resources=scalingconfigs/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=finops.costdeck.io,resources=scalingconfigs/finalizers,verbs=update
+// +kubebuilder:rbac:groups=finops.costdeck.io,namespace=costdeck,resources=scalingconfigs,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=finops.costdeck.io,namespace=costdeck,resources=scalingconfigs/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=finops.costdeck.io,namespace=costdeck,resources=scalingconfigs/finalizers,verbs=update
 // +kubebuilder:rbac:groups=apps,resources=deployments;statefulsets,verbs=get;list;watch;update;patch
 
 func (r *ScalingConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {

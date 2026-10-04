@@ -29,10 +29,12 @@ import (
 
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
@@ -45,6 +47,7 @@ import (
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
 	"github.com/migalsp/costdeck-operator/internal/api"
+	cdconfig "github.com/migalsp/costdeck-operator/internal/config"
 	"github.com/migalsp/costdeck-operator/internal/controller"
 	"github.com/migalsp/costdeck-operator/internal/metrics"
 	"github.com/migalsp/costdeck-operator/internal/webex"
@@ -104,6 +107,8 @@ func main() {
 	config := ctrl.GetConfigOrDie()
 	mgr, err := ctrl.NewManager(config, ctrl.Options{
 		Scheme:                 scheme,
+		Cache:                  cacheOptions(cdconfig.OperatorNamespace()),
+		Client:                 clientOptions(),
 		Metrics:                metricsServerOptions,
 		WebhookServer:          webhookServer,
 		HealthProbeBindAddress: probeAddr,
@@ -224,6 +229,34 @@ func main() {
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
 		setupLog.Error(err, "Failed to run manager")
 		os.Exit(1)
+	}
+}
+
+// cacheOptions confines the informers for everything CostDeck owns to the operator
+// namespace. Watching these kinds cluster-wide would need cluster-wide list/watch RBAC and
+// would hold every Event in the cluster in memory.
+func cacheOptions(operatorNs string) cache.Options {
+	inOperatorNs := cache.ByObject{Namespaces: map[string]cache.Config{operatorNs: {}}}
+	return cache.Options{
+		ByObject: map[client.Object]cache.ByObject{
+			&corev1.Event{}:                   inOperatorNs,
+			&finopsv1.CostDeckConfig{}:        inOperatorNs,
+			&finopsv1.NamespaceFinOps{}:       inOperatorNs,
+			&finopsv1.NamespaceOptimization{}: inOperatorNs,
+			&finopsv1.ScalingConfig{}:         inOperatorNs,
+			&finopsv1.ScalingGroup{}:          inOperatorNs,
+		},
+	}
+}
+
+// clientOptions makes Secrets and ConfigMaps bypass the cache. CostDeck reads a handful of
+// its own Secrets by name; caching them would start an informer that lists and watches
+// every Secret it can see, which is both a needless privilege and a memory cost.
+func clientOptions() client.Options {
+	return client.Options{
+		Cache: &client.CacheOptions{
+			DisableFor: []client.Object{&corev1.Secret{}, &corev1.ConfigMap{}},
+		},
 	}
 }
 

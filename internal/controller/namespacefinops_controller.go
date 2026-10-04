@@ -42,12 +42,14 @@ type NamespaceFinOpsReconciler struct {
 	VMClient      *metrics.VMClient
 }
 
-// +kubebuilder:rbac:groups=finops.costdeck.io,resources=namespacefinops,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=finops.costdeck.io,resources=namespacefinops/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=finops.costdeck.io,resources=namespacefinops/finalizers,verbs=update
+// +kubebuilder:rbac:groups=finops.costdeck.io,namespace=costdeck,resources=namespacefinops,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=finops.costdeck.io,namespace=costdeck,resources=namespacefinops/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=finops.costdeck.io,namespace=costdeck,resources=namespacefinops/finalizers,verbs=update
 
-// +kubebuilder:rbac:groups=core,resources=pods,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 // +kubebuilder:rbac:groups=metrics.k8s.io,resources=pods,verbs=get;list;watch
+
+// Reconcile records one usage data point per minute for the tracked namespace.
 func (r *NamespaceFinOpsReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
