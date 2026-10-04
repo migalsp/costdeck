@@ -1,3 +1,4 @@
+import { useAuth } from '../lib/auth'
 import { useState, useEffect } from 'react'
 import { ArrowLeft, Play, Square, RefreshCw } from 'lucide-react'
 
@@ -15,6 +16,7 @@ interface ScalingWorkloadsProps {
 }
 
 export default function ScalingWorkloads({ namespace, onBack }: ScalingWorkloadsProps) {
+  const { can } = useAuth()
   const [workloads, setWorkloads] = useState<Workload[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -81,7 +83,7 @@ export default function ScalingWorkloads({ namespace, onBack }: ScalingWorkloads
       </div>
 
       {/* Bulk Actions */}
-      <div className="flex items-center gap-3 mb-6">
+      {can('operator') && <div className="flex items-center gap-3 mb-6">
         <button 
           onClick={() => {
             workloads.forEach(w => {
@@ -102,7 +104,7 @@ export default function ScalingWorkloads({ namespace, onBack }: ScalingWorkloads
         >
           <Square size={16} fill="currentColor" /> Scale Down All
         </button>
-      </div>
+      </div>}
 
       {/* Workloads Table */}
       {loading ? (
@@ -140,7 +142,7 @@ export default function ScalingWorkloads({ namespace, onBack }: ScalingWorkloads
                     <span className="text-xs text-slate-400 ml-1">ready</span>
                   </td>
                   <td className="px-6 py-4 text-right">
-                    <div className="flex items-center justify-end gap-2">
+                    {can('operator') && <div className="flex items-center justify-end gap-2">
                       <button
                         onClick={() => handleScaleWorkload(w.name, w.kind, w.replicas > 0 ? w.replicas : 1)}
                         disabled={w.status === 'running'}
@@ -165,7 +167,7 @@ export default function ScalingWorkloads({ namespace, onBack }: ScalingWorkloads
                         <Square size={12} fill="currentColor" />
                         {w.status === 'scaled-down' ? 'Stopped' : 'Scale Down'}
                       </button>
-                    </div>
+                    </div>}
                   </td>
                 </tr>
               ))}

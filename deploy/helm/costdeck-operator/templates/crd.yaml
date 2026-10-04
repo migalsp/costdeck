@@ -45,6 +45,85 @@ spec:
           spec:
             description: spec defines the desired configuration
             properties:
+              auth:
+                description: Auth configures single sign-on and local login.
+                properties:
+                  disableLocalLogin:
+                    description: |-
+                      DisableLocalLogin hides the username/password form once SSO works. The built-in
+                      admin account (COSTDECK_AUTH_USER/PASSWORD) then only serves as break-glass access
+                      through the API.
+                    type: boolean
+                  entra:
+                    description: Entra configures Microsoft Entra ID single sign-on.
+                    properties:
+                      authorityHost:
+                        default: https://login.microsoftonline.com
+                        description: |-
+                          AuthorityHost is the Entra login endpoint; override it for sovereign clouds
+                          (https://login.microsoftonline.us, https://login.chinacloudapi.cn).
+                        type: string
+                      autoProvision:
+                        default: true
+                        description: |-
+                          AutoProvision lets any user of the tenant sign in with DefaultRole. When false, only
+                          users matched by GroupRoleMapping or an app role may sign in.
+                        type: boolean
+                      clientId:
+                        description: ClientID is the application (client) ID of the
+                          app registration.
+                        maxLength: 128
+                        type: string
+                      clientSecretRef:
+                        description: ClientSecretRef names the Secret holding the
+                          client secret under CLIENT_SECRET.
+                        type: string
+                      defaultRole:
+                        default: viewer
+                        description: |-
+                          DefaultRole is granted to users who match no group or app role mapping:
+                          viewer, operator or admin.
+                        enum:
+                        - viewer
+                        - operator
+                        - admin
+                        type: string
+                      enabled:
+                        description: Enabled shows the "Sign in with Microsoft" button
+                          and accepts Entra ID sign-ins.
+                        type: boolean
+                      groupRoleMapping:
+                        additionalProperties:
+                          type: string
+                        description: |-
+                          GroupRoleMapping maps Entra group object IDs (the "groups" claim) to a role. The most
+                          privileged match wins. App roles named admin/operator/viewer are honoured as well.
+                        type: object
+                      redirectUrl:
+                        description: |-
+                          RedirectURL must match a redirect URI of the app registration exactly. Either
+                          https://<host>/api/auth/entra/callback (server-side) or https://<host>/auth/callback
+                          (single-page app). Derived from the request host when empty.
+                        maxLength: 512
+                        type: string
+                      skipSslVerify:
+                        description: |-
+                          SkipSSLVerify disables TLS verification towards Entra. Only for SSL-inspecting
+                          corporate proxies.
+                        type: boolean
+                      tenantId:
+                        description: |-
+                          TenantID is the directory (tenant) ID or a verified domain. Use "organizations" to
+                          accept any work account (multi-tenant app registration).
+                        maxLength: 128
+                        type: string
+                    type: object
+                    x-kubernetes-validations:
+                    - message: tenantId and clientId are required when Entra SSO is
+                        enabled
+                      rule: '!self.enabled || (size(self.tenantId) > 0 && size(self.clientId)
+                        > 0)'
+                type: object
               clusterName:
                 description: |-
                   ClusterName defines an optional identifier for this cluster.

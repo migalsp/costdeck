@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react'
-import { Scaling, Server, LineChart, Activity, BookOpen, LogOut, Settings } from 'lucide-react'
+import { useState, useEffect, useCallback } from 'react'
+import { Scaling, Server, LineChart, Activity, BookOpen, LogOut, Settings, UserCircle2 } from 'lucide-react'
 import Dashboard from './pages/Dashboard'
 import NamespaceDetails from './pages/NamespaceDetails'
 import OperatorHealth from './pages/OperatorHealth'
@@ -11,6 +11,8 @@ import ApiReference from './pages/ApiReference'
 import SettingsPage from './pages/SettingsPage'
 import ReportsPage from './pages/ReportsPage'
 import AIChatWidget from './components/AIChatModal'
+import AuthCallback from './pages/AuthCallback'
+import { AuthContext, type User } from './lib/auth'
 
 function App() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'scale' | 'cluster' | 'operator' | 'api-docs' | 'settings' | 'reports'>('dashboard')
@@ -18,21 +20,38 @@ function App() {
   const [selectedScalingNS, setSelectedScalingNS] = useState<string | null>(null)
   const [appVersion, setAppVersion] = useState('...')
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null)
+  const [user, setUser] = useState<User | null>(null)
+  const isSSOCallback = window.location.pathname === '/auth/callback'
+
+  const loadSession = useCallback(async () => {
+    try {
+      const res = await fetch('/api/auth/me')
+      if (res.status === 401) {
+        setUser(null)
+        setIsAuthenticated(false)
+        return
+      }
+      if (res.ok) setUser(await res.json())
+      setIsAuthenticated(true)
+      const v = await fetch('/api/version').then(r => r.json()).catch(() => null)
+      if (v) setAppVersion(v.version || 'dev')
+    } catch {
+      setIsAuthenticated(false)
+    }
+  }, [])
 
   useEffect(() => {
-    // Check auth status by calling any authenticated endpoint
-    fetch('/api/version')
-      .then(r => {
-        if (r.status === 401) {
-          setIsAuthenticated(false)
-          return null
-        }
-        setIsAuthenticated(true)
-        return r.json()
-      })
-      .then(d => { if (d) setAppVersion(d.version || 'dev') })
-      .catch(() => setIsAuthenticated(true)) // If no auth configured, allow through
-  }, [])
+    if (!isSSOCallback) loadSession()
+  }, [isSSOCallback, loadSession])
+
+  const finishSSO = useCallback((returnTo: string) => {
+    window.history.replaceState(null, '', returnTo)
+    loadSession()
+  }, [loadSession])
+
+  if (isSSOCallback && isAuthenticated === null) {
+    return <AuthCallback onSignedIn={finishSSO} />
+  }
 
   // Loading state
   if (isAuthenticated === null) {
@@ -45,13 +64,13 @@ function App() {
 
   // Login gate
   if (isAuthenticated === false) {
-    return <LoginPage onLogin={() => {
-      setIsAuthenticated(true)
-      fetch('/api/version').then(r => r.json()).then(d => setAppVersion(d.version || 'dev')).catch(() => {})
-    }} />
+    return <LoginPage onLogin={loadSession} />
   }
 
+  const isAdmin = user?.role === 'admin'
+
   return (
+    <AuthContext.Provider value={user}>
     <div className="flex h-screen w-full bg-slate-50 font-sans">
       {/* Sidebar */}
       <aside className="w-66 bg-slate-900 text-white flex flex-col shadow-2xl z-10 border-r border-white/5 backdrop-blur-xl">
@@ -204,7 +223,7 @@ function App() {
             </div>
 
             <div className="space-y-1.5">
-              <button
+              {isAdmin && <button
                 onClick={() => setActiveTab('settings')}
                 className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-300 relative group overflow-hidden ${
                   activeTab === 'settings'
@@ -215,15 +234,27 @@ function App() {
                 {activeTab === 'settings' && <div className="absolute left-0 top-0 bottom-0 w-1 bg-white rounded-r-full shadow-[0_0_10px_white]" />}
                 <Settings size={20} className={activeTab === 'settings' ? 'text-white' : 'text-slate-500 group-hover:text-emerald-400 transition-colors'} />
                 <span className="font-bold text-[13px] tracking-tight">Settings</span>
-              </button>
+              </button>}
             </div>
           </div>
         </nav>
         
         <div className="p-6 border-t border-slate-800">
+          {user && user.provider !== 'anonymous' && (
+            <div className="flex items-center gap-3 mb-4 px-1" title={user.email || user.name}>
+              <UserCircle2 size={28} className="text-slate-500 shrink-0" />
+              <div className="min-w-0">
+                <div className="text-xs font-bold text-slate-200 truncate">{user.name}</div>
+                <div className="text-[10px] uppercase tracking-widest text-emerald-500 font-black">
+                  {user.role}{user.provider === 'entra' ? ' · Microsoft' : ''}
+                </div>
+              </div>
+            </div>
+          )}
           <button
             onClick={async () => {
               await fetch('/api/logout', { method: 'POST' })
+              setUser(null)
               setIsAuthenticated(false)
             }}
             className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-slate-500 hover:text-red-400 hover:bg-red-500/10 transition-all text-xs font-bold"
@@ -252,7 +283,7 @@ function App() {
         {activeTab === 'cluster' && <ClusterDashboard />}
         {activeTab === 'operator' && <OperatorHealth />}
         {activeTab === 'api-docs' && <ApiReference />}
-        {activeTab === 'settings' && <SettingsPage />}
+        {activeTab === 'settings' && isAdmin && <SettingsPage />}
         {activeTab === 'reports' && <ReportsPage />}
         {activeTab === 'scale' && (
           selectedScalingNS ? (
@@ -269,6 +300,7 @@ function App() {
       {/* AI Chat Widget */}
       <AIChatWidget />
     </div>
+    </AuthContext.Provider>
   )
 }
 

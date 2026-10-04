@@ -4,6 +4,7 @@ import (
 	"context"
 	"embed"
 	"errors"
+	"fmt"
 	"io/fs"
 	"net/http"
 	"path"
@@ -16,6 +17,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
+	"github.com/migalsp/costdeck-operator/internal/auth"
 	"github.com/migalsp/costdeck-operator/internal/metrics"
 )
 
@@ -36,7 +38,10 @@ type Server struct {
 	K8sClient     kubernetes.Interface
 	MetricsClient metricsv.Interface
 	Metrics       *metrics.Provider
-	Port          string
+	// Auth authenticates users. Start creates it when it is nil; handler tests leave it
+	// nil, which skips authentication entirely.
+	Auth *auth.Service
+	Port string
 
 	healthMu      sync.Mutex
 	healthHistory []map[string]any
@@ -60,6 +65,17 @@ func (s *Server) NeedLeaderElection() bool { return false }
 func (s *Server) Start(ctx context.Context) error {
 	log := logf.FromContext(ctx).WithName("api-server")
 	s.rootCtx = ctx
+
+	if s.Auth == nil {
+		svc, err := auth.NewService(ctx, s.Client)
+		if err != nil {
+			return fmt.Errorf("initialise authentication: %w", err)
+		}
+		s.Auth = svc
+	}
+	if s.Auth.Disabled(ctx) {
+		log.Info("Authentication is disabled: set COSTDECK_AUTH_USER/COSTDECK_AUTH_PASSWORD or enable Entra SSO")
+	}
 
 	go s.StartMCPServerLoop(ctx)
 
@@ -110,69 +126,85 @@ func (s *Server) Handler() (http.Handler, error) {
 	root := http.NewServeMux()
 	root.Handle("/api/", s.routes())
 	root.Handle("/", spaHandler(ui))
-	return securityHeaders(AuthMiddleware(root)), nil
+	var h http.Handler = root
+	if s.Auth != nil {
+		h = s.Auth.Middleware(h)
+	}
+	return securityHeaders(h), nil
 }
 
-// routes registers every API endpoint. Method-qualified patterns make the mux answer
-// 405 for a wrong method and expose path parameters through r.PathValue.
+// routes registers every API endpoint with the minimum role it requires. Method-qualified
+// patterns make the mux answer 405 for a wrong method and expose path parameters through
+// r.PathValue.
 func (s *Server) routes() *http.ServeMux {
 	mux := http.NewServeMux()
+	viewer := func(p string, h http.HandlerFunc) { mux.HandleFunc(p, auth.Require(auth.RoleViewer, h)) }
+	operator := func(p string, h http.HandlerFunc) { mux.HandleFunc(p, auth.Require(auth.RoleOperator, h)) }
+	admin := func(p string, h http.HandlerFunc) { mux.HandleFunc(p, auth.Require(auth.RoleAdmin, h)) }
 
-	// Session
-	mux.HandleFunc("POST /api/login", HandleLogin)
-	mux.HandleFunc("POST /api/logout", HandleLogout)
-	mux.HandleFunc("GET /api/version", s.handleVersion)
+	// Session and single sign-on (public; the auth middleware lets them through).
+	if s.Auth != nil {
+		mux.HandleFunc("POST /api/login", s.Auth.HandleLogin)
+		mux.HandleFunc("POST /api/logout", s.Auth.HandleLogout)
+		mux.HandleFunc("GET /api/auth/config", s.Auth.HandleConfig)
+		mux.HandleFunc("GET /api/auth/me", s.Auth.HandleMe)
+		mux.HandleFunc("GET /api/auth/entra/login", s.Auth.Entra.HandleLogin)
+		mux.HandleFunc("GET /api/auth/entra/callback", s.Auth.Entra.HandleCallback)
+		mux.HandleFunc("POST /api/auth/entra/callback-spa", s.Auth.Entra.HandleSPACallback)
+	}
+	viewer("GET /api/version", s.handleVersion)
 
 	// Cluster and operator
-	mux.HandleFunc("GET /api/cluster-info", s.handleClusterInfo)
-	mux.HandleFunc("GET /api/cluster/nodes", s.handleClusterNodes)
-	mux.HandleFunc("GET /api/operator/health", s.handleOperatorHealth)
-	mux.HandleFunc("GET /api/operator/logs", s.handleOperatorLogs)
-	mux.HandleFunc("GET /api/operator/logs/download", s.handleOperatorLogsDownload)
+	viewer("GET /api/cluster-info", s.handleClusterInfo)
+	viewer("GET /api/cluster/nodes", s.handleClusterNodes)
+	viewer("GET /api/operator/health", s.handleOperatorHealth)
+	operator("GET /api/operator/logs", s.handleOperatorLogs)
+	admin("GET /api/operator/logs/download", s.handleOperatorLogsDownload)
 
 	// Namespace insights and right-sizing
-	mux.HandleFunc("GET /api/namespaces", s.handleNamespaces)
-	mux.HandleFunc("GET /api/namespaces/{ns}/history", s.serveHistory)
-	mux.HandleFunc("GET /api/namespaces/{ns}/pods", s.servePods)
-	mux.HandleFunc("GET /api/namespaces/{ns}/workloads", s.serveWorkloads)
-	mux.HandleFunc("PUT /api/namespaces/{ns}/workloads/{name}", s.serveWorkloadAction)
-	mux.HandleFunc("POST /api/namespaces/{ns}/optimize", s.handleNamespaceOptimize)
-	mux.HandleFunc("POST /api/namespaces/{ns}/revert", s.handleNamespaceRevert)
-	mux.HandleFunc("GET /api/namespaces/{ns}/optimization", s.handleNamespaceOptimizationInfo)
-	mux.HandleFunc("POST /api/costing", s.handleCosting)
+	viewer("GET /api/namespaces", s.handleNamespaces)
+	viewer("GET /api/namespaces/{ns}/history", s.serveHistory)
+	viewer("GET /api/namespaces/{ns}/pods", s.servePods)
+	viewer("GET /api/namespaces/{ns}/workloads", s.serveWorkloads)
+	operator("PUT /api/namespaces/{ns}/workloads/{name}", s.serveWorkloadAction)
+	operator("POST /api/namespaces/{ns}/optimize", s.handleNamespaceOptimize)
+	operator("POST /api/namespaces/{ns}/revert", s.handleNamespaceRevert)
+	viewer("GET /api/namespaces/{ns}/optimization", s.handleNamespaceOptimizationInfo)
+	viewer("POST /api/costing", s.handleCosting)
 
 	// Scaling
-	mux.HandleFunc("GET /api/scaling/groups", s.listScalingGroups)
-	mux.HandleFunc("POST /api/scaling/groups", s.createScalingGroup)
-	mux.HandleFunc("GET /api/scaling/groups/{name}", s.getScalingGroup)
-	mux.HandleFunc("PUT /api/scaling/groups/{name}", s.updateScalingGroup)
-	mux.HandleFunc("DELETE /api/scaling/groups/{name}", s.deleteScalingGroup)
-	mux.HandleFunc("POST /api/scaling/groups/{name}/manual", s.handleScalingGroupManual)
-	mux.HandleFunc("GET /api/scaling/groups/{name}/events", s.handleScalingGroupEvents)
-	mux.HandleFunc("GET /api/scaling/configs", s.listScalingConfigs)
-	mux.HandleFunc("POST /api/scaling/configs", s.createScalingConfig)
-	mux.HandleFunc("GET /api/scaling/configs/{name}", s.getScalingConfig)
-	mux.HandleFunc("PUT /api/scaling/configs/{name}", s.updateScalingConfig)
-	mux.HandleFunc("DELETE /api/scaling/configs/{name}", s.deleteScalingConfig)
-	mux.HandleFunc("POST /api/scaling/configs/{name}/manual", s.handleScalingConfigManual)
-	mux.HandleFunc("GET /api/discovery/{provider}/{type}", s.handleDiscovery)
+	viewer("GET /api/scaling/groups", s.listScalingGroups)
+	admin("POST /api/scaling/groups", s.createScalingGroup)
+	viewer("GET /api/scaling/groups/{name}", s.getScalingGroup)
+	admin("PUT /api/scaling/groups/{name}", s.updateScalingGroup)
+	admin("DELETE /api/scaling/groups/{name}", s.deleteScalingGroup)
+	operator("POST /api/scaling/groups/{name}/manual", s.handleScalingGroupManual)
+	viewer("GET /api/scaling/groups/{name}/events", s.handleScalingGroupEvents)
+	viewer("GET /api/scaling/configs", s.listScalingConfigs)
+	admin("POST /api/scaling/configs", s.createScalingConfig)
+	viewer("GET /api/scaling/configs/{name}", s.getScalingConfig)
+	admin("PUT /api/scaling/configs/{name}", s.updateScalingConfig)
+	admin("DELETE /api/scaling/configs/{name}", s.deleteScalingConfig)
+	operator("POST /api/scaling/configs/{name}/manual", s.handleScalingConfigManual)
+	viewer("GET /api/discovery/{provider}/{type}", s.handleDiscovery)
 
 	// Settings
-	mux.HandleFunc("GET /api/settings", s.handleGetSettings)
-	mux.HandleFunc("PUT /api/settings", s.handleUpdateSettings)
-	mux.HandleFunc("POST /api/settings/providers/{provider}/test", s.handleTestProvider)
-	mux.HandleFunc("GET /api/settings/providers/{provider}/status", s.handleProviderStatus)
+	viewer("GET /api/settings", s.handleGetSettings)
+	admin("PUT /api/settings", s.handleUpdateSettings)
+	admin("POST /api/settings/providers/{provider}/test", s.handleTestProvider)
+	viewer("GET /api/settings/providers/{provider}/status", s.handleProviderStatus)
 
 	// Integrations
-	mux.HandleFunc("POST /api/webex/webhook", s.handleWebexWebhook)
-	mux.HandleFunc("POST /api/ai/chat", s.handleAIChat)
-	mux.HandleFunc("GET /api/ai/report", s.handleAIReportGet)
-	mux.HandleFunc("POST /api/ai/report/save", s.handleAIReportSave)
-	mux.HandleFunc("POST /api/ai/report/generate", s.handleAIReportGenerate)
+	mux.HandleFunc("POST /api/webex/webhook", s.handleWebexWebhook) // HMAC-authenticated
+	viewer("POST /api/ai/chat", s.handleAIChat)
+	viewer("GET /api/ai/report", s.handleAIReportGet)
+	operator("POST /api/ai/report/save", s.handleAIReportSave)
+	operator("POST /api/ai/report/generate", s.handleAIReportGenerate)
 
 	// Documentation
 	mux.HandleFunc("GET /api/openapi.yaml", handleOpenAPISpec)
 	mux.HandleFunc("GET /api/docs", handleSwaggerUI)
+
 	return mux
 }
 

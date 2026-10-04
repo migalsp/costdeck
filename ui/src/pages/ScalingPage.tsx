@@ -18,6 +18,7 @@ import {
 import ScalingConfigModal from '../components/ScalingConfigModal'
 import ScalingPipelineModal from '../components/ScalingPipelineModal'
 import { AWSLogo } from '../components/ProviderLogos'
+import { useAuth } from '../lib/auth'
 import OverrideDialog, { relativeTime, type OverrideUntil } from '../components/OverrideDialog'
 
 interface ScalingSchedule {
@@ -86,6 +87,7 @@ interface ScalingConfig {
 }
 
 const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ onSelectNamespace }) => {
+  const { can } = useAuth();
   const [groups, setGroups] = useState<ScalingGroup[]>([]);
   const [policies, setPolicies] = useState<ScalingConfig[]>([]);
   const [namespaces, setNamespaces] = useState<string[]>([]);
@@ -407,14 +409,14 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
             </>
           )}
         </span>
-        <button
+        {can('operator') && <button
           onClick={(e) => { e.stopPropagation(); onClear(); }}
           disabled={busy}
           className="shrink-0 flex items-center gap-1 px-2 py-1 rounded-lg bg-white/70 hover:bg-white border border-current/20 uppercase tracking-wider transition-colors disabled:opacity-50"
           title="Clear the override and follow the schedule again"
         >
           <RotateCcw size={11} /> Follow schedule
-        </button>
+        </button>}
       </div>
     );
   };
@@ -469,6 +471,7 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
           </div>
         </div>
         <div className="flex items-center gap-1">
+          {can('operator') && <>
           <button onClick={(e) => { e.stopPropagation(); promptOverride('group', group.metadata.name, true, group.spec.schedules); }}
             disabled={isScalingMap[`group-${group.metadata.name}`]}
             className={`p-1.5 rounded-lg transition-colors ${group.status?.phase === 'ScaledUp' ? 'bg-emerald-50 text-emerald-500' : 'bg-slate-50 text-slate-400 hover:bg-slate-100'} ${isScalingMap[`group-${group.metadata.name}`] ? 'opacity-50 cursor-not-allowed' : ''}`}
@@ -489,6 +492,8 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
                 <Square size={14} fill={group.status?.phase === 'ScaledDown' ? "currentColor" : "none"} />
               )}
           </button>
+          </>}
+          {can('admin') && <>
           <button onClick={(e) => { e.stopPropagation(); setEditingPolicy({ mode: 'schedule', name: group.metadata.name, spec: { ...group.spec } }); }}
           className="p-1.5 text-slate-400 hover:bg-indigo-50 hover:text-indigo-500 rounded-lg transition-colors" title="Availability Schedule">
           <CalendarClock size={14} /></button>
@@ -501,6 +506,7 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
           <button onClick={(e) => handleDeleteGroup(e, group.metadata.name)}
             className="p-1.5 text-slate-300 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-colors" title="Delete Group">
             <Plus size={14} className="rotate-45" /></button>
+          </>}
         </div>
       </div>
 
@@ -662,7 +668,7 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
       </div>
       
       <div className="flex flex-col gap-1 items-end shrink-0" onClick={(e) => e.stopPropagation()}>
-        <div className="flex gap-1">
+        {can('operator') && <div className="flex gap-1">
           <button onClick={() => promptOverride('config', config.metadata.name, true, config.spec.schedules)}
             disabled={isScalingMap[`config-${config.metadata.name}`]}
             className={`p-1.5 rounded-lg transition-colors ${config.status?.phase === 'ScaledUp' ? 'bg-emerald-50 text-emerald-500' : 'bg-slate-50 text-slate-400 hover:bg-slate-100'} ${isScalingMap[`config-${config.metadata.name}`] ? 'opacity-50 cursor-not-allowed' : ''}`}
@@ -683,21 +689,23 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
                 <Square size={14} fill={config.status?.phase === 'ScaledDown' ? "currentColor" : "none"} />
               )}
           </button>
-        </div>
+        </div>}
         <div className="flex gap-1">
-          {overridden && (
+          {overridden && can('operator') && (
             <button onClick={() => handleManualScale('config', config.metadata.name, null)}
               disabled={isScalingMap[`config-${config.metadata.name}`]}
               className="p-1.5 rounded-lg bg-amber-50 text-amber-600 hover:bg-amber-100 transition-colors disabled:opacity-50"
               title="Clear the manual override and follow the schedule again">
               <RotateCcw size={14} /></button>
           )}
+          {can('admin') && <>
           <button onClick={() => setEditingPolicy({ mode: 'schedule', name: config.metadata.name, spec: config.spec })}
             className="p-1.5 text-slate-400 hover:bg-indigo-50 hover:text-indigo-500 rounded-lg transition-colors" title="Schedule">
             <CalendarClock size={14} /></button>
           <button onClick={() => setEditingPolicy({ mode: 'sequence', name: config.metadata.name, spec: config.spec })}
             className="p-1.5 text-slate-400 hover:bg-slate-100 rounded-lg transition-colors" title="Sequence & Exclusions">
             <Settings2 size={14} /></button>
+          </>}
         </div>
       </div>
     </div>
@@ -740,13 +748,13 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
           <p className="text-slate-500 mt-1">Orchestrate infrastructure availability by schedule or on-demand.</p>
         </div>
         <div className="flex gap-3">
-          <button 
+          {can('admin') && <button 
             onClick={() => setIsAddingGroup(true)}
             className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 rounded-xl font-bold shadow-lg shadow-indigo-600/20 transition-all border border-indigo-400/20"
           >
             <Plus size={20} />
             New Group
-          </button>
+          </button>}
         </div>
       </div>
 
@@ -827,7 +835,7 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
 
                       return (
                       <div key={ns} className={`bg-white border rounded-2xl p-4 flex items-center justify-between group transition-all cursor-pointer ${managedByGroup ? 'border-indigo-100 hover:border-indigo-300' : 'border-dashed border-slate-200 hover:border-indigo-300'} hover:shadow-sm`}
-                        onClick={() => handleCreateIndividualConfig(ns)}
+                        onClick={() => { if (can('admin')) handleCreateIndividualConfig(ns); }}
                         title={managedByGroup ? `Click to override sequence/exclusions for ${ns}` : "Click to enable scaling control for this namespace"}>
                         <div className="flex items-center gap-3 min-w-0">
                           <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors shrink-0 ${managedByGroup ? 'bg-indigo-50 text-indigo-500' : 'bg-slate-50 text-slate-300 group-hover:bg-indigo-50 group-hover:text-indigo-500'}`}>

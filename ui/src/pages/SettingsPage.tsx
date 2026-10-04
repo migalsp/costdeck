@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import {
   Settings, Cloud, Bot, MessageSquare, Plus, Trash2, RefreshCw,
   CheckCircle2, XCircle, AlertTriangle, Eye, EyeOff, ChevronDown,
-  ChevronUp, Sparkles, ExternalLink, Activity, Plug
+  ChevronUp, Sparkles, ExternalLink, Activity, Plug, Shield
 } from 'lucide-react'
 import { AWSLogo, AzureLogo, GCPLogo, WebexLogo } from '../components/ProviderLogos'
 
@@ -71,6 +71,19 @@ interface MCPSettings {
   port: number
 }
 
+interface EntraSettings {
+  enabled: boolean
+  tenantId?: string
+  clientId?: string
+  redirectUrl?: string
+  authorityHost?: string
+  defaultRole?: string
+  autoProvision: boolean
+  groupRoleMapping?: Record<string, string>
+  skipSslVerify: boolean
+  hasClientSecret: boolean
+}
+
 interface SettingsData {
   providers: {
     aws?: AWSSettings
@@ -87,6 +100,10 @@ interface SettingsData {
   }
   features?: {
     cloudPricingApi?: boolean;
+  }
+  auth?: {
+    disableLocalLogin: boolean
+    entra?: EntraSettings
   }
 }
 
@@ -352,6 +369,19 @@ export default function SettingsPage() {
   const [vmSkipSsl, setVmSkipSsl] = useState(false)
   const [vmCaCert, setVmCaCert] = useState('')
 
+  // Access / SSO form state
+  const [disableLocalLogin, setDisableLocalLogin] = useState(false)
+  const [entraEnabled, setEntraEnabled] = useState(false)
+  const [entraTenant, setEntraTenant] = useState('')
+  const [entraClient, setEntraClient] = useState('')
+  const [entraSecret, setEntraSecret] = useState('')
+  const [entraRedirect, setEntraRedirect] = useState('')
+  const [entraAuthority, setEntraAuthority] = useState('')
+  const [entraDefaultRole, setEntraDefaultRole] = useState('viewer')
+  const [entraAutoProvision, setEntraAutoProvision] = useState(true)
+  const [entraSkipSsl, setEntraSkipSsl] = useState(false)
+  const [entraMapping, setEntraMapping] = useState<{ group: string; role: string }[]>([])
+
   // MCP form state
   const [mcpEnabled, setMcpEnabled] = useState(false)
   const [mcpPort, setMcpPort] = useState(8083)
@@ -395,6 +425,21 @@ export default function SettingsPage() {
         }
         if (data.features) {
           setCloudPricingApi(data.features.cloudPricingApi || false)
+        }
+        if (data.auth) {
+          setDisableLocalLogin(data.auth.disableLocalLogin)
+          const e = data.auth.entra
+          if (e) {
+            setEntraEnabled(e.enabled)
+            setEntraTenant(e.tenantId || '')
+            setEntraClient(e.clientId || '')
+            setEntraRedirect(e.redirectUrl || '')
+            setEntraAuthority(e.authorityHost || '')
+            setEntraDefaultRole(e.defaultRole || 'viewer')
+            setEntraAutoProvision(e.autoProvision)
+            setEntraSkipSsl(e.skipSslVerify)
+            setEntraMapping(Object.entries(e.groupRoleMapping || {}).map(([group, role]) => ({ group, role })))
+          }
         }
       }
     } catch (err) {
@@ -452,7 +497,22 @@ export default function SettingsPage() {
         },
         features: {
           cloudPricingApi: cloudPricingApi,
-        }
+        },
+        auth: {
+          disableLocalLogin,
+          entra: {
+            enabled: entraEnabled,
+            tenantId: entraTenant,
+            clientId: entraClient,
+            redirectUrl: entraRedirect,
+            authorityHost: entraAuthority,
+            defaultRole: entraDefaultRole,
+            autoProvision: entraAutoProvision,
+            skipSslVerify: entraSkipSsl,
+            groupRoleMapping: Object.fromEntries(entraMapping.filter(m => m.group.trim()).map(m => [m.group.trim(), m.role])),
+            ...(entraSecret ? { clientSecret: entraSecret } : {}),
+          },
+        },
       }
 
       const res = await fetch('/api/settings', {
@@ -473,6 +533,7 @@ export default function SettingsPage() {
         setVmUsername('')
         setVmPassword('')
         setVmCaCert('')
+        setEntraSecret('')
         setSaveMessage('Settings saved successfully')
         setTimeout(() => setSaveMessage(null), 3000)
       } else {
@@ -508,6 +569,14 @@ export default function SettingsPage() {
         body.baseUrl = aiBaseUrl
         body.apiKey = aiApiKey
         body.skipSslVerify = aiSkipSslVerify
+      } else if (provider === 'entra') {
+        Object.assign(body, {
+          tenantId: entraTenant,
+          clientId: entraClient,
+          authorityHost: entraAuthority,
+          skipSslVerify: entraSkipSsl,
+          ...(entraSecret ? { clientSecret: entraSecret } : {}),
+        })
       } else if (provider === 'webex') {
         Object.assign(body, {
           roomId: webexRoomId,
@@ -594,6 +663,7 @@ export default function SettingsPage() {
           { id: 'ai', icon: <Bot size={16} />, label: 'AI Models' },
           { id: 'messengers', icon: <MessageSquare size={16} />, label: 'Messengers' },
           { id: 'mcp', icon: <Plug size={16} />, label: 'MCP Server' },
+          { id: 'access', icon: <Shield size={16} />, label: 'Access & SSO' },
           { id: 'features', icon: <Sparkles size={16} />, label: 'Features' },
         ].map(tab => (
           <button
@@ -1227,6 +1297,150 @@ export default function SettingsPage() {
                 </div>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─── Access & SSO Section ─────────────────────────────────────────── */}
+      {expandedSection === 'access' && (
+        <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
+          <SectionHeader
+            icon={<Shield className="text-sky-600" size={20} />}
+            title="Access & Single Sign-On"
+            subtitle="Let people sign in with Microsoft Entra ID and map their groups to CostDeck roles"
+          />
+
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-5">
+            <div className="flex items-center justify-between">
+              <div>
+                <span className="font-bold text-slate-800">Microsoft Entra ID</span>
+                <p className="text-[10px] text-slate-400">OpenID Connect · authorization code flow with PKCE</p>
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input type="checkbox" checked={entraEnabled} onChange={e => setEntraEnabled(e.target.checked)} className="sr-only peer" />
+                <div className={`w-11 h-6 rounded-full ${entraEnabled ? 'bg-sky-600' : 'bg-slate-300'}`}>
+                  <div className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-md transition-transform ${entraEnabled ? 'translate-x-5' : 'translate-x-0'}`} />
+                </div>
+              </label>
+            </div>
+
+            <div className="p-4 bg-sky-50 border border-sky-100 rounded-xl text-xs text-sky-800 space-y-1.5">
+              <p className="font-bold">App registration redirect URI (add one of them in the Azure portal):</p>
+              <p><code className="bg-white px-1.5 py-0.5 rounded">{window.location.origin}/api/auth/entra/callback</code> — web platform, recommended</p>
+              <p><code className="bg-white px-1.5 py-0.5 rounded">{window.location.origin}/auth/callback</code> — single-page application</p>
+              <p className="text-sky-600">Add the optional <b>groups</b> claim (Token configuration → Security groups) or define app roles named admin / operator / viewer.</p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5 block">Directory (tenant) ID</label>
+                <input value={entraTenant} onChange={e => setEntraTenant(e.target.value)} placeholder="00000000-0000-0000-0000-000000000000"
+                  className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-mono" />
+              </div>
+              <div>
+                <label className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5 block">Application (client) ID</label>
+                <input value={entraClient} onChange={e => setEntraClient(e.target.value)} placeholder="00000000-0000-0000-0000-000000000000"
+                  className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-mono" />
+              </div>
+            </div>
+
+            <div>
+              <label className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5 block">
+                Client secret
+                {settings?.auth?.entra?.hasClientSecret && <span className="ml-2 text-emerald-500 normal-case font-medium">✓ Configured</span>}
+              </label>
+              <SecretInput value={entraSecret} onChange={setEntraSecret}
+                placeholder={settings?.auth?.entra?.hasClientSecret ? '••••••••••••••••••••' : 'Client secret value'} />
+              <p className="text-[10px] text-slate-400 mt-1.5">Stored in a Kubernetes Secret and never returned to the browser.</p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5 block">Redirect URI <span className="normal-case font-normal text-slate-400">(optional)</span></label>
+                <input value={entraRedirect} onChange={e => setEntraRedirect(e.target.value)} placeholder={`${window.location.origin}/api/auth/entra/callback`}
+                  className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-mono" />
+              </div>
+              <div>
+                <label className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5 block">Authority <span className="normal-case font-normal text-slate-400">(sovereign clouds)</span></label>
+                <input value={entraAuthority} onChange={e => setEntraAuthority(e.target.value)} placeholder="https://login.microsoftonline.com"
+                  className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-mono" />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4 items-start">
+              <div>
+                <label className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5 block">Default role</label>
+                <select value={entraDefaultRole} onChange={e => setEntraDefaultRole(e.target.value)}
+                  className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm">
+                  <option value="viewer">Viewer — read only</option>
+                  <option value="operator">Operator — scale and override schedules</option>
+                  <option value="admin">Admin — full access</option>
+                </select>
+              </div>
+              <label className="flex items-start gap-3 p-3 rounded-xl border border-slate-200 bg-slate-50 cursor-pointer mt-6">
+                <input type="checkbox" checked={entraAutoProvision} onChange={e => setEntraAutoProvision(e.target.checked)} className="mt-0.5 accent-sky-600" />
+                <span>
+                  <span className="block text-sm font-bold text-slate-700">Auto-provision users</span>
+                  <span className="block text-[11px] text-slate-400">Anyone in the tenant may sign in with the default role. Off: only mapped groups.</span>
+                </span>
+              </label>
+            </div>
+
+            <div>
+              <label className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2 block">Group → role mapping</label>
+              <div className="space-y-2">
+                {entraMapping.map((m, i) => (
+                  <div key={i} className="flex gap-2">
+                    <input value={m.group} placeholder="Entra group object ID"
+                      onChange={e => setEntraMapping(prev => prev.map((x, j) => j === i ? { ...x, group: e.target.value } : x))}
+                      className="flex-1 px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-mono" />
+                    <select value={m.role}
+                      onChange={e => setEntraMapping(prev => prev.map((x, j) => j === i ? { ...x, role: e.target.value } : x))}
+                      className="w-36 px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs">
+                      <option value="viewer">viewer</option>
+                      <option value="operator">operator</option>
+                      <option value="admin">admin</option>
+                    </select>
+                    <button onClick={() => setEntraMapping(prev => prev.filter((_, j) => j !== i))}
+                      className="px-2 text-slate-300 hover:text-red-500"><Trash2 size={14} /></button>
+                  </div>
+                ))}
+                <button onClick={() => setEntraMapping(prev => [...prev, { group: '', role: 'operator' }])}
+                  className="px-3 py-2 bg-slate-100 hover:bg-slate-200 rounded-lg text-xs font-bold text-slate-600 flex items-center gap-1">
+                  <Plus size={12} /> Add mapping
+                </button>
+              </div>
+              <p className="text-[10px] text-slate-400 mt-1.5">The most privileged match wins. App roles named admin, operator or viewer are honoured without a mapping.</p>
+            </div>
+
+            <label className="flex items-center gap-2 text-xs font-bold text-slate-500 cursor-pointer">
+              <input type="checkbox" checked={entraSkipSsl} onChange={e => setEntraSkipSsl(e.target.checked)} />
+              Skip TLS verification (only behind SSL-inspecting proxies)
+            </label>
+
+            <div className="flex items-center gap-3">
+              <button onClick={() => handleTestConnection('entra')} disabled={testing === 'entra' || !entraTenant || !entraClient}
+                className="flex items-center gap-2 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-bold transition-all disabled:opacity-50">
+                {testing === 'entra' ? <RefreshCw size={14} className="animate-spin" /> : <ExternalLink size={14} />}
+                Test Connection
+              </button>
+              {testResult?.provider === 'entra' && (
+                <span className={`text-xs font-bold flex items-center gap-1 ${testResult.connected ? 'text-emerald-600' : 'text-red-500'}`}>
+                  {testResult.connected ? <CheckCircle2 size={14} /> : <XCircle size={14} />}
+                  {testResult.connected ? testResult.message : testResult.error || 'Connection failed'}
+                </span>
+              )}
+            </div>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input type="checkbox" checked={disableLocalLogin} onChange={e => setDisableLocalLogin(e.target.checked)} className="mt-1 accent-sky-600" />
+              <span>
+                <span className="block text-sm font-bold text-slate-700">Hide the username/password form</span>
+                <span className="block text-[11px] text-slate-400">Only takes effect while Microsoft sign-in is enabled, so you cannot lock yourself out. The built-in admin keeps working for the API as break-glass access.</span>
+              </span>
+            </label>
           </div>
         </div>
       )}

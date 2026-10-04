@@ -60,7 +60,7 @@ paths:
             Set-Cookie:
               schema:
                 type: string
-                example: costdeck-session=abc123; Path=/; Max-Age=86400; HttpOnly
+                example: costdeck-session=eyJ...; Path=/; Max-Age=43200; HttpOnly; SameSite=Lax
           content:
             application/json:
               schema:
@@ -84,6 +84,93 @@ paths:
       responses:
         "200":
           description: Logout successful
+        "429":
+          description: Too many failed sign-in attempts from this address
+
+  /api/auth/config:
+    get:
+      tags: [Auth]
+      summary: Available sign-in methods
+      description: Public. Tells the login page whether to show the password form and the Microsoft button.
+      responses:
+        "200":
+          description: Sign-in methods
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  disabled: { type: boolean, description: No sign-in method is configured (development mode) }
+                  localLogin: { type: boolean }
+                  entra:
+                    type: object
+                    properties:
+                      enabled: { type: boolean }
+
+  /api/auth/me:
+    get:
+      tags: [Auth]
+      summary: Current user
+      responses:
+        "200":
+          description: The signed-in identity
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sub: { type: string, example: "entra:7f3c..." }
+                  name: { type: string }
+                  email: { type: string }
+                  role: { type: string, enum: [viewer, operator, admin] }
+                  provider: { type: string, enum: [local, entra, anonymous] }
+        "401":
+          description: Not signed in
+
+  /api/auth/entra/login:
+    get:
+      tags: [Auth]
+      summary: Start Microsoft Entra ID sign-in
+      description: Redirects the browser to Entra ID (authorization code flow with PKCE).
+      parameters:
+        - name: return
+          in: query
+          description: Path to return to after signing in.
+          schema: { type: string, example: /scaling }
+      responses:
+        "302":
+          description: Redirect to login.microsoftonline.com
+
+  /api/auth/entra/callback:
+    get:
+      tags: [Auth]
+      summary: Entra ID redirect URI (server-side mode)
+      description: >
+        Register https://<host>/api/auth/entra/callback as a Web redirect URI. Verifies state,
+        PKCE, the ID token signature, audience, issuer and nonce, sets the session cookie and
+        redirects back. Failures redirect with ?sso_error=<code>&sso_detail=<text>.
+      responses:
+        "302":
+          description: Redirect back into the dashboard
+
+  /api/auth/entra/callback-spa:
+    post:
+      tags: [Auth]
+      summary: Complete Entra ID sign-in (single-page-app mode)
+      description: Used by the /auth/callback dashboard route when the app registration uses the SPA redirect URI.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                code: { type: string }
+                state: { type: string }
+      responses:
+        "200":
+          description: Signed in; the session cookie is set
+        "401":
+          description: Sign-in rejected
 
   /api/version:
     get:

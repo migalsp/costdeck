@@ -1,3 +1,4 @@
+import { useAuth } from '../lib/auth'
 import { useState, useEffect } from 'react'
 import { ArrowLeft, Search, Activity, AlertCircle, Play, Square, Settings2, Clock, Plus } from 'lucide-react'
 import ScalingConfigModal from '../components/ScalingConfigModal'
@@ -49,6 +50,7 @@ const formatMem = (v: string): string => {
 }
 
 export default function NamespaceDetails({ namespace, onBack }: NamespaceDetailsProps) {
+  const { can } = useAuth();
   const [pods, setPods] = useState<PodDetail[]>([])
   const [optimization, setOptimization] = useState<any>(null)
   const [loading, setLoading] = useState(true)
@@ -146,7 +148,9 @@ export default function NamespaceDetails({ namespace, onBack }: NamespaceDetails
       await fetch(`/api/scaling/configs/${config.metadata.name}/manual`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ active })
+        // Hold until the next scheduled change when there is a schedule, so a click never
+        // pins the namespace forever.
+        body: JSON.stringify({ active, ...((config.spec?.schedules?.length || 0) > 0 ? { until: 'nextTransition' } : {}) })
       });
       fetchConfig();
       setError(null);
@@ -186,7 +190,7 @@ export default function NamespaceDetails({ namespace, onBack }: NamespaceDetails
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           metadata: { name: `config-${namespace}` },
-          spec: { targetNamespace: namespace, active: true }
+          spec: { targetNamespace: namespace }
         })
       });
       fetchConfig();
@@ -325,6 +329,7 @@ export default function NamespaceDetails({ namespace, onBack }: NamespaceDetails
         <div className="relative z-10 flex items-center gap-3">
           {config ? (
             <>
+              {can('operator') && <>
               <button 
                 onClick={() => handleManualScale(true)}
                 disabled={isScaling}
@@ -347,14 +352,15 @@ export default function NamespaceDetails({ namespace, onBack }: NamespaceDetails
                   <Square size={20} fill={config.status?.phase === 'ScaledDown' ? "currentColor" : "none"} />
                 )}
               </button>
-              <button 
+              </>}
+              {can('admin') && <button 
                 onClick={() => setIsEditingConfig(true)}
                 className="bg-white/10 hover:bg-white/20 p-3 rounded-xl transition-all"
               >
                 <Settings2 size={20} />
-              </button>
+              </button>}
             </>
-          ) : (
+          ) : can('admin') && (
             <button 
               onClick={handleCreateConfig}
               className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-3 rounded-xl font-bold flex items-center gap-2 shadow-lg shadow-indigo-600/20 transition-all"

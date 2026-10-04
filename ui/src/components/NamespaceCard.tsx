@@ -1,3 +1,4 @@
+import { useAuth } from '../lib/auth'
 import { useState, useEffect } from 'react'
 import type { MetricDataPoint } from '../pages/Dashboard'
 import {
@@ -39,6 +40,7 @@ const parseMem = (v: string): number => {
 }
 
 export default function NamespaceCard({ namespace, insights = [], onClick }: NamespaceCardProps) {
+  const { can } = useAuth()
   const [history, setHistory] = useState<any[]>([])
   const [optimization, setOptimization] = useState<any>(null)
   const [loading, setLoading] = useState(true)
@@ -352,7 +354,7 @@ export default function NamespaceCard({ namespace, insights = [], onClick }: Nam
         </div>
 
         <div className="flex gap-2">
-          {(optimization?.active && actionLoading !== 'optimize') || actionLoading === 'revert' ? (
+          {!can('operator') ? null : (optimization?.active && actionLoading !== 'optimize') || actionLoading === 'revert' ? (
             <button 
               onClick={handleRevert}
               disabled={actionLoading !== null}

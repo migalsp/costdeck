@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -343,5 +344,41 @@ func TestHandleScalingGroupManualNullClearsLegacyAnnotation(t *testing.T) {
 	}
 	if _, ok := fetchGroup(t, server, "legacy-group").Annotations[scaling.LegacyOverrideAnnotation]; ok {
 		t.Error("following the schedule must also drop the legacy override annotation")
+	}
+}
+
+func putSettings(t *testing.T, server *Server, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewBufferString(body))
+	rr := httptest.NewRecorder()
+	server.routes().ServeHTTP(rr, req)
+	return rr
+}
+
+func TestSettingsEntraValidationAndMasking(t *testing.T) {
+	t.Setenv("POD_NAMESPACE", "costdeck")
+	server := buildMockServer()
+
+	if rr := putSettings(t, server, `{"auth":{"entra":{"enabled":true}}}`); rr.Code != http.StatusBadRequest {
+		t.Errorf("enabling Entra without tenant/client = %d, want 400", rr.Code)
+	}
+	if rr := putSettings(t, server, `{"auth":{"entra":{"tenantId":"t","clientId":"c","groupRoleMapping":{"g1":"superuser"}}}}`); rr.Code != http.StatusBadRequest {
+		t.Errorf("unknown role in mapping = %d, want 400", rr.Code)
+	}
+
+	rr := putSettings(t, server, `{"auth":{"entra":{"enabled":true,"tenantId":"t","clientId":"c","clientSecret":"s","defaultRole":"reader","groupRoleMapping":{"g1":"owner"}}}}`)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("valid Entra settings = %d: %s", rr.Code, rr.Body.String())
+	}
+	if strings.Contains(rr.Body.String(), `"s"`) && strings.Contains(rr.Body.String(), "clientSecret") {
+		t.Error("the client secret must never be returned")
+	}
+	var resp SettingsResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	e := resp.Auth.Entra
+	if e == nil || !e.Enabled || !e.HasClientSecret || e.DefaultRole != "viewer" || e.GroupRoleMapping["g1"] != "operator" {
+		t.Errorf("stored Entra settings = %+v, want aliases normalised and the secret stored", e)
 	}
 }

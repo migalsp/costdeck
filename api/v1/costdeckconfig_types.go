@@ -219,6 +219,81 @@ type IntegrationsConfig struct {
 	MCP *MCPConfig `json:"mcp,omitempty"`
 }
 
+// ─── Authentication ──────────────────────────────────────────────────────────
+
+// EntraConfig configures Microsoft Entra ID (Azure AD) single sign-on using the OpenID
+// Connect authorization code flow with PKCE.
+// +kubebuilder:validation:XValidation:rule="!self.enabled || (size(self.tenantId) > 0 && size(self.clientId) > 0)",message="tenantId and clientId are required when Entra SSO is enabled"
+type EntraConfig struct {
+	// Enabled shows the "Sign in with Microsoft" button and accepts Entra ID sign-ins.
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+
+	// TenantID is the directory (tenant) ID or a verified domain. Use "organizations" to
+	// accept any work account (multi-tenant app registration).
+	// +kubebuilder:validation:MaxLength=128
+	// +optional
+	TenantID string `json:"tenantId,omitempty"`
+
+	// ClientID is the application (client) ID of the app registration.
+	// +kubebuilder:validation:MaxLength=128
+	// +optional
+	ClientID string `json:"clientId,omitempty"`
+
+	// ClientSecretRef names the Secret holding the client secret under CLIENT_SECRET.
+	// +optional
+	ClientSecretRef string `json:"clientSecretRef,omitempty"`
+
+	// RedirectURL must match a redirect URI of the app registration exactly. Either
+	// https://<host>/api/auth/entra/callback (server-side) or https://<host>/auth/callback
+	// (single-page app). Derived from the request host when empty.
+	// +kubebuilder:validation:MaxLength=512
+	// +optional
+	RedirectURL string `json:"redirectUrl,omitempty"`
+
+	// AuthorityHost is the Entra login endpoint; override it for sovereign clouds
+	// (https://login.microsoftonline.us, https://login.chinacloudapi.cn).
+	// +kubebuilder:default="https://login.microsoftonline.com"
+	// +optional
+	AuthorityHost string `json:"authorityHost,omitempty"`
+
+	// DefaultRole is granted to users who match no group or app role mapping:
+	// viewer, operator or admin.
+	// +kubebuilder:validation:Enum=viewer;operator;admin
+	// +kubebuilder:default=viewer
+	// +optional
+	DefaultRole string `json:"defaultRole,omitempty"`
+
+	// AutoProvision lets any user of the tenant sign in with DefaultRole. When false, only
+	// users matched by GroupRoleMapping or an app role may sign in.
+	// +kubebuilder:default=true
+	// +optional
+	AutoProvision *bool `json:"autoProvision,omitempty"`
+
+	// GroupRoleMapping maps Entra group object IDs (the "groups" claim) to a role. The most
+	// privileged match wins. App roles named admin/operator/viewer are honoured as well.
+	// +optional
+	GroupRoleMapping map[string]string `json:"groupRoleMapping,omitempty"`
+
+	// SkipSSLVerify disables TLS verification towards Entra. Only for SSL-inspecting
+	// corporate proxies.
+	// +optional
+	SkipSSLVerify bool `json:"skipSslVerify,omitempty"`
+}
+
+// AuthConfig configures how users sign in to the dashboard and the API.
+type AuthConfig struct {
+	// Entra configures Microsoft Entra ID single sign-on.
+	// +optional
+	Entra *EntraConfig `json:"entra,omitempty"`
+
+	// DisableLocalLogin hides the username/password form once SSO works. The built-in
+	// admin account (COSTDECK_AUTH_USER/PASSWORD) then only serves as break-glass access
+	// through the API.
+	// +optional
+	DisableLocalLogin bool `json:"disableLocalLogin,omitempty"`
+}
+
 // ─── Features ────────────────────────────────────────────────────────────────
 
 // FeaturesConfig holds configuration for core CostDeck features.
@@ -248,6 +323,10 @@ type CostDeckConfigSpec struct {
 	// Features holds core CostDeck feature toggles
 	// +optional
 	Features FeaturesConfig `json:"features,omitempty"`
+
+	// Auth configures single sign-on and local login.
+	// +optional
+	Auth AuthConfig `json:"auth,omitempty"`
 }
 
 // ProviderStatus represents the connection status of a single provider.
