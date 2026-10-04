@@ -85,12 +85,8 @@ func (r *ScalingGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request
 
 	timeoutPassed := false
 	if group.Spec.FeatureFlags != nil && group.Spec.FeatureFlags.SkipOnTimeout {
-		timeoutMinutes := 5 // default
-		if group.Spec.FeatureFlags.TimeoutMinutes > 0 {
-			timeoutMinutes = group.Spec.FeatureFlags.TimeoutMinutes
-		}
-		if (group.Status.Phase == "ScalingUp" || group.Status.Phase == "ScalingDown") &&
-			time.Since(group.Status.LastAction.Time) > time.Duration(timeoutMinutes)*time.Minute {
+		if (group.Status.Phase == scaling.PhaseScalingUp || group.Status.Phase == scaling.PhaseScalingDown) &&
+			time.Since(group.Status.LastAction.Time) > time.Duration(stageTimeoutMinutes(group))*time.Minute {
 			timeoutPassed = true
 		}
 	}
@@ -142,6 +138,14 @@ func (r *ScalingGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	// 5. Update Status
 	return r.updateStatusAndPhase(ctx, group, allReady, managedCount, namespacesReady, namespacesTotal, readyNamespaces, targetActive)
 }
+// stageTimeoutMinutes returns the configured skip-on-timeout window, defaulting to five.
+func stageTimeoutMinutes(group *finopsv1.ScalingGroup) int {
+	if group.Spec.FeatureFlags != nil && group.Spec.FeatureFlags.TimeoutMinutes > 0 {
+		return group.Spec.FeatureFlags.TimeoutMinutes
+	}
+	return 5
+}
+
 func (r *ScalingGroupReconciler) getScalingStages(group *finopsv1.ScalingGroup, targetActive bool) [][]string {
 	managedNamespaces := group.Spec.Namespaces
 	var stages [][]string
@@ -203,9 +207,9 @@ func (r *ScalingGroupReconciler) reconcileExternalTarget(ctx context.Context, gr
 		return false, fmt.Errorf("external target %s not found in spec", extId)
 	}
 
-	provider, ok := r.Engine.Providers[extTarget.Provider]
-	if !ok {
-		return false, fmt.Errorf("provider %s not found", extTarget.Provider)
+	provider, err := r.Engine.Provider(ctx, extTarget.Provider)
+	if err != nil {
+		return false, err
 	}
 
 	if err := provider.Scale(ctx, *extTarget, targetActive); err != nil {
@@ -274,7 +278,7 @@ func (r *ScalingGroupReconciler) emitScalingEvents(group *finopsv1.ScalingGroup,
 		}
 
 		if timeoutPassed {
-			msg := fmt.Sprintf("Timeout exceeded 1 min. Strict sequence is still active. Waiting on Stage %d: %s", stageNumber, strings.Join(blockingNamespaces, ", "))
+			msg := fmt.Sprintf("Stage timeout of %d min exceeded, skipping unresponsive targets. Still waiting on Stage %d: %s", stageTimeoutMinutes(group), stageNumber, strings.Join(blockingNamespaces, ", "))
 			r.Recorder.Event(group, "Warning", "ScalingTimeout", msg)
 		} else {
 			msg := fmt.Sprintf("Executing Stage %d. Waiting for targets in: %s", stageNumber, strings.Join(blockingNamespaces, ", "))
@@ -332,13 +336,10 @@ func (r *ScalingGroupReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		r.Engine.Providers = make(map[string]scaling.ExternalProvider)
 	}
 
-	// Initialize AWS Provider (this relies on the Pod having IRSA or environment variables set)
-	awsProv, err := scaling.NewAWSProvider(context.Background())
-	if err == nil {
-		r.Engine.Providers[awsProv.Name()] = awsProv
-		logf.Log.Info("Successfully initialized external provider", "provider", awsProv.Name())
-	} else {
-		logf.Log.Error(err, "Failed to initialize AWS Provider, external targets for AWS will not work")
+	// External providers are built from the live CostDeckConfig, so the credentials saved
+	// in the settings page are the ones used to start and stop cloud resources.
+	if r.Engine.Resolver == nil {
+		r.Engine.Resolver = &scaling.ConfigProviderResolver{Client: mgr.GetClient()}
 	}
 
 	r.Recorder = mgr.GetEventRecorderFor("scalinggroup-controller")
