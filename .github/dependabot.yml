@@ -46,3 +46,33 @@ updates:
         applies-to: security-updates
         patterns:
           - "*"
+
+  # Workflows pin actions by major version and the Dockerfile by base-image tag. Both stay
+  # on the same security-only policy: a PR appears only for an advisory.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 0
+    commit-message:
+      prefix: "ci(deps)"
+    groups:
+      actions-security:
+        applies-to: security-updates
+        patterns:
+          - "*"
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 0
+    commit-message:
+      prefix: "build(deps)"
+    groups:
+      docker-security:
+        applies-to: security-updates
+        patterns:
+          - "*"
