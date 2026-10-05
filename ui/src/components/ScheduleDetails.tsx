@@ -1,23 +1,21 @@
 import { useState } from 'react'
-import { Activity, LayoutList, ListOrdered, Link2, Pencil, Play, RotateCcw, Square, Trash2 } from 'lucide-react'
-import { apiError } from '../lib/api'
+import { Activity, ArrowRight, LayoutList, ListOrdered, Link2, Pencil, Play, RotateCcw, Square, Trash2 } from 'lucide-react'
 import { formatMoney } from '../lib/format'
 import { describeSpec, statusLine } from '../lib/schedule'
-import type { ExternalTarget, ScalingConfig, ScalingGroup, ScalingSpec } from '../lib/types'
+import type { ScalingConfig, ScalingGroup, ScalingSpec } from '../lib/types'
 import ScheduleActivity from './ScheduleActivity'
 import ScheduleStatusLine from './ScheduleStatus'
-import StartOrderEditor from './StartOrderEditor'
 import WeekTimeline from './WeekTimeline'
-import { Badge, Button, Drawer, Tabs } from './ui'
+import type { WizardTab } from './ScheduleWizard'
+import { Badge, Button, Modal, Tabs } from './ui'
 
-export type DrawerTab = 'overview' | 'activity' | 'order'
+export type DetailsTab = 'overview' | 'activity'
 
 interface Props {
   target: { kind: 'group'; group: ScalingGroup } | { kind: 'config'; config: ScalingConfig }
   groups: ScalingGroup[]
-  discovered: ExternalTarget[]
-  tab: DrawerTab
-  onTab: (tab: DrawerTab) => void
+  tab: DetailsTab
+  onTab: (tab: DetailsTab) => void
   busy?: boolean
   canOperate: boolean
   canAdmin: boolean
@@ -25,16 +23,16 @@ interface Props {
   onStart: () => void
   onStop: () => void
   onResume: () => void
-  onEdit: () => void
+  onEdit: (tab?: WizardTab) => void
   onDelete?: () => void
   onRules?: () => void
-  onSaved: () => void
   onSelectNamespace: (ns: string) => void
 }
 
-// ScheduleDrawer is the detail view of one schedule: what it does now and when, how far a
-// running transition got, and the order its namespaces and cloud resources start in.
-export default function ScheduleDrawer(p: Props) {
+// ScheduleDetails is the detail view of one schedule: what it does now and when, and the
+// live pipeline of a running transition. Configuration, start order included, is edited
+// in ScheduleWizard.
+export default function ScheduleDetails(p: Props) {
   const isGroup = p.target.kind === 'group'
   const obj = p.target.kind === 'group' ? p.target.group : p.target.config
   const spec: ScalingSpec = obj.spec
@@ -50,18 +48,6 @@ export default function ScheduleDrawer(p: Props) {
   const requiredBy = p.target.kind === 'group' ? p.target.group.status?.requiredBy || [] : []
   const conflicts = p.target.kind === 'group' ? p.target.group.status?.conflictingNamespaces || [] : []
 
-  const saveOrder = async (change: { sequence?: string[]; externalTargets?: ExternalTarget[] }) => {
-    if (p.target.kind !== 'group') return
-    const g = p.target.group
-    const res = await fetch(`/api/scaling/groups/${g.metadata.name}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ metadata: { name: g.metadata.name }, spec: { ...g.spec, ...change } }),
-    })
-    if (!res.ok) throw new Error(await apiError(res))
-    p.onSaved()
-  }
-
   const actions = (
     <div className="flex flex-wrap items-center gap-2 mt-3">
       {p.canOperate && (manual
@@ -69,13 +55,15 @@ export default function ScheduleDrawer(p: Props) {
         : up
           ? <Button size="sm" icon={<Square size={14} />} onClick={p.onStop} disabled={p.busy}>Scale down now</Button>
           : <Button size="sm" variant="success" icon={<Play size={14} />} onClick={p.onStart} disabled={p.busy}>Start now</Button>)}
-      {p.canAdmin && <Button size="sm" variant="ghost" icon={<Pencil size={14} />} onClick={p.onEdit}>Edit schedule</Button>}
+      {p.canAdmin && <Button size="sm" variant="ghost" icon={<Pencil size={14} />} onClick={() => p.onEdit()}>Edit</Button>}
       {!isGroup && p.canAdmin && p.onRules && <Button size="sm" variant="ghost" icon={<ListOrdered size={14} />} onClick={p.onRules}>Workload rules</Button>}
     </div>
   )
 
   return (
-    <Drawer
+    <Modal
+      size="xl"
+      tall
       title={name}
       subtitle={describeSpec(spec)}
       onClose={p.onClose}
@@ -85,13 +73,12 @@ export default function ScheduleDrawer(p: Props) {
           {actions}
           {isGroup && (
             <div className="mt-4">
-              <Tabs<DrawerTab>
+              <Tabs<DetailsTab>
                 value={p.tab}
                 onChange={p.onTab}
                 tabs={[
                   { id: 'overview', label: <span className="inline-flex items-center gap-1.5"><LayoutList size={14} /> Overview</span> },
                   { id: 'activity', label: <span className="inline-flex items-center gap-1.5"><Activity size={14} /> Activity</span> },
-                  { id: 'order', label: <span className="inline-flex items-center gap-1.5"><ListOrdered size={14} /> Start order</span> },
                 ]}
               />
             </div>
@@ -126,6 +113,29 @@ export default function ScheduleDrawer(p: Props) {
               <p className="mt-2 text-sm text-rose-600">Skipped, already in another schedule: {conflicts.join(', ')}</p>
             )}
           </section>
+
+          {isGroup && (
+            <section>
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-sm font-semibold text-slate-800 flex items-center gap-1.5"><ListOrdered size={14} /> Start order</h3>
+                {p.canAdmin && <Button size="sm" variant="ghost" onClick={() => p.onEdit('order')}>Change</Button>}
+              </div>
+              {(spec.sequence?.length || 0) === 0 ? (
+                <p className="text-sm text-slate-500">All namespaces start together.</p>
+              ) : (
+                <div className="flex flex-wrap items-center gap-1.5 text-sm">
+                  {spec.sequence!.map((stage, i) => (
+                    <span key={i} className="inline-flex items-center gap-1.5">
+                      {i > 0 && <ArrowRight size={13} className="text-slate-300" />}
+                      <span className="px-2 py-0.5 rounded-md bg-slate-50 border border-slate-200 text-slate-700">
+                        {stage.split(/\s+/).map(item => item.replace(/^ext:/, '☁ ')).join(', ')}
+                      </span>
+                    </span>
+                  ))}
+                </div>
+              )}
+            </section>
+          )}
 
           {isGroup && ((spec.dependsOn?.length || 0) > 0 || requiredBy.length > 0) && (
             <section>
@@ -168,17 +178,6 @@ export default function ScheduleDrawer(p: Props) {
 
       {p.target.kind === 'group' && p.tab === 'activity' && <ScheduleActivity group={p.target.group} />}
 
-      {p.target.kind === 'group' && p.tab === 'order' && (
-        <StartOrderEditor
-          key={p.target.group.metadata.name}
-          namespaces={p.target.group.spec.namespaces}
-          sequence={p.target.group.spec.sequence}
-          externalTargets={p.target.group.spec.externalTargets}
-          discovered={p.discovered}
-          readOnly={!p.canAdmin}
-          onSave={saveOrder}
-        />
-      )}
-    </Drawer>
+    </Modal>
   )
 }

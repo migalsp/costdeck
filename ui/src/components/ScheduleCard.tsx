@@ -3,7 +3,7 @@ import { ChevronRight, Link2, Pencil, Play, RotateCcw, Square } from 'lucide-rea
 import { formatMoney } from '../lib/format'
 import { describeSpec, statusLine } from '../lib/schedule'
 import type { Condition, ScalingSpec, ScheduleStatus } from '../lib/types'
-import type { DrawerTab } from './ScheduleDrawer'
+import type { DetailsTab } from './ScheduleDetails'
 import ScheduleStatusLine from './ScheduleStatus'
 import WeekTimeline from './WeekTimeline'
 import { Button, Card } from './ui'
@@ -24,7 +24,7 @@ export interface ScheduleCardProps {
   busy?: boolean
   canOperate: boolean
   canAdmin: boolean
-  onOpen: (tab: DrawerTab) => void
+  onOpen: (tab: DetailsTab) => void
   onStart: () => void
   onStop: () => void
   onResume: () => void

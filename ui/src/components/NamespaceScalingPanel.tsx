@@ -7,7 +7,7 @@ import type { ScalingConfig, ScalingGroup, ScalingSpec } from '../lib/types'
 import { usePolling } from '../lib/usePolling'
 import type { NamespaceFinOps } from '../pages/Dashboard'
 import OverrideDialog, { type OverrideUntil } from './OverrideDialog'
-import ScalingConfigModal from './ScalingConfigModal'
+import WorkloadRulesDialog from './WorkloadRulesDialog'
 import ScheduleWizard from './ScheduleWizard'
 import WeekTimeline from './WeekTimeline'
 
@@ -195,7 +195,7 @@ export default function NamespaceScalingPanel({ namespace }: { namespace: string
         <ScheduleWizard {...wizard} namespaces={namespaces} groups={groups} onClose={() => setWizard(null)} onSaved={() => { setWizard(null); load() }} />
       )}
       {rulesFor && (
-        <ScalingConfigModal name={namespace} mode="sequence" spec={rulesFor.spec} onClose={() => setRulesFor(null)} onSave={saveRules} />
+        <WorkloadRulesDialog namespace={namespace} spec={rulesFor.spec} onClose={() => setRulesFor(null)} onSave={saveRules} />
       )}
     </div>
   )

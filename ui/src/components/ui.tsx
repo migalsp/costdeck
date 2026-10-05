@@ -125,55 +125,43 @@ function useEscape(onClose: () => void) {
   }, [onClose])
 }
 
-interface OverlayProps {
+interface ModalProps {
   title: ReactNode
   subtitle?: ReactNode
   onClose: () => void
   children: ReactNode
   footer?: ReactNode
+  // headerExtra sits under the title: status lines, actions, tabs.
   headerExtra?: ReactNode
+  size?: 'sm' | 'md' | 'lg' | 'xl'
+  // tall gives the dialog a fixed height so switching tabs does not resize it.
+  tall?: boolean
+  // Forms keep their input when the backdrop is clicked; only the close button and
+  // Escape dismiss them.
+  dismissOnBackdrop?: boolean
 }
 
-// Drawer slides in from the right for details that keep the page in view.
-export function Drawer({ title, subtitle, onClose, children, footer, headerExtra }: OverlayProps) {
+const modalWidths = { sm: 'max-w-md', md: 'max-w-xl', lg: 'max-w-3xl', xl: 'max-w-4xl' }
+
+// Modal is the one dialog shell of the app: every overlay opens centred, with the same
+// header, close button, backdrop and footer.
+export function Modal({ title, subtitle, onClose, children, footer, headerExtra, size = 'md', tall, dismissOnBackdrop = true }: ModalProps) {
   useEscape(onClose)
   return (
-    <div className="fixed inset-0 z-[100] flex justify-end">
-      <div className="absolute inset-0 bg-slate-900/40" onClick={onClose} />
-      <div className="relative w-full max-w-2xl h-full bg-white shadow-2xl flex flex-col animate-slide-in">
-        <div className="px-6 pt-5 pb-3 border-b border-slate-200">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-slate-900/40" onClick={dismissOnBackdrop ? onClose : undefined} />
+      <div className={`relative w-full ${modalWidths[size]} ${tall ? 'h-[85vh]' : 'max-h-[90vh]'} bg-white rounded-2xl shadow-2xl flex flex-col animate-pop`}>
+        <div className={`px-6 pt-5 ${headerExtra ? 'pb-0' : 'pb-4'} border-b border-slate-200`}>
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0">
               <h2 className="text-lg font-bold text-slate-900 truncate">{title}</h2>
               {subtitle && <div className="text-sm text-slate-500">{subtitle}</div>}
             </div>
-            <button onClick={onClose} className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100" title="Close"><X size={18} /></button>
+            <button onClick={onClose} className="p-1.5 -mr-1.5 rounded-lg text-slate-400 hover:bg-slate-100" title="Close"><X size={18} /></button>
           </div>
           {headerExtra}
         </div>
         <div className="flex-1 overflow-y-auto px-6 py-5">{children}</div>
-        {footer && <div className="px-6 py-3 border-t border-slate-200 bg-slate-50">{footer}</div>}
-      </div>
-    </div>
-  )
-}
-
-// Modal centres a focused task, such as a confirmation or a form.
-export function Modal({ title, subtitle, onClose, children, footer, size = 'md' }: OverlayProps & { size?: 'sm' | 'md' | 'lg' }) {
-  useEscape(onClose)
-  const width = size === 'sm' ? 'max-w-md' : size === 'lg' ? 'max-w-3xl' : 'max-w-xl'
-  return (
-    <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-slate-900/40" onClick={onClose} />
-      <div className={`relative w-full ${width} max-h-[92vh] bg-white rounded-2xl shadow-2xl flex flex-col animate-pop`}>
-        <div className="px-6 py-4 border-b border-slate-200 flex items-start justify-between gap-4">
-          <div>
-            <h2 className="text-lg font-bold text-slate-900">{title}</h2>
-            {subtitle && <p className="text-sm text-slate-500">{subtitle}</p>}
-          </div>
-          <button onClick={onClose} className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100" title="Close"><X size={18} /></button>
-        </div>
-        <div className="px-6 py-5 overflow-y-auto">{children}</div>
         {footer && <div className="px-6 py-3 border-t border-slate-200 bg-slate-50 rounded-b-2xl flex items-center justify-end gap-2">{footer}</div>}
       </div>
     </div>

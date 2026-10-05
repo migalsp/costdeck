@@ -5,10 +5,10 @@ import { formatMoney } from '../lib/format'
 import type { ExternalTarget, ScalingConfig, ScalingGroup, ScalingSpec } from '../lib/types'
 import { usePolling } from '../lib/usePolling'
 import type { NamespaceFinOps } from './Dashboard'
-import ScalingConfigModal from '../components/ScalingConfigModal'
+import WorkloadRulesDialog from '../components/WorkloadRulesDialog'
 import ScheduleCard from '../components/ScheduleCard'
-import ScheduleDrawer, { type DrawerTab } from '../components/ScheduleDrawer'
-import ScheduleWizard from '../components/ScheduleWizard'
+import ScheduleDetails, { type DetailsTab } from '../components/ScheduleDetails'
+import ScheduleWizard, { type WizardTab } from '../components/ScheduleWizard'
 import { AWSLogo } from '../components/ProviderLogos'
 import { useAuth } from '../lib/auth'
 import OverrideDialog, { type OverrideUntil } from '../components/OverrideDialog'
@@ -20,7 +20,7 @@ type Target = { type: 'group' | 'config'; name: string }
 const isSystemNamespace = (ns: string) => ns.startsWith('kube-')
 
 type WizardState =
-  | { kind: 'group'; existing?: ScalingGroup; initialNamespaces?: string[] }
+  | { kind: 'group'; existing?: ScalingGroup; initialNamespaces?: string[]; initialTab?: WizardTab }
   | { kind: 'config'; existing: ScalingConfig }
 
 const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ onSelectNamespace }) => {
@@ -34,7 +34,7 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
   const [wizard, setWizard] = useState<WizardState | null>(null);
   // Workload rules (exclusions and workload order) of a single-namespace config.
   const [ordering, setOrdering] = useState<{ name: string; spec: ScalingSpec } | null>(null);
-  const [details, setDetails] = useState<{ kind: 'group' | 'config'; name: string; tab: DrawerTab } | null>(null);
+  const [details, setDetails] = useState<{ kind: 'group' | 'config'; name: string; tab: DetailsTab } | null>(null);
   const [isScalingMap, setIsScalingMap] = useState<Record<string, boolean>>({});
   const [overridePrompt, setOverridePrompt] = useState<Target & { active: boolean; hasSchedule: boolean } | null>(null);
   const [cloudExpanded, setCloudExpanded] = useState(false);
@@ -351,9 +351,43 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
         </div>
       )}
 
+      {details && (() => {
+        const group = details.kind === 'group' ? groups.find(g => g.metadata.name === details.name) : undefined;
+        const config = details.kind === 'config' ? policies.find(c => c.metadata.name === details.name) : undefined;
+        if (!group && !config) return null;
+        const kind = details.kind;
+        const name = details.name;
+        const spec = (group || config)!.spec;
+        return (
+          <ScheduleDetails
+            target={group ? { kind: 'group', group } : { kind: 'config', config: config! }}
+            groups={groups}
+            tab={details.tab}
+            onTab={tab => setDetails({ ...details, tab })}
+            busy={isScalingMap[`${kind}-${name}`]}
+            canOperate={can('operator')}
+            canAdmin={can('admin')}
+            onClose={() => setDetails(null)}
+            onStart={() => prompt(kind, name, true, spec)}
+            onStop={() => prompt(kind, name, false, spec)}
+            onResume={() => handleManualScale(kind, name, null)}
+            onEdit={tab => {
+              // One dialog at a time: editing replaces the details view.
+              setDetails(null);
+              if (group) setWizard({ kind: 'group', existing: group, initialTab: tab });
+              else setWizard({ kind: 'config', existing: config! });
+            }}
+            onDelete={group ? () => deleteGroup(name) : undefined}
+            onRules={config ? () => setOrdering({ name, spec: config.spec }) : undefined}
+            onSelectNamespace={ns => { setDetails(null); onSelectNamespace(ns); }}
+          />
+        );
+      })()}
+
       {wizard && (
         <ScheduleWizard
           {...wizard}
+          discovered={Object.values(discoveredResources).flat()}
           namespaces={namespaces}
           groups={groups}
           onClose={() => setWizard(null)}
@@ -377,44 +411,14 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
       )}
 
       {ordering && (
-        <ScalingConfigModal
-          name={ordering.name}
-          mode="sequence"
+        <WorkloadRulesDialog
+          namespace={policies.find(c => c.metadata.name === ordering.name)?.spec.targetNamespace || ordering.name}
           spec={ordering.spec}
           onClose={() => setOrdering(null)}
           onSave={handleSaveOrder}
         />
       )}
 
-      {details && (() => {
-        const group = details.kind === 'group' ? groups.find(g => g.metadata.name === details.name) : undefined;
-        const config = details.kind === 'config' ? policies.find(c => c.metadata.name === details.name) : undefined;
-        if (!group && !config) return null;
-        const kind = details.kind;
-        const name = details.name;
-        const spec = (group || config)!.spec;
-        return (
-          <ScheduleDrawer
-            target={group ? { kind: 'group', group } : { kind: 'config', config: config! }}
-            groups={groups}
-            discovered={Object.values(discoveredResources).flat()}
-            tab={details.tab}
-            onTab={tab => setDetails({ ...details, tab })}
-            busy={isScalingMap[`${kind}-${name}`]}
-            canOperate={can('operator')}
-            canAdmin={can('admin')}
-            onClose={() => setDetails(null)}
-            onStart={() => prompt(kind, name, true, spec)}
-            onStop={() => prompt(kind, name, false, spec)}
-            onResume={() => handleManualScale(kind, name, null)}
-            onEdit={() => group ? setWizard({ kind: 'group', existing: group }) : setWizard({ kind: 'config', existing: config! })}
-            onDelete={group ? () => deleteGroup(name) : undefined}
-            onRules={config ? () => setOrdering({ name, spec: config.spec }) : undefined}
-            onSaved={fetchData}
-            onSelectNamespace={ns => { setDetails(null); onSelectNamespace(ns); }}
-          />
-        );
-      })()}
     </div>
   );
 };

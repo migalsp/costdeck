@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { Play, Square, X, CalendarClock } from 'lucide-react'
+import { CalendarClock, Play, Square } from 'lucide-react'
+import { Button, Modal } from './ui'
 
 export type OverrideUntil = 'nextTransition' | '1h' | '4h' | '8h' | '24h' | 'forever'
 
@@ -18,7 +19,7 @@ const OPTIONS: { id: OverrideUntil; label: string; hint: string; needsSchedule?:
   { id: '4h', label: 'For 4 hours', hint: '' },
   { id: '8h', label: 'For 8 hours', hint: '' },
   { id: '24h', label: 'For 24 hours', hint: '' },
-  { id: 'forever', label: 'Until I resume the schedule', hint: 'The schedule stays ignored until you click "Follow schedule".' },
+  { id: 'forever', label: 'Until I hand it back to the schedule', hint: 'The schedule stays ignored until you click "Follow schedule".' },
 ]
 
 // OverrideDialog asks how long a manual scale action should hold. A manual override fully
@@ -28,45 +29,35 @@ export default function OverrideDialog({ name, kind, active, hasSchedule, onCanc
   const [choice, setChoice] = useState<OverrideUntil>(options[0].id)
 
   return (
-    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[200] flex items-center justify-center p-4" onClick={onCancel}>
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-md" onClick={e => e.stopPropagation()}>
-        <div className="p-6 border-b border-slate-100 flex items-start justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${active ? 'bg-emerald-50 text-emerald-500' : 'bg-rose-50 text-rose-500'}`}>
-              {active ? <Play size={18} /> : <Square size={18} />}
-            </div>
-            <div>
-              <h3 className="font-bold text-slate-800">Force {active ? 'up' : 'down'}</h3>
-              <p className="text-xs text-slate-500">{kind === 'group' ? 'Group' : 'Namespace'} <b className="text-slate-700">{name}</b></p>
-            </div>
-          </div>
-          <button onClick={onCancel} className="p-1.5 text-slate-400 hover:bg-slate-100 rounded-lg"><X size={16} /></button>
-        </div>
-        <div className="p-6 space-y-2">
-          <p className="text-[11px] text-slate-500 mb-3 flex items-start gap-1.5">
-            <CalendarClock size={13} className="shrink-0 mt-0.5" />
-            While a manual override is active the schedule is ignored. Choose when it should hand control back.
-          </p>
-          {options.map(o => (
-            <label key={o.id} className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-all ${choice === o.id ? 'border-brand-300 bg-brand-50/50' : 'border-slate-200 hover:border-slate-300'}`}>
-              <input type="radio" name="override-until" checked={choice === o.id} onChange={() => setChoice(o.id)} className="mt-0.5 accent-brand-600" />
-              <span>
-                <span className="block text-sm font-bold text-slate-700">{o.label}</span>
-                {o.hint && <span className="block text-[11px] text-slate-400">{o.hint}</span>}
-              </span>
-            </label>
-          ))}
-        </div>
-        <div className="p-6 pt-0 flex gap-3">
-          <button onClick={onCancel} className="flex-1 px-4 py-2.5 rounded-xl font-bold text-slate-500 border border-slate-200 hover:bg-slate-50">Cancel</button>
-          <button
-            onClick={() => onConfirm(choice)}
-            className={`flex-1 px-4 py-2.5 rounded-xl font-bold text-white shadow-lg ${active ? 'bg-emerald-500 hover:bg-emerald-600' : 'bg-rose-500 hover:bg-rose-600'}`}
-          >
-            Scale {active ? 'up' : 'down'}
-          </button>
-        </div>
+    <Modal
+      size="sm"
+      title={active ? `Start ${name} now` : `Scale ${name} down now`}
+      subtitle={kind === 'group' ? 'Schedule' : 'Namespace'}
+      onClose={onCancel}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onCancel}>Cancel</Button>
+          <Button variant={active ? 'primary' : 'danger'} icon={active ? <Play size={14} /> : <Square size={14} />} onClick={() => onConfirm(choice)}>
+            {active ? 'Start now' : 'Scale down now'}
+          </Button>
+        </>
+      }
+    >
+      <p className="text-sm text-slate-500 mb-3 flex items-start gap-1.5">
+        <CalendarClock size={15} className="shrink-0 mt-0.5" />
+        The schedule is ignored while this holds. When should it take over again?
+      </p>
+      <div className="space-y-2">
+        {options.map(o => (
+          <label key={o.id} className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${choice === o.id ? 'border-brand-300 bg-brand-50/60' : 'border-slate-200 hover:border-slate-300'}`}>
+            <input type="radio" name="override-until" checked={choice === o.id} onChange={() => setChoice(o.id)} className="mt-0.5 accent-brand-600" />
+            <span>
+              <span className="block text-sm font-medium text-slate-800">{o.label}</span>
+              {o.hint && <span className="block text-xs text-slate-500">{o.hint}</span>}
+            </span>
+          </label>
+        ))}
       </div>
-    </div>
+    </Modal>
   )
 }

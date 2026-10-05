@@ -79,11 +79,47 @@ func (s *Server) serveHistory(w http.ResponseWriter, r *http.Request) {
 
 // PodDetail is one pod row of the namespace details view.
 type PodDetail struct {
-	Name   string                   `json:"name"`
-	Status string                   `json:"status"`
-	CPU    finopsv1.ResourceMetrics `json:"cpu"`
-	Memory finopsv1.ResourceMetrics `json:"memory"`
-	Cost   *CostResponse            `json:"cost,omitempty"`
+	Name   string `json:"name"`
+	Status string `json:"status"`
+	// Ready is true when every container passes its readiness check.
+	Ready bool `json:"ready"`
+	// Reason explains a pod that is not healthy although its phase may say Running, such
+	// as CrashLoopBackOff, ImagePullBackOff or OOMKilled.
+	Reason   string                   `json:"reason,omitempty"`
+	Restarts int32                    `json:"restarts"`
+	CPU      finopsv1.ResourceMetrics `json:"cpu"`
+	Memory   finopsv1.ResourceMetrics `json:"memory"`
+	Cost     *CostResponse            `json:"cost,omitempty"`
+}
+
+// podHealth returns readiness, the most telling problem reason and the restart count.
+func podHealth(p *corev1.Pod) (ready bool, reason string, restarts int32) {
+	ready = p.Status.Phase == corev1.PodRunning
+	for _, c := range p.Status.InitContainerStatuses {
+		if w := c.State.Waiting; w != nil && w.Reason != "" && w.Reason != "PodInitializing" {
+			reason = "Init:" + w.Reason
+		}
+	}
+	for _, c := range p.Status.ContainerStatuses {
+		restarts += c.RestartCount
+		ready = ready && c.Ready
+		switch {
+		case c.State.Waiting != nil && c.State.Waiting.Reason != "" && c.State.Waiting.Reason != "ContainerCreating":
+			reason = c.State.Waiting.Reason
+		case c.State.Terminated != nil && c.State.Terminated.Reason != "" && reason == "":
+			reason = c.State.Terminated.Reason
+		case reason == "" && c.LastTerminationState.Terminated != nil && c.LastTerminationState.Terminated.Reason == "OOMKilled":
+			reason = "OOMKilled"
+		}
+	}
+	if reason == "" && p.Status.Phase == corev1.PodPending {
+		for _, c := range p.Status.Conditions {
+			if c.Type == corev1.PodScheduled && c.Status == corev1.ConditionFalse && c.Reason != "" {
+				reason = c.Reason // Unschedulable
+			}
+		}
+	}
+	return ready, reason, restarts
 }
 
 func (s *Server) servePods(w http.ResponseWriter, r *http.Request) {
@@ -129,9 +165,13 @@ func (s *Server) servePods(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		ready, reason, restarts := podHealth(&p)
 		details = append(details, PodDetail{
-			Name:   p.Name,
-			Status: string(p.Status.Phase),
+			Name:     p.Name,
+			Status:   string(p.Status.Phase),
+			Ready:    ready,
+			Reason:   reason,
+			Restarts: restarts,
 			CPU: finopsv1.ResourceMetrics{
 				Usage:    cpuU,
 				Requests: cpuReq.String(),

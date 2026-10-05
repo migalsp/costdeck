@@ -1,9 +1,11 @@
 import { useMemo, useState } from 'react'
-import { X, Search, ChevronDown, ChevronRight, Check } from 'lucide-react'
+import { Search, Check, CalendarClock, ListOrdered, SlidersHorizontal } from 'lucide-react'
 import { apiError, errorMessage } from '../lib/api'
 import { planFromSpec, planProblem, specFromPlan, type SchedulePlan } from '../lib/schedule'
-import type { ScalingConfig, ScalingGroup, ScalingGroupSpec, ScalingSpec } from '../lib/types'
+import type { ExternalTarget, ScalingConfig, ScalingGroup, ScalingGroupSpec, ScalingSpec } from '../lib/types'
 import ScheduleEditor from './ScheduleEditor'
+import StartOrderEditor, { type StartOrder } from './StartOrderEditor'
+import { Button, Modal, Tabs } from './ui'
 
 const K8S_NAME = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/
 
@@ -23,9 +25,14 @@ function suggestName(namespaces: string[]): string {
 const sameSchedule = (a: Pick<ScalingSpec, 'schedules' | 'activation'>, b: Pick<ScalingSpec, 'schedules' | 'activation'>) =>
   JSON.stringify(a.schedules || []) === JSON.stringify(b.schedules || []) && (a.activation || '') === (b.activation || '')
 
+export type WizardTab = 'schedule' | 'order' | 'advanced'
+
 type Props = {
   namespaces: string[]
   groups: ScalingGroup[]
+  // Cloud resources offered in Start order; undefined where discovery is unavailable.
+  discovered?: ExternalTarget[]
+  initialTab?: WizardTab
   onClose: () => void
   onSaved: () => void
 } & (
@@ -33,10 +40,11 @@ type Props = {
   | { kind: 'config'; existing: ScalingConfig }
 )
 
-// ScheduleWizard creates or edits a schedule in one screen: which namespaces, when they
-// run, and a name. Ordering, dependencies and timeouts stay folded under Advanced.
+// ScheduleWizard creates or edits a schedule: which namespaces, when they run and a name
+// (Schedule), the order they start in (Start order), and dependencies and timeouts
+// (Advanced). One Save stores all of it.
 export default function ScheduleWizard(props: Props) {
-  const { namespaces, groups, onClose, onSaved } = props
+  const { namespaces, groups, onClose, onSaved, discovered } = props
   const isGroup = props.kind === 'group'
   const existingGroup = props.kind === 'group' ? props.existing : undefined
   const existing = props.existing
@@ -48,7 +56,8 @@ export default function ScheduleWizard(props: Props) {
   const [name, setName] = useState(existing?.metadata.name || '')
   const [nameTouched, setNameTouched] = useState(editing)
   const [filter, setFilter] = useState('')
-  const [advanced, setAdvanced] = useState(false)
+  const [tab, setTab] = useState<WizardTab>(props.initialTab || 'schedule')
+  const [order, setOrder] = useState<StartOrder>({ sequence: existingGroup?.spec.sequence, externalTargets: existingGroup?.spec.externalTargets })
   const [dependsOn, setDependsOn] = useState<string[]>(existingGroup?.spec.dependsOn || [])
   const [category, setCategory] = useState(existingGroup?.spec.category || '')
   const [giveUp, setGiveUp] = useState(existingGroup?.spec.featureFlags?.skipOnTimeout || false)
@@ -84,6 +93,9 @@ export default function ScheduleWizard(props: Props) {
           ...schedule,
           category: category.trim() || base.category || 'General',
           namespaces: selected,
+          // Only keep stage entries that still belong to the schedule.
+          sequence: order.sequence?.map(s => s.split(/\s+/).filter(i => selected.includes(i) || i.startsWith('ext:')).join(' ')).filter(Boolean),
+          externalTargets: order.externalTargets,
           dependsOn: dependsOn.length ? dependsOn : undefined,
           featureFlags: giveUp ? { skipOnTimeout: true, timeoutMinutes: giveUpMinutes } : undefined,
         }
@@ -115,131 +127,143 @@ export default function ScheduleWizard(props: Props) {
 
   const shown = namespaces.filter(ns => ns.includes(filter.trim().toLowerCase()))
 
-  return (
-    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-3xl max-h-[92vh] flex flex-col animate-in fade-in zoom-in duration-200">
-        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
-          <div>
-            <h2 className="text-xl font-bold text-slate-800">{editing ? `Edit ${existing!.metadata.name}` : 'New schedule'}</h2>
-            <p className="text-xs text-slate-500">Workloads are scaled to zero outside the hours you choose and restored afterwards.</p>
-          </div>
-          <button onClick={onClose} className="p-2 rounded-full text-slate-400 hover:bg-slate-100"><X size={18} /></button>
-        </div>
+  const scheduleTab = (
+    <div className="space-y-6">
+      <section>
+        <h3 className="text-sm font-semibold text-slate-800 mb-2">Which namespaces?</h3>
+        {isGroup ? (
+          <>
+            <div className="relative mb-2">
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input value={filter} onChange={e => setFilter(e.target.value)} placeholder="Filter namespaces"
+                className="w-full pl-8 pr-3 py-2 text-sm bg-white border border-slate-200 rounded-lg outline-none focus:border-brand-500" />
+            </div>
+            <div className="max-h-44 overflow-y-auto grid grid-cols-2 md:grid-cols-3 gap-1.5 pr-1">
+              {shown.map(ns => {
+                const owner = ownerOf.get(ns)
+                const on = selected.includes(ns)
+                return (
+                  <button key={ns} type="button" disabled={!!owner}
+                    onClick={() => setSelected(on ? selected.filter(n => n !== ns) : [...selected, ns])}
+                    title={owner ? `Already scheduled by ${owner}` : undefined}
+                    className={`flex items-center gap-2 px-2.5 py-2 rounded-lg border text-left text-sm transition-colors ${
+                      owner ? 'border-transparent bg-slate-50 text-slate-300 cursor-not-allowed'
+                        : on ? 'border-brand-300 bg-brand-50 text-brand-800' : 'border-slate-200 hover:border-slate-300 text-slate-700'}`}>
+                    <span className={`w-4 h-4 shrink-0 rounded border flex items-center justify-center ${on ? 'bg-brand-600 border-brand-600' : 'border-slate-300 bg-white'}`}>
+                      {on && <Check size={12} className="text-white" />}
+                    </span>
+                    <span className="truncate font-medium">{ns}</span>
+                    {owner && <span className="ml-auto text-[10px] truncate">in {owner}</span>}
+                  </button>
+                )
+              })}
+            </div>
+            <p className="text-xs text-slate-400 mt-1">{selected.length} selected</p>
+          </>
+        ) : (
+          <p className="text-sm font-medium text-slate-700">{selected[0]}</p>
+        )}
+      </section>
 
-        <div className="p-6 space-y-6 overflow-y-auto">
-          <section>
-            <h3 className="text-sm font-bold text-slate-700 mb-2"><span className="text-brand-500">1.</span> Which namespaces?</h3>
-            {isGroup ? (
-              <>
-                <div className="relative mb-2">
-                  <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                  <input value={filter} onChange={e => setFilter(e.target.value)} placeholder="Filter namespaces"
-                    className="w-full pl-8 pr-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-lg outline-none focus:border-brand-500" />
-                </div>
-                <div className="max-h-44 overflow-y-auto grid grid-cols-2 md:grid-cols-3 gap-1.5 pr-1">
-                  {shown.map(ns => {
-                    const owner = ownerOf.get(ns)
-                    const on = selected.includes(ns)
-                    return (
-                      <button key={ns} type="button" disabled={!!owner}
-                        onClick={() => setSelected(on ? selected.filter(n => n !== ns) : [...selected, ns])}
-                        title={owner ? `Already scheduled by ${owner}` : undefined}
-                        className={`flex items-center gap-2 px-2.5 py-2 rounded-lg border text-left text-sm transition-colors ${
-                          owner ? 'border-transparent bg-slate-50 text-slate-300 cursor-not-allowed'
-                            : on ? 'border-brand-300 bg-brand-50 text-brand-800' : 'border-slate-200 hover:border-slate-300 text-slate-700'}`}>
-                        <span className={`w-4 h-4 shrink-0 rounded border flex items-center justify-center ${on ? 'bg-brand-600 border-brand-600' : 'border-slate-300 bg-white'}`}>
-                          {on && <Check size={12} className="text-white" />}
-                        </span>
-                        <span className="truncate font-semibold">{ns}</span>
-                        {owner && <span className="ml-auto text-[10px] truncate">in {owner}</span>}
-                      </button>
-                    )
-                  })}
-                </div>
-                <p className="text-[11px] text-slate-400 mt-1">{selected.length} selected</p>
-              </>
-            ) : (
-              <p className="text-sm font-semibold text-slate-700">{selected[0]}</p>
-            )}
-          </section>
+      <section>
+        <h3 className="text-sm font-semibold text-slate-800 mb-2">When should they run?</h3>
+        <ScheduleEditor plan={plan} onChange={setPlan} allowOnDemand={isGroup} />
+        {editing && overrideActive && scheduleChanged && (
+          <p className="mt-2 text-xs font-medium text-amber-700">Saving ends the current manual override, so the new schedule applies straight away.</p>
+        )}
+      </section>
 
-          <section>
-            <h3 className="text-sm font-bold text-slate-700 mb-2"><span className="text-brand-500">2.</span> When should they run?</h3>
-            <ScheduleEditor plan={plan} onChange={setPlan} allowOnDemand={isGroup} />
-            {editing && overrideActive && scheduleChanged && (
-              <p className="mt-2 text-xs font-semibold text-amber-600">Saving ends the current manual override, so the new schedule applies straight away.</p>
-            )}
-          </section>
-
-          {isGroup && (
-            <section>
-              <h3 className="text-sm font-bold text-slate-700 mb-2"><span className="text-brand-500">3.</span> Name</h3>
-              <input value={editing ? existing!.metadata.name : nameTouched ? name : suggestName(selected)} disabled={editing}
-                onChange={e => { setName(e.target.value); setNameTouched(true) }} placeholder="for example pps1"
-                className="w-full md:w-80 px-3 py-2 text-sm font-semibold bg-slate-50 border border-slate-200 rounded-lg outline-none focus:border-brand-500 disabled:opacity-60" />
-              {!editing && finalName && finalName !== (nameTouched ? name : suggestName(selected)) && (
-                <p className="text-[11px] text-slate-400 mt-1">Saved as <b>{finalName}</b></p>
-              )}
-            </section>
+      {isGroup && (
+        <section>
+          <h3 className="text-sm font-semibold text-slate-800 mb-2">Name</h3>
+          <input value={editing ? existing!.metadata.name : nameTouched ? name : suggestName(selected)} disabled={editing}
+            onChange={e => { setName(e.target.value); setNameTouched(true) }} placeholder="for example pps1"
+            className="w-full md:w-80 px-3 py-2 text-sm bg-white border border-slate-200 rounded-lg outline-none focus:border-brand-500 disabled:bg-slate-50 disabled:text-slate-500" />
+          {!editing && finalName && finalName !== (nameTouched ? name : suggestName(selected)) && (
+            <p className="text-xs text-slate-400 mt-1">Saved as <b>{finalName}</b></p>
           )}
-
-          {isGroup && (
-            <section className="border-t border-slate-100 pt-4">
-              <button type="button" onClick={() => setAdvanced(!advanced)} className="flex items-center gap-1 text-sm font-bold text-slate-500 hover:text-slate-700">
-                {advanced ? <ChevronDown size={16} /> : <ChevronRight size={16} />} Advanced
-                {(dependsOn.length > 0 || giveUp) && <span className="ml-1 text-[10px] font-bold text-brand-500">(in use)</span>}
-              </button>
-              {advanced && (
-                <div className="mt-3 space-y-5 pl-5">
-                  <div>
-                    <div className="text-sm font-bold text-slate-700">Start only after</div>
-                    <p className="text-[11px] text-slate-500 mb-2">This schedule waits until the selected ones are fully up, and keeps them up while it runs. Use it for a shared platform that environments need.</p>
-                    <div className="flex flex-wrap gap-1.5">
-                      {groups.filter(g => g.metadata.name !== existing?.metadata.name).map(g => {
-                        const on = dependsOn.includes(g.metadata.name)
-                        return (
-                          <button key={g.metadata.name} type="button" onClick={() => setDependsOn(on ? dependsOn.filter(d => d !== g.metadata.name) : [...dependsOn, g.metadata.name])}
-                            className={`px-2.5 py-1 rounded-lg text-xs font-bold border ${on ? 'bg-brand-600 border-brand-600 text-white' : 'bg-white border-slate-200 text-slate-500 hover:border-slate-300'}`}>
-                            {g.metadata.name}
-                          </button>
-                        )
-                      })}
-                      {groups.filter(g => g.metadata.name !== existing?.metadata.name).length === 0 && <span className="text-xs text-slate-400 italic">No other schedules yet.</span>}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-sm font-bold text-slate-700">Don't wait forever</div>
-                    <label className="flex items-center gap-2 text-xs text-slate-600 mt-1">
-                      <input type="checkbox" checked={giveUp} onChange={e => setGiveUp(e.target.checked)} className="accent-brand-600" />
-                      Move on if a namespace is not ready after
-                      <input type="number" min={1} max={60} value={giveUpMinutes} disabled={!giveUp}
-                        onChange={e => setGiveUpMinutes(Math.max(1, Math.min(60, Number(e.target.value) || 10)))}
-                        className="w-14 px-2 py-1 border border-slate-200 rounded-md text-center disabled:opacity-50" />
-                      minutes
-                    </label>
-                  </div>
-                  <div>
-                    <div className="text-sm font-bold text-slate-700">Section</div>
-                    <p className="text-[11px] text-slate-500 mb-1">Groups schedules on the page, for example Platform or Environments.</p>
-                    <input value={category} onChange={e => setCategory(e.target.value)} placeholder="General" list="schedule-sections"
-                      className="w-56 px-3 py-1.5 text-sm bg-slate-50 border border-slate-200 rounded-lg outline-none focus:border-brand-500" />
-                    <datalist id="schedule-sections">{categories.map(c => <option key={c} value={c} />)}</datalist>
-                  </div>
-                </div>
-              )}
-            </section>
-          )}
-        </div>
-
-        <div className="px-6 py-4 border-t border-slate-100 flex items-center gap-3">
-          <span className="flex-1 text-xs font-semibold text-rose-600">{error || (problem && selected.length > 0 ? problem : '')}</span>
-          <button onClick={onClose} className="px-4 py-2 rounded-lg text-sm font-bold text-slate-500 hover:bg-slate-100">Cancel</button>
-          <button onClick={save} disabled={!!problem || saving}
-            className="px-5 py-2 rounded-lg text-sm font-bold bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-40">
-            {saving ? 'Saving…' : editing ? 'Save changes' : 'Create schedule'}
-          </button>
-        </div>
-      </div>
+        </section>
+      )}
     </div>
+  )
+
+  const advancedTab = (
+    <div className="space-y-6">
+      <section>
+        <h3 className="text-sm font-semibold text-slate-800">Start only after</h3>
+        <p className="text-sm text-slate-500 mb-2">This schedule waits until the selected ones are fully up, and keeps them up while it runs. Use it for a shared platform that environments need.</p>
+        <div className="flex flex-wrap gap-1.5">
+          {groups.filter(g => g.metadata.name !== existing?.metadata.name).map(g => {
+            const on = dependsOn.includes(g.metadata.name)
+            return (
+              <button key={g.metadata.name} type="button" onClick={() => setDependsOn(on ? dependsOn.filter(d => d !== g.metadata.name) : [...dependsOn, g.metadata.name])}
+                className={`px-2.5 py-1 rounded-lg text-xs font-semibold border ${on ? 'bg-brand-600 border-brand-600 text-white' : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300'}`}>
+                {g.metadata.name}
+              </button>
+            )
+          })}
+          {groups.filter(g => g.metadata.name !== existing?.metadata.name).length === 0 && <span className="text-xs text-slate-400 italic">No other schedules yet.</span>}
+        </div>
+      </section>
+      <section>
+        <h3 className="text-sm font-semibold text-slate-800">Don't wait forever</h3>
+        <label className="flex items-center gap-2 text-sm text-slate-600 mt-1">
+          <input type="checkbox" checked={giveUp} onChange={e => setGiveUp(e.target.checked)} className="accent-brand-600" />
+          Move on if a namespace is not ready after
+          <input type="number" min={1} max={60} value={giveUpMinutes} disabled={!giveUp}
+            onChange={e => setGiveUpMinutes(Math.max(1, Math.min(60, Number(e.target.value) || 10)))}
+            className="w-16 px-2 py-1 border border-slate-200 rounded-md text-center disabled:opacity-50" />
+          minutes
+        </label>
+      </section>
+      <section>
+        <h3 className="text-sm font-semibold text-slate-800">Section</h3>
+        <p className="text-sm text-slate-500 mb-1">Groups schedules on the page, for example Platform or Environments.</p>
+        <input value={category} onChange={e => setCategory(e.target.value)} placeholder="General" list="schedule-sections"
+          className="w-56 px-3 py-1.5 text-sm bg-white border border-slate-200 rounded-lg outline-none focus:border-brand-500" />
+        <datalist id="schedule-sections">{categories.map(c => <option key={c} value={c} />)}</datalist>
+      </section>
+    </div>
+  )
+
+  return (
+    <Modal
+      size="lg"
+      tall
+      dismissOnBackdrop={false}
+      title={editing ? `Edit ${existing!.metadata.name}` : 'New schedule'}
+      subtitle="Workloads are scaled to zero outside the hours you choose and restored afterwards."
+      onClose={onClose}
+      headerExtra={isGroup ? (
+        <div className="mt-3">
+          <Tabs<WizardTab>
+            value={tab}
+            onChange={setTab}
+            tabs={[
+              { id: 'schedule', label: <span className="inline-flex items-center gap-1.5"><CalendarClock size={14} /> Schedule</span> },
+              { id: 'order', label: <span className="inline-flex items-center gap-1.5"><ListOrdered size={14} /> Start order{order.sequence?.length ? ` (${order.sequence.length})` : ''}</span> },
+              { id: 'advanced', label: <span className="inline-flex items-center gap-1.5"><SlidersHorizontal size={14} /> Advanced{dependsOn.length || giveUp ? ' ·' : ''}</span> },
+            ]}
+          />
+        </div>
+      ) : undefined}
+      footer={
+        <>
+          <span className="flex-1 text-xs font-medium text-rose-600">{error || (problem && selected.length > 0 ? problem : '')}</span>
+          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button variant="primary" onClick={save} disabled={!!problem || saving}>
+            {saving ? 'Saving…' : editing ? 'Save changes' : 'Create schedule'}
+          </Button>
+        </>
+      }
+    >
+      {(!isGroup || tab === 'schedule') && scheduleTab}
+      {isGroup && tab === 'order' && (
+        selected.length === 0
+          ? <p className="text-sm text-slate-500">Pick namespaces on the Schedule tab first.</p>
+          : <StartOrderEditor namespaces={selected} value={order} onChange={setOrder} discovered={discovered} />
+      )}
+      {isGroup && tab === 'advanced' && advancedTab}
+    </Modal>
   )
 }
