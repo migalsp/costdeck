@@ -553,25 +553,66 @@ func TestGetSequenceIndexMatchesWholePatterns(t *testing.T) {
 }
 
 func TestTargetReplicas(t *testing.T) {
-	originals := map[string]int32{"*v1.Deployment/api": 3}
 	tests := []struct {
-		name    string
-		key     string
-		active  bool
-		current int32
-		want    int32
+		name     string
+		active   bool
+		current  int32
+		original int32
+		want     int32
 	}{
-		{"scale down always means zero", "*v1.Deployment/api", false, 3, 0},
-		{"restore the recorded count", "*v1.Deployment/api", true, 0, 3},
-		{"restore over a partial manual scale-up", "*v1.Deployment/api", true, 1, 3},
-		{"keep a larger manual scale-up", "*v1.Deployment/api", true, 5, 5},
-		{"no record keeps running replicas", "*v1.Deployment/web", true, 2, 2},
-		{"no record starts one replica", "*v1.Deployment/web", true, 0, 1},
+		{"scale down always means zero", false, 3, 3, 0},
+		{"restore the recorded count", true, 0, 3, 3},
+		{"restore over a partial manual scale-up", true, 1, 3, 3},
+		{"keep a larger manual scale-up", true, 5, 3, 5},
+		{"no record keeps running replicas", true, 2, 0, 2},
+		{"no record starts one replica", true, 0, 0, 1},
 	}
 	for _, tt := range tests {
-		if got := targetReplicas(tt.key, tt.active, tt.current, originals); got != tt.want {
+		if got := targetReplicas(tt.active, tt.current, tt.original); got != tt.want {
 			t.Errorf("%s: targetReplicas() = %d, want %d", tt.name, got, tt.want)
 		}
+	}
+}
+
+// The original replica count must survive losing status.originalReplicas, for example when
+// the status update after a scale-down hits a conflict.
+func TestOriginalReplicasSurviveLostStatus(t *testing.T) {
+	e := buildMockEngine()
+	replicas := int32(5)
+	d := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "shop"},
+		Spec:       appsv1.DeploymentSpec{Replicas: &replicas},
+	}
+	ctx := context.Background()
+	if err := e.Client.Create(ctx, d); err != nil {
+		t.Fatal(err)
+	}
+	get := func() *appsv1.Deployment {
+		var out appsv1.Deployment
+		if err := e.Client.Get(ctx, client.ObjectKeyFromObject(d), &out); err != nil {
+			t.Fatal(err)
+		}
+		return &out
+	}
+
+	if err := e.scaleResource(ctx, get(), false, map[string]int32{}); err != nil {
+		t.Fatal(err)
+	}
+	down := get()
+	if *down.Spec.Replicas != 0 || down.Annotations[OriginalReplicasAnnotation] != "5" {
+		t.Fatalf("after scale-down: replicas %d, annotation %q", *down.Spec.Replicas, down.Annotations[OriginalReplicasAnnotation])
+	}
+
+	// A fresh, empty map stands in for the status update that never landed.
+	if err := e.scaleResource(ctx, down, true, map[string]int32{}); err != nil {
+		t.Fatal(err)
+	}
+	up := get()
+	if *up.Spec.Replicas != 5 {
+		t.Errorf("after scale-up: %d replicas, want the original 5", *up.Spec.Replicas)
+	}
+	if _, ok := up.Annotations[OriginalReplicasAnnotation]; ok {
+		t.Error("the annotation must be removed once the workload is restored")
 	}
 }
 

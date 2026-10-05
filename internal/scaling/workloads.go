@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path"
 	"sort"
+	"strconv"
 	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -19,6 +20,13 @@ import (
 // unsequenced is the priority of workloads that match no sequence entry. They scale last
 // on the way up and first on the way down.
 const unsequenced = 999
+
+// OriginalReplicasAnnotation records on the workload itself how many replicas it had
+// before CostDeck scaled it to zero. It is written in the same patch that scales the
+// workload down, so the count survives a failed status update, a restart or a deleted
+// group; status.originalReplicas is only the fallback for workloads scaled before it
+// existed.
+const OriginalReplicasAnnotation = "costdeck.io/original-replicas"
 
 // Phase values reported by ComputePhase and stored in status.phase.
 const (
@@ -113,29 +121,43 @@ func originalKey(obj client.Object) string {
 func (e *Engine) scaleResource(ctx context.Context, obj client.Object, active bool, originalReplicas map[string]int32) error {
 	key := originalKey(obj)
 	current := getReplicas(obj)
-	target := targetReplicas(key, active, current, originalReplicas)
-	if current == target {
+	target := targetReplicas(active, current, recordedReplicas(obj, originalReplicas))
+	// Nothing to do when the count is right, unless a restored workload still carries the
+	// annotation, which a later manual scale-to-zero must not inherit.
+	_, annotated := obj.GetAnnotations()[OriginalReplicasAnnotation]
+	if current == target && (!active || !annotated) {
 		return nil
 	}
 
+	var record int32
 	if !active && current > 0 {
+		record = current
 		originalReplicas[key] = current
 	}
 	log.FromContext(ctx).Info("Setting replicas", "resource", key, "namespace", obj.GetNamespace(), "from", current, "to", target)
-	if err := e.setReplicas(ctx, obj, target); err != nil {
+	if err := e.setReplicas(ctx, obj, target, record); err != nil {
 		return fmt.Errorf("scale %s in %s to %d replicas: %w", key, obj.GetNamespace(), target, err)
 	}
 	return nil
 }
 
+// recordedReplicas returns the replica count a workload had before it was scaled down:
+// the annotation on the workload, else the group's status, else zero.
+func recordedReplicas(obj client.Object, originals map[string]int32) int32 {
+	if v, err := strconv.ParseInt(obj.GetAnnotations()[OriginalReplicasAnnotation], 10, 32); err == nil && v > 0 {
+		return int32(v)
+	}
+	return max(originals[originalKey(obj)], 0)
+}
+
 // targetReplicas decides the replica count for a workload. Scaling down always means zero.
-// Scaling up restores the count recorded at scale-down time, unless the workload is
-// already running with more replicas than that; a workload with no record gets one.
-func targetReplicas(key string, active bool, current int32, originals map[string]int32) int32 {
+// Scaling up restores the count recorded at scale-down time (original, zero if none),
+// unless the workload already runs more replicas than that; with no record it gets one.
+func targetReplicas(active bool, current, original int32) int32 {
 	if !active {
 		return 0
 	}
-	if original, ok := originals[key]; ok && original > current {
+	if original > current {
 		return original
 	}
 	if current > 0 {
@@ -233,9 +255,10 @@ func getReplicas(obj client.Object) int32 {
 	return *replicas
 }
 
-// setReplicas changes only spec.replicas with a merge patch, so it neither conflicts
-// with nor overwrites concurrent edits to the rest of the object.
-func (e *Engine) setReplicas(ctx context.Context, obj client.Object, count int32) error {
+// setReplicas changes spec.replicas, and the original-replicas annotation, with one merge
+// patch, so it neither conflicts with nor overwrites concurrent edits to the rest of the
+// object. A non-zero record is stored in the annotation; scaling up removes it.
+func (e *Engine) setReplicas(ctx context.Context, obj client.Object, count, record int32) error {
 	patch := client.MergeFrom(obj.DeepCopyObject().(client.Object))
 	switch v := obj.(type) {
 	case *appsv1.Deployment:
@@ -245,6 +268,17 @@ func (e *Engine) setReplicas(ctx context.Context, obj client.Object, count int32
 	default:
 		return fmt.Errorf("unsupported workload type %T", obj)
 	}
+	annotations := obj.GetAnnotations()
+	switch {
+	case record > 0:
+		if annotations == nil {
+			annotations = map[string]string{}
+		}
+		annotations[OriginalReplicasAnnotation] = strconv.Itoa(int(record))
+	case count > 0:
+		delete(annotations, OriginalReplicasAnnotation)
+	}
+	obj.SetAnnotations(annotations)
 	return e.Client.Patch(ctx, obj, patch)
 }
 
@@ -360,9 +394,8 @@ func (e *Engine) KeptDown(ctx context.Context, ns string, originals map[string]i
 		return cpu, mem, err
 	}
 	for _, obj := range objs {
-		original, ok := originals[originalKey(obj)]
-		missing := int64(original - getReplicas(obj))
-		if !ok || missing <= 0 {
+		missing := int64(recordedReplicas(obj, originals) - getReplicas(obj))
+		if missing <= 0 {
 			continue
 		}
 		var tmpl corev1.PodTemplateSpec
