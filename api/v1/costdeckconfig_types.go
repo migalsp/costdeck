@@ -264,7 +264,9 @@ type EntraConfig struct {
 	RedirectURL string `json:"redirectUrl,omitempty"`
 
 	// AuthorityHost is the Entra login endpoint; override it for sovereign clouds
-	// (https://login.microsoftonline.us, https://login.chinacloudapi.cn).
+	// (https://login.microsoftonline.us, https://login.chinacloudapi.cn). It must be
+	// HTTPS: the client secret is sent to it.
+	// +kubebuilder:validation:Pattern=`^https://[^/\s]+/?$`
 	// +kubebuilder:default="https://login.microsoftonline.com"
 	// +optional
 	AuthorityHost string `json:"authorityHost,omitempty"`

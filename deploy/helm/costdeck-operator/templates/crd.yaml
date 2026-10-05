@@ -62,7 +62,9 @@ spec:
                         default: https://login.microsoftonline.com
                         description: |-
                           AuthorityHost is the Entra login endpoint; override it for sovereign clouds
-                          (https://login.microsoftonline.us, https://login.chinacloudapi.cn).
+                          (https://login.microsoftonline.us, https://login.chinacloudapi.cn). It must be
+                          HTTPS: the client secret is sent to it.
+                        pattern: ^https://[^/\s]+/?$
                         type: string
                       autoProvision:
                         default: true
