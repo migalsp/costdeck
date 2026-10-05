@@ -2,10 +2,11 @@ import { useState, useCallback, type ReactNode } from 'react'
 import {
   Cloud, Bot, MessageSquare, Plus, Trash2, RefreshCw,
   CheckCircle2, XCircle, AlertTriangle, Eye, EyeOff, ChevronDown,
-  ChevronUp, Sparkles, ExternalLink, Activity, Plug, Shield, Info, KeyRound, Coins, Receipt
+  ChevronUp, Sparkles, ExternalLink, Activity, Plug, Shield, Info, Users as UsersIcon, KeyRound, Coins, Receipt
 } from 'lucide-react'
 import { AWSLogo, AzureLogo, GCPLogo, WebexLogo } from '../components/ProviderLogos'
 import ApiTokens from '../components/ApiTokens'
+import UsersSettings from '../components/settings/UsersSettings'
 import { usePolling } from '../lib/usePolling'
 import { apiError, errorMessage } from '../lib/api'
 import { Button, PageHeader } from '../components/ui'
@@ -127,7 +128,7 @@ interface SettingsData {
 
 // ─── Navigation ─────────────────────────────────────────────────────────────
 
-type Section = 'sso' | 'tokens' | 'pricing' | 'billing' | 'metrics' | 'clouds' | 'notifications' | 'ai' | 'mcp'
+type Section = 'users' | 'sso' | 'tokens' | 'pricing' | 'billing' | 'metrics' | 'clouds' | 'notifications' | 'ai' | 'mcp'
 // Sections whose form is saved with their Save button; the others act at once.
 type SavedSection = 'sso' | 'pricing' | 'metrics' | 'clouds' | 'notifications' | 'ai' | 'mcp'
 const savedSections: Section[] = ['sso', 'pricing', 'metrics', 'clouds', 'notifications', 'ai', 'mcp']
@@ -135,6 +136,7 @@ const isSaved = (s: Section): s is SavedSection => savedSections.includes(s)
 
 const navGroups: { title: string; items: { id: Section; label: string; icon: ReactNode }[] }[] = [
   { title: 'People & access', items: [
+    { id: 'users', label: 'Users', icon: <UsersIcon size={16} /> },
     { id: 'sso', label: 'Single sign-on', icon: <Shield size={16} /> },
     { id: 'tokens', label: 'API tokens', icon: <KeyRound size={16} /> },
   ] },
@@ -160,7 +162,7 @@ function initialSection(): Section {
   } catch {
     // Storage may be unavailable; start at the top.
   }
-  return 'sso'
+  return 'users'
 }
 
 interface NavStatus { text: string; on?: boolean }
@@ -1033,6 +1035,17 @@ export default function SettingsPage() {
       <div className="flex flex-col lg:flex-row gap-8 items-start">
         <SettingsNav value={section} onChange={go} status={navStatus(settings)} dirty={dirty} />
         <div className="flex-1 min-w-0 w-full" onChangeCapture={markDirty}>
+
+      {section === 'users' && (
+        <div className="space-y-4 animate-in fade-in duration-300">
+          <SectionHeader
+            icon={<UsersIcon className="text-brand-600" size={20} />}
+            title="Users"
+            subtitle="Who signs in with a password, with which role, and who signed in lately"
+          />
+          <UsersSettings onOpenSSO={() => go('sso')} />
+        </div>
+      )}
 
       {/* ─── Cloud Providers Section ─────────────────────────────────────── */}
       {section === 'clouds' && (

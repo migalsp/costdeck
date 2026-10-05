@@ -180,6 +180,7 @@ func (s *Server) routes() *http.ServeMux {
 		mux.HandleFunc("POST /api/logout", s.Auth.HandleLogout)
 		mux.HandleFunc("GET /api/auth/config", s.Auth.HandleConfig)
 		mux.HandleFunc("GET /api/auth/me", s.Auth.HandleMe)
+		mux.HandleFunc("POST /api/auth/password", s.Auth.HandleChangePassword)
 		mux.HandleFunc("GET /api/auth/entra/login", s.Auth.Entra.HandleLogin)
 		mux.HandleFunc("GET /api/auth/entra/callback", s.Auth.Entra.HandleCallback)
 		mux.HandleFunc("POST /api/auth/entra/callback-spa", s.Auth.Entra.HandleSPACallback)
@@ -243,6 +244,11 @@ func (s *Server) routes() *http.ServeMux {
 	admin("GET /api/tokens", s.listTokens)
 	admin("POST /api/tokens", s.createToken)
 	admin("DELETE /api/tokens/{name}", s.deleteToken)
+	admin("GET /api/users", s.listUsers)
+	admin("POST /api/users", s.createUser)
+	admin("PATCH /api/users/{username}", s.updateUser)
+	admin("POST /api/users/{username}/password", s.resetUserPassword)
+	admin("DELETE /api/users/{username}", s.deleteUser)
 
 	// Integrations
 	mux.HandleFunc("POST /api/webex/webhook", s.handleWebexWebhook) // HMAC-authenticated

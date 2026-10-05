@@ -44,6 +44,8 @@ const (
 type Entra struct {
 	Client   client.Reader
 	Sessions *Sessions
+	// OnSignIn is told about every completed sign-in; optional.
+	OnSignIn func(context.Context, Identity)
 
 	mu        sync.Mutex
 	providers map[string]cachedOIDC
@@ -283,6 +285,7 @@ func (e *Entra) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		redirectWithError(w, r, returnTo, &SignInError{Code: "session_failed", Detail: err.Error()})
 		return
 	}
+	e.signedIn(r.Context(), *id)
 	http.Redirect(w, r, returnTo, http.StatusFound)
 }
 
@@ -310,7 +313,14 @@ func (e *Entra) HandleSPACallback(w http.ResponseWriter, r *http.Request) {
 		writeAuthJSON(w, http.StatusInternalServerError, map[string]string{"error": "session_failed"})
 		return
 	}
+	e.signedIn(r.Context(), *id)
 	writeAuthJSON(w, http.StatusOK, map[string]any{"user": id, "returnTo": returnTo})
+}
+
+func (e *Entra) signedIn(ctx context.Context, id Identity) {
+	if e.OnSignIn != nil {
+		e.OnSignIn(ctx, id)
+	}
 }
 
 // complete validates the callback, exchanges the code and maps the user to a role.

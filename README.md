@@ -55,7 +55,7 @@ kubectl get secret costdeck-operator-admin-credentials -n costdeck \
 kubectl port-forward -n costdeck svc/costdeck-operator-api 8082:8082
 ```
 
-Open http://localhost:8082 and sign in as `costdeck-admin`. Pick the latest version from
+Open http://localhost:8082 and sign in as `costdeck`. Pick the latest version from
 the [releases](https://github.com/migalsp/costdeck/releases). The
 [installation guide](docs/installation.md) covers Ingress, SSO, cloud accounts, monitoring
 and every chart value.

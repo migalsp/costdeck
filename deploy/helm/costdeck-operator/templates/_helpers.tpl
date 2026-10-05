@@ -58,3 +58,16 @@ Create the name of the service account to use
 {{- default "default" .Values.serviceAccount.name }}
 {{- end }}
 {{- end }}
+
+{{/*
+The built-in admin's username: adminUsername when set, otherwise the name an existing
+install already uses (upgrades never rename the account), otherwise "costdeck".
+*/}}
+{{- define "costdeck-operator.adminUsername" -}}
+{{- $existing := lookup "v1" "Secret" .Release.Namespace (printf "%s-admin-credentials" (include "costdeck-operator.fullname" .)) -}}
+{{- $current := "" -}}
+{{- if and $existing $existing.data -}}
+{{- $current = index $existing.data "username" | default "" | b64dec -}}
+{{- end -}}
+{{- .Values.adminUsername | default $current | default "costdeck" -}}
+{{- end }}

@@ -116,10 +116,11 @@ PF_PIDS="$!"
 kubectl port-forward -n "$NS" "svc/$RELEASE-metrics" "$METRICS_PORT:8080" >/dev/null 2>&1 &
 PF_PIDS="$PF_PIDS $!"
 wait_for "API reachable" curl -sf "localhost:$API_PORT/api/auth/config"
+ADMIN_USER=$(kubectl get secret "$RELEASE-admin-credentials" -n "$NS" -o jsonpath='{.data.username}' | base64 -d)
 PASSWORD=$(kubectl get secret "$RELEASE-admin-credentials" -n "$NS" -o jsonpath='{.data.password}' | base64 -d)
 JAR=$(mktemp)
 curl -sf -c "$JAR" -H 'Content-Type: application/json' \
-  -d "{\"username\":\"costdeck-admin\",\"password\":\"$PASSWORD\"}" "localhost:$API_PORT/api/login" >/dev/null \
+  -d "{\"username\":\"$ADMIN_USER\",\"password\":\"$PASSWORD\"}" "localhost:$API_PORT/api/login" >/dev/null \
   || fail "login with the generated admin password"
 code=$(curl -s -o /dev/null -w '%{http_code}' "localhost:$API_PORT/api/scaling/groups")
 [[ "$code" == 401 ]] || fail "unauthenticated API call returned $code, want 401"

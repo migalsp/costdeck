@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Scaling, Server, LineChart, Activity, BookOpen, FileText, LogOut, Settings, UserCircle2, LayoutDashboard, HardDrive, Target } from 'lucide-react'
+import { Scaling, Server, LineChart, Activity, BookOpen, FileText, LogOut, Settings, UserCircle2, LayoutDashboard, HardDrive, Target, KeyRound } from 'lucide-react'
 import type { ReactNode } from 'react'
 import NamespaceInsights from './pages/NamespaceInsights'
 import Overview from './pages/Overview'
@@ -15,7 +15,8 @@ import SettingsPage from './pages/SettingsPage'
 import ReportsPage from './pages/ReportsPage'
 import AIChatWidget from './components/AIChatModal'
 import AuthCallback from './pages/AuthCallback'
-import { AuthContext, type User } from './lib/auth'
+import ChangePasswordDialog from './components/ChangePasswordDialog'
+import { AuthContext, isManagedUser, type User } from './lib/auth'
 
 interface Session {
   authenticated: boolean
@@ -64,6 +65,7 @@ function App() {
   const [appVersion, setAppVersion] = useState('...')
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null)
   const [user, setUser] = useState<User | null>(null)
+  const [changingPassword, setChangingPassword] = useState(false)
   const isSSOCallback = window.location.pathname === '/auth/callback'
 
   // applySession runs after the fetch resolves, never synchronously inside an effect.
@@ -103,6 +105,21 @@ function App() {
   }
 
   const isAdmin = user?.role === 'admin'
+  const signOut = async () => {
+    await fetch('/api/logout', { method: 'POST' })
+    setUser(null)
+    setIsAuthenticated(false)
+  }
+
+  // A password an administrator chose has to be replaced before anything else; the API
+  // refuses every other call until then.
+  if (user?.mustChangePassword) {
+    return (
+      <div className="min-h-screen bg-slate-900">
+        <ChangePasswordDialog required onDone={loadSession} onClose={signOut} onSignOut={signOut} />
+      </div>
+    )
+  }
 
   return (
     <AuthContext.Provider value={user}>
@@ -156,12 +173,17 @@ function App() {
               </div>
             </div>
           )}
+          {isManagedUser(user) && (
+            <button
+              onClick={() => setChangingPassword(true)}
+              className="w-full flex items-center justify-center gap-2 px-4 py-2 mb-1 rounded-xl text-slate-500 hover:text-white hover:bg-white/5 transition-all text-xs font-bold"
+            >
+              <KeyRound size={14} />
+              Change password
+            </button>
+          )}
           <button
-            onClick={async () => {
-              await fetch('/api/logout', { method: 'POST' })
-              setUser(null)
-              setIsAuthenticated(false)
-            }}
+            onClick={signOut}
             className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition-all text-xs font-bold"
           >
             <LogOut size={14} />
@@ -212,6 +234,9 @@ function App() {
       
       {/* AI Chat Widget */}
       <AIChatWidget />
+      {changingPassword && (
+        <ChangePasswordDialog onDone={() => { setChangingPassword(false); loadSession() }} onClose={() => setChangingPassword(false)} onSignOut={signOut} />
+      )}
     </div>
     </AuthContext.Provider>
   )

@@ -116,7 +116,8 @@ func newTestService(t *testing.T, objs ...client.Object) *Service {
 	utilruntime.Must(finopsv1.AddToScheme(scheme))
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objs...).Build()
 	s := testSessions(t)
-	return &Service{Client: c, Sessions: s, Entra: &Entra{Client: c, Sessions: s}, localUser: "admin", localPassword: "pw"}
+	return &Service{Client: c, Sessions: s, Entra: &Entra{Client: c, Sessions: s}, localUser: "admin", localPassword: "pw",
+		Users: &Users{Client: c, Reserved: "admin"}, SignIns: &SignIns{Client: c}}
 }
 
 func TestMiddlewareAndRoles(t *testing.T) {

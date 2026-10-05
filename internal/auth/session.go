@@ -71,8 +71,12 @@ type Identity struct {
 	Name      string `json:"name"`
 	Email     string `json:"email,omitempty"`
 	Role      Role   `json:"role"`
-	Provider  string `json:"provider"` // local, entra or anonymous
+	Provider  string `json:"provider"` // local, entra, token or anonymous
 	ExpiresAt int64  `json:"exp"`
+	// IssuedAt lets a password change end the sessions issued before it.
+	IssuedAt int64 `json:"iat,omitempty"`
+	// MustChangePassword is set for a local user whose password an administrator chose.
+	MustChangePassword bool `json:"mustChangePassword,omitempty"`
 }
 
 // Session cookie settings.
@@ -202,7 +206,8 @@ func (s *Sessions) Verify(token string, v any) error {
 
 // Issue sets the session cookie for id.
 func (s *Sessions) Issue(w http.ResponseWriter, r *http.Request, id Identity) error {
-	id.ExpiresAt = time.Now().Add(s.ttl).Unix()
+	now := time.Now()
+	id.IssuedAt, id.ExpiresAt = now.Unix(), now.Add(s.ttl).Unix()
 	token, err := s.Sign(id)
 	if err != nil {
 		return err

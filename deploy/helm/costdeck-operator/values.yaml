@@ -11,6 +11,12 @@ image:
 
 imagePullSecrets: []
 
+# The built-in admin account: break-glass access that always works, even when single
+# sign-on is down. Its password is generated once into the <release>-admin-credentials
+# Secret. Leave the username empty to keep the current one on upgrades ("costdeck" on a
+# new install). Add accounts for people under Settings → Users in the dashboard.
+adminUsername: ""
+
 serviceAccount:
   # Specifies whether a service account should be created
   create: true

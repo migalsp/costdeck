@@ -1,6 +1,6 @@
 CostDeck {{ .Chart.AppVersion }} is installed in namespace {{ .Release.Namespace }}.
 
-Sign in as "costdeck-admin" with the generated password:
+Sign in as "{{ include "costdeck-operator.adminUsername" . }}" with the generated password:
 
   kubectl get secret {{ include "costdeck-operator.fullname" . }}-admin-credentials -n {{ .Release.Namespace }} \
     -o jsonpath='{.data.password}' | base64 -d; echo
@@ -19,6 +19,7 @@ Dashboard (no Ingress configured):
   open http://localhost:8082
 {{- end }}
 
+Add accounts for your team under Settings → Users, or connect single sign-on there.
 Single sign-on, AI, Webex, VictoriaMetrics and cloud pricing are configured in the
 dashboard under Settings (admin role) and stored in the CostDeckConfig "default".
 {{- if and (gt (int .Values.replicaCount) 1) (not .Values.leaderElection.enabled) }}

@@ -43,6 +43,8 @@ tags:
     description: CostDeckConfig settings, connection tests and API tokens
   - name: Auth
     description: Sign-in, sign-out and single sign-on
+  - name: Users
+    description: Local accounts, their roles and who signed in
   - name: Webex
     description: Inbound Webex webhook
   - name: Docs
@@ -69,7 +71,7 @@ paths:
               properties:
                 username:
                   type: string
-                  example: costdeck-admin
+                  example: costdeck
                 password:
                   type: string
                   example: "<from-secret>"
@@ -129,6 +131,28 @@ paths:
                     properties:
                       enabled: { type: boolean }
 
+  /api/auth/password:
+    post:
+      x-role: viewer
+      tags: [Auth]
+      summary: Change my password
+      description: For local users. Ends the user's other sessions and re-issues this one. The built-in admin's password lives in the Helm release's admin-credentials Secret.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [currentPassword, newPassword]
+              properties:
+                currentPassword: { type: string }
+                newPassword: { type: string, minLength: 12 }
+      responses:
+        "200": { description: Changed; a new session cookie is set }
+        "400": { description: Not a local user, or the new password is too short }
+        "403": { description: The current password is wrong }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
   /api/auth/me:
     get:
       x-role: viewer
@@ -147,7 +171,8 @@ paths:
                   name: { type: string }
                   email: { type: string }
                   role: { type: string, enum: [viewer, operator, admin] }
-                  provider: { type: string, enum: [local, entra, anonymous] }
+                  provider: { type: string, enum: [local, entra, token, anonymous] }
+                  mustChangePassword: { type: boolean, description: "A local user whose password an administrator chose; every other call answers 403 until they change it." }
         "401":
           description: Not signed in
 
@@ -1381,6 +1406,130 @@ paths:
         "204": { description: Revoked }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
+  /api/users:
+    get:
+      x-role: admin
+      tags: [Users]
+      summary: List users
+      description: Local users, the built-in admin account and the last sign-in of everyone, single sign-on users included.
+      responses:
+        "200":
+          description: Users and sign-ins
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  builtin:
+                    type: object
+                    nullable: true
+                    properties:
+                      username: { type: string, example: costdeck }
+                      secret: { type: string, example: costdeck/costdeck-operator-admin-credentials }
+                  users: { type: array, items: { $ref: "#/components/schemas/User" } }
+                  signIns: { type: array, items: { $ref: "#/components/schemas/SignIn" } }
+                  sso: { type: boolean, description: Single sign-on is enabled }
+                  minPasswordLength: { type: integer, example: 12 }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      x-role: admin
+      tags: [Users]
+      summary: Create a local user
+      description: Without a password one is generated and returned once. By default the user chooses a new password at the first sign-in.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, role]
+              properties:
+                username: { type: string, pattern: "^[a-z0-9]([a-z0-9._-]{0,61}[a-z0-9])?$" }
+                name: { type: string }
+                email: { type: string }
+                role: { type: string, enum: [viewer, operator, admin] }
+                password: { type: string, minLength: 12 }
+                mustChangePassword: { type: boolean, default: true }
+            example: { username: anna, name: Anna Petrova, role: operator }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user: { $ref: "#/components/schemas/User" }
+                  password: { type: string, description: Only when it was generated }
+        "400": { description: Invalid name, role or password, or the name is taken }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/users/{username}:
+    patch:
+      x-role: admin
+      tags: [Users]
+      summary: Update a local user
+      description: Changes the name, email, role or disabled flag. Disabling ends the user's sessions; a new role applies within 30 seconds. Administrators cannot disable or demote themselves.
+      parameters:
+        - { name: username, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                email: { type: string }
+                role: { type: string, enum: [viewer, operator, admin] }
+                disabled: { type: boolean }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "404": { description: No such user }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    delete:
+      x-role: admin
+      tags: [Users]
+      summary: Delete a local user
+      parameters:
+        - { name: username, in: path, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Deleted; the user's sessions end }
+        "404": { description: No such user }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/users/{username}/password:
+    post:
+      x-role: admin
+      tags: [Users]
+      summary: Reset a local user's password
+      description: Without a password one is generated and returned once. The user's sessions end.
+      parameters:
+        - { name: username, in: path, required: true, schema: { type: string } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                password: { type: string, minLength: 12 }
+                mustChangePassword: { type: boolean, default: true }
+      responses:
+        "200":
+          description: Reset
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  password: { type: string, description: Only when it was generated }
+        "404": { description: No such user }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
   /api/webex/webhook:
     post:
       tags: [Webex]
@@ -1602,6 +1751,28 @@ components:
                     name: { type: string }
                     cpu: { $ref: "#/components/schemas/ResourceAdvice" }
                     memory: { $ref: "#/components/schemas/ResourceAdvice" }
+    User:
+      type: object
+      properties:
+        username: { type: string }
+        name: { type: string }
+        email: { type: string }
+        role: { type: string, enum: [viewer, operator, admin] }
+        disabled: { type: boolean }
+        mustChangePassword: { type: boolean }
+        createdAt: { type: string, format: date-time }
+        createdBy: { type: string }
+        passwordChangedAt: { type: string, format: date-time }
+    SignIn:
+      type: object
+      properties:
+        subject: { type: string, example: "entra:7f3c..." }
+        name: { type: string }
+        email: { type: string }
+        provider: { type: string, enum: [local, entra] }
+        role: { type: string, enum: [viewer, operator, admin] }
+        at: { type: string, format: date-time }
+        count: { type: integer }
     TokenInfo:
       type: object
       properties:

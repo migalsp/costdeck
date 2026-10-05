@@ -88,7 +88,7 @@ export const guides: Guide[] = [
         id: 'sign-in',
         title: 'Sign in',
         blocks: [
-          { p: 'Cost Deck creates an admin account on first start. Read its password, open a port-forward and sign in at http://localhost:8082 as `costdeck-admin`.' },
+          { p: 'Cost Deck creates an admin account on first start. Read its password, open a port-forward and sign in at http://localhost:8082 as `costdeck`.' },
           {
             code: `kubectl get secret costdeck-operator-admin-credentials -n costdeck \\
   -o jsonpath='{.data.password}' | base64 -d; echo
@@ -933,7 +933,7 @@ spec:
     id: 'access',
     title: 'Access and sign-in',
     icon: 'access',
-    summary: 'Roles, single sign-on with Microsoft Entra ID, and API tokens.',
+    summary: 'Roles, users, single sign-on with Microsoft Entra ID, and API tokens.',
     topics: [
       {
         id: 'roles',
@@ -945,10 +945,26 @@ spec:
               rows: [
                 ['viewer', 'See everything; use the assistant and MCP read-only.'],
                 ['operator', 'Also start and stop schedules, hand them back to the schedule, generate reports, read logs.'],
-                ['admin', 'Also create, edit and delete schedules, change settings and manage API tokens.'],
+                ['admin', 'Also create, edit and delete schedules, change settings, and manage users and API tokens.'],
               ],
             },
           },
+        ],
+      },
+      {
+        id: 'users',
+        title: 'Add people',
+        blocks: [
+          { p: 'People with a Microsoft work account are best added through single sign-on: their groups decide their role and they need no account here. For everyone else, add a local user.' },
+          {
+            steps: [
+              'Open **Settings** → **Users** and click **Add user**.',
+              'Pick a username and a role. Let Cost Deck generate the password, or type one of at least 12 characters.',
+              'Hand the password over. At the first sign-in they choose their own.',
+            ],
+          },
+          { p: 'Disabling a user, deleting them or resetting their password signs them out at once; a new role applies within 30 seconds. Local users change their password from the menu under their name. The same page lists when everyone last signed in, single sign-on users included.' },
+          { tip: 'The built-in admin (`costdeck`) is break-glass access managed by the Helm chart. It cannot be edited here and keeps working when single sign-on is down.' },
         ],
       },
       {

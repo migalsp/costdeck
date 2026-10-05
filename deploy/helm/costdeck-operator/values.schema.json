@@ -15,6 +15,11 @@
       }
     },
     "imagePullSecrets": { "type": "array" },
+    "adminUsername": {
+      "type": "string",
+      "pattern": "^$|^[a-z0-9]([a-z0-9._-]{0,61}[a-z0-9])?$",
+      "description": "Username of the built-in admin account. Empty keeps the current one; new installs use \"costdeck\"."
+    },
     "serviceAccount": {
       "type": "object",
       "properties": {

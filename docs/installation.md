@@ -60,7 +60,7 @@ kubectl get secret costdeck-operator-admin-credentials -n costdeck \
   -o jsonpath='{.data.password}' | base64 -d; echo
 ```
 
-Sign in as `costdeck-admin`. Without an Ingress, use a port-forward:
+Sign in as `costdeck` (installs from before 1.4 keep `costdeck-admin`; set `adminUsername` to rename it). Without an Ingress, use a port-forward:
 
 ```bash
 kubectl port-forward -n costdeck svc/costdeck-operator-api 8082:8082
@@ -92,7 +92,25 @@ Secrets in that namespace, never into the custom resource.
 | :--- | :--- |
 | viewer | See everything; use the read-only assistant and MCP tools |
 | operator | Also start and stop schedules, hand them back to the schedule, generate AI reports, read logs |
-| admin | Also create, edit and delete schedules, change settings, manage API tokens |
+| admin | Also create, edit and delete schedules, change settings, manage users and API tokens |
+
+## Users
+
+There are three ways to sign in, and they can be combined:
+
+- **The built-in admin** (`costdeck`) is break-glass access managed by the chart. It keeps
+  working when single sign-on is down or hidden, and its password lives only in the
+  `costdeck-operator-admin-credentials` Secret.
+- **Local users** are added by an admin under **Settings → Users** for people without single
+  sign-on. Each has a role. A password the admin chooses or generates must be changed at the
+  first sign-in, and passwords have at least 12 characters. Disabling or deleting a user, or
+  resetting their password, ends their sessions; a new role applies within 30 seconds.
+  Passwords are stored as bcrypt hashes in the `costdeck-users` Secret.
+- **Single sign-on** users get their role from group mappings (below). They need no account
+  in Cost Deck.
+
+**Settings → Users** also lists the last sign-in of everyone, single sign-on users included.
+Local users change their own password from the menu under their name.
 
 ## Single sign-on with Microsoft Entra ID
 
@@ -418,6 +436,7 @@ helm upgrade costdeck-operator oci://ghcr.io/migalsp/costdeck/charts/costdeck-op
 | :--- | :--- | :--- |
 | `image.repository` | `ghcr.io/migalsp/costdeck/costdeck-operator` | |
 | `image.tag` | chart appVersion | |
+| `adminUsername` | empty | Built-in admin name; empty keeps the current one, `costdeck` on new installs |
 | `replicaCount` | `1` | More replicas serve the dashboard; one leader reconciles |
 | `leaderElection.enabled` | `true` | Keep on whenever `replicaCount` > 1 |
 | `serviceAccount.annotations` | `{}` | IRSA / Workload Identity |
