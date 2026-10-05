@@ -210,8 +210,8 @@ export default function ScheduleWizard(props: Props) {
         <label className="flex items-center gap-2 text-sm text-slate-600 mt-1">
           <input type="checkbox" checked={giveUp} onChange={e => setGiveUp(e.target.checked)} className="accent-brand-600" />
           Move on if a namespace is not ready after
-          <input type="number" min={1} max={60} value={giveUpMinutes} disabled={!giveUp}
-            onChange={e => setGiveUpMinutes(Math.max(1, Math.min(60, Number(e.target.value) || 10)))}
+          <input type="number" min={1} max={30} value={giveUpMinutes} disabled={!giveUp}
+            onChange={e => setGiveUpMinutes(Math.max(1, Math.min(30, Number(e.target.value) || 10)))}
             className="w-16 px-2 py-1 border border-slate-200 rounded-md text-center disabled:opacity-50" />
           minutes
         </label>
