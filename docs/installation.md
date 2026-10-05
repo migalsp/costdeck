@@ -252,6 +252,29 @@ claude mcp add --transport http costdeck https://costdeck.example.com/mcp \
   replicas and takes over again once replicas are restored.
 - A namespace belongs to at most one schedule. If two claim it, the older one wins and
   the newer one reports the conflict.
+- The replica count to restore is kept on each workload in the
+  `costdeck.io/original-replicas` annotation, written in the same change that scales it
+  down and removed once it is restored.
+
+### GitOps (Argo CD, Flux)
+
+A GitOps controller that syncs `spec.replicas` from Git scales the workloads straight
+back up. Tell it to ignore the fields Cost Deck manages. For Argo CD:
+
+```yaml
+spec:
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jsonPointers: [/spec/replicas, /metadata/annotations/costdeck.io~1original-replicas]
+    - group: apps
+      kind: StatefulSet
+      jsonPointers: [/spec/replicas, /metadata/annotations/costdeck.io~1original-replicas]
+  syncPolicy:
+    syncOptions: [RespectIgnoreDifferences=true]
+```
+
+For Flux, leave `spec.replicas` out of the manifests in Git, as you would with an HPA.
 
 ## Right-sizing advice
 
