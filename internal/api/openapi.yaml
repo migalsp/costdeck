@@ -31,8 +31,8 @@ tags:
     description: Operator self-monitoring
   - name: Namespaces
     description: Namespace resource insights
-  - name: Optimization
-    description: Resource right-sizing
+  - name: Right-sizing
+    description: Advice on which requests can shrink
   - name: Scaling
     description: Scaling schedules (ScalingGroups) and single-namespace configs
   - name: Costing
@@ -43,6 +43,8 @@ tags:
     description: CostDeckConfig settings, connection tests and API tokens (admin)
   - name: Webex
     description: Inbound Webex webhook
+  - name: Docs
+    description: This specification and Swagger UI
 
 security:
   - cookieAuth: []
@@ -127,8 +129,10 @@ paths:
 
   /api/auth/me:
     get:
+      x-role: viewer
       tags: [Auth]
       summary: Current user
+      description: Any signed-in user. The dashboard shows the sign-in page when this answers 401.
       responses:
         "200":
           description: The signed-in identity
@@ -195,6 +199,7 @@ paths:
 
   /api/version:
     get:
+      x-role: viewer
       tags: [System]
       summary: Operator version
       responses:
@@ -213,6 +218,7 @@ paths:
 
   /api/cluster-info:
     get:
+      x-role: viewer
       tags: [System]
       summary: Cluster summary
       description: Returns node count and total cluster resources.
@@ -235,6 +241,7 @@ paths:
 
   /api/cluster/nodes:
     get:
+      x-role: viewer
       tags: [System]
       summary: Node metrics
       description: Per-node resource metrics for the cluster heatmap.
@@ -252,6 +259,7 @@ paths:
 
   /api/operator/health:
     get:
+      x-role: viewer
       tags: [Health]
       summary: Runtime health metrics
       description: Go runtime stats, CPU/memory usage, and historical data.
@@ -274,6 +282,7 @@ paths:
 
   /api/operator/logs:
     get:
+      x-role: operator
       tags: [Health]
       summary: Operator logs
       description: Returns the trailing 100 lines of operator logs.
@@ -289,6 +298,7 @@ paths:
 
   /api/operator/logs/download:
     get:
+      x-role: admin
       tags: [Health]
       summary: Download full logs
       description: Downloads the complete operator log file.
@@ -303,6 +313,7 @@ paths:
 
   /api/namespaces:
     get:
+      x-role: viewer
       tags: [Namespaces]
       summary: List namespaces
       description: Lists all monitored NamespaceFinOps CRDs.
@@ -320,6 +331,7 @@ paths:
 
   /api/namespaces/{ns}/history:
     get:
+      x-role: viewer
       tags: [Namespaces]
       summary: Usage history
       description: Resource usage history for the last 60 minutes.
@@ -339,6 +351,7 @@ paths:
 
   /api/namespaces/{ns}/pods:
     get:
+      x-role: viewer
       tags: [Namespaces]
       summary: Pod metrics
       description: Pod-level resource metrics for the namespace.
@@ -358,6 +371,7 @@ paths:
 
   /api/namespaces/{ns}/workloads:
     get:
+      x-role: viewer
       tags: [Namespaces]
       summary: List workloads
       description: Lists Deployments and StatefulSets in the namespace.
@@ -377,6 +391,7 @@ paths:
 
   /api/namespaces/{ns}/workloads/{name}:
     put:
+      x-role: operator
       tags: [Namespaces]
       summary: Scale workload
       description: Set replica count for a specific Deployment or StatefulSet.
@@ -405,29 +420,16 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
-  /api/namespaces/{ns}/optimize:
-    post:
-      tags: [Optimization]
-      summary: Optimize namespace (deprecated)
-      deprecated: true
-      description: >-
-        Rewrites the requests and limits of every workload from observed usage and stores the
-        original values for revert. Deprecated: the dashboard and the assistant no longer
-        change requests. Use GET /api/namespaces/{ns}/recommendations and apply the advice
-        through your own deployment pipeline. Will be removed in a future major release.
-      parameters:
-        - $ref: "#/components/parameters/Namespace"
-      responses:
-        "200":
-          description: Optimization applied
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-
   /api/namespaces/{ns}/revert:
     post:
-      tags: [Optimization]
-      summary: Revert optimization
-      description: Restore original resource requests/limits from before optimization.
+      x-role: operator
+      tags: [Right-sizing]
+      summary: Undo an earlier automatic right-sizing
+      deprecated: true
+      description: >-
+        Versions up to 1.3 could rewrite requests and limits automatically. This restores the
+        values from before that change. Cost Deck no longer changes requests itself, so this
+        only matters for namespaces changed by an earlier version.
       parameters:
         - $ref: "#/components/parameters/Namespace"
       responses:
@@ -438,7 +440,8 @@ paths:
 
   /api/namespaces/{ns}/recommendations:
     get:
-      tags: [Optimization]
+      x-role: viewer
+      tags: [Right-sizing]
       summary: Right-sizing recommendations
       description: >-
         Compares each container's requests with observed demand: p95 CPU and peak memory over
@@ -460,9 +463,13 @@ paths:
 
   /api/namespaces/{ns}/optimization:
     get:
-      tags: [Optimization]
-      summary: Optimization status
-      description: Returns whether an optimization is active and the before/after values.
+      x-role: viewer
+      tags: [Right-sizing]
+      summary: Earlier automatic right-sizing
+      deprecated: true
+      description: >-
+        Whether an automatic right-sizing made by version 1.3 or earlier is still in effect,
+        with the values before and after. Undo it with POST /api/namespaces/{ns}/revert.
       parameters:
         - $ref: "#/components/parameters/Namespace"
       responses:
@@ -477,6 +484,7 @@ paths:
 
   /api/scaling/groups:
     get:
+      x-role: viewer
       tags: [Scaling]
       summary: List scaling groups
       responses:
@@ -491,6 +499,7 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
     post:
+      x-role: admin
       tags: [Scaling]
       summary: Create scaling group
       requestBody:
@@ -513,6 +522,7 @@ paths:
         schema:
           type: string
     get:
+      x-role: viewer
       tags: [Scaling]
       summary: Get scaling group
       responses:
@@ -523,6 +533,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ScalingGroup"
     put:
+      x-role: admin
       tags: [Scaling]
       summary: Update scaling group
       requestBody:
@@ -534,6 +545,7 @@ paths:
         "200":
           description: Group updated
     delete:
+      x-role: admin
       tags: [Scaling]
       summary: Delete scaling group
       responses:
@@ -542,9 +554,12 @@ paths:
 
   /api/scaling/groups/{name}/manual:
     post:
+      x-role: operator
       tags: [Scaling]
-      summary: Manual override for group
-      description: Activate or deactivate a scaling group manually.
+      summary: Start now, scale down now, or follow the schedule
+      description: >-
+        The "Start now", "Scale down now" and "Follow schedule" buttons. An override without
+        activeUntil or until holds until it is cleared with {"active": null}.
       parameters:
         - name: name
           in: path
@@ -577,6 +592,16 @@ paths:
                     until the schedule would change state on its own, or a Go duration such
                     as "4h". Clearing the override (active null) also removes the legacy
                     costdeck.io/manual-override annotation.
+            examples:
+              startUntilNextChange:
+                summary: Start now, until the next scheduled change
+                value: { active: true, until: nextTransition }
+              downForFourHours:
+                summary: Scale down for four hours
+                value: { active: false, until: 4h }
+              followSchedule:
+                summary: Follow the schedule again
+                value: { active: null }
       responses:
         "200":
           description: Override applied
@@ -585,6 +610,7 @@ paths:
 
   /api/scaling/configs:
     get:
+      x-role: viewer
       tags: [Scaling]
       summary: List scaling configs
       responses:
@@ -597,6 +623,7 @@ paths:
                 items:
                   $ref: "#/components/schemas/ScalingConfig"
     post:
+      x-role: admin
       tags: [Scaling]
       summary: Create scaling config
       requestBody:
@@ -616,18 +643,28 @@ paths:
         schema:
           type: string
     get:
+      x-role: viewer
       tags: [Scaling]
       summary: Get scaling config
       responses:
         "200":
           description: Config details
     put:
+      x-role: admin
       tags: [Scaling]
       summary: Update scaling config
+      description: Replaces the whole spec. Fields left out are removed, so send the complete object.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScalingConfig"
       responses:
         "200":
           description: Config updated
     delete:
+      x-role: admin
       tags: [Scaling]
       summary: Delete scaling config
       responses:
@@ -636,8 +673,10 @@ paths:
 
   /api/scaling/configs/{name}/manual:
     post:
+      x-role: operator
       tags: [Scaling]
-      summary: Manual override for config
+      summary: Start now, scale down now, or follow the schedule
+      description: Same as the group endpoint, for a single-namespace config.
       parameters:
         - name: name
           in: path
@@ -678,6 +717,7 @@ paths:
 
   /api/scaling/groups/{name}/events:
     get:
+      x-role: viewer
       tags: [Scaling]
       summary: Kubernetes events of a group
       description: Events recorded for the ScalingGroup, oldest first; the activity view uses them.
@@ -693,9 +733,10 @@ paths:
 
   /api/costing:
     post:
+      x-role: viewer
       tags: [Costing]
       summary: Estimate cost
-      description: Prices a namespace, node or the whole cluster at the effective rates (custom, AWS Price List or heuristic).
+      description: Prices a namespace, node or the whole cluster at the rates in effect (custom rates, cloud list prices or the estimate).
       requestBody:
         required: true
         content:
@@ -722,14 +763,33 @@ paths:
                   determinedBy: { type: string, description: "where the rates came from" }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
+  /api/discovery:
+    get:
+      x-role: viewer
+      tags: [Costing]
+      summary: Discover every cloud resource
+      description: Lists the configured resource types of every enabled cloud provider. A provider that fails is reported under errors without hiding the others.
+      responses:
+        "200":
+          description: Resources and per-provider errors
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  resources: { type: array, items: { type: object } }
+                  errors: { type: object, additionalProperties: { type: string } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
   /api/discovery/{provider}/{type}:
     get:
+      x-role: viewer
       tags: [Costing]
-      summary: Discover cloud resources
-      description: Lists resources that can join a scaling sequence as external targets. Only provider `aws` with types `aurora` and `ec2` is supported.
+      summary: Discover cloud resources of one type
+      description: Lists resources that can join a schedule's start order. Types are aurora and ec2 (aws), vm, postgres and mysql (azure), gce and cloudsql (gcp).
       parameters:
-        - { name: provider, in: path, required: true, schema: { type: string, enum: [aws] } }
-        - { name: type, in: path, required: true, schema: { type: string, enum: [aurora, ec2] } }
+        - { name: provider, in: path, required: true, schema: { type: string, enum: [aws, azure, gcp] } }
+        - { name: type, in: path, required: true, schema: { type: string, enum: [aurora, ec2, vm, postgres, mysql, gce, cloudsql] } }
       responses:
         "200":
           description: Discovered resources
@@ -751,6 +811,7 @@ paths:
 
   /api/ai/chat:
     post:
+      x-role: viewer
       tags: [AI]
       summary: Chat with the assistant
       description: >-
@@ -789,6 +850,7 @@ paths:
 
   /api/ai/tools/{name}:
     post:
+      x-role: operator
       tags: [AI]
       summary: Run a confirmed assistant action
       description: Runs a mutating tool (scale_group, scale_namespace, revert_optimization) the user confirmed. Requires the operator role.
@@ -813,6 +875,7 @@ paths:
 
   /api/ai/report:
     get:
+      x-role: viewer
       tags: [AI]
       summary: Saved cost report
       responses:
@@ -829,6 +892,7 @@ paths:
 
   /api/ai/report/generate:
     post:
+      x-role: operator
       tags: [AI]
       summary: Generate a cost report
       description: Streams a new Markdown report as Server-Sent Events (same event format as chat) and saves it when done.
@@ -838,6 +902,7 @@ paths:
 
   /api/ai/report/save:
     post:
+      x-role: operator
       tags: [AI]
       summary: Save an edited report
       requestBody:
@@ -851,6 +916,7 @@ paths:
 
   /api/settings:
     get:
+      x-role: viewer
       tags: [Settings]
       summary: Read settings
       description: The CostDeckConfig settings with connection status. Credentials are never returned, only whether they are set.
@@ -858,6 +924,7 @@ paths:
         "200": { description: Settings, content: { application/json: { schema: { type: object } } } }
         "401": { $ref: "#/components/responses/Unauthorized" }
     put:
+      x-role: admin
       tags: [Settings]
       summary: Update settings
       description: >-
@@ -868,6 +935,21 @@ paths:
         content:
           application/json:
             schema: { type: object }
+            examples:
+              victoriaMetrics:
+                summary: Connect VictoriaMetrics
+                value:
+                  integrations:
+                    victoriaMetrics: { enabled: true, endpoint: "http://vmselect.monitoring:8481/select/0/prometheus", retentionDays: 14 }
+              customRates:
+                summary: Use your own prices
+                value:
+                  pricing: { cpuCoreHour: "0.031", memoryGiBHour: "0.0042", currency: EUR }
+              azure:
+                summary: Enable Azure with workload identity
+                value:
+                  providers:
+                    azure: { enabled: true, subscriptionId: "00000000-0000-0000-0000-000000000000", resourceTypes: [vm, postgres] }
       responses:
         "200": { description: Updated settings, content: { application/json: { schema: { type: object } } } }
         "400": { description: Invalid settings }
@@ -875,11 +957,12 @@ paths:
 
   /api/settings/providers/{provider}/test:
     post:
+      x-role: admin
       tags: [Settings]
       summary: Test a connection
-      description: Tests unsaved credentials or settings for aws, ai, entra, webex or victoriametrics.
+      description: Tests unsaved credentials or settings. For cloud providers it also reports how many resources discovery finds.
       parameters:
-        - { name: provider, in: path, required: true, schema: { type: string, enum: [aws, ai, entra, webex, victoriametrics] } }
+        - { name: provider, in: path, required: true, schema: { type: string, enum: [aws, azure, gcp, ai, entra, webex, victoriametrics] } }
       requestBody:
         content:
           application/json:
@@ -899,6 +982,7 @@ paths:
 
   /api/settings/providers/{provider}/status:
     get:
+      x-role: viewer
       tags: [Settings]
       summary: Connection status of a configured provider
       parameters:
@@ -909,6 +993,7 @@ paths:
 
   /api/settings/ai/models:
     post:
+      x-role: admin
       tags: [Settings]
       summary: List AI models
       description: Asks the AI provider (with the given or stored credentials) which models it offers.
@@ -935,6 +1020,7 @@ paths:
 
   /api/tokens:
     get:
+      x-role: admin
       tags: [Settings]
       summary: List API tokens
       responses:
@@ -945,6 +1031,7 @@ paths:
               schema: { type: array, items: { $ref: "#/components/schemas/TokenInfo" } }
         "401": { $ref: "#/components/responses/Unauthorized" }
     post:
+      x-role: admin
       tags: [Settings]
       summary: Create an API token
       description: The token value is returned once and only its hash is stored.
@@ -959,6 +1046,7 @@ paths:
                 name: { type: string }
                 role: { type: string, enum: [viewer, operator, admin] }
                 expiresInDays: { type: integer, minimum: 0, maximum: 3650, description: "0 = never" }
+            example: { name: ci-pipeline, role: operator, expiresInDays: 90 }
       responses:
         "201":
           description: Created
@@ -974,6 +1062,7 @@ paths:
 
   /api/tokens/{name}:
     delete:
+      x-role: admin
       tags: [Settings]
       summary: Revoke an API token
       parameters:
@@ -993,6 +1082,40 @@ paths:
       responses:
         "200": { description: Accepted }
         "401": { description: Missing or invalid signature }
+
+  /api/openapi.yaml:
+    get:
+      tags: [Docs]
+      security: []
+      summary: OpenAPI specification (YAML)
+      responses:
+        "200":
+          description: This document
+          content:
+            application/x-yaml: {}
+
+  /api/openapi.json:
+    get:
+      tags: [Docs]
+      security: []
+      summary: OpenAPI specification (JSON)
+      responses:
+        "200":
+          description: This document as JSON
+          content:
+            application/json: {}
+
+  /api/docs:
+    get:
+      tags: [Docs]
+      security: []
+      summary: Swagger UI
+      description: Interactive documentation where requests can be tried out.
+      responses:
+        "200":
+          description: HTML page
+          content:
+            text/html: {}
 
 components:
   securitySchemes:
@@ -1220,63 +1343,126 @@ components:
 
     ScalingGroup:
       type: object
+      description: A schedule for a set of namespaces and cloud resources (kind ScalingGroup).
+      example:
+        metadata: { name: dev }
+        spec:
+          category: Environments
+          namespaces: [dev-frontend, dev-backend]
+          schedules:
+            - { days: [1, 2, 3, 4, 5], startTime: "08:00", endTime: "19:00", timezone: Europe/Berlin }
+          dependsOn: [platform]
+          sequence: [dev-backend, dev-frontend]
       properties:
         metadata:
           type: object
           properties:
-            name:
-              type: string
+            name: { type: string, description: "Lowercase letters, digits and dashes." }
         spec:
           type: object
+          required: [category, namespaces]
           properties:
             category:
               type: string
+              description: Section the schedule is listed under, for example Platform or Environments.
             namespaces:
               type: array
-              items:
-                type: string
+              items: { type: string }
+            schedules:
+              type: array
+              description: When the namespaces run. Windows are OR-ed; outside all of them everything is scaled down.
+              items: { $ref: "#/components/schemas/ScalingSchedule" }
+            activation:
+              type: string
+              enum: [Schedule, OnDemand]
+              description: OnDemand has no hours of its own and runs only while a schedule that depends on it needs it.
+            dependsOn:
+              type: array
+              items: { type: string }
+              description: Schedules this one starts after. They are kept up while this one runs.
+            sequence:
+              type: array
+              items: { type: string }
+              description: >-
+                Start order. Each entry is a stage of space-separated namespaces or ext:<identifier>
+                cloud resources. Stages start top to bottom and stop bottom to top; namespaces in no
+                stage start last.
+            externalTargets:
+              type: array
+              items: { $ref: "#/components/schemas/ExternalTarget" }
+            featureFlags:
+              type: object
+              properties:
+                skipOnTimeout: { type: boolean, description: "Move on when a namespace is not ready in time." }
+                timeoutMinutes: { type: integer, minimum: 1, maximum: 30, default: 5 }
             active:
               type: boolean
               nullable: true
-              description: Manual override. Null (absent) means the schedule is followed.
+              description: >-
+                Manual override, normally set through the /manual endpoint. Absent (null) means
+                the schedule is followed; false does not mean "follow the schedule", it keeps the
+                namespaces down.
             activeUntil:
               type: string
               format: date-time
-              description: Optional expiry for the manual override.
-            schedules:
-              type: array
-              items:
-                $ref: "#/components/schemas/ScalingSchedule"
-            sequence:
-              type: array
-              items:
-                type: string
+              description: When the manual override ends by itself.
+        status:
+          type: object
+          description: Written by the operator. phase is ScaledUp, ScalingUp, ScalingDown, ScaledDown or WaitingForDependencies; mode says what decides the state (Schedule, ManualUp, ManualDown, AlwaysOn, Dependency, OnDemand).
 
     ScalingConfig:
       type: object
+      description: >-
+        A schedule for a single namespace (kind ScalingConfig). The dashboard uses it for
+        workload rules on a namespace. A namespace that belongs to a ScalingGroup follows the
+        group; its config then only contributes exclusions and workload order.
+      example:
+        metadata: { name: dev-backend }
+        spec:
+          targetNamespace: dev-backend
+          exclusions: [redis-*]
+          sequence: [postgres, "api-* worker"]
       properties:
         metadata:
           type: object
           properties:
-            name:
-              type: string
+            name: { type: string }
         spec:
           type: object
+          required: [targetNamespace]
           properties:
-            targetNamespace:
-              type: string
+            targetNamespace: { type: string }
+            schedules:
+              type: array
+              items: { $ref: "#/components/schemas/ScalingSchedule" }
+            exclusions:
+              type: array
+              items: { type: string }
+              description: Workloads that never scale down, by name or prefix glob ("redis-*").
+            sequence:
+              type: array
+              items: { type: string }
+              description: Workload start order. Each entry is a stage of space-separated name globs.
             active:
               type: boolean
               nullable: true
-              description: Manual override. Null (absent) means the schedule is followed.
+              description: Manual override; absent (null) means the schedule is followed.
             activeUntil:
               type: string
               format: date-time
-              description: Optional expiry for the manual override.
-            schedules:
-              type: array
-              items:
-                $ref: "#/components/schemas/ScalingSchedule"
+
+    ExternalTarget:
+      type: object
+      description: A cloud resource started and stopped with the schedule.
+      required: [provider, type, identifier]
+      properties:
+        provider: { type: string, enum: [aws, azure, gcp] }
+        type: { type: string, enum: [aurora, ec2, vm, postgres, mysql, gce, cloudsql] }
+        identifier:
+          type: string
+          description: "AWS: cluster identifier or instance ID. Azure: full resource ID. Google Cloud: <zone>/<name> for Compute Engine, the instance name for Cloud SQL."
+        region: { type: string }
+        name: { type: string, description: Display name. }
 
     ScalingSchedule:
       type: object

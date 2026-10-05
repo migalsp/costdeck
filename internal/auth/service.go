@@ -110,11 +110,11 @@ func (s *Service) Disabled(ctx context.Context) bool {
 // anonymousAdmin is the identity used while authentication is disabled.
 var anonymousAdmin = &Identity{Subject: "anonymous", Name: "Anonymous", Role: RoleAdmin, Provider: "anonymous"}
 
-// publicPaths never require a session. The Webex webhook authenticates every request with
-// its HMAC signature instead.
-func publicPath(path string) bool {
+// PublicPath reports whether a path never requires a session. The Webex webhook
+// authenticates every request with its HMAC signature instead.
+func PublicPath(path string) bool {
 	switch path {
-	case "/api/login", "/api/logout", "/api/auth/config", "/api/docs", "/api/openapi.yaml", "/api/webex/webhook":
+	case "/api/login", "/api/logout", "/api/auth/config", "/api/docs", "/api/openapi.yaml", "/api/openapi.json", "/api/webex/webhook":
 		return true
 	}
 	return strings.HasPrefix(path, "/api/auth/entra/")
@@ -124,7 +124,7 @@ func publicPath(path string) bool {
 // endpoint. The dashboard's static files are public; the SPA asks /api/auth/me and shows
 // the login page when that answers 401.
 func protectedPath(path string) bool {
-	return (strings.HasPrefix(path, "/api/") && !publicPath(path)) || path == "/mcp" || strings.HasPrefix(path, "/mcp/")
+	return (strings.HasPrefix(path, "/api/") && !PublicPath(path)) || path == "/mcp" || strings.HasPrefix(path, "/mcp/")
 }
 
 // Middleware authenticates requests with a session cookie or an API token

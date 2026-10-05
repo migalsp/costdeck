@@ -225,6 +225,7 @@ func (s *Server) routes() *http.ServeMux {
 
 	// Documentation
 	mux.HandleFunc("GET /api/openapi.yaml", handleOpenAPISpec)
+	mux.HandleFunc("GET /api/openapi.json", handleOpenAPIJSON)
 	mux.HandleFunc("GET /api/docs", handleSwaggerUI)
 
 	return mux

@@ -1,10 +1,29 @@
 package api
 
-import "net/http"
+import (
+	"net/http"
+	"sync"
+
+	"sigs.k8s.io/yaml"
+)
 
 func handleOpenAPISpec(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/x-yaml")
 	_, _ = w.Write(openapiSpec)
+}
+
+// openapiJSON is the embedded spec converted once, for clients that read JSON. The
+// dashboard renders its API reference from it.
+var openapiJSON = sync.OnceValues(func() ([]byte, error) { return yaml.YAMLToJSON(openapiSpec) })
+
+func handleOpenAPIJSON(w http.ResponseWriter, r *http.Request) {
+	spec, err := openapiJSON()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(spec)
 }
 
 func handleSwaggerUI(w http.ResponseWriter, r *http.Request) {
