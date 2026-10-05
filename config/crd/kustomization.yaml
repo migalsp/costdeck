@@ -6,6 +6,7 @@ resources:
 - bases/finops.costdeck.io_scalingconfigs.yaml
 - bases/finops.costdeck.io_scalinggroups.yaml
 - bases/finops.costdeck.io_namespaceoptimizations.yaml
+- bases/finops.costdeck.io_costdeckconfigs.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:
