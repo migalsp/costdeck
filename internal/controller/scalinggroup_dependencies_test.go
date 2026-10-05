@@ -8,7 +8,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
@@ -36,7 +36,7 @@ var _ = Describe("ScalingGroup dependencies", func() {
 			Client:   k8sClient,
 			Scheme:   k8sClient.Scheme(),
 			Engine:   &scaling.Engine{Client: k8sClient},
-			Recorder: record.NewFakeRecorder(100),
+			Recorder: events.NewFakeRecorder(100),
 		}
 		Expect(k8sClient.Create(ctx, &finopsv1.ScalingGroup{
 			ObjectMeta: metav1.ObjectMeta{Name: platformKey.Name, Namespace: platformKey.Namespace},

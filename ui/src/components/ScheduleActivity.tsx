@@ -12,6 +12,8 @@ interface KubeEvent {
   count?: number
   lastTimestamp?: string
   eventTime?: string
+  // events.k8s.io events count repeats here instead of in count/lastTimestamp.
+  series?: { count?: number; lastObservedTime?: string }
 }
 
 interface Pod { name: string; status: string; ready: boolean; reason?: string; restarts: number }
@@ -19,7 +21,8 @@ interface Workload { name: string; kind: string; replicas: number; readyReplicas
 
 type NodeState = 'done' | 'running' | 'waiting' | 'problem' | 'idle'
 
-const eventTime = (e: KubeEvent) => e.lastTimestamp || e.eventTime || e.metadata.creationTimestamp
+const eventTime = (e: KubeEvent) => e.series?.lastObservedTime || e.lastTimestamp || e.eventTime || e.metadata.creationTimestamp
+const repeats = (e: KubeEvent) => e.series?.count || e.count || 1
 const EXT = 'ext:'
 const busyPhases = ['ScalingUp', 'ScalingDown', 'WaitingForDependencies']
 
@@ -262,7 +265,7 @@ export default function ScheduleActivity({ group: initial }: { group: ScalingGro
                 </span>
                 <span className="min-w-0">
                   <span className={`text-xs font-semibold ${e.type === 'Warning' ? 'text-amber-700' : 'text-slate-500'}`}>{e.reason}</span>
-                  <span className="block text-slate-700">{e.message}{(e.count || 0) > 1 && <span className="text-slate-400"> ×{e.count}</span>}</span>
+                  <span className="block text-slate-700">{e.message}{repeats(e) > 1 && <span className="text-slate-400"> ×{repeats(e)}</span>}</span>
                 </span>
               </li>
             ))}

@@ -24,12 +24,13 @@ import (
 	"strings"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
@@ -47,7 +48,7 @@ type ScalingGroupReconciler struct {
 	client.Client
 	Scheme   *runtime.Scheme
 	Engine   *scaling.Engine
-	Recorder record.EventRecorder
+	Recorder events.EventRecorder
 	// Pricing values the savings of kept-down workloads; optional.
 	Pricing *pricing.Resolver
 	// Notifier announces finished transitions; optional.
@@ -225,7 +226,7 @@ func (r *ScalingGroupReconciler) waitForDependencies(ctx context.Context, group 
 	if group.Status.Phase != scaling.PhaseWaitingForDependencies {
 		group.Status.Phase = scaling.PhaseWaitingForDependencies
 		group.Status.LastAction = metav1.Now()
-		r.Recorder.Event(group, "Normal", "WaitingForDependencies", msg)
+		r.Recorder.Eventf(group, nil, corev1.EventTypeNormal, "WaitingForDependencies", "WaitForDependencies", "%s", msg)
 	}
 	applyDecision(&group.Status.ScheduleStatus, &group.Status.Conditions, plan.Decision, group.Generation, "group")
 	setReadyCondition(&group.Status.Conditions, group.Status.Phase, true, group.Generation, msg)
@@ -421,15 +422,15 @@ func (r *ScalingGroupReconciler) emitScalingEvents(group *finopsv1.ScalingGroup,
 
 		if timeoutPassed {
 			msg := fmt.Sprintf("Stage timeout of %d min exceeded, skipping unresponsive targets. Still waiting on Stage %d: %s", stageTimeoutMinutes(group), stageNumber, strings.Join(blockingNamespaces, ", "))
-			r.Recorder.Event(group, "Warning", "ScalingTimeout", msg)
+			r.Recorder.Eventf(group, nil, corev1.EventTypeWarning, "ScalingTimeout", "Scale", "%s", msg)
 		} else {
 			msg := fmt.Sprintf("Executing Stage %d. Waiting for targets in: %s", stageNumber, strings.Join(blockingNamespaces, ", "))
-			r.Recorder.Event(group, "Normal", "ScalingActive", msg)
+			r.Recorder.Eventf(group, nil, corev1.EventTypeNormal, "ScalingActive", "Scale", "%s", msg)
 		}
 	}
 
 	if namespacesReady > group.Status.NamespacesReady {
-		r.Recorder.Eventf(group, "Normal", "ScalingProgress", "Progress updated: %d of %d targets reached target state.", namespacesReady, namespacesTotal)
+		r.Recorder.Eventf(group, nil, corev1.EventTypeNormal, "ScalingProgress", "Scale", "Progress updated: %d of %d targets reached target state.", namespacesReady, namespacesTotal)
 	}
 }
 
@@ -455,7 +456,11 @@ func (r *ScalingGroupReconciler) updateStatusAndPhase(ctx context.Context, group
 	if group.Status.Phase != newPhase {
 		group.Status.Phase = newPhase
 		group.Status.LastAction = metav1.Now()
-		r.Recorder.Eventf(group, "Normal", "PhaseTransition", "Group phase transitioned from %s to %s", oldPhase, newPhase)
+		if oldPhase == "" {
+			r.Recorder.Eventf(group, nil, corev1.EventTypeNormal, "PhaseTransition", "UpdatePhase", "Group phase is %s", newPhase)
+		} else {
+			r.Recorder.Eventf(group, nil, corev1.EventTypeNormal, "PhaseTransition", "UpdatePhase", "Group phase transitioned from %s to %s", oldPhase, newPhase)
+		}
 	} else if group.Status.LastAction.IsZero() {
 		group.Status.LastAction = metav1.Now()
 	}
@@ -491,7 +496,7 @@ func (r *ScalingGroupReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		r.Engine.Resolver = &scaling.ConfigProviderResolver{Client: mgr.GetClient()}
 	}
 
-	r.Recorder = mgr.GetEventRecorderFor("scalinggroup-controller")
+	r.Recorder = mgr.GetEventRecorder("scalinggroup-controller")
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&finopsv1.ScalingGroup{}).
