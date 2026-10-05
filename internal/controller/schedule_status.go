@@ -7,9 +7,11 @@ import (
 	"strings"
 	"time"
 
+	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
 	"github.com/migalsp/costdeck-operator/internal/pricing"
@@ -29,6 +31,15 @@ const (
 	// group already manages.
 	ConditionNamespaceConflict = "NamespaceConflict"
 )
+
+// updateStatus writes an object's status unless the reconcile left it as it was found:
+// a settled schedule would otherwise send an identical status every minute.
+func updateStatus(ctx context.Context, c client.Client, obj client.Object, before, after any) error {
+	if equality.Semantic.DeepEqual(before, after) {
+		return nil
+	}
+	return c.Status().Update(ctx, obj)
+}
 
 // settledRequeue is the requeue interval once a target has converged: a minute, or less
 // when the next schedule transition is closer, so boundaries take effect on time.

@@ -129,6 +129,16 @@ func (p *Provider) NamespaceUsage(ctx context.Context, namespace string) (Usage,
 	return u, Result{Source: SourceMetricsServer, Degraded: vmErr}, err
 }
 
+// ClusterPodUsage returns the live usage of every pod in the cluster from metrics-server,
+// keyed namespace/name, from the reading the namespaces share.
+func (p *Provider) ClusterPodUsage(ctx context.Context) (map[string]Usage, error) {
+	ms, ok := p.MetricsServer.(*MetricsServerSource)
+	if !ok {
+		return nil, errors.New("metrics-server is not configured")
+	}
+	return ms.ClusterPodUsage(ctx)
+}
+
 // PodUsage returns current per-pod usage, preferring VictoriaMetrics.
 func (p *Provider) PodUsage(ctx context.Context, namespace string) (map[string]Usage, Result, error) {
 	vm, _, vmErr := p.resolve(ctx)

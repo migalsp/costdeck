@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"k8s.io/apimachinery/pkg/version"
 	"k8s.io/client-go/kubernetes"
 	metricsv "k8s.io/metrics/pkg/client/clientset/versioned"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -54,6 +55,10 @@ type Server struct {
 	healthHistory []map[string]any
 
 	recommendationCache recommendationCache
+
+	versionMu sync.Mutex
+	version   *version.Info
+	versionAt time.Time
 
 	// rootCtx lives as long as the server; background work started by a request uses it.
 	rootCtx context.Context

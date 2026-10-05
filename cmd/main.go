@@ -226,10 +226,12 @@ func main() {
 
 // cacheOptions confines the informers for everything CostDeck owns to the operator
 // namespace. Watching these kinds cluster-wide would need cluster-wide list/watch RBAC and
-// would hold every Event in the cluster in memory.
+// would hold every Event in the cluster in memory. Cached objects drop their managedFields,
+// often the largest part of a Pod, which CostDeck never reads.
 func cacheOptions(operatorNs string) cache.Options {
 	inOperatorNs := cache.ByObject{Namespaces: map[string]cache.Config{operatorNs: {}}}
 	return cache.Options{
+		DefaultTransform: cache.TransformStripManagedFields(),
 		ByObject: map[client.Object]cache.ByObject{
 			&corev1.Event{}:                   inOperatorNs,
 			&finopsv1.CostDeckConfig{}:        inOperatorNs,

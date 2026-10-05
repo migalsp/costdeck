@@ -375,7 +375,8 @@ func TestHandleClusterNodes(t *testing.T) {
 			},
 		},
 	}
-	if _, err := server.K8sClient.CoreV1().Nodes().Create(context.Background(), node, metav1.CreateOptions{}); err != nil {
+	// The handler reads nodes through the cached client.
+	if err := server.Client.Create(context.Background(), node); err != nil {
 		t.Fatal(err)
 	}
 

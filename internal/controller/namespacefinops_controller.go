@@ -19,6 +19,8 @@ package controller
 import (
 	"context"
 	"fmt"
+	"slices"
+	"sync"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -46,7 +48,25 @@ type NamespaceFinOpsReconciler struct {
 	Metrics *metrics.Provider
 	// Pricing values the namespace's requests for the cost metric; optional.
 	Pricing *pricing.Resolver
+	// FlushEvery is how often sampled points are written to the status; zero means
+	// five minutes.
+	FlushEvery time.Duration
+
+	mu sync.Mutex
+	// pending holds the points sampled since the last status write, by object name.
+	pending map[string][]finopsv1.MetricDataPoint
+	// sampledAt is when each object was last sampled.
+	sampledAt map[string]time.Time
 }
+
+// Usage is sampled once a minute but written in batches: one status update per namespace
+// per minute was most of the operator's write load on the API server. A new leader loses
+// at most one unwritten batch.
+const (
+	sampleEvery       = time.Minute
+	defaultFlushEvery = 5 * time.Minute
+	historyPoints     = 60
+)
 
 // ConditionMetricsAvailable reports whether usage could be collected and from where.
 const ConditionMetricsAvailable = "MetricsAvailable"
@@ -58,7 +78,9 @@ const ConditionMetricsAvailable = "MetricsAvailable"
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 // +kubebuilder:rbac:groups=metrics.k8s.io,resources=pods,verbs=get;list;watch
 
-// Reconcile records one usage data point per minute for the tracked namespace.
+// Reconcile samples the tracked namespace's usage once a minute and writes the samples
+// to the status every few minutes, or at once when its findings or the metrics condition
+// change.
 func (r *NamespaceFinOpsReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
@@ -66,9 +88,15 @@ func (r *NamespaceFinOpsReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	if err := r.Get(ctx, req.NamespacedName, &nsFinOps); err != nil {
 		if apierrors.IsNotFound(err) {
 			telemetry.ForgetNamespace(req.Name)
+			r.forget(req.Name)
 			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{}, err
+	}
+	now := time.Now()
+	// A spec change can reconcile between samples; keep one sample a minute.
+	if last := r.lastSample(req.Name, nsFinOps.Status.LastUpdated.Time); !last.IsZero() && now.Sub(last) < sampleEvery-5*time.Second {
+		return ctrl.Result{RequeueAfter: sampleEvery - now.Sub(last)}, nil
 	}
 
 	targetNs := nsFinOps.Spec.TargetNamespace
@@ -82,122 +110,156 @@ func (r *NamespaceFinOpsReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		if source.Degraded != nil {
 			msg = fmt.Sprintf("VictoriaMetrics: %v; metrics-server: %v", source.Degraded, err)
 		}
-		meta.SetStatusCondition(&nsFinOps.Status.Conditions, metav1.Condition{
+		changed := meta.SetStatusCondition(&nsFinOps.Status.Conditions, metav1.Condition{
 			Type: ConditionMetricsAvailable, Status: metav1.ConditionFalse,
 			Reason: "Unavailable", Message: msg, ObservedGeneration: nsFinOps.Generation,
 		})
-		if uerr := r.Status().Update(ctx, &nsFinOps); uerr != nil {
-			return ctrl.Result{}, uerr
+		if changed {
+			if uerr := r.Status().Update(ctx, &nsFinOps); uerr != nil {
+				return ctrl.Result{}, uerr
+			}
 		}
-		return ctrl.Result{RequeueAfter: time.Minute}, nil
+		return ctrl.Result{RequeueAfter: sampleEvery}, nil
 	}
-	meta.SetStatusCondition(&nsFinOps.Status.Conditions, metricsCondition(source, nsFinOps.Generation))
+	conditionChanged := meta.SetStatusCondition(&nsFinOps.Status.Conditions, metricsCondition(source, nsFinOps.Generation))
 	totalCpuUsage, totalMemUsage := usage.CPU, usage.Memory
 
-	// 2. Get current limits and requests from regular pods
+	// 2. Requests and limits of the running pods, from the cache.
 	var podList corev1.PodList
 	if err := r.List(ctx, &podList, client.InNamespace(targetNs)); err != nil {
 		log.Error(err, "Could not list Pods", "namespace", targetNs)
-		return ctrl.Result{RequeueAfter: time.Minute}, nil
+		return ctrl.Result{RequeueAfter: sampleEvery}, nil
 	}
-
-	var totalCpuReq, totalMemReq resource.Quantity
-	var totalCpuLim, totalMemLim resource.Quantity
-
-	missingRequests := false
-	missingLimits := false
-
-	for _, p := range podList.Items {
-		if p.Status.Phase != corev1.PodRunning {
-			continue // Only count running pods
-		}
-		for _, c := range p.Spec.Containers {
-			cpuR := c.Resources.Requests.Cpu()
-			memR := c.Resources.Requests.Memory()
-			cpuL := c.Resources.Limits.Cpu()
-			memL := c.Resources.Limits.Memory()
-
-			totalCpuReq.Add(*cpuR)
-			totalMemReq.Add(*memR)
-			totalCpuLim.Add(*cpuL)
-			totalMemLim.Add(*memL)
-
-			if cpuR.IsZero() || memR.IsZero() {
-				missingRequests = true
-			}
-			if cpuL.IsZero() || memL.IsZero() {
-				missingLimits = true
-			}
-		}
-	}
-
-	// 2.5 Calculate Insights
-	var insights []string
-	if missingRequests {
-		insights = append(insights, "Missing Requests")
-	}
-	if missingLimits {
-		insights = append(insights, "Uncapped")
-	}
-
-	// Overprovisioning check (Usage < 30% of Requests)
-	if !totalCpuReq.IsZero() && totalCpuUsage.AsApproximateFloat64() < totalCpuReq.AsApproximateFloat64()*0.3 {
-		insights = append(insights, "Overprovisioned CPU")
-	}
-	if !totalMemReq.IsZero() && totalMemUsage.AsApproximateFloat64() < totalMemReq.AsApproximateFloat64()*0.3 {
-		insights = append(insights, "Overprovisioned RAM")
-	}
-
-	if len(insights) == 0 && len(podList.Items) > 0 {
-		insights = append(insights, "Optimized")
-	}
+	totals := sumPods(podList.Items)
+	req2, lim := totals.requests, totals.limits
+	insights := namespaceInsights(totals, totalCpuUsage, totalMemUsage, len(podList.Items) > 0)
 
 	if r.Pricing != nil {
 		rates := r.Pricing.Rates(ctx)
 		telemetry.RecordNamespace(targetNs, totalCpuUsage.AsApproximateFloat64(), totalMemUsage.AsApproximateFloat64(),
-			rates.Monthly(totalCpuReq, totalMemReq), rates.Currency)
+			rates.Monthly(req2.cpu, req2.mem), rates.Currency)
 	}
 
-	// 3. Create the data point
-	now := metav1.Now()
-	dp := finopsv1.MetricDataPoint{
-		Timestamp: now,
-		CPU: finopsv1.ResourceMetrics{
-			Usage:    totalCpuUsage.String(),
-			Requests: totalCpuReq.String(),
-			Limits:   totalCpuLim.String(),
-		},
-		Memory: finopsv1.ResourceMetrics{
-			Usage:    totalMemUsage.String(),
-			Requests: totalMemReq.String(),
-			Limits:   totalMemLim.String(),
-		},
+	// 3. Buffer the data point; write the buffer when it is due.
+	points := r.addSample(req.Name, now, finopsv1.MetricDataPoint{
+		Timestamp: metav1.NewTime(now),
+		CPU:       finopsv1.ResourceMetrics{Usage: totalCpuUsage.String(), Requests: req2.cpu.String(), Limits: lim.cpu.String()},
+		Memory:    finopsv1.ResourceMetrics{Usage: totalMemUsage.String(), Requests: req2.mem.String(), Limits: lim.mem.String()},
+	})
+	flushEvery := r.FlushEvery
+	if flushEvery <= 0 {
+		flushEvery = defaultFlushEvery
+	}
+	due := nsFinOps.Status.LastUpdated.IsZero() || now.Sub(nsFinOps.Status.LastUpdated.Time) >= flushEvery-5*time.Second
+	if !due && !conditionChanged && slices.Equal(insights, nsFinOps.Status.Insights) {
+		return ctrl.Result{RequeueAfter: sampleEvery}, nil
 	}
 
-	// 4. Update the history only if at least 1 minute has passed
-	lastPointTime := nsFinOps.Status.LastUpdated.Time
-	if !lastPointTime.IsZero() && time.Since(lastPointTime) < 55*time.Second {
-		// Just update the insights and current state, but don't add a new history point yet
-		nsFinOps.Status.Insights = insights
-		if err := r.Status().Update(ctx, &nsFinOps); err != nil {
-			return ctrl.Result{}, err
-		}
-		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+	nsFinOps.Status.History = append(nsFinOps.Status.History, points...)
+	if len(nsFinOps.Status.History) > historyPoints {
+		nsFinOps.Status.History = nsFinOps.Status.History[len(nsFinOps.Status.History)-historyPoints:]
 	}
-
-	nsFinOps.Status.History = append(nsFinOps.Status.History, dp)
-	if len(nsFinOps.Status.History) > 60 {
-		nsFinOps.Status.History = nsFinOps.Status.History[len(nsFinOps.Status.History)-60:]
-	}
-	nsFinOps.Status.LastUpdated = now
+	nsFinOps.Status.LastUpdated = metav1.NewTime(now)
 	nsFinOps.Status.Insights = insights
-
 	if err := r.Status().Update(ctx, &nsFinOps); err != nil {
+		// The points stay buffered for the next attempt.
 		log.Error(err, "Could not update NamespaceFinOps status")
 		return ctrl.Result{}, err
 	}
+	r.flushed(req.Name, len(points))
+	return ctrl.Result{RequeueAfter: sampleEvery}, nil
+}
 
-	return ctrl.Result{RequeueAfter: time.Minute}, nil
+type resourcePair struct{ cpu, mem resource.Quantity }
+
+// podTotals is what the running pods' containers request and are limited to, and
+// whether any container lacks a request or a limit.
+type podTotals struct {
+	requests, limits               resourcePair
+	missingRequests, missingLimits bool
+}
+
+// sumPods adds up the running pods' containers.
+func sumPods(pods []corev1.Pod) podTotals {
+	var t podTotals
+	for _, p := range pods {
+		if p.Status.Phase != corev1.PodRunning {
+			continue
+		}
+		for _, c := range p.Spec.Containers {
+			cpuR, memR := c.Resources.Requests.Cpu(), c.Resources.Requests.Memory()
+			cpuL, memL := c.Resources.Limits.Cpu(), c.Resources.Limits.Memory()
+			t.requests.cpu.Add(*cpuR)
+			t.requests.mem.Add(*memR)
+			t.limits.cpu.Add(*cpuL)
+			t.limits.mem.Add(*memL)
+			t.missingRequests = t.missingRequests || cpuR.IsZero() || memR.IsZero()
+			t.missingLimits = t.missingLimits || cpuL.IsZero() || memL.IsZero()
+		}
+	}
+	return t
+}
+
+// namespaceInsights names what stands out about a namespace's requests and limits.
+func namespaceInsights(t podTotals, cpuUsed, memUsed resource.Quantity, hasPods bool) []string {
+	var insights []string
+	if t.missingRequests {
+		insights = append(insights, "Missing Requests")
+	}
+	if t.missingLimits {
+		insights = append(insights, "Uncapped")
+	}
+	// Overprovisioned: usage below 30% of the requests.
+	if !t.requests.cpu.IsZero() && cpuUsed.AsApproximateFloat64() < t.requests.cpu.AsApproximateFloat64()*0.3 {
+		insights = append(insights, "Overprovisioned CPU")
+	}
+	if !t.requests.mem.IsZero() && memUsed.AsApproximateFloat64() < t.requests.mem.AsApproximateFloat64()*0.3 {
+		insights = append(insights, "Overprovisioned RAM")
+	}
+	if len(insights) == 0 && hasPods {
+		insights = append(insights, "Optimized")
+	}
+	return insights
+}
+
+// lastSample returns when an object was last sampled by this process, or its last
+// status write after a restart.
+func (r *NamespaceFinOpsReconciler) lastSample(name string, written time.Time) time.Time {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if t, ok := r.sampledAt[name]; ok {
+		return t
+	}
+	return written
+}
+
+// addSample buffers a point and returns every point not yet written.
+func (r *NamespaceFinOpsReconciler) addSample(name string, at time.Time, dp finopsv1.MetricDataPoint) []finopsv1.MetricDataPoint {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.pending == nil {
+		r.pending, r.sampledAt = map[string][]finopsv1.MetricDataPoint{}, map[string]time.Time{}
+	}
+	buf := append(r.pending[name], dp)
+	if len(buf) > historyPoints {
+		buf = buf[len(buf)-historyPoints:]
+	}
+	r.pending[name], r.sampledAt[name] = buf, at
+	return slices.Clone(buf)
+}
+
+// flushed drops the first n buffered points once they are written.
+func (r *NamespaceFinOpsReconciler) flushed(name string, n int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.pending[name] = r.pending[name][min(n, len(r.pending[name])):]
+}
+
+func (r *NamespaceFinOpsReconciler) forget(name string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.pending, name)
+	delete(r.sampledAt, name)
 }
 
 // metricsCondition describes which source answered the last usage query.

@@ -6,10 +6,13 @@ import (
 	"os"
 	"runtime"
 	"slices"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/version"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
@@ -18,23 +21,42 @@ import (
 )
 
 func (s *Server) handleClusterInfo(w http.ResponseWriter, r *http.Request) {
-	version, err := s.K8sClient.Discovery().ServerVersion()
+	v, err := s.serverVersion()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{
-		"version":  version.GitVersion,
-		"platform": version.Platform,
+		"version":  v.GitVersion,
+		"platform": v.Platform,
 	})
+}
+
+// versionTTL is how long the API server's version is reused; it only changes on upgrades.
+const versionTTL = 10 * time.Minute
+
+// serverVersion returns the Kubernetes version, asking the API server at most every
+// versionTTL instead of on every page load.
+func (s *Server) serverVersion() (*version.Info, error) {
+	s.versionMu.Lock()
+	defer s.versionMu.Unlock()
+	if s.version != nil && time.Since(s.versionAt) < versionTTL {
+		return s.version, nil
+	}
+	v, err := s.K8sClient.Discovery().ServerVersion()
+	if err != nil {
+		return nil, err
+	}
+	s.version, s.versionAt = v, time.Now()
+	return v, nil
 }
 
 func (s *Server) handleClusterNodes(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	k8sVer := s.getK8sVersion()
 
-	nodes, err := s.K8sClient.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
-	if err != nil {
+	var nodes corev1.NodeList
+	if err := s.Client.List(ctx, &nodes); err != nil {
 		writeErrorf(w, http.StatusInternalServerError, "Failed to list nodes: %v", err)
 		return
 	}
@@ -85,12 +107,12 @@ func (s *Server) handleClusterNodes(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getK8sVersion() string {
-	version, err := s.K8sClient.Discovery().ServerVersion()
+	v, err := s.serverVersion()
 	if err != nil {
 		logf.Log.Error(err, "Failed to get k8s version")
 		return "unknown"
 	}
-	return version.GitVersion
+	return v.GitVersion
 }
 
 func (s *Server) getNodeMetricsMap(ctx context.Context) map[string]corev1.ResourceList {
@@ -113,8 +135,8 @@ func (s *Server) getPodRequestsPerNode(ctx context.Context) (map[string]*resourc
 	nodeReqCPU := make(map[string]*resource.Quantity)
 	nodeReqMem := make(map[string]*resource.Quantity)
 
-	pods, err := s.K8sClient.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
-	if err != nil {
+	var pods corev1.PodList
+	if err := s.Client.List(ctx, &pods); err != nil {
 		logf.Log.Error(err, "Failed to list pods for calculating node capacity requests")
 		return nodeReqCPU, nodeReqMem
 	}
@@ -223,7 +245,7 @@ func (s *Server) handleOperatorHealth(w http.ResponseWriter, r *http.Request) {
 	var reqCPU, reqMem, limCPU, limMem float64
 
 	if podName != "" && podNs != "" {
-		if pod, err := s.K8sClient.CoreV1().Pods(podNs).Get(r.Context(), podName, metav1.GetOptions{}); err == nil {
+		if pod := (&corev1.Pod{}); s.Client.Get(r.Context(), client.ObjectKey{Namespace: podNs, Name: podName}, pod) == nil {
 			for _, container := range pod.Spec.Containers {
 				reqCPU += float64(container.Resources.Requests.Cpu().MilliValue()) / 1000.0
 				reqMem += float64(container.Resources.Requests.Memory().Value()) / 1024 / 1024

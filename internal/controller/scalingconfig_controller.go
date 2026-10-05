@@ -67,11 +67,12 @@ func (r *ScalingConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		}
 		return ctrl.Result{}, err
 	}
+	before := config.Status.DeepCopy()
 
 	// 1.5 Conflict Resolution: "Group Wins"
 	if managed, groupName, err := r.isManagedByGroup(ctx, config.Spec.TargetNamespace); err == nil && managed {
 		l.Info("Namespace managed by group, overriding individual config", "namespace", config.Spec.TargetNamespace, "group", groupName)
-		return r.markAsOverridden(ctx, config, groupName)
+		return r.markAsOverridden(ctx, config, before, groupName)
 	}
 
 	// 2. Determine desired state
@@ -107,7 +108,7 @@ func (r *ScalingConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		savings = recordSavings(ctx, &config.Status.ScheduleStatus, r.Pricing, cpu, mem)
 	}
 
-	if err := r.Status().Update(ctx, config); err != nil {
+	if err := updateStatus(ctx, r.Client, config, before, &config.Status); err != nil {
 		return ctrl.Result{}, err
 	}
 	announceTransition(ctx, r.Notifier, "Namespace", config.Spec.TargetNamespace, previousPhase, config.Status.Phase, config.Status.ScheduleStatus, nil)
@@ -134,7 +135,7 @@ func (r *ScalingConfigReconciler) isManagedByGroup(ctx context.Context, ns strin
 	return false, "", nil
 }
 
-func (r *ScalingConfigReconciler) markAsOverridden(ctx context.Context, config *finopsv1.ScalingConfig, groupName string) (ctrl.Result, error) {
+func (r *ScalingConfigReconciler) markAsOverridden(ctx context.Context, config *finopsv1.ScalingConfig, before *finopsv1.ScalingConfigStatus, groupName string) (ctrl.Result, error) {
 	if config.Status.Phase != PhaseOverriddenByGroup {
 		config.Status.LastAction = metav1.Now()
 	}
@@ -146,7 +147,7 @@ func (r *ScalingConfigReconciler) markAsOverridden(ctx context.Context, config *
 		Message: fmt.Sprintf("Namespace %s is managed by ScalingGroup %s; this config only contributes its sequence and exclusions.",
 			config.Spec.TargetNamespace, groupName),
 	})
-	if err := r.Status().Update(ctx, config); err != nil {
+	if err := updateStatus(ctx, r.Client, config, before, &config.Status); err != nil {
 		return ctrl.Result{}, err
 	}
 	return ctrl.Result{RequeueAfter: 5 * time.Minute}, nil

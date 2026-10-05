@@ -73,6 +73,7 @@ func (r *ScalingGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		}
 		return ctrl.Result{}, err
 	}
+	before := group.Status.DeepCopy()
 
 	// 2. Determine the desired state against every group in the namespace, so that
 	// dependsOn edges and namespace ownership are taken into account.
@@ -95,7 +96,7 @@ func (r *ScalingGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	// 2.5 A group that wants to come up holds back until its dependencies are ScaledUp.
 	// One that is already up keeps running even if a dependency briefly degrades.
 	if plan.BlockedOnDependencies() && group.Status.Phase != scaling.PhaseScaledUp {
-		return r.waitForDependencies(ctx, group, plan)
+		return r.waitForDependencies(ctx, group, before, plan)
 	}
 
 	// 3. Define stages from group.Spec.Sequence, skipping namespaces an older group owns.
@@ -163,7 +164,7 @@ func (r *ScalingGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if len(blockingNamespaces) > 0 {
 		detail = "Waiting for: " + strings.Join(blockingNamespaces, ", ")
 	}
-	return r.updateStatusAndPhase(ctx, group, allReady, managedCount, namespacesReady, namespacesTotal, readyNamespaces, decision, detail)
+	return r.updateStatusAndPhase(ctx, group, before, allReady, managedCount, namespacesReady, namespacesTotal, readyNamespaces, decision, detail)
 }
 
 // recordGroupSavings estimates what the group's kept-down workloads would cost per hour.
@@ -220,7 +221,7 @@ func (r *ScalingGroupReconciler) planFor(ctx context.Context, group *finopsv1.Sc
 }
 
 // waitForDependencies records that the group is held back and checks again shortly.
-func (r *ScalingGroupReconciler) waitForDependencies(ctx context.Context, group *finopsv1.ScalingGroup, plan scaling.GroupPlan) (ctrl.Result, error) {
+func (r *ScalingGroupReconciler) waitForDependencies(ctx context.Context, group *finopsv1.ScalingGroup, before *finopsv1.ScalingGroupStatus, plan scaling.GroupPlan) (ctrl.Result, error) {
 	waiting := append(append([]string{}, plan.WaitingFor...), plan.MissingDependencies...)
 	msg := "Waiting for ScalingGroup(s) to be ScaledUp: " + strings.Join(waiting, ", ")
 	if group.Status.Phase != scaling.PhaseWaitingForDependencies {
@@ -230,7 +231,7 @@ func (r *ScalingGroupReconciler) waitForDependencies(ctx context.Context, group 
 	}
 	applyDecision(&group.Status.ScheduleStatus, &group.Status.Conditions, plan.Decision, group.Generation, "group")
 	setReadyCondition(&group.Status.Conditions, group.Status.Phase, true, group.Generation, msg)
-	if err := r.Status().Update(ctx, group); err != nil {
+	if err := updateStatus(ctx, r.Client, group, before, &group.Status); err != nil {
 		return ctrl.Result{}, err
 	}
 	return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
@@ -434,7 +435,7 @@ func (r *ScalingGroupReconciler) emitScalingEvents(group *finopsv1.ScalingGroup,
 	}
 }
 
-func (r *ScalingGroupReconciler) updateStatusAndPhase(ctx context.Context, group *finopsv1.ScalingGroup, allReady bool, managedCount, namespacesReady, namespacesTotal int, readyNamespaces []string, decision scaling.Decision, detail string) (ctrl.Result, error) {
+func (r *ScalingGroupReconciler) updateStatusAndPhase(ctx context.Context, group *finopsv1.ScalingGroup, before *finopsv1.ScalingGroupStatus, allReady bool, managedCount, namespacesReady, namespacesTotal int, readyNamespaces []string, decision scaling.Decision, detail string) (ctrl.Result, error) {
 	targetActive := decision.Active
 	group.Status.ManagedCount = managedCount
 	group.Status.NamespacesReady = namespacesReady
@@ -467,7 +468,7 @@ func (r *ScalingGroupReconciler) updateStatusAndPhase(ctx context.Context, group
 
 	setReadyCondition(&group.Status.Conditions, newPhase, targetActive, group.Generation, detail)
 
-	if err := r.Status().Update(ctx, group); err != nil {
+	if err := updateStatus(ctx, r.Client, group, before, &group.Status); err != nil {
 		return ctrl.Result{}, err
 	}
 	announceTransition(ctx, r.Notifier, "Group", group.Name, oldPhase, newPhase, group.Status.ScheduleStatus, group.Status.RequiredBy)

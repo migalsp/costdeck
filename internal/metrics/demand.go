@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"time"
-
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // maxDemandWindow caps the history a right-sizing query scans. Two weeks covers weekly
@@ -86,15 +84,12 @@ func (c *VMClient) containerVector(ctx context.Context, query string) (map[Conta
 
 // ContainerUsage returns the current usage of every container in a namespace.
 func (s *MetricsServerSource) ContainerUsage(ctx context.Context, namespace string) (map[ContainerKey]Usage, error) {
-	if s.Client == nil {
-		return nil, fmt.Errorf("metrics API client is not configured")
-	}
-	list, err := s.Client.MetricsV1beta1().PodMetricses(namespace).List(ctx, metav1.ListOptions{})
+	items, err := s.pods(ctx, namespace)
 	if err != nil {
-		return nil, fmt.Errorf("list pod metrics from metrics-server: %w", err)
+		return nil, err
 	}
 	out := make(map[ContainerKey]Usage)
-	for _, pm := range list.Items {
+	for _, pm := range items {
 		for _, c := range pm.Containers {
 			out[ContainerKey{Pod: pm.Name, Container: c.Name}] = Usage{CPU: *c.Usage.Cpu(), Memory: *c.Usage.Memory()}
 		}
