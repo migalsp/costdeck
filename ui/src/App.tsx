@@ -4,7 +4,6 @@ import Dashboard from './pages/Dashboard'
 import NamespaceDetails from './pages/NamespaceDetails'
 import OperatorHealth from './pages/OperatorHealth'
 import ScalingPage from './pages/ScalingPage'
-import ScalingWorkloads from './pages/ScalingWorkloads'
 import ClusterDashboard from './pages/ClusterDashboard'
 import LoginPage from './pages/LoginPage'
 import ApiReference from './pages/ApiReference'
@@ -171,7 +170,7 @@ function App() {
               >
                 {activeTab === 'scale' && <div className="absolute left-0 top-0 bottom-0 w-1 bg-white rounded-r-full shadow-[0_0_10px_white]" />}
                 <Scaling size={20} className={activeTab === 'scale' ? 'text-white' : 'text-slate-500 group-hover:text-emerald-400 transition-colors'} />
-                <span className="font-bold text-[13px] tracking-tight">Workload Scaling</span>
+                <span className="font-bold text-[13px] tracking-tight">Scaling Schedules</span>
               </button>
             </div>
           </div>
@@ -297,9 +296,9 @@ function App() {
         {activeTab === 'reports' && <ReportsPage />}
         {activeTab === 'scale' && (
           selectedScalingNS ? (
-            <ScalingWorkloads 
-              namespace={selectedScalingNS} 
-              onBack={() => setSelectedScalingNS(null)} 
+            <NamespaceDetails
+              namespace={selectedScalingNS}
+              onBack={() => setSelectedScalingNS(null)}
             />
           ) : (
             <ScalingPage onSelectNamespace={setSelectedScalingNS} />

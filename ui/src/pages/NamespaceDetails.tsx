@@ -1,11 +1,10 @@
-import { useAuth } from '../lib/auth'
 import { useState } from 'react'
-import { ArrowLeft, Search, Activity, AlertCircle, Play, Square, Settings2, Clock, Plus } from 'lucide-react'
-import ScalingConfigModal from '../components/ScalingConfigModal'
+import { ArrowLeft, Search, Activity, AlertCircle } from 'lucide-react'
+import NamespaceScalingPanel from '../components/NamespaceScalingPanel'
 import InfoTooltip from '../components/InfoTooltip'
 import RecommendationsPanel from '../components/RecommendationsPanel'
-import { errorMessage, fetchNamespaceCost } from '../lib/api'
-import type { CostEstimate, OptimizationStatus, ScalingConfig, ScalingSpec } from '../lib/types'
+import { fetchNamespaceCost } from '../lib/api'
+import type { CostEstimate, OptimizationStatus } from '../lib/types'
 import { usePolling } from '../lib/usePolling'
 
 interface PodDetail {
@@ -70,17 +69,13 @@ const sortValue = (pod: PodDetail, field: SortField): string | number => {
 }
 
 export default function NamespaceDetails({ namespace, onBack }: NamespaceDetailsProps) {
-  const { can } = useAuth();
   const [pods, setPods] = useState<PodDetail[]>([])
   const [optimization, setOptimization] = useState<OptimizationStatus | null>(null)
   const [loading, setLoading] = useState(true)
   const [filterQuery, setFilterQuery] = useState('')
   const [error, setError] = useState<string | null>(null)
-  const [config, setConfig] = useState<ScalingConfig | undefined>(undefined)
-  const [isEditingConfig, setIsEditingConfig] = useState(false)
   const [sortField, setSortField] = useState<SortField>('name')
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc')
-  const [isScaling, setIsScaling] = useState(false)
   const [namespaceCost, setNamespaceCost] = useState<CostEstimate | null>(null)
 
   const fetchPods = (silent = false) => {
@@ -98,15 +93,7 @@ export default function NamespaceDetails({ namespace, onBack }: NamespaceDetails
       .finally(() => setLoading(false));
   }
 
-  const fetchConfig = () => {
-    fetch('/api/scaling/configs')
-      .then(res => res.json())
-      .then(data => {
-        const p = ((data || []) as ScalingConfig[]).find(p => p.spec.targetNamespace === namespace);
-        setConfig(p);
-      })
-      .catch(console.error);
-  }
+
 
   const fetchOptimization = () => {
     fetch(`/api/namespaces/${namespace}/optimization`)
@@ -124,106 +111,15 @@ export default function NamespaceDetails({ namespace, onBack }: NamespaceDetails
   // Pods refresh silently: the loading state starts true and the first fetch clears it.
   usePolling(() => {
     fetchPods(true)
-    fetchConfig()
     fetchOptimization()
     fetchCost()
   }, 10000, namespace)
 
-  const handleManualScale = async (active: boolean) => {
-    if (!config || isScaling) return;
-    setIsScaling(true);
-    
-    // Optimistic UI Update
-    const previousPhase = config.status?.phase;
-    setConfig({
-      ...config,
-      status: {
-        lastAction: '',
-        ...config.status,
-        phase: 'Scaling...'
-      }
-    });
 
-    try {
-      await fetch(`/api/scaling/configs/${config.metadata.name}/manual`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        // Hold until the next scheduled change when there is a schedule, so a click never
-        // pins the namespace forever.
-        body: JSON.stringify({ active, ...((config.spec?.schedules?.length || 0) > 0 ? { until: 'nextTransition' } : {}) })
-      });
-      fetchConfig();
-      setError(null);
-      
-      // Fast polling setup to catch the result quickly
-      let attempts = 0;
-      const fastPoll = setInterval(() => {
-        fetchPods(true);
-        fetchConfig();
-        attempts++;
-        if (attempts > 10) { // Keep fast polling for ~20 seconds maximum
-          clearInterval(fastPoll);
-          setIsScaling(false);
-        }
-      }, 2000);
 
-      // We clear the isScaling explicitly when the phase actually changes from 'Scaling...' inside fetchConfig,
-      // but we need a fallback timeout here just in case.
-      setTimeout(() => setIsScaling(false), 22000);
 
-    } catch (err) {
-      console.error("Error during manual scale:", err);
-      setError("Failed to apply manual scaling. Please check the console for details.");
-      // Revert optimistic update on failure
-      setConfig({
-        ...config,
-        status: { lastAction: '', ...config.status, phase: previousPhase ?? '' }
-      });
-      setIsScaling(false);
-    }
-  };
 
-  const handleCreateConfig = async () => {
-    try {
-      await fetch('/api/scaling/configs', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          metadata: { name: `config-${namespace}` },
-          spec: { targetNamespace: namespace }
-        })
-      });
-      fetchConfig();
-    } catch (err) {
-      console.error(err);
-    }
-  };
 
-  const handleUpdateConfig = async (updatedSpec: ScalingSpec) => {
-    if (!config) return;
-    try {
-      const res = await fetch(`/api/scaling/configs/${config.metadata.name}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          metadata: { name: config.metadata.name },
-          spec: updatedSpec 
-        })
-      });
-
-      if (!res.ok) {
-        const text = await res.text();
-        throw new Error(text || res.statusText);
-      }
-
-      setIsEditingConfig(false);
-      setError(null);
-      fetchConfig();
-    } catch (err) {
-      console.error(err);
-      setError(`Failed to update configuration: ${errorMessage(err)}`);
-    }
-  };
 
   const handleSort = (field: typeof sortField) => {
     if (sortField === field) {
@@ -273,79 +169,7 @@ export default function NamespaceDetails({ namespace, onBack }: NamespaceDetails
         </div>
       </div>
 
-      {/* Scaling Controls Section */}
-      <div className="bg-slate-900 rounded-2xl p-6 mb-8 text-white shadow-xl flex items-center justify-between border border-white/10 overflow-hidden relative">
-        <div className="absolute top-0 right-0 p-8 opacity-10 pointer-events-none">
-          <Activity size={120} />
-        </div>
-        <div className="relative z-10 flex items-center gap-6">
-          <div className={`p-4 rounded-2xl ${config ? 'bg-indigo-500/20 text-indigo-400' : 'bg-slate-800 text-slate-500'}`}>
-            <Clock size={32} />
-          </div>
-          <div>
-            <h3 className="text-xl font-bold flex items-center gap-2">
-              Scaling Status
-              {config && (
-                <span className={`px-2 py-0.5 rounded text-[10px] uppercase tracking-widest ${
-                  config.status?.phase === 'ScaledUp' ? 'bg-emerald-500/20 text-emerald-400' : 
-                  config.status?.phase === 'Scaling...' ? 'bg-blue-500/20 text-blue-400 animate-pulse' :
-                  'bg-amber-500/20 text-amber-400'
-                }`}>
-                  {config.status?.phase || 'Idle'}
-                </span>
-              )}
-            </h3>
-            <p className="text-slate-400 text-sm mt-1">
-              {config 
-                ? `Scale config "${config.metadata.name}" is active. Availability managed by schedule.` 
-                : "No individual scaling config configured for this namespace."}
-            </p>
-          </div>
-        </div>
-        <div className="relative z-10 flex items-center gap-3">
-          {config ? (
-            <>
-              {can('operator') && <>
-              <button 
-                onClick={() => handleManualScale(true)}
-                disabled={isScaling}
-                className={`p-3 rounded-xl transition-all ${config.status?.phase === 'ScaledUp' ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/30' : 'bg-slate-800 text-slate-400 hover:text-white'} ${isScaling ? 'opacity-50 cursor-not-allowed' : ''}`}
-              >
-                {isScaling && config.status?.phase === 'Scaling...' ? (
-                   <div className="w-5 h-5 border-2 border-slate-300 border-t-emerald-500 rounded-full animate-spin"></div>
-                ) : (
-                  <Play size={20} fill={config.status?.phase === 'ScaledUp' ? "currentColor" : "none"} />
-                )}
-              </button>
-              <button 
-                onClick={() => handleManualScale(false)}
-                disabled={isScaling}
-                className={`p-3 rounded-xl transition-all ${config.status?.phase === 'ScaledDown' ? 'bg-rose-500 text-white shadow-lg shadow-rose-500/30' : 'bg-slate-800 text-slate-400 hover:text-white'} ${isScaling ? 'opacity-50 cursor-not-allowed' : ''}`}
-              >
-                {isScaling && config.status?.phase === 'Scaling...' ? (
-                   <div className="w-5 h-5 border-2 border-slate-300 border-t-rose-500 rounded-full animate-spin"></div>
-                ) : (
-                  <Square size={20} fill={config.status?.phase === 'ScaledDown' ? "currentColor" : "none"} />
-                )}
-              </button>
-              </>}
-              {can('admin') && <button 
-                onClick={() => setIsEditingConfig(true)}
-                className="bg-white/10 hover:bg-white/20 p-3 rounded-xl transition-all"
-              >
-                <Settings2 size={20} />
-              </button>}
-            </>
-          ) : can('admin') && (
-            <button 
-              onClick={handleCreateConfig}
-              className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-3 rounded-xl font-bold flex items-center gap-2 shadow-lg shadow-indigo-600/20 transition-all"
-            >
-              <Plus size={18} /> Enable Scaling
-            </button>
-          )}
-        </div>
-      </div>
+      <NamespaceScalingPanel namespace={namespace} />
 
       <RecommendationsPanel namespace={namespace} />
 
@@ -533,16 +357,6 @@ export default function NamespaceDetails({ namespace, onBack }: NamespaceDetails
           </table>
         </div>
       </div>
-
-      {isEditingConfig && config && (
-        <ScalingConfigModal 
-          name={config.metadata.name}
-          mode="schedule"
-          spec={config.spec}
-          onClose={() => setIsEditingConfig(false)}
-          onSave={handleUpdateConfig}
-        />
-      )}
     </div>
   )
 }
