@@ -176,3 +176,27 @@ func TestGCPDiscoverScaleAndReadiness(t *testing.T) {
 		t.Error("a malformed instance ID must be rejected")
 	}
 }
+
+func TestCloudTokenStaysOnTheAPIHost(t *testing.T) {
+	evil := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("the token reached another host: %s %s", r.Method, r.URL)
+	}))
+	defer evil.Close()
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "redirect") {
+			http.Redirect(w, r, evil.URL+"/steal", http.StatusFound)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"value": []any{}, "nextLink": evil.URL + "/page2"})
+	}))
+	defer api.Close()
+
+	rest := newRESTClient(context.Background(), oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "secret"}))
+	p := &AzureProvider{subscription: sub, rest: rest, base: api.URL}
+	if _, err := p.Discover(context.Background(), AzureTypeVM, nil); err == nil || !strings.Contains(err.Error(), "paging link") {
+		t.Errorf("a paging link to another host must be refused, got %v", err)
+	}
+	if err := rest.do(context.Background(), http.MethodGet, api.URL+"/redirect", nil, nil); err == nil || !strings.Contains(err.Error(), "refusing a redirect") {
+		t.Errorf("a redirect to another host must be refused, got %v", err)
+	}
+}

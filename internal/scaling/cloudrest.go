@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -23,7 +25,34 @@ type restClient struct {
 func newRESTClient(ctx context.Context, ts oauth2.TokenSource) *restClient {
 	base := &http.Client{Timeout: 30 * time.Second}
 	client := oauth2.NewClient(context.WithValue(ctx, oauth2.HTTPClient, base), oauth2.ReuseTokenSource(nil, ts))
+	// The oauth2 transport adds the bearer token to every request it sends, redirects
+	// included, so a redirect may never leave the host the request was made to.
+	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 10 {
+			return errors.New("stopped after 10 redirects")
+		}
+		if !sameOrigin(via[0].URL.String(), req.URL.String()) {
+			return fmt.Errorf("refusing a redirect to %s", req.URL.Host)
+		}
+		return nil
+	}
 	return &restClient{http: client}
+}
+
+// sameOrigin reports whether link has base's scheme and host. Paging links come from the
+// response and are followed with the cloud token, so they must stay on the API's host.
+func sameOrigin(base, link string) bool {
+	b, errB := url.Parse(base)
+	l, errL := url.Parse(link)
+	return errB == nil && errL == nil && l.User == nil && b.Scheme == l.Scheme && strings.EqualFold(b.Host, l.Host)
+}
+
+// nextLink returns a paging link to follow, or an error when it leaves the API's host.
+func nextLink(base, link string) (string, error) {
+	if link == "" || sameOrigin(base, link) {
+		return link, nil
+	}
+	return "", fmt.Errorf("refusing a paging link outside %s", base)
 }
 
 // apiError is a non-2xx answer. Status lets callers treat "already in that state"
@@ -38,7 +67,7 @@ func (e *apiError) Error() string {
 }
 
 // do sends a request and decodes a JSON answer into out (when out is not nil).
-func (c *restClient) do(ctx context.Context, method, url string, body, out any) error {
+func (c *restClient) do(ctx context.Context, method, endpoint string, body, out any) error {
 	var reader io.Reader
 	if body != nil {
 		buf, err := json.Marshal(body)
@@ -47,7 +76,7 @@ func (c *restClient) do(ctx context.Context, method, url string, body, out any) 
 		}
 		reader = bytes.NewReader(buf)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, url, reader)
+	req, err := http.NewRequestWithContext(ctx, method, endpoint, reader)
 	if err != nil {
 		return err
 	}

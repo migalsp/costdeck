@@ -183,7 +183,10 @@ func (p *AzureProvider) Discover(ctx context.Context, resourceType string, tags 
 				Provider: ProviderAzure, Type: resourceType, Identifier: r.ID, Region: r.Location, Status: status, Name: r.Name,
 			})
 		}
-		next = page.NextLink
+		var err error
+		if next, err = nextLink(p.base, page.NextLink); err != nil {
+			return nil, err
+		}
 	}
 	return targets, nil
 }
