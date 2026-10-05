@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -149,6 +150,10 @@ func (s *Service) Middleware(next http.Handler) http.Handler {
 			writeAuthJSON(w, http.StatusUnauthorized, map[string]string{"error": "Invalid or expired API token"})
 			return
 		}
+		if crossSiteWrite(r) {
+			writeAuthJSON(w, http.StatusForbidden, map[string]string{"error": "Cross-site request refused"})
+			return
+		}
 		id, err := s.Sessions.Read(r)
 		if err != nil {
 			writeAuthJSON(w, http.StatusUnauthorized, map[string]string{"error": "Authentication required"})
@@ -156,6 +161,27 @@ func (s *Service) Middleware(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r.WithContext(WithIdentity(ctx, id)))
 	})
+}
+
+// crossSiteWrite reports whether a request that would change something with the session
+// cookie comes from another site. SameSite=Lax keeps the cookie off cross-site requests but
+// not off requests from a sibling subdomain, and the API accepts a JSON body whatever its
+// Content-Type, so a page elsewhere on the same site could otherwise post a form to it.
+// Browsers say where a request comes from in Sec-Fetch-Site, or at least in Origin; clients
+// that send neither, such as curl, are not browsers and cannot be tricked into sending it.
+func crossSiteWrite(r *http.Request) bool {
+	switch r.Method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return false
+	}
+	if site := r.Header.Get("Sec-Fetch-Site"); site != "" {
+		return site != "same-origin" && site != "none"
+	}
+	if origin := r.Header.Get("Origin"); origin != "" {
+		u, err := url.Parse(origin)
+		return err != nil || !strings.EqualFold(u.Host, r.Host)
+	}
+	return false
 }
 
 // Require wraps a handler with a minimum role.

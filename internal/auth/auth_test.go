@@ -497,3 +497,41 @@ func TestMiddlewareAcceptsBearerTokens(t *testing.T) {
 		t.Errorf("forged token = %d, want 401", rr.Code)
 	}
 }
+
+func TestMiddlewareRefusesCrossSiteWrites(t *testing.T) {
+	svc := newTestService(t)
+	mux := http.NewServeMux()
+	ok := func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }
+	mux.HandleFunc("POST /api/thing", Require(RoleViewer, ok))
+	mux.HandleFunc("GET /api/thing", Require(RoleViewer, ok))
+	h := svc.Middleware(mux)
+	token, _ := svc.Sessions.Sign(Identity{Subject: "local:admin", Role: RoleAdmin, ExpiresAt: time.Now().Add(time.Hour).Unix()})
+
+	do := func(method string, headers map[string]string) int {
+		req := httptest.NewRequest(method, "http://costdeck.example.com/api/thing", nil)
+		req.AddCookie(&http.Cookie{Name: SessionCookie, Value: token})
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		return rr.Code
+	}
+	for name, c := range map[string]struct {
+		method  string
+		headers map[string]string
+		want    int
+	}{
+		"dashboard":              {http.MethodPost, map[string]string{"Sec-Fetch-Site": "same-origin", "Origin": "http://costdeck.example.com"}, http.StatusOK},
+		"sibling subdomain":      {http.MethodPost, map[string]string{"Sec-Fetch-Site": "same-site", "Origin": "http://evil.example.com"}, http.StatusForbidden},
+		"other site":             {http.MethodPost, map[string]string{"Sec-Fetch-Site": "cross-site"}, http.StatusForbidden},
+		"older browser, foreign": {http.MethodPost, map[string]string{"Origin": "http://evil.example.com"}, http.StatusForbidden},
+		"older browser, ours":    {http.MethodPost, map[string]string{"Origin": "http://costdeck.example.com"}, http.StatusOK},
+		"curl":                   {http.MethodPost, nil, http.StatusOK},
+		"cross-site read":        {http.MethodGet, map[string]string{"Sec-Fetch-Site": "cross-site"}, http.StatusOK},
+	} {
+		if got := do(c.method, c.headers); got != c.want {
+			t.Errorf("%s: %d, want %d", name, got, c.want)
+		}
+	}
+}
