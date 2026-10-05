@@ -5,10 +5,14 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"testing/fstest"
 )
+
+var testUI = fstest.MapFS{"index.html": {Data: []byte(`<!doctype html><div id="root"></div>`)}}
 
 func TestRouterMethodAndFallbacks(t *testing.T) {
 	server := buildMockServerWithK8s()
+	server.UI = testUI
 	handler, err := server.Handler()
 	if err != nil {
 		t.Fatal(err)
@@ -40,6 +44,27 @@ func TestRouterMethodAndFallbacks(t *testing.T) {
 				t.Errorf("X-Content-Type-Options = %q, want nosniff", got)
 			}
 		})
+	}
+}
+
+func TestBuildWithoutDashboardExplainsItself(t *testing.T) {
+	server := buildMockServerWithK8s()
+	server.UI = fstest.MapFS{}
+	handler, err := server.Handler()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rr.Code != http.StatusServiceUnavailable || !strings.Contains(rr.Body.String(), "make ui") {
+		t.Errorf("GET / = %d %q, want 503 pointing at `make ui`", rr.Code, rr.Body.String())
+	}
+
+	rr = httptest.NewRecorder()
+	handler.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/version", nil))
+	if rr.Code != http.StatusOK {
+		t.Errorf("GET /api/version = %d, the API must keep working without the dashboard", rr.Code)
 	}
 }
 

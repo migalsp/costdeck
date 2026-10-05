@@ -43,6 +43,8 @@ type Server struct {
 	// nil, which skips authentication entirely.
 	Auth *auth.Service
 	Port string
+	// UI holds the dashboard files; nil means the assets embedded at build time.
+	UI fs.FS
 
 	// Pricing resolves cost rates; built on first use when nil.
 	Pricing     *pricing.Resolver
@@ -55,6 +57,10 @@ type Server struct {
 	rootCtx context.Context
 }
 
+// uiFS is the dashboard compiled by `make ui` (or the container build). A checkout only
+// carries internal/api/ui/.gitkeep, which the ui/* pattern matches, so the package always
+// compiles; spaHandler explains what is missing when no index.html was embedded.
+//
 //go:embed ui/*
 var uiFS embed.FS
 
@@ -120,9 +126,13 @@ func (s *Server) Start(ctx context.Context) error {
 
 // Handler builds the complete HTTP handler: API routes, the dashboard and middleware.
 func (s *Server) Handler() (http.Handler, error) {
-	ui, err := fs.Sub(uiFS, "ui")
-	if err != nil {
-		return nil, err
+	ui := s.UI
+	if ui == nil {
+		embedded, err := fs.Sub(uiFS, "ui")
+		if err != nil {
+			return nil, err
+		}
+		ui = embedded
 	}
 	// API routes get a mux of their own: an unknown /api/ path must answer 404 (and a
 	// wrong method 405) instead of falling through to the dashboard.
@@ -220,6 +230,13 @@ func (s *Server) routes() *http.ServeMux {
 // spaHandler serves the embedded single-page app. Paths that are not a file fall back to
 // index.html so client-side routes (for example the SSO callback) survive a reload.
 func spaHandler(ui fs.FS) http.Handler {
+	if _, err := fs.Stat(ui, "index.html"); err != nil {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "The dashboard is not part of this build. Run `make ui` before `go build`, "+
+				"or use the released container image. The REST API under /api/ works without it.",
+				http.StatusServiceUnavailable)
+		})
+	}
 	files := http.FileServerFS(ui)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		name := strings.TrimPrefix(path.Clean(r.URL.Path), "/")

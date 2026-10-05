@@ -122,8 +122,18 @@ lint-config: golangci-lint ## Verify golangci-lint linter configuration
 
 ##@ Build
 
+.PHONY: ui
+ui: ## Build the dashboard and sync it into internal/api/ui, where go:embed picks it up.
+	cd ui && npm ci && npm run build
+	find internal/api/ui -mindepth 1 ! -name .gitkeep -delete
+	cp -R ui/dist/. internal/api/ui/
+
+.PHONY: ui-lint
+ui-lint: ## Type-check and lint the dashboard.
+	cd ui && npm ci && npx tsc -b && npm run lint
+
 .PHONY: build
-build: manifests generate fmt vet ## Build manager binary.
+build: manifests generate fmt vet ## Build manager binary (run `make ui` first to embed the dashboard).
 	go build -o bin/manager cmd/main.go
 
 .PHONY: run
