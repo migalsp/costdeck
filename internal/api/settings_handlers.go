@@ -127,8 +127,9 @@ type MessengerSettingsResponse struct {
 }
 
 type WebexSettingsResponse struct {
-	Enabled        bool                     `json:"enabled"`
-	RoomID         string                   `json:"roomId,omitempty"`
+	Enabled           bool                     `json:"enabled"`
+	NotifyTransitions bool                     `json:"notifyTransitions"`
+	RoomID            string                   `json:"roomId,omitempty"`
 	HasCredentials bool                     `json:"hasCredentials"`
 	Status         *finopsv1.ProviderStatus `json:"status,omitempty"`
 }
@@ -240,7 +241,8 @@ type MessengerUpdateRequest struct {
 }
 
 type WebexUpdateRequest struct {
-	Enabled       *bool   `json:"enabled,omitempty"`
+	Enabled           *bool `json:"enabled,omitempty"`
+	NotifyTransitions *bool `json:"notifyTransitions,omitempty"`
 	RoomID        *string `json:"roomId,omitempty"`
 	BotToken      string  `json:"botToken,omitempty"`
 	WebhookSecret *string `json:"webhookSecret,omitempty"`
@@ -346,7 +348,8 @@ func (s *Server) buildSettingsResponse(ctx context.Context, cfg *finopsv1.CostDe
 	if cfg.Spec.Integrations.Messenger != nil && cfg.Spec.Integrations.Messenger.Webex != nil {
 		resp.Integrations.Messenger = &MessengerSettingsResponse{
 			Webex: &WebexSettingsResponse{
-				Enabled:        cfg.Spec.Integrations.Messenger.Webex.Enabled,
+				Enabled:           cfg.Spec.Integrations.Messenger.Webex.Enabled,
+				NotifyTransitions: cfg.Spec.Integrations.Messenger.Webex.NotifyTransitions,
 				RoomID:         cfg.Spec.Integrations.Messenger.Webex.RoomID,
 				HasCredentials: cfg.Spec.Integrations.Messenger.Webex.SecretRef != "",
 				Status:         cfg.Status.Webex,
@@ -589,6 +592,12 @@ func (s *Server) applyWebexSettings(ctx context.Context, cfg *finopsv1.CostDeckC
 	}
 	if wxReq.RoomID != nil {
 		wx.RoomID = strings.TrimSpace(*wxReq.RoomID)
+	}
+	if wxReq.NotifyTransitions != nil {
+		wx.NotifyTransitions = *wxReq.NotifyTransitions
+	}
+	if wx.NotifyTransitions && wx.RoomID == "" {
+		return badRequestf("transition notifications need a Webex space ID to post to")
 	}
 	if wxReq.BotToken == "" && wxReq.WebhookSecret == nil {
 		return nil

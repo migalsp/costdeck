@@ -46,6 +46,8 @@ type ScalingConfigReconciler struct {
 	Engine *scaling.Engine
 	// Pricing values the savings of kept-down workloads; optional.
 	Pricing *pricing.Resolver
+	// Notifier announces finished transitions; optional.
+	Notifier Notifier
 }
 
 // +kubebuilder:rbac:groups=finops.costdeck.io,namespace=costdeck,resources=scalingconfigs,verbs=get;list;watch;create;update;patch;delete
@@ -79,6 +81,7 @@ func (r *ScalingConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	l.Info("Reconciling ScalingConfig", "targetNamespace", config.Spec.TargetNamespace, "targetActive", targetActive, "mode", decision.Mode)
 
 	// 2.5 Phase and Timeout Logic
+	previousPhase := config.Status.Phase
 	timeoutPassed := r.updateStatusPhase(ctx, config, targetActive)
 
 	// 3. Execute Scaling if needed
@@ -107,6 +110,7 @@ func (r *ScalingConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	if err := r.Status().Update(ctx, config); err != nil {
 		return ctrl.Result{}, err
 	}
+	announceTransition(ctx, r.Notifier, "Namespace", config.Spec.TargetNamespace, previousPhase, config.Status.Phase, config.Status.ScheduleStatus, nil)
 	telemetry.RecordScaling("ScalingConfig", config.Name, targetActive, ready,
 		decision.Mode == scaling.ModeManualUp || decision.Mode == scaling.ModeManualDown, savings, config.Status.Currency)
 

@@ -52,6 +52,7 @@ interface AISettings {
 
 interface WebexSettings {
   enabled: boolean
+  notifyTransitions?: boolean
   roomId?: string
   hasCredentials: boolean
   status?: ProviderStatus
@@ -356,6 +357,7 @@ export default function SettingsPage() {
   const [webexRoomId, setWebexRoomId] = useState('')
   const [webexBotToken, setWebexBotToken] = useState('')
   const [webexWebhookSecret, setWebexWebhookSecret] = useState('')
+  const [webexNotify, setWebexNotify] = useState(false)
 
   // VictoriaMetrics form state
   const [vmEnabled, setVmEnabled] = useState(false)
@@ -410,6 +412,7 @@ export default function SettingsPage() {
         if (data.integrations.messenger?.webex) {
           setWebexEnabled(data.integrations.messenger.webex.enabled)
           setWebexRoomId(data.integrations.messenger.webex.roomId || '')
+          setWebexNotify(data.integrations.messenger.webex.notifyTransitions || false)
         }
         if (data.integrations.victoriaMetrics) {
           setVmEnabled(data.integrations.victoriaMetrics.enabled)
@@ -481,6 +484,7 @@ export default function SettingsPage() {
             webex: {
               enabled: webexEnabled,
               roomId: webexRoomId,
+              notifyTransitions: webexNotify,
               ...(webexBotToken ? { botToken: webexBotToken } : {}),
               ...(webexWebhookSecret ? { webhookSecret: webexWebhookSecret } : {})
             }
@@ -1217,6 +1221,14 @@ export default function SettingsPage() {
                   className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm"
                 />
               </div>
+
+              <label className="flex items-start gap-3 p-3 rounded-xl border border-slate-200 bg-slate-50 cursor-pointer">
+                <input type="checkbox" checked={webexNotify} onChange={e => setWebexNotify(e.target.checked)} className="mt-0.5 accent-blue-600" />
+                <span>
+                  <span className="block text-sm font-bold text-slate-700">Announce scaling transitions</span>
+                  <span className="block text-[11px] text-slate-400">Post to the space above whenever a group or namespace finishes scaling up or down, with who triggered it and the estimated savings.</span>
+                </span>
+              </label>
 
               <div>
                 <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5 block">

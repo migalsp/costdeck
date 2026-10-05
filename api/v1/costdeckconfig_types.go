@@ -138,9 +138,15 @@ type WebexConfig struct {
 	// +optional
 	Enabled bool `json:"enabled,omitempty"`
 
-	// RoomID is the Webex room/space ID for notifications
+	// RoomID is the Webex space the bot answers in and posts notifications to. When empty
+	// the bot answers in every space it is a member of.
 	// +optional
 	RoomID string `json:"roomId,omitempty"`
+
+	// NotifyTransitions posts to RoomID whenever a ScalingGroup or ScalingConfig finishes
+	// scaling up or down, with who triggered it and the estimated savings.
+	// +optional
+	NotifyTransitions bool `json:"notifyTransitions,omitempty"`
 
 	// SecretRef is the name of the K8s Secret holding the Webex bot token (key BOT_TOKEN).
 	// Adding a WEBHOOK_SECRET key switches delivery from polling to signed webhooks

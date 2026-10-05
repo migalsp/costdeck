@@ -176,18 +176,21 @@ func main() {
 		setupLog.Error(err, "Failed to create controller", "controller", "NamespaceDiscovery")
 		os.Exit(1)
 	}
+	notifier := &webex.Notifier{Client: mgr.GetClient()}
 	if err := (&controller.ScalingConfigReconciler{
-		Client:  mgr.GetClient(),
-		Scheme:  mgr.GetScheme(),
-		Pricing: pricingResolver,
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Pricing:  pricingResolver,
+		Notifier: notifier,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "ScalingConfig")
 		os.Exit(1)
 	}
 	if err := (&controller.ScalingGroupReconciler{
-		Client:  mgr.GetClient(),
-		Scheme:  mgr.GetScheme(),
-		Pricing: pricingResolver,
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Pricing:  pricingResolver,
+		Notifier: notifier,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "ScalingGroup")
 		os.Exit(1)

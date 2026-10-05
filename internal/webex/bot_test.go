@@ -292,3 +292,41 @@ func TestParseUntil(t *testing.T) {
 		}
 	}
 }
+
+func TestNotifierPostsOnlyWhenEnabled(t *testing.T) {
+	_, api, k8s := newTestBot(t, "prod")
+	srv := httptest.NewServer(api)
+	defer srv.Close()
+	t.Setenv("POD_NAMESPACE", "costdeck")
+	ctx := context.Background()
+	cfg := &finopsv1.CostDeckConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: "costdeck"},
+		Spec: finopsv1.CostDeckConfigSpec{ClusterName: "prod", Integrations: finopsv1.IntegrationsConfig{
+			Messenger: &finopsv1.MessengerIntegrationConfig{Webex: &finopsv1.WebexConfig{Enabled: true, SecretRef: "wx", RoomID: "room"}},
+		}},
+	}
+	for _, obj := range []client.Object{
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "wx", Namespace: "costdeck"}, Data: map[string][]byte{SecretKeyBotToken: []byte("t")}},
+		cfg,
+	} {
+		if err := k8s.Create(ctx, obj); err != nil {
+			t.Fatal(err)
+		}
+	}
+	n := &Notifier{Client: k8s, NewClient: func(token string) *Client { return &Client{Token: token, BaseURL: srv.URL, HTTP: srv.Client()} }}
+
+	n.Notify(ctx, "⏸️ Group `pps1` is scaled down")
+	if len(api.replies()) != 0 {
+		t.Fatal("notifications are opt-in")
+	}
+
+	cfg.Spec.Integrations.Messenger.Webex.NotifyTransitions = true
+	if err := k8s.Update(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	n.Notify(ctx, "⏸️ Group `pps1` is scaled down")
+	replies := api.replies()
+	if len(replies) != 1 || replies[0]["roomId"] != "room" || !strings.HasPrefix(replies[0]["markdown"], "**[prod]**") {
+		t.Errorf("notification = %v", replies)
+	}
+}

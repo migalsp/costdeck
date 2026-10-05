@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -101,6 +102,51 @@ func recordSavings(ctx context.Context, st *finopsv1.ScheduleStatus, resolver *p
 		st.Currency = rates.Currency
 	}
 	return hourly
+}
+
+// Notifier announces finished scaling transitions, for example in a Webex space.
+type Notifier interface {
+	Notify(ctx context.Context, markdown string)
+}
+
+// announceTransition notifies when an object has just finished scaling up or down. The
+// first reconcile of a new object (no previous phase) is not announced.
+func announceTransition(ctx context.Context, n Notifier, kind, name, oldPhase, newPhase string, st finopsv1.ScheduleStatus, requiredBy []string) {
+	if n == nil || oldPhase == "" || oldPhase == newPhase || (newPhase != scaling.PhaseScaledUp && newPhase != scaling.PhaseScaledDown) {
+		return
+	}
+	go n.Notify(context.WithoutCancel(ctx), transitionMessage(kind, name, newPhase, st, requiredBy))
+}
+
+func transitionMessage(kind, name, phase string, st finopsv1.ScheduleStatus, requiredBy []string) string {
+	icon, state := "▶️", "is up"
+	if phase == scaling.PhaseScaledDown {
+		icon, state = "⏸️", "is scaled down"
+	}
+	why := ""
+	switch st.Mode {
+	case scaling.ModeSchedule:
+		why = "by its schedule"
+	case scaling.ModeManualUp, scaling.ModeManualDown:
+		why = "by a manual override"
+		if st.OverrideExpiresAt != nil {
+			why += " until " + st.OverrideExpiresAt.UTC().Format("Mon 15:04 MST")
+		}
+	case scaling.ModeDependency:
+		why = "for " + strings.Join(requiredBy, ", ")
+	case scaling.ModeOnDemand:
+		why = "because nothing needs it"
+	case scaling.ModeAlwaysOn:
+		why = "(no schedule)"
+	}
+	msg := fmt.Sprintf("%s %s `%s` %s %s.", icon, kind, name, state, why)
+	if st.NextTransition != nil {
+		msg += fmt.Sprintf(" Next change: %s at %s.", strings.ToLower(st.NextTransition.DesiredState), st.NextTransition.Time.UTC().Format("Mon 15:04 MST"))
+	}
+	if st.EstimatedHourlySavings != "" {
+		msg += fmt.Sprintf(" Saving ~%s %s/h.", strings.TrimRight(strings.TrimRight(st.EstimatedHourlySavings, "0"), "."), st.Currency)
+	}
+	return msg
 }
 
 // setReadyCondition records whether the observed phase matches the desired state.

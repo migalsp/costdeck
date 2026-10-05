@@ -199,8 +199,15 @@ spec:
                           enabled:
                             description: Enabled toggles the Webex integration on/off
                             type: boolean
+                          notifyTransitions:
+                            description: |-
+                              NotifyTransitions posts to RoomID whenever a ScalingGroup or ScalingConfig finishes
+                              scaling up or down, with who triggered it and the estimated savings.
+                            type: boolean
                           roomId:
-                            description: RoomID is the Webex room/space ID for notifications
+                            description: |-
+                              RoomID is the Webex space the bot answers in and posts notifications to. When empty
+                              the bot answers in every space it is a member of.
                             type: string
                           secretRef:
                             description: |-
