@@ -369,7 +369,7 @@ curl -b cookies.txt -X POST http://localhost:8082/api/costing \\
 #   "hourlyCost": 0.096,
 #   "monthlyCost": 70.08,
 #   "currency": "USD",
-#   "determinedBy": "Heuristic Math Pricing (aws)"
+#   "determinedBy": "Heuristic list-price estimate (aws)"
 # }`
       },
       {
@@ -800,7 +800,7 @@ const apiGroups: { section: string; items: Endpoint[] }[] = [
       {
         method: 'POST', path: '/api/costing', description: 'Calculate estimated hourly and monthly costs for a target', auth: true,
         requestBody: '{\n  "targetType": "namespace",\n  "targetName": "frontend",\n  "totalCpu": 2,\n  "totalMemoryGb": 4\n}',
-        responseExample: '{\n  "hourlyCost": 0.096,\n  "monthlyCost": 70.08,\n  "currency": "USD",\n  "determinedBy": "Heuristic Math Pricing (aws)"\n}'
+        responseExample: '{\n  "hourlyCost": 0.096,\n  "monthlyCost": 70.08,\n  "currency": "USD",\n  "determinedBy": "Heuristic list-price estimate (aws)"\n}'
       },
     ]
   },

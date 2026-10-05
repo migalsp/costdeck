@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"maps"
 	"net/http"
+	"regexp"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -14,12 +15,12 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
 	"github.com/migalsp/costdeck-operator/internal/auth"
 	"github.com/migalsp/costdeck-operator/internal/config"
 	"github.com/migalsp/costdeck-operator/internal/metrics"
+	"github.com/migalsp/costdeck-operator/internal/pricing"
 	"github.com/migalsp/costdeck-operator/internal/scaling"
 	"github.com/migalsp/costdeck-operator/internal/webex"
 )
@@ -33,6 +34,15 @@ type SettingsResponse struct {
 	Integrations IntegrationsSettingsResponse `json:"integrations"`
 	Features     *FeaturesSettingsResponse    `json:"features,omitempty"`
 	Auth         AuthSettingsResponse         `json:"auth"`
+	Pricing      PricingSettingsResponse      `json:"pricing"`
+}
+
+// PricingSettingsResponse shows the configured custom rates and the rates in effect.
+type PricingSettingsResponse struct {
+	CPUCoreHour  string        `json:"cpuCoreHour,omitempty"`
+	MemoryGBHour string        `json:"memoryGiBHour,omitempty"`
+	Currency     string        `json:"currency,omitempty"`
+	Effective    pricing.Rates `json:"effective"`
 }
 
 // AuthSettingsResponse describes sign-in settings. The client secret is never returned.
@@ -140,6 +150,14 @@ type SettingsUpdateRequest struct {
 	Integrations *IntegrationsUpdateRequest `json:"integrations,omitempty"`
 	Features     *FeaturesUpdateRequest     `json:"features,omitempty"`
 	Auth         *AuthUpdateRequest         `json:"auth,omitempty"`
+	Pricing      *PricingUpdateRequest      `json:"pricing,omitempty"`
+}
+
+// PricingUpdateRequest sets custom rates; empty strings clear them.
+type PricingUpdateRequest struct {
+	CPUCoreHour  *string `json:"cpuCoreHour,omitempty"`
+	MemoryGBHour *string `json:"memoryGiBHour,omitempty"`
+	Currency     *string `json:"currency,omitempty"`
 }
 
 // AuthUpdateRequest changes sign-in settings. Nil fields stay unchanged.
@@ -365,6 +383,14 @@ func (s *Server) buildSettingsResponse(ctx context.Context, cfg *finopsv1.CostDe
 		CloudPricingAPI: cfg.Spec.Features.CloudPricingAPI,
 	}
 
+	// Pricing
+	resp.Pricing = PricingSettingsResponse{
+		CPUCoreHour:  cfg.Spec.Pricing.CPUCoreHour,
+		MemoryGBHour: cfg.Spec.Pricing.MemoryGBHour,
+		Currency:     cfg.Spec.Pricing.Currency,
+		Effective:    s.costRates(ctx),
+	}
+
 	// Sign-in
 	resp.Auth.DisableLocalLogin = cfg.Spec.Auth.DisableLocalLogin
 	if e := cfg.Spec.Auth.Entra; e != nil {
@@ -398,7 +424,7 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 
 	appliers := []func(context.Context, *finopsv1.CostDeckConfig, *SettingsUpdateRequest) error{
 		s.applyAWSSettings, s.applyAzureSettings, s.applyGCPSettings, s.applyAISettings,
-		s.applyWebexSettings, s.applyVictoriaMetricsSettings, applyMCPSettings, applyFeatureSettings, s.applyAuthSettings,
+		s.applyWebexSettings, s.applyVictoriaMetricsSettings, applyMCPSettings, applyFeatureSettings, applyPricingSettings, s.applyAuthSettings,
 	}
 
 	var cfg *finopsv1.CostDeckConfig
@@ -630,6 +656,36 @@ func applyMCPSettings(_ context.Context, cfg *finopsv1.CostDeckConfig, req *Sett
 	return nil
 }
 
+var decimalRate = regexp.MustCompile(`^[0-9]+(\.[0-9]+)?$`)
+
+func applyPricingSettings(_ context.Context, cfg *finopsv1.CostDeckConfig, req *SettingsUpdateRequest) error {
+	p := req.Pricing
+	if p == nil {
+		return nil
+	}
+	for _, f := range []struct {
+		src *string
+		dst *string
+	}{{p.CPUCoreHour, &cfg.Spec.Pricing.CPUCoreHour}, {p.MemoryGBHour, &cfg.Spec.Pricing.MemoryGBHour}} {
+		if f.src == nil {
+			continue
+		}
+		v := strings.TrimSpace(*f.src)
+		if v != "" && !decimalRate.MatchString(v) {
+			return badRequestf("rates must be plain decimal numbers such as 0.031, got %q", v)
+		}
+		*f.dst = v
+	}
+	if p.Currency != nil {
+		c := strings.ToUpper(strings.TrimSpace(*p.Currency))
+		if c != "" && len(c) != 3 {
+			return badRequestf("currency must be a three-letter code such as USD or EUR")
+		}
+		cfg.Spec.Pricing.Currency = c
+	}
+	return nil
+}
+
 func applyFeatureSettings(_ context.Context, cfg *finopsv1.CostDeckConfig, req *SettingsUpdateRequest) error {
 	if req.Features != nil && req.Features.CloudPricingAPI != nil {
 		cfg.Spec.Features.CloudPricingAPI = *req.Features.CloudPricingAPI
@@ -731,14 +787,12 @@ func (s *Server) handleTestProvider(w http.ResponseWriter, r *http.Request) {
 	case "entra":
 		s.testEntra(w, ctx, cfg, r)
 	case "azure":
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
+		writeJSON(w, http.StatusOK, map[string]any{
 			"connected": false,
 			"error":     "Azure provider is not yet implemented",
 		})
 	case "gcp":
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
+		writeJSON(w, http.StatusOK, map[string]any{
 			"connected": false,
 			"error":     "GCP provider is not yet implemented",
 		})
@@ -758,8 +812,7 @@ func (s *Server) testAWSProvider(w http.ResponseWriter, ctx context.Context, cfg
 		if err == nil && req.AccessKeyID != "" && req.SecretAccessKey != "" {
 			provider, err = scaling.NewAWSProviderFromCredentials(ctx, req.AccessKeyID, req.SecretAccessKey, req.Region)
 			if err != nil {
-				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(map[string]any{
+				writeJSON(w, http.StatusOK, map[string]any{
 					"connected": false,
 					"error":     fmt.Sprintf("Failed to initialize with provided credentials: %v", err),
 				})
@@ -771,8 +824,7 @@ func (s *Server) testAWSProvider(w http.ResponseWriter, ctx context.Context, cfg
 	// Fallback to stored credentials if no body or body belongs to another provider
 	if provider == nil {
 		if cfg.Spec.Providers.AWS == nil || cfg.Spec.Providers.AWS.SecretRef == "" {
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]any{
+			writeJSON(w, http.StatusOK, map[string]any{
 				"connected": false,
 				"error":     "No AWS credentials configured",
 			})
@@ -785,8 +837,7 @@ func (s *Server) testAWSProvider(w http.ResponseWriter, ctx context.Context, cfg
 			cfg.Spec.Providers.AWS.Region,
 		)
 		if err != nil {
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]any{
+			writeJSON(w, http.StatusOK, map[string]any{
 				"connected": false,
 				"error":     err.Error(),
 			})
@@ -795,16 +846,14 @@ func (s *Server) testAWSProvider(w http.ResponseWriter, ctx context.Context, cfg
 	}
 
 	if err := provider.ValidateConnectivity(ctx); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
+		writeJSON(w, http.StatusOK, map[string]any{
 			"connected": false,
 			"error":     err.Error(),
 		})
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	writeJSON(w, http.StatusOK, map[string]any{
 		"connected": true,
 	})
 }
@@ -938,23 +987,10 @@ func (s *Server) handleProviderStatus(w http.ResponseWriter, r *http.Request) {
 		status = &finopsv1.ProviderStatus{Connected: false, Error: "Provider not configured"}
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(status)
+	writeJSON(w, http.StatusOK, status)
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
-
-// currentConfig returns the CostDeckConfig singleton for read-only use. A read failure is
-// logged and reported as an empty configuration so that dependent features degrade to
-// "not configured" instead of failing the whole request.
-func (s *Server) currentConfig(ctx context.Context) *finopsv1.CostDeckConfig {
-	cfg, err := config.Get(ctx, s.Client)
-	if err != nil {
-		logf.Log.Error(err, "Could not read CostDeckConfig")
-		return config.Empty()
-	}
-	return cfg
-}
 
 // getOrCreateDefaultConfig returns the CostDeckConfig singleton, creating it on first use
 // so that settings can be saved on a fresh installation.

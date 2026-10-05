@@ -302,9 +302,31 @@ type AuthConfig struct {
 
 // FeaturesConfig holds configuration for core CostDeck features.
 type FeaturesConfig struct {
-	// CloudPricingAPI toggles whether to use Public Cloud Pricing API (e.g., AWS Pricing API) instead of heuristic math calculations.
+	// CloudPricingAPI prices the cluster's nodes with the AWS Price List API (on-demand,
+	// Linux) and derives the per-core and per-GiB rates from them. Needs the
+	// pricing:GetProducts permission. Ignored when custom rates are set in spec.pricing.
 	// +optional
 	CloudPricingAPI bool `json:"cloudPricingApi,omitempty"`
+}
+
+// PricingConfig sets the rates used for every cost estimate. Set both rates to use them
+// (on-premises clusters, negotiated discounts); leave them empty to use cloud or
+// heuristic list prices.
+type PricingConfig struct {
+	// CPUCoreHour is the price of one CPU core for one hour, e.g. "0.031".
+	// +kubebuilder:validation:Pattern=`^[0-9]+(\.[0-9]+)?$`
+	// +optional
+	CPUCoreHour string `json:"cpuCoreHour,omitempty"`
+
+	// MemoryGBHour is the price of one GiB of memory for one hour, e.g. "0.0042".
+	// +kubebuilder:validation:Pattern=`^[0-9]+(\.[0-9]+)?$`
+	// +optional
+	MemoryGBHour string `json:"memoryGiBHour,omitempty"`
+
+	// Currency is the ISO 4217 code shown next to costs. Defaults to USD.
+	// +kubebuilder:validation:Pattern=`^[A-Za-z]{3}$`
+	// +optional
+	Currency string `json:"currency,omitempty"`
 }
 
 // ─── CostDeckConfig CRD ─────────────────────────────────────────────────────
@@ -331,6 +353,10 @@ type CostDeckConfigSpec struct {
 	// Auth configures single sign-on and local login.
 	// +optional
 	Auth AuthConfig `json:"auth,omitempty"`
+
+	// Pricing sets custom cost rates.
+	// +optional
+	Pricing PricingConfig `json:"pricing,omitempty"`
 }
 
 // ProviderStatus represents the connection status of a single provider.

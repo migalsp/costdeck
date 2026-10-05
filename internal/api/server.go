@@ -19,6 +19,7 @@ import (
 
 	"github.com/migalsp/costdeck-operator/internal/auth"
 	"github.com/migalsp/costdeck-operator/internal/metrics"
+	"github.com/migalsp/costdeck-operator/internal/pricing"
 )
 
 // Version is set at build time via ldflags
@@ -42,6 +43,10 @@ type Server struct {
 	// nil, which skips authentication entirely.
 	Auth *auth.Service
 	Port string
+
+	// Pricing resolves cost rates; built on first use when nil.
+	Pricing     *pricing.Resolver
+	pricingOnce sync.Once
 
 	healthMu      sync.Mutex
 	healthHistory []map[string]any

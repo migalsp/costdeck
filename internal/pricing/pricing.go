@@ -1,0 +1,234 @@
+// Package pricing turns CPU and memory into money. Rates come, in order of preference,
+// from custom rates in the CostDeckConfig, from the AWS Price List API for the instance
+// types the cluster actually runs, or from list-price heuristics per cloud.
+package pricing
+
+import (
+	"context"
+	"fmt"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
+
+	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
+	"github.com/migalsp/costdeck-operator/internal/config"
+)
+
+// HoursPerMonth is the average number of hours in a month.
+const HoursPerMonth = 730
+
+// Rates converts resources into money.
+type Rates struct {
+	CPUCoreHour  float64 `json:"cpuCoreHour"`
+	MemoryGBHour float64 `json:"memoryGiBHour"`
+	Currency     string  `json:"currency"`
+	// Basis says where the rates come from, so an estimate is never mistaken for a quote.
+	Basis string `json:"basis"`
+}
+
+// Hourly is the cost of the given CPU and memory for one hour.
+func (r Rates) Hourly(cpu, mem resource.Quantity) float64 {
+	return cpu.AsApproximateFloat64()*r.CPUCoreHour + mem.AsApproximateFloat64()/(1<<30)*r.MemoryGBHour
+}
+
+// Monthly is the cost of the given CPU and memory for an average month.
+func (r Rates) Monthly(cpu, mem resource.Quantity) float64 { return r.Hourly(cpu, mem) * HoursPerMonth }
+
+// heuristics are list-price ballparks for general-purpose instances, per core-hour and
+// GiB-hour. They only apply when nothing better is available.
+var heuristics = map[string][2]float64{
+	"aws":   {0.040, 0.004},
+	"azure": {0.042, 0.005},
+	"gcp":   {0.038, 0.004},
+	"local": {0.035, 0.003},
+}
+
+// NodePricer returns the on-demand hourly price of an instance type in a region.
+type NodePricer interface {
+	HourlyPrice(ctx context.Context, region, instanceType string) (float64, error)
+}
+
+// Resolver resolves the rates for the cluster.
+type Resolver struct {
+	Client client.Reader
+	// AWS builds an AWS Price List client from the live CostDeckConfig; nil disables
+	// cloud pricing.
+	AWS func(ctx context.Context, cfg *finopsv1.CostDeckConfig) (NodePricer, error)
+	// TTL bounds how long cloud-derived rates are reused (prices change rarely).
+	TTL time.Duration
+
+	mu       sync.Mutex
+	cached   *Rates
+	cachedAt time.Time
+	cacheKey string
+}
+
+// Rates returns the current rates. It never fails: when a better source is unavailable it
+// falls back to the next one and says so in Basis.
+func (r *Resolver) Rates(ctx context.Context) Rates {
+	cfg, err := config.Get(ctx, r.Client)
+	if err != nil {
+		cfg = config.Empty()
+	}
+	var nodes corev1.NodeList
+	_ = r.Client.List(ctx, &nodes)
+	cloud := DetectCloud(nodes.Items)
+
+	if custom, ok := customRates(cfg.Spec.Pricing); ok {
+		return custom
+	}
+	fallback := heuristicRates(cloud, cfg.Spec.Pricing.Currency)
+
+	if cfg.Spec.Features.CloudPricingAPI && cloud == "aws" && r.AWS != nil && len(nodes.Items) > 0 {
+		key := nodeFingerprint(nodes.Items)
+		r.mu.Lock()
+		if r.cached != nil && r.cacheKey == key && time.Since(r.cachedAt) < r.ttl() {
+			rates := *r.cached
+			r.mu.Unlock()
+			return rates
+		}
+		r.mu.Unlock()
+
+		rates, err := r.awsRates(ctx, cfg, nodes.Items)
+		if err != nil {
+			logf.FromContext(ctx).Info("Could not price nodes with the AWS Price List API, using heuristic rates", "error", err.Error())
+			fallback.Basis += " — AWS pricing unavailable: " + err.Error()
+			return fallback
+		}
+		r.mu.Lock()
+		r.cached, r.cachedAt, r.cacheKey = &rates, time.Now(), key
+		r.mu.Unlock()
+		return rates
+	}
+	return fallback
+}
+
+func (r *Resolver) ttl() time.Duration {
+	if r.TTL > 0 {
+		return r.TTL
+	}
+	return 12 * time.Hour
+}
+
+func customRates(p finopsv1.PricingConfig) (Rates, bool) {
+	cpu, errCPU := strconv.ParseFloat(p.CPUCoreHour, 64)
+	mem, errMem := strconv.ParseFloat(p.MemoryGBHour, 64)
+	if errCPU != nil || errMem != nil || cpu < 0 || mem < 0 || (cpu == 0 && mem == 0) {
+		return Rates{}, false
+	}
+	return Rates{CPUCoreHour: cpu, MemoryGBHour: mem, Currency: currency(p.Currency), Basis: "Custom rates from CostDeckConfig"}, true
+}
+
+func heuristicRates(cloud, cur string) Rates {
+	h, ok := heuristics[cloud]
+	if !ok {
+		h = heuristics["local"]
+	}
+	basis := "Heuristic list-price estimate"
+	if cloud != "local" {
+		basis += " (" + cloud + ")"
+	}
+	return Rates{CPUCoreHour: h[0], MemoryGBHour: h[1], Currency: currency(cur), Basis: basis}
+}
+
+func currency(c string) string {
+	if c == "" {
+		return "USD"
+	}
+	return strings.ToUpper(c)
+}
+
+// DetectCloud names the cloud the nodes run on: aws, azure, gcp or local.
+func DetectCloud(nodes []corev1.Node) string {
+	for _, n := range nodes {
+		id := strings.ToLower(n.Spec.ProviderID)
+		switch {
+		case strings.HasPrefix(id, "aws://"):
+			return "aws"
+		case strings.HasPrefix(id, "azure://"):
+			return "azure"
+		case strings.HasPrefix(id, "gce://"):
+			return "gcp"
+		}
+	}
+	return "local"
+}
+
+func nodeFingerprint(nodes []corev1.Node) string {
+	counts := map[string]int{}
+	for _, n := range nodes {
+		counts[n.Labels[corev1.LabelTopologyRegion]+"/"+n.Labels[corev1.LabelInstanceTypeStable]]++
+	}
+	return fmt.Sprint(counts)
+}
+
+// awsRates prices every node at its on-demand list price and splits the total into a
+// per-core and a per-GiB rate. The split keeps the heuristic CPU:memory price ratio and
+// scales it so that the rates reproduce the cluster's real hourly bill.
+func (r *Resolver) awsRates(ctx context.Context, cfg *finopsv1.CostDeckConfig, nodes []corev1.Node) (Rates, error) {
+	pricer, err := r.AWS(ctx, cfg)
+	if err != nil {
+		return Rates{}, err
+	}
+	base := heuristics["aws"]
+	prices := map[string]float64{}
+	var billed, modelled float64
+	spot := 0
+	types := map[string]bool{}
+	for _, n := range nodes {
+		region := n.Labels[corev1.LabelTopologyRegion]
+		instanceType := n.Labels[corev1.LabelInstanceTypeStable]
+		if region == "" || instanceType == "" {
+			continue
+		}
+		key := region + "/" + instanceType
+		price, ok := prices[key]
+		if !ok {
+			if price, err = pricer.HourlyPrice(ctx, region, instanceType); err != nil {
+				return Rates{}, fmt.Errorf("%s in %s: %w", instanceType, region, err)
+			}
+			prices[key] = price
+		}
+		if isSpot(n) {
+			spot++
+		}
+		types[instanceType] = true
+		cpu := n.Status.Capacity.Cpu().AsApproximateFloat64()
+		memGiB := n.Status.Capacity.Memory().AsApproximateFloat64() / (1 << 30)
+		billed += price
+		modelled += cpu*base[0] + memGiB*base[1]
+	}
+	if billed == 0 || modelled == 0 {
+		return Rates{}, fmt.Errorf("no node carries instance-type and region labels")
+	}
+	scale := billed / modelled
+	names := make([]string, 0, len(types))
+	for t := range types {
+		names = append(names, t)
+	}
+	basis := fmt.Sprintf("AWS on-demand list prices for %d node(s) (%s)", len(nodes), strings.Join(sortedFirst(names, 4), ", "))
+	if spot > 0 {
+		basis += fmt.Sprintf("; %d spot node(s) priced at on-demand", spot)
+	}
+	return Rates{CPUCoreHour: base[0] * scale, MemoryGBHour: base[1] * scale, Currency: "USD", Basis: basis}, nil
+}
+
+func isSpot(n corev1.Node) bool {
+	return strings.EqualFold(n.Labels["eks.amazonaws.com/capacityType"], "SPOT") ||
+		strings.EqualFold(n.Labels["karpenter.sh/capacity-type"], "spot")
+}
+
+func sortedFirst(items []string, n int) []string {
+	sort.Strings(items)
+	if len(items) > n {
+		return append(items[:n:n], fmt.Sprintf("+%d more", len(items)-n))
+	}
+	return items
+}

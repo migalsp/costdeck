@@ -18,6 +18,7 @@ import (
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
 	"github.com/migalsp/costdeck-operator/internal/ai"
 	"github.com/migalsp/costdeck-operator/internal/config"
+	"github.com/migalsp/costdeck-operator/internal/pricing"
 	"github.com/migalsp/costdeck-operator/internal/scaling"
 )
 
@@ -276,8 +277,8 @@ func (s *Server) toolClusterOverview(ctx context.Context) (string, error) {
 		"nodes": len(nodes.Items), "nodesReady": ready, "activePods": running,
 		"allocatableCPU": allocCPU.String(), "allocatableMemory": allocMem.String(),
 		"requestedCPU": reqCPU.String(), "requestedMemory": reqMem.String(),
-		"estimatedMonthlyCostOfAllocatable": round2(rates.monthly(allocCPU, allocMem)),
-		"estimatedMonthlyCostOfRequests":    round2(rates.monthly(reqCPU, reqMem)),
+		"estimatedMonthlyCostOfAllocatable": round2(rates.Monthly(allocCPU, allocMem)),
+		"estimatedMonthlyCostOfRequests":    round2(rates.Monthly(reqCPU, reqMem)),
 		"currency":                          rates.Currency,
 		"pricing":                           rates.Basis,
 	})
@@ -354,10 +355,10 @@ type namespaceRow struct {
 }
 
 // namespaceRows summarizes every tracked namespace from its latest data point.
-func (s *Server) namespaceRows(ctx context.Context) ([]namespaceRow, priceRates, error) {
+func (s *Server) namespaceRows(ctx context.Context) ([]namespaceRow, pricing.Rates, error) {
 	var list finopsv1.NamespaceFinOpsList
 	if err := s.Client.List(ctx, &list, client.InNamespace(config.OperatorNamespace())); err != nil {
-		return nil, priceRates{}, err
+		return nil, pricing.Rates{}, err
 	}
 	rates := s.costRates(ctx)
 	rows := make([]namespaceRow, 0, len(list.Items))
@@ -369,11 +370,11 @@ func (s *Server) namespaceRows(ctx context.Context) ([]namespaceRow, priceRates,
 			row.MemoryUsage, row.MemoryRequests = last.Memory.Usage, last.Memory.Requests
 			cpuReq, memReq := parseQ(last.CPU.Requests), parseQ(last.Memory.Requests)
 			cpuUse, memUse := parseQ(last.CPU.Usage), parseQ(last.Memory.Usage)
-			row.MonthlyCost = round2(rates.monthly(cpuReq, memReq))
+			row.MonthlyCost = round2(rates.Monthly(cpuReq, memReq))
 			wasteCPU, wasteMem := cpuReq.DeepCopy(), memReq.DeepCopy()
 			wasteCPU.Sub(cpuUse)
 			wasteMem.Sub(memUse)
-			row.MonthlyWaste = round2(rates.monthly(clampZero(wasteCPU), clampZero(wasteMem)))
+			row.MonthlyWaste = round2(rates.Monthly(clampZero(wasteCPU), clampZero(wasteMem)))
 		}
 		rows = append(rows, row)
 	}

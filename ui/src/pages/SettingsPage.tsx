@@ -106,6 +106,12 @@ interface SettingsData {
     disableLocalLogin: boolean
     entra?: EntraSettings
   }
+  pricing?: {
+    cpuCoreHour?: string
+    memoryGiBHour?: string
+    currency?: string
+    effective: { cpuCoreHour: number; memoryGiBHour: number; currency: string; basis: string }
+  }
 }
 
 // ─── Sub-Components ─────────────────────────────────────────────────────────
@@ -336,6 +342,9 @@ export default function SettingsPage() {
 
   // Features state
   const [cloudPricingApi, setCloudPricingApi] = useState(false)
+  const [priceCpu, setPriceCpu] = useState('')
+  const [priceMem, setPriceMem] = useState('')
+  const [priceCurrency, setPriceCurrency] = useState('')
   const [aiApiKey, setAiApiKey] = useState('')
   const [aiSkipSslVerify, setAiSkipSslVerify] = useState(false)
   const [aiModels, setAiModels] = useState<string[]>([])
@@ -415,6 +424,11 @@ export default function SettingsPage() {
         if (data.features) {
           setCloudPricingApi(data.features.cloudPricingApi || false)
         }
+        if (data.pricing) {
+          setPriceCpu(data.pricing.cpuCoreHour || '')
+          setPriceMem(data.pricing.memoryGiBHour || '')
+          setPriceCurrency(data.pricing.currency || '')
+        }
         if (data.auth) {
           setDisableLocalLogin(data.auth.disableLocalLogin)
           const e = data.auth.entra
@@ -485,6 +499,11 @@ export default function SettingsPage() {
         },
         features: {
           cloudPricingApi: cloudPricingApi,
+        },
+        pricing: {
+          cpuCoreHour: priceCpu,
+          memoryGiBHour: priceMem,
+          currency: priceCurrency,
         },
         auth: {
           disableLocalLogin,
@@ -1449,21 +1468,47 @@ export default function SettingsPage() {
             subtitle="Enable or disable core CostDeck capabilities"
           />
 
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
-            <div className="flex flex-col gap-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h4 className="font-bold text-slate-800">Public Cloud API Pricing <span className="text-emerald-600 ml-1">(Experimental)</span></h4>
-                  <p className="text-sm text-slate-500 mt-1">
-                    Use real-time API queries to AWS/Azure/GCP to get 100% accurate pricing instead of mathematical heuristics.
-                  </p>
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-6">
+            {settings?.pricing?.effective && (
+              <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-600">
+                <span className="font-bold text-slate-800">Rates in effect:</span>{' '}
+                {settings.pricing.effective.cpuCoreHour.toFixed(4)} {settings.pricing.effective.currency}/core-hour ·{' '}
+                {settings.pricing.effective.memoryGiBHour.toFixed(4)} {settings.pricing.effective.currency}/GiB-hour
+                <div className="text-slate-400 mt-1">{settings.pricing.effective.basis}</div>
+              </div>
+            )}
+
+            <div className="flex items-center justify-between">
+              <div>
+                <h4 className="font-bold text-slate-800">AWS on-demand pricing</h4>
+                <p className="text-sm text-slate-500 mt-1">
+                  Price each node at its AWS on-demand list price (AWS Price List API, Linux, by instance type and region) and derive the per-core and per-GiB rates from the real hourly bill. Needs the <code>pricing:GetProducts</code> permission; spot and Savings Plans discounts are not applied.
+                </p>
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer ml-4">
+                <input type="checkbox" checked={cloudPricingApi} onChange={e => setCloudPricingApi(e.target.checked)} className="sr-only peer" />
+                <div className={`w-11 h-6 rounded-full peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-emerald-500/20 transition-colors ${cloudPricingApi ? 'bg-emerald-500' : 'bg-slate-300'}`}>
+                  <div className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-md transition-transform ${cloudPricingApi ? 'translate-x-5' : 'translate-x-0'}`} />
                 </div>
-                <label className="relative inline-flex items-center cursor-pointer ml-4">
-                  <input type="checkbox" checked={cloudPricingApi} onChange={e => setCloudPricingApi(e.target.checked)} className="sr-only peer" />
-                  <div className={`w-11 h-6 rounded-full peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-emerald-500/20 transition-colors ${cloudPricingApi ? 'bg-emerald-500' : 'bg-slate-300'}`}>
-                    <div className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-md transition-transform ${cloudPricingApi ? 'translate-x-5' : 'translate-x-0'}`} />
-                  </div>
-                </label>
+              </label>
+            </div>
+
+            <div>
+              <h4 className="font-bold text-slate-800">Custom rates</h4>
+              <p className="text-sm text-slate-500 mt-1 mb-3">For on-premises clusters or negotiated prices. When both rates are set they override every other source.</p>
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1 block">Per core-hour</label>
+                  <input value={priceCpu} onChange={e => setPriceCpu(e.target.value)} placeholder="0.031" className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm font-mono" />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1 block">Per GiB-hour</label>
+                  <input value={priceMem} onChange={e => setPriceMem(e.target.value)} placeholder="0.0042" className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm font-mono" />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1 block">Currency</label>
+                  <input value={priceCurrency} onChange={e => setPriceCurrency(e.target.value)} placeholder="USD" maxLength={3} className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm font-mono uppercase" />
+                </div>
               </div>
             </div>
           </div>

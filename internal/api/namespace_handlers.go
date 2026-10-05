@@ -17,6 +17,7 @@ import (
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
 	"github.com/migalsp/costdeck-operator/internal/config"
 	"github.com/migalsp/costdeck-operator/internal/metrics"
+	"github.com/migalsp/costdeck-operator/internal/pricing"
 )
 
 // Workload kinds CostDeck scales and right-sizes.
@@ -89,16 +90,7 @@ func (s *Server) servePods(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	nsName := r.PathValue("ns")
 
-	cfg, err := config.Get(ctx, s.Client)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	provider := "local"
-	if cfg.Spec.Providers.AWS != nil && cfg.Spec.Providers.AWS.Enabled {
-		provider = "aws"
-	}
-	cpuRate, ramRate := getDefaultRates(provider)
+	rates := s.costRates(ctx)
 
 	podUsage, source, err := s.metricsProvider().PodUsage(ctx, nsName)
 	if err != nil {
@@ -128,20 +120,12 @@ func (s *Server) servePods(w http.ResponseWriter, r *http.Request) {
 
 		var podCost *CostResponse
 		if p.Status.Phase != corev1.PodSucceeded && p.Status.Phase != corev1.PodFailed {
-			cpuCores := float64(cpuReq.MilliValue()) / 1000.0
-			ramGb := float64(memReq.Value()) / 1024.0 / 1024.0 / 1024.0
-			hourly := (cpuCores * cpuRate) + (ramGb * ramRate)
-
-			determinedBy := "Heuristic Math Pricing"
-			if provider != "local" {
-				determinedBy = fmt.Sprintf("%s (%s)", determinedBy, provider)
-			}
-
+			hourly := rates.Hourly(cpuReq, memReq)
 			podCost = &CostResponse{
 				HourlyCost:   hourly,
-				MonthlyCost:  hourly * 730,
-				Currency:     "USD",
-				DeterminedBy: determinedBy,
+				MonthlyCost:  hourly * pricing.HoursPerMonth,
+				Currency:     rates.Currency,
+				DeterminedBy: rates.Basis,
 			}
 		}
 

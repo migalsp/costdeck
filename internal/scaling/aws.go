@@ -121,6 +121,9 @@ func (p *AWSProvider) ValidateConnectivity(ctx context.Context) error {
 	return nil
 }
 
+// Config returns the AWS SDK configuration (credentials and region) of the provider.
+func (p *AWSProvider) Config() aws.Config { return p.cfg }
+
 func (p *AWSProvider) Name() string {
 	return "aws"
 }

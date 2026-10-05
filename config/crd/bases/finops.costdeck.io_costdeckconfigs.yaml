@@ -132,9 +132,10 @@ spec:
                 description: Features holds core CostDeck feature toggles
                 properties:
                   cloudPricingApi:
-                    description: CloudPricingAPI toggles whether to use Public Cloud
-                      Pricing API (e.g., AWS Pricing API) instead of heuristic math
-                      calculations.
+                    description: |-
+                      CloudPricingAPI prices the cluster's nodes with the AWS Price List API (on-demand,
+                      Linux) and derives the per-core and per-GiB rates from them. Needs the
+                      pricing:GetProducts permission. Ignored when custom rates are set in spec.pricing.
                     type: boolean
                 type: object
               integrations:
@@ -245,6 +246,25 @@ spec:
                           Prefer adding CA_CERT to the credentials Secret instead.
                         type: boolean
                     type: object
+                type: object
+              pricing:
+                description: Pricing sets custom cost rates.
+                properties:
+                  cpuCoreHour:
+                    description: CPUCoreHour is the price of one CPU core for one
+                      hour, e.g. "0.031".
+                    pattern: ^[0-9]+(\.[0-9]+)?$
+                    type: string
+                  currency:
+                    description: Currency is the ISO 4217 code shown next to costs.
+                      Defaults to USD.
+                    pattern: ^[A-Za-z]{3}$
+                    type: string
+                  memoryGiBHour:
+                    description: MemoryGBHour is the price of one GiB of memory for
+                      one hour, e.g. "0.0042".
+                    pattern: ^[0-9]+(\.[0-9]+)?$
+                    type: string
                 type: object
               providers:
                 description: Providers holds cloud provider configurations
