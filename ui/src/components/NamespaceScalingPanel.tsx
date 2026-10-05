@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { CalendarClock, ListChecks, Play, Square, RotateCcw, Plus } from 'lucide-react'
+import { CalendarClock, ListChecks, Play, PowerOff, RotateCcw, Plus } from 'lucide-react'
 import { apiError, errorMessage } from '../lib/api'
 import { useAuth } from '../lib/auth'
 import { describeSpec, statusLine } from '../lib/schedule'
@@ -149,7 +149,7 @@ export default function NamespaceScalingPanel({ namespace }: { namespace: string
           </button>
         ) : up ? (
           <button onClick={() => setPrompt(false)} disabled={busy} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-slate-700 text-xs font-bold hover:bg-slate-100 disabled:opacity-50">
-            <Square size={13} /> Scale down now
+            <PowerOff size={13} /> Scale down now
           </button>
         ) : (
           <button onClick={() => setPrompt(true)} disabled={busy} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-bold hover:bg-emerald-100 disabled:opacity-50">

@@ -328,7 +328,7 @@ export default function AIChatWidget() {
             />
             {isLoading ? (
               <button type="button" onClick={() => abortRef.current?.abort()} className="absolute right-2.5 p-2 rounded-lg bg-slate-200 text-slate-600 hover:bg-slate-300" aria-label="Stop">
-                <Square size={16} />
+                <Square size={14} fill="currentColor" />
               </button>
             ) : (
               <button type="submit" disabled={!input.trim()}

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Activity, ArrowRight, LayoutList, ListOrdered, Link2, Pencil, Play, RotateCcw, Square, Trash2 } from 'lucide-react'
+import { Activity, ArrowRight, LayoutList, ListOrdered, Link2, Pencil, Play, RotateCcw, PowerOff, Trash2 } from 'lucide-react'
 import { formatMoney } from '../lib/format'
 import { describeSpec, statusLine } from '../lib/schedule'
 import { targetLabel } from '../lib/cloud'
@@ -54,7 +54,7 @@ export default function ScheduleDetails(p: Props) {
       {p.canOperate && (manual
         ? <Button size="sm" variant="warning" icon={<RotateCcw size={14} />} onClick={p.onResume} disabled={p.busy}>Follow schedule</Button>
         : up
-          ? <Button size="sm" icon={<Square size={14} />} onClick={p.onStop} disabled={p.busy}>Scale down now</Button>
+          ? <Button size="sm" icon={<PowerOff size={14} />} onClick={p.onStop} disabled={p.busy}>Scale down now</Button>
           : <Button size="sm" variant="success" icon={<Play size={14} />} onClick={p.onStart} disabled={p.busy}>Start now</Button>)}
       {p.canAdmin && <Button size="sm" variant="ghost" icon={<Pencil size={14} />} onClick={() => p.onEdit()}>Edit</Button>}
       {!isGroup && p.canAdmin && p.onRules && <Button size="sm" variant="ghost" icon={<ListOrdered size={14} />} onClick={p.onRules}>Workload rules</Button>}

@@ -1,5 +1,5 @@
 import type { MouseEvent } from 'react'
-import { ChevronRight, Link2, Pencil, Play, RotateCcw, Square } from 'lucide-react'
+import { ChevronRight, Link2, Pencil, Play, RotateCcw, PowerOff } from 'lucide-react'
 import { formatMoney } from '../lib/format'
 import { describeSpec, statusLine } from '../lib/schedule'
 import type { Condition, ScalingSpec, ScheduleStatus } from '../lib/types'
@@ -103,7 +103,7 @@ export default function ScheduleCard(p: ScheduleCardProps) {
           {p.canOperate && (manual
             ? <Button size="sm" variant="warning" icon={<RotateCcw size={13} />} onClick={stop(p.onResume)} disabled={p.busy}>Follow schedule</Button>
             : up
-              ? <Button size="sm" icon={<Square size={13} />} onClick={stop(p.onStop)} disabled={p.busy}>Scale down now</Button>
+              ? <Button size="sm" icon={<PowerOff size={13} />} onClick={stop(p.onStop)} disabled={p.busy}>Scale down now</Button>
               : <Button size="sm" variant="success" icon={<Play size={13} />} onClick={stop(p.onStart)} disabled={p.busy}>Start now</Button>)}
           {p.busy && <span className="w-3.5 h-3.5 border-2 border-slate-200 border-t-brand-500 rounded-full animate-spin" />}
           {p.canAdmin && (

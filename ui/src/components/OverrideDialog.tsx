@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { CalendarClock, Play, Square } from 'lucide-react'
+import { CalendarClock, Play, PowerOff } from 'lucide-react'
 import { Button, Modal } from './ui'
 
 export type OverrideUntil = 'nextTransition' | '1h' | '4h' | '8h' | '24h' | 'forever'
@@ -37,7 +37,7 @@ export default function OverrideDialog({ name, kind, active, hasSchedule, onCanc
       footer={
         <>
           <Button variant="ghost" onClick={onCancel}>Cancel</Button>
-          <Button variant={active ? 'primary' : 'danger'} icon={active ? <Play size={14} /> : <Square size={14} />} onClick={() => onConfirm(choice)}>
+          <Button variant={active ? 'primary' : 'danger'} icon={active ? <Play size={14} /> : <PowerOff size={14} />} onClick={() => onConfirm(choice)}>
             {active ? 'Start now' : 'Scale down now'}
           </Button>
         </>
