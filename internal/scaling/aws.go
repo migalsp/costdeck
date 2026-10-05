@@ -24,6 +24,9 @@ import (
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
 )
 
+// ProviderAWS is the name external targets and discovery use for AWS.
+const ProviderAWS = "aws"
+
 // AWS resource types CostDeck can discover, start and stop.
 const (
 	AWSTypeAurora = "aurora"
@@ -125,7 +128,7 @@ func (p *AWSProvider) ValidateConnectivity(ctx context.Context) error {
 func (p *AWSProvider) Config() aws.Config { return p.cfg }
 
 func (p *AWSProvider) Name() string {
-	return "aws"
+	return ProviderAWS
 }
 
 func (p *AWSProvider) Scale(ctx context.Context, target finopsv1.ExternalTarget, active bool) error {

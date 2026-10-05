@@ -87,9 +87,9 @@ func TestPlanGroupsPlatformFollowsItsDependents(t *testing.T) {
 	})
 
 	t.Run("an environment still scaling down after hours keeps the platform", func(t *testing.T) {
-		plans := e.PlanGroups(at(t, time.Tuesday, "18:02"), greenZone(PhaseScaledUp, PhaseScaledUp, PhaseScalingDown, PhaseScaledDown))
-		if got := plans["platform"].RequiredBy; !slices.Equal(got, []string{"pps1", "stag1"}) {
-			t.Errorf("RequiredBy = %v, want [pps1 stag1]", got)
+		plans := e.PlanGroups(at(t, time.Tuesday, "18:02"), greenZone(PhaseScaledUp, PhaseScaledUp, PhaseScalingDown, PhaseScalingDown))
+		if got := plans["platform"].RequiredBy; !slices.Equal(got, []string{"e2e1", "pps1", "stag1"}) {
+			t.Errorf("RequiredBy = %v, want [e2e1 pps1 stag1]", got)
 		}
 	})
 

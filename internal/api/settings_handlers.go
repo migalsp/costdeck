@@ -130,8 +130,8 @@ type WebexSettingsResponse struct {
 	Enabled           bool                     `json:"enabled"`
 	NotifyTransitions bool                     `json:"notifyTransitions"`
 	RoomID            string                   `json:"roomId,omitempty"`
-	HasCredentials bool                     `json:"hasCredentials"`
-	Status         *finopsv1.ProviderStatus `json:"status,omitempty"`
+	HasCredentials    bool                     `json:"hasCredentials"`
+	Status            *finopsv1.ProviderStatus `json:"status,omitempty"`
 }
 
 type VictoriaMetricsSettingsResponse struct {
@@ -241,11 +241,11 @@ type MessengerUpdateRequest struct {
 }
 
 type WebexUpdateRequest struct {
-	Enabled           *bool `json:"enabled,omitempty"`
-	NotifyTransitions *bool `json:"notifyTransitions,omitempty"`
-	RoomID        *string `json:"roomId,omitempty"`
-	BotToken      string  `json:"botToken,omitempty"`
-	WebhookSecret *string `json:"webhookSecret,omitempty"`
+	Enabled           *bool   `json:"enabled,omitempty"`
+	NotifyTransitions *bool   `json:"notifyTransitions,omitempty"`
+	RoomID            *string `json:"roomId,omitempty"`
+	BotToken          string  `json:"botToken,omitempty"`
+	WebhookSecret     *string `json:"webhookSecret,omitempty"`
 }
 
 type VictoriaMetricsUpdateRequest struct {
@@ -350,9 +350,9 @@ func (s *Server) buildSettingsResponse(ctx context.Context, cfg *finopsv1.CostDe
 			Webex: &WebexSettingsResponse{
 				Enabled:           cfg.Spec.Integrations.Messenger.Webex.Enabled,
 				NotifyTransitions: cfg.Spec.Integrations.Messenger.Webex.NotifyTransitions,
-				RoomID:         cfg.Spec.Integrations.Messenger.Webex.RoomID,
-				HasCredentials: cfg.Spec.Integrations.Messenger.Webex.SecretRef != "",
-				Status:         cfg.Status.Webex,
+				RoomID:            cfg.Spec.Integrations.Messenger.Webex.RoomID,
+				HasCredentials:    cfg.Spec.Integrations.Messenger.Webex.SecretRef != "",
+				Status:            cfg.Status.Webex,
 			},
 		}
 	}

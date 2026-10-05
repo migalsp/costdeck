@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"testing"
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
@@ -30,7 +29,7 @@ func buildMockServerWithK8s() *Server {
 	// the real CRD requires.
 	client := fakeclient.NewClientBuilder().WithScheme(scheme).
 		WithStatusSubresource(&finopsv1.NamespaceOptimization{}).Build()
-	k8sClient := fake.NewSimpleClientset()
+	k8sClient := fake.NewClientset()
 
 	k8sClient.Discovery().(*fakediscovery.FakeDiscovery).FakedServerVersion = &version.Info{
 		GitVersion: "v1.35.0",
@@ -44,10 +43,8 @@ func buildMockServerWithK8s() *Server {
 }
 
 func TestHandleOperatorHealth(t *testing.T) {
-	os.Setenv("HOSTNAME", "costdeck-operator-1234")
-	os.Setenv("POD_NAMESPACE", "costdeck")
-	defer os.Unsetenv("HOSTNAME")
-	defer os.Unsetenv("POD_NAMESPACE")
+	t.Setenv("HOSTNAME", "costdeck-operator-1234")
+	t.Setenv("POD_NAMESPACE", "costdeck")
 
 	server := buildMockServerWithK8s()
 
@@ -111,7 +108,9 @@ func TestHandleNamespaces(t *testing.T) {
 	ns := &finopsv1.NamespaceFinOps{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-ns", Namespace: "costdeck"},
 	}
-	server.Client.Create(context.Background(), ns)
+	if err := server.Client.Create(context.Background(), ns); err != nil {
+		t.Fatal(err)
+	}
 
 	req, err := http.NewRequest("GET", "/api/namespaces", nil)
 	if err != nil {
@@ -148,8 +147,7 @@ func TestHandleDiscovery(t *testing.T) {
 	}
 
 	// Test 2: AWS disabled
-	os.Setenv("AWS_PROVIDER_ENABLED", "false")
-	defer os.Unsetenv("AWS_PROVIDER_ENABLED")
+	t.Setenv("AWS_PROVIDER_ENABLED", "false")
 
 	req, _ = http.NewRequest("GET", "/api/discovery/aws/aurora", nil)
 	rr = httptest.NewRecorder()
@@ -169,8 +167,7 @@ func TestHandleDiscovery(t *testing.T) {
 }
 
 func TestServeHistory(t *testing.T) {
-	os.Setenv("POD_NAMESPACE", "costdeck")
-	defer os.Unsetenv("POD_NAMESPACE")
+	t.Setenv("POD_NAMESPACE", "costdeck")
 
 	server := buildMockServerWithK8s()
 
@@ -182,7 +179,9 @@ func TestServeHistory(t *testing.T) {
 			},
 		},
 	}
-	server.Client.Create(context.Background(), ns)
+	if err := server.Client.Create(context.Background(), ns); err != nil {
+		t.Fatal(err)
+	}
 
 	req, _ := http.NewRequest("GET", "/api/namespaces/test-ns/history", nil)
 	rr := httptest.NewRecorder()
@@ -242,8 +241,7 @@ func TestServeWorkloads(t *testing.T) {
 }
 
 func TestHandleNamespaceOptimize(t *testing.T) {
-	os.Setenv("POD_NAMESPACE", "costdeck")
-	defer os.Unsetenv("POD_NAMESPACE")
+	t.Setenv("POD_NAMESPACE", "costdeck")
 
 	server := buildMockServerWithK8s()
 
@@ -256,7 +254,9 @@ func TestHandleNamespaceOptimize(t *testing.T) {
 			},
 		},
 	}
-	server.Client.Create(context.Background(), nsFinOps)
+	if err := server.Client.Create(context.Background(), nsFinOps); err != nil {
+		t.Fatal(err)
+	}
 
 	req, _ := http.NewRequest("POST", "/api/namespaces/test-ns/optimize", nil)
 	rr := httptest.NewRecorder()
@@ -268,8 +268,7 @@ func TestHandleNamespaceOptimize(t *testing.T) {
 }
 
 func TestHandleNamespaceRevert(t *testing.T) {
-	os.Setenv("POD_NAMESPACE", "costdeck")
-	defer os.Unsetenv("POD_NAMESPACE")
+	t.Setenv("POD_NAMESPACE", "costdeck")
 
 	server := buildMockServerWithK8s()
 
@@ -288,7 +287,9 @@ func TestHandleNamespaceRevert(t *testing.T) {
 			},
 		},
 	}
-	server.Client.Create(context.Background(), opt)
+	if err := server.Client.Create(context.Background(), opt); err != nil {
+		t.Fatal(err)
+	}
 
 	req, _ := http.NewRequest("POST", "/api/namespaces/test-ns/revert", nil)
 	rr := httptest.NewRecorder()
@@ -301,8 +302,7 @@ func TestHandleNamespaceRevert(t *testing.T) {
 }
 
 func TestHandleScalingGroups(t *testing.T) {
-	os.Setenv("POD_NAMESPACE", "costdeck")
-	defer os.Unsetenv("POD_NAMESPACE")
+	t.Setenv("POD_NAMESPACE", "costdeck")
 
 	server := buildMockServerWithK8s()
 
@@ -312,7 +312,9 @@ func TestHandleScalingGroups(t *testing.T) {
 			Active: new(bool),
 		},
 	}
-	server.Client.Create(context.Background(), group)
+	if err := server.Client.Create(context.Background(), group); err != nil {
+		t.Fatal(err)
+	}
 
 	req, _ := http.NewRequest("GET", "/api/scaling/groups", nil)
 	rr := httptest.NewRecorder()
@@ -332,8 +334,7 @@ func TestHandleScalingGroups(t *testing.T) {
 }
 
 func TestHandleScalingConfigs(t *testing.T) {
-	os.Setenv("POD_NAMESPACE", "costdeck")
-	defer os.Unsetenv("POD_NAMESPACE")
+	t.Setenv("POD_NAMESPACE", "costdeck")
 
 	server := buildMockServerWithK8s()
 
@@ -343,7 +344,9 @@ func TestHandleScalingConfigs(t *testing.T) {
 			Active: new(bool),
 		},
 	}
-	server.Client.Create(context.Background(), config)
+	if err := server.Client.Create(context.Background(), config); err != nil {
+		t.Fatal(err)
+	}
 
 	req, _ := http.NewRequest("GET", "/api/scaling/configs", nil)
 	rr := httptest.NewRecorder()
@@ -384,7 +387,9 @@ func TestHandleClusterNodes(t *testing.T) {
 			},
 		},
 	}
-	server.K8sClient.CoreV1().Nodes().Create(context.Background(), node, metav1.CreateOptions{})
+	if _, err := server.K8sClient.CoreV1().Nodes().Create(context.Background(), node, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
 
 	req, _ := http.NewRequest("GET", "/api/cluster/nodes", nil)
 	rr := httptest.NewRecorder()

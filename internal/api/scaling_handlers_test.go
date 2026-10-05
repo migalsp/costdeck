@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -26,15 +25,11 @@ func buildMockServer() *Server {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	utilruntime.Must(finopsv1.AddToScheme(scheme))
 
-	client := fake.NewClientBuilder().WithScheme(scheme).Build()
-	return &Server{
-		Client: client,
-	}
+	return &Server{Client: fake.NewClientBuilder().WithScheme(scheme).Build()}
 }
 
 func TestHandleScalingGroupsGET(t *testing.T) {
-	os.Setenv("POD_NAMESPACE", "costdeck")
-	defer os.Unsetenv("POD_NAMESPACE")
+	t.Setenv("POD_NAMESPACE", "costdeck")
 
 	server := buildMockServer()
 
@@ -48,7 +43,9 @@ func TestHandleScalingGroupsGET(t *testing.T) {
 			Namespaces: []string{"default"},
 		},
 	}
-	server.Client.Create(context.Background(), group)
+	if err := server.Client.Create(context.Background(), group); err != nil {
+		t.Fatal(err)
+	}
 
 	req, err := http.NewRequest("GET", "/api/scaling/groups", nil)
 	if err != nil {
@@ -74,8 +71,7 @@ func TestHandleScalingGroupsGET(t *testing.T) {
 }
 
 func TestHandleScalingGroupsPOST(t *testing.T) {
-	os.Setenv("POD_NAMESPACE", "costdeck")
-	defer os.Unsetenv("POD_NAMESPACE")
+	t.Setenv("POD_NAMESPACE", "costdeck")
 
 	server := buildMockServer()
 
@@ -95,15 +91,16 @@ func TestHandleScalingGroupsPOST(t *testing.T) {
 
 	// Verify it was created in the mock cluster
 	list := &finopsv1.ScalingGroupList{}
-	server.Client.List(context.Background(), list)
+	if err := server.Client.List(context.Background(), list); err != nil {
+		t.Fatal(err)
+	}
 	if len(list.Items) != 1 {
 		t.Errorf("Expected 1 group created in cluster, got %d", len(list.Items))
 	}
 }
 
 func TestHandleScalingConfigsGET(t *testing.T) {
-	os.Setenv("POD_NAMESPACE", "costdeck")
-	defer os.Unsetenv("POD_NAMESPACE")
+	t.Setenv("POD_NAMESPACE", "costdeck")
 
 	server := buildMockServer()
 
@@ -116,7 +113,9 @@ func TestHandleScalingConfigsGET(t *testing.T) {
 			TargetNamespace: "app-ns",
 		},
 	}
-	server.Client.Create(context.Background(), config)
+	if err := server.Client.Create(context.Background(), config); err != nil {
+		t.Fatal(err)
+	}
 
 	req, err := http.NewRequest("GET", "/api/scaling/configs", nil)
 	if err != nil {
@@ -142,8 +141,7 @@ func TestHandleScalingConfigsGET(t *testing.T) {
 }
 
 func TestHandleScalingConfigActionsGETAndDELETE(t *testing.T) {
-	os.Setenv("POD_NAMESPACE", "costdeck")
-	defer os.Unsetenv("POD_NAMESPACE")
+	t.Setenv("POD_NAMESPACE", "costdeck")
 
 	server := buildMockServer()
 
@@ -153,7 +151,9 @@ func TestHandleScalingConfigActionsGETAndDELETE(t *testing.T) {
 			Namespace: "costdeck",
 		},
 	}
-	server.Client.Create(context.Background(), config)
+	if err := server.Client.Create(context.Background(), config); err != nil {
+		t.Fatal(err)
+	}
 
 	// GET
 	reqGet, _ := http.NewRequest("GET", "/api/scaling/configs/test-config-action", nil)
@@ -218,8 +218,7 @@ func fetchGroup(t *testing.T, server *Server, name string) *finopsv1.ScalingGrou
 // A null "active" is the only way back to schedule-driven behaviour, so it must clear
 // spec.active rather than being treated as "no change" or as false.
 func TestHandleScalingGroupManualNullClearsOverride(t *testing.T) {
-	os.Setenv("POD_NAMESPACE", "costdeck")
-	defer os.Unsetenv("POD_NAMESPACE")
+	t.Setenv("POD_NAMESPACE", "costdeck")
 
 	server := buildMockServer()
 	seedGroup(t, server, "pinned-group")
@@ -241,8 +240,7 @@ func TestHandleScalingGroupManualNullClearsOverride(t *testing.T) {
 }
 
 func TestHandleScalingGroupManualFalsePinsDown(t *testing.T) {
-	os.Setenv("POD_NAMESPACE", "costdeck")
-	defer os.Unsetenv("POD_NAMESPACE")
+	t.Setenv("POD_NAMESPACE", "costdeck")
 
 	server := buildMockServer()
 	seedGroup(t, server, "down-group")
@@ -258,8 +256,7 @@ func TestHandleScalingGroupManualFalsePinsDown(t *testing.T) {
 }
 
 func TestHandleScalingGroupManualActiveUntil(t *testing.T) {
-	os.Setenv("POD_NAMESPACE", "costdeck")
-	defer os.Unsetenv("POD_NAMESPACE")
+	t.Setenv("POD_NAMESPACE", "costdeck")
 
 	server := buildMockServer()
 	seedGroup(t, server, "temp-group")

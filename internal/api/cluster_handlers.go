@@ -318,7 +318,7 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request) {
 	providerName := r.PathValue("provider")
 	resourceType := r.PathValue("type")
 
-	if providerName != "aws" {
+	if providerName != scaling.ProviderAWS {
 		writeErrorf(w, http.StatusNotImplemented, "Provider '%s' not supported yet", providerName)
 		return
 	}
