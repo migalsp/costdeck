@@ -2,15 +2,18 @@ openapi: "3.0.3"
 info:
   title: Cost Deck Operator API
   description: |
-    REST API for the Cost Deck Kubernetes FinOps operator.
-    Provides namespace resource insights, workload scaling, optimization, and cluster monitoring.
+    REST API for the Cost Deck Kubernetes FinOps operator: namespace cost and usage,
+    right-sizing advice, scaling schedules, settings and the AI assistant.
 
-    **Authentication:** All endpoints (except `/api/login`) require a valid `costdeck-session` cookie.
-    Obtain one via `POST /api/login`.
+    **Authentication:** every endpoint except sign-in, the auth configuration and the Webex
+    webhook needs either the `costdeck-session` cookie (from `POST /api/login` or Entra ID
+    sign-in) or an API token sent as `Authorization: Bearer cdk_...`. Each endpoint requires
+    at least the viewer, operator or admin role. MCP is served at `/mcp` with the same
+    authentication.
   version: "1.3.0" # x-release-please-version
   contact:
     name: Cost Deck
-    url: https://github.com/migalsp/costdeck-operator
+    url: https://github.com/migalsp/costdeck
   license:
     name: Apache 2.0
     url: https://www.apache.org/licenses/LICENSE-2.0
@@ -31,12 +34,25 @@ tags:
   - name: Optimization
     description: Resource right-sizing
   - name: Scaling
-    description: Workload scaling management
+    description: Scaling schedules (ScalingGroups) and single-namespace configs
+  - name: Costing
+    description: Cost estimates and cloud resource discovery
+  - name: AI
+    description: Assistant chat and cost reports (Server-Sent Events)
+  - name: Settings
+    description: CostDeckConfig settings, connection tests and API tokens (admin)
+  - name: Webex
+    description: Inbound Webex webhook
+
+security:
+  - cookieAuth: []
+  - bearerAuth: []
 
 paths:
   /api/login:
     post:
       tags: [Auth]
+      security: []
       summary: Sign in
       description: Authenticate with username/password. Returns a session cookie.
       requestBody:
@@ -79,6 +95,7 @@ paths:
   /api/logout:
     post:
       tags: [Auth]
+      security: []
       summary: Sign out
       description: Clears the session cookie.
       responses:
@@ -90,6 +107,7 @@ paths:
   /api/auth/config:
     get:
       tags: [Auth]
+      security: []
       summary: Available sign-in methods
       description: Public. Tells the login page whether to show the password form and the Microsoft button.
       responses:
@@ -130,6 +148,7 @@ paths:
   /api/auth/entra/login:
     get:
       tags: [Auth]
+      security: []
       summary: Start Microsoft Entra ID sign-in
       description: Redirects the browser to Entra ID (authorization code flow with PKCE).
       parameters:
@@ -144,6 +163,7 @@ paths:
   /api/auth/entra/callback:
     get:
       tags: [Auth]
+      security: []
       summary: Entra ID redirect URI (server-side mode)
       description: >
         Register https://<host>/api/auth/entra/callback as a Web redirect URI. Verifies state,
@@ -156,6 +176,7 @@ paths:
   /api/auth/entra/callback-spa:
     post:
       tags: [Auth]
+      security: []
       summary: Complete Entra ID sign-in (single-page-app mode)
       description: Used by the /auth/callback dashboard route when the app registration uses the SPA redirect URI.
       requestBody:
@@ -655,7 +676,334 @@ paths:
         "400":
           description: Invalid deadline or duration
 
+  /api/scaling/groups/{name}/events:
+    get:
+      tags: [Scaling]
+      summary: Kubernetes events of a group
+      description: Events recorded for the ScalingGroup, oldest first; the activity view uses them.
+      parameters:
+        - { name: name, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Events
+          content:
+            application/json:
+              schema: { type: array, items: { type: object } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/costing:
+    post:
+      tags: [Costing]
+      summary: Estimate cost
+      description: Prices a namespace, node or the whole cluster at the effective rates (custom, AWS Price List or heuristic).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [targetType]
+              properties:
+                targetType: { type: string, enum: [namespace, node, cluster] }
+                targetName: { type: string }
+                totalCpu: { type: number, description: "cores, for node and cluster targets" }
+                totalMemoryGb: { type: number, description: "GiB, for node and cluster targets" }
+      responses:
+        "200":
+          description: Estimate
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  hourlyCost: { type: number }
+                  monthlyCost: { type: number }
+                  currency: { type: string }
+                  determinedBy: { type: string, description: "where the rates came from" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/discovery/{provider}/{type}:
+    get:
+      tags: [Costing]
+      summary: Discover cloud resources
+      description: Lists resources that can join a scaling sequence as external targets. Only provider `aws` with types `aurora` and `ec2` is supported.
+      parameters:
+        - { name: provider, in: path, required: true, schema: { type: string, enum: [aws] } }
+        - { name: type, in: path, required: true, schema: { type: string, enum: [aurora, ec2] } }
+      responses:
+        "200":
+          description: Discovered resources
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    provider: { type: string }
+                    type: { type: string }
+                    identifier: { type: string }
+                    name: { type: string }
+                    region: { type: string }
+                    status: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "501": { description: Provider not supported }
+
+  /api/ai/chat:
+    post:
+      tags: [AI]
+      summary: Chat with the assistant
+      description: >-
+        Streams the answer as Server-Sent Events. Each `data:` line is a JSON event of type
+        text, reset, tool_call, tool_result, confirm, error or done. A `confirm` event names a
+        mutating tool the model wants to run; nothing happens until the client calls
+        POST /api/ai/tools/{name}.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                messages:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      role: { type: string, enum: [user, assistant] }
+                      content: { type: string }
+      responses:
+        "200":
+          description: Event stream
+          content:
+            text/event-stream:
+              schema:
+                type: object
+                properties:
+                  type: { type: string }
+                  text: { type: string }
+                  tool: { type: string }
+                  args: { type: object }
+                  isError: { type: boolean }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/ai/tools/{name}:
+    post:
+      tags: [AI]
+      summary: Run a confirmed assistant action
+      description: Runs a mutating tool (scale_group, scale_namespace, revert_optimization) the user confirmed. Requires the operator role.
+      parameters:
+        - { name: name, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                args: { type: object }
+      responses:
+        "200":
+          description: Result text
+          content:
+            application/json:
+              schema: { type: object, properties: { result: { type: string } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { description: Requires the operator role }
+
+  /api/ai/report:
+    get:
+      tags: [AI]
+      summary: Saved cost report
+      responses:
+        "200":
+          description: The last saved report (empty when none)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  report: { type: string, description: Markdown }
+                  generatedAt: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/ai/report/generate:
+    post:
+      tags: [AI]
+      summary: Generate a cost report
+      description: Streams a new Markdown report as Server-Sent Events (same event format as chat) and saves it when done.
+      responses:
+        "200": { description: Event stream, content: { text/event-stream: {} } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/ai/report/save:
+    post:
+      tags: [AI]
+      summary: Save an edited report
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, properties: { report: { type: string } } }
+      responses:
+        "200": { description: Saved }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/settings:
+    get:
+      tags: [Settings]
+      summary: Read settings
+      description: The CostDeckConfig settings with connection status. Credentials are never returned, only whether they are set.
+      responses:
+        "200": { description: Settings, content: { application/json: { schema: { type: object } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    put:
+      tags: [Settings]
+      summary: Update settings
+      description: >-
+        Updates the sections present in the body (providers, integrations, features, pricing,
+        auth). Omitted credential fields keep the stored Secret. Requires the admin role.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "200": { description: Updated settings, content: { application/json: { schema: { type: object } } } }
+        "400": { description: Invalid settings }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/settings/providers/{provider}/test:
+    post:
+      tags: [Settings]
+      summary: Test a connection
+      description: Tests unsaved credentials or settings for aws, ai, entra, webex or victoriametrics.
+      parameters:
+        - { name: provider, in: path, required: true, schema: { type: string, enum: [aws, ai, entra, webex, victoriametrics] } }
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "200":
+          description: Result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  connected: { type: boolean }
+                  message: { type: string }
+                  error: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/settings/providers/{provider}/status:
+    get:
+      tags: [Settings]
+      summary: Connection status of a configured provider
+      parameters:
+        - { name: provider, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: Status, content: { application/json: { schema: { type: object } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/settings/ai/models:
+    post:
+      tags: [Settings]
+      summary: List AI models
+      description: Asks the AI provider (with the given or stored credentials) which models it offers.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                provider: { type: string, enum: [anthropic, openai, gemini, local] }
+                baseUrl: { type: string }
+                apiKey: { type: string }
+      responses:
+        "200":
+          description: Models
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  models: { type: array, items: { type: string } }
+                  default: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/tokens:
+    get:
+      tags: [Settings]
+      summary: List API tokens
+      responses:
+        "200":
+          description: Tokens (never the token values)
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/TokenInfo" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [Settings]
+      summary: Create an API token
+      description: The token value is returned once and only its hash is stored.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, role]
+              properties:
+                name: { type: string }
+                role: { type: string, enum: [viewer, operator, admin] }
+                expiresInDays: { type: integer, minimum: 0, maximum: 3650, description: "0 = never" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token: { type: string, example: cdk_... }
+                  info: { $ref: "#/components/schemas/TokenInfo" }
+        "400": { description: Invalid request }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/tokens/{name}:
+    delete:
+      tags: [Settings]
+      summary: Revoke an API token
+      parameters:
+        - { name: name, in: path, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Revoked }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/webex/webhook:
+    post:
+      tags: [Webex]
+      summary: Webex webhook
+      description: Receives Webex message events when a webhook secret is configured. The body must carry a valid HMAC-SHA1 X-Spark-Signature; no session or token is needed.
+      security: []
+      parameters:
+        - { name: X-Spark-Signature, in: header, required: true, schema: { type: string } }
+      responses:
+        "200": { description: Accepted }
+        "401": { description: Missing or invalid signature }
+
 components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: costdeck-session
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: API token (cdk_...) from Settings → Access & SSO.
   parameters:
     Namespace:
       name: ns
@@ -821,6 +1169,14 @@ components:
                     name: { type: string }
                     cpu: { $ref: "#/components/schemas/ResourceAdvice" }
                     memory: { $ref: "#/components/schemas/ResourceAdvice" }
+    TokenInfo:
+      type: object
+      properties:
+        name: { type: string }
+        role: { type: string, enum: [viewer, operator, admin] }
+        createdAt: { type: string, format: date-time }
+        createdBy: { type: string }
+        expiresAt: { type: string, format: date-time }
     ResourceAdvice:
       type: object
       properties:
