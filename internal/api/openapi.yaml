@@ -23,24 +23,24 @@ servers:
     description: Current instance
 
 tags:
-  - name: Auth
-    description: Authentication endpoints
+  - name: Scaling
+    description: Schedules (ScalingGroups), single-namespace configs and manual overrides
+  - name: Namespaces
+    description: Usage, pods and workloads per namespace
+  - name: Right-sizing
+    description: Advice on which requests can shrink
+  - name: Costing
+    description: Cost estimates and cloud resource discovery
   - name: System
     description: Operator version and cluster info
   - name: Health
-    description: Operator self-monitoring
-  - name: Namespaces
-    description: Namespace resource insights
-  - name: Right-sizing
-    description: Advice on which requests can shrink
-  - name: Scaling
-    description: Scaling schedules (ScalingGroups) and single-namespace configs
-  - name: Costing
-    description: Cost estimates and cloud resource discovery
+    description: Operator self-monitoring and logs
   - name: AI
     description: Assistant chat and cost reports (Server-Sent Events)
   - name: Settings
-    description: CostDeckConfig settings, connection tests and API tokens (admin)
+    description: CostDeckConfig settings, connection tests and API tokens
+  - name: Auth
+    description: Sign-in, sign-out and single sign-on
   - name: Webex
     description: Inbound Webex webhook
   - name: Docs

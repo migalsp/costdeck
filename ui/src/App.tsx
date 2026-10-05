@@ -7,7 +7,7 @@ import OperatorHealth from './pages/OperatorHealth'
 import ScalingPage from './pages/ScalingPage'
 import ClusterDashboard from './pages/ClusterDashboard'
 import LoginPage from './pages/LoginPage'
-import ApiReference from './pages/ApiReference'
+import Documentation from './pages/Documentation'
 import SettingsPage from './pages/SettingsPage'
 import ReportsPage from './pages/ReportsPage'
 import AIChatWidget from './components/AIChatModal'
@@ -188,7 +188,7 @@ function App() {
         )}
         {activeTab === 'cluster' && <ClusterDashboard />}
         {activeTab === 'operator' && <OperatorHealth />}
-        {activeTab === 'api-docs' && <ApiReference />}
+        {activeTab === 'api-docs' && <Documentation />}
         {activeTab === 'settings' && isAdmin && <SettingsPage />}
         {activeTab === 'reports' && <ReportsPage />}
         {activeTab === 'scale' && (
