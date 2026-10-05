@@ -37,7 +37,7 @@ spec:
       type: integer
     - jsonPath: .status.nextTransition.time
       name: Next change
-      type: date
+      type: string
     - jsonPath: .status.estimatedHourlySavings
       name: Saving/h
       priority: 1

@@ -181,7 +181,7 @@ type ScalingConfigStatus struct {
 // +kubebuilder:printcolumn:name="Mode",type=string,JSONPath=".status.mode"
 // +kubebuilder:printcolumn:name="Desired",type=string,JSONPath=".status.desiredState"
 // +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=".status.phase"
-// +kubebuilder:printcolumn:name="Next change",type=date,JSONPath=".status.nextTransition.time"
+// +kubebuilder:printcolumn:name="Next change",type=string,JSONPath=".status.nextTransition.time"
 // +kubebuilder:printcolumn:name="Saving/h",type=string,JSONPath=".status.estimatedHourlySavings",priority=1
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=".metadata.creationTimestamp"
 
