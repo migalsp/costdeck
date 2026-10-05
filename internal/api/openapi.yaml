@@ -35,6 +35,8 @@ tags:
     description: Operator version and cluster info
   - name: Health
     description: Operator self-monitoring and logs
+  - name: Reports
+    description: The cost digest, its schedule and the report history
   - name: AI
     description: Assistant chat and cost reports (Server-Sent Events)
   - name: Settings
@@ -763,6 +765,190 @@ paths:
                   determinedBy: { type: string, description: "where the rates came from" }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
+  /api/finops/overview:
+    get:
+      x-role: viewer
+      tags: [Costing]
+      summary: Cost overview
+      description: >-
+        The cluster's cost picture: what the nodes cost at the current run rate, how much of
+        it pods request and use, month to date with a forecast, the daily history of the last
+        30 days, every namespace with its cost, efficiency and schedule, and the savings
+        opportunities ranked by what they save. Right-sizing advice is calculated in the
+        background; savings.rightsizingPending counts namespaces still being analysed.
+      responses:
+        "200":
+          description: Overview
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FinOpsOverview"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/finops/nodes:
+    get:
+      x-role: viewer
+      tags: [Costing]
+      summary: Node view
+      description: >-
+        Every node with its pool, instance type, zone, capacity type (spot or on-demand), pods,
+        CPU and memory capacity, allocatable, requested and used, and its monthly cost; node
+        pool totals; and findings such as nodes that could be emptied, a CPU-to-memory shape
+        that wastes nodes, pods that cannot be scheduled, and nodes that are not ready.
+      responses:
+        "200":
+          description: Node view
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  k8sVersion: { type: string }
+                  report:
+                    type: object
+                    properties:
+                      currency: { type: string }
+                      summary: { type: object }
+                      pools: { type: array, items: { type: object } }
+                      nodes: { type: array, items: { type: object } }
+                      findings: { type: array, items: { type: object } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/finops/nodes/{name}/pods:
+    get:
+      x-role: viewer
+      tags: [Costing]
+      summary: Pods on a node
+      description: The pods running on one node with their requests, usage and monthly cost, most expensive first.
+      parameters:
+        - { name: name, in: path, required: true, schema: { type: string }, description: Node name }
+      responses:
+        "200":
+          description: Pods
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    namespace: { type: string }
+                    name: { type: string }
+                    phase: { type: string }
+                    daemonSet: { type: boolean }
+                    cpuRequest: { type: number }
+                    cpuUsed: { type: number }
+                    memoryRequestGiB: { type: number }
+                    memoryUsedGiB: { type: number }
+                    monthlyCost: { type: number }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/finops/infra:
+    get:
+      x-role: viewer
+      tags: [Costing]
+      summary: Volumes and load balancers
+      description: >-
+        Every persistent volume with its size, disk type, monthly cost, the pods that mount
+        it and its state (in-use, unused, scaled-down or orphaned), and every LoadBalancer
+        Service with its ready endpoints, monthly cost and state (serving, idle or
+        scaled-down). Volumes are priced per storage class at cloud list prices or the
+        custom storage rate; local volumes are part of the node.
+      responses:
+        "200":
+          description: Storage and network
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  currency: { type: string }
+                  cloud: { type: string, enum: [aws, azure, gcp, local] }
+                  error: { type: string, description: Why volumes or load balancers could not be read. }
+                  infra:
+                    type: object
+                    properties:
+                      storageMonthly: { type: number }
+                      networkMonthly: { type: number }
+                      unusedStorageMonthly: { type: number }
+                      idleNetworkMonthly: { type: number }
+                      volumes: { type: array, items: { type: object } }
+                      loadBalancers: { type: array, items: { type: object } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/budgets:
+    get:
+      x-role: viewer
+      tags: [Costing]
+      summary: Budgets and alerts
+      description: >-
+        Every budget against the current month (spent, forecast at the current hourly cost,
+        state ok, at-risk or over), the anomaly alert settings and the recent alerts.
+        Budgets are edited through PUT /api/settings (budgets, alerts).
+      responses:
+        "200":
+          description: Budgets
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  currency: { type: string }
+                  budgets:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        budget: { $ref: "#/components/schemas/Budget" }
+                        limit: { type: number }
+                        spent: { type: number }
+                        forecast: { type: number }
+                        hourlyNow: { type: number }
+                        state: { type: string, enum: [ok, at-risk, over] }
+                        namespaces: { type: array, items: { type: string } }
+                        partial: { type: boolean }
+                  anomalies: { type: object }
+                  events:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        at: { type: string, format: date-time }
+                        kind: { type: string, enum: [budget, forecast, anomaly] }
+                        title: { type: string }
+                        detail: { type: string }
+                        delivered: { type: string }
+                  webexReady: { type: boolean }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/billing/reconcile:
+    post:
+      x-role: admin
+      tags: [Costing]
+      summary: Reconcile with the cloud bill now
+      description: >-
+        Reads the cloud bill for the cluster's nodes over the week ending two days ago and
+        compares it with the list-price node cost of the same days. The ratio scales every
+        compute cost. Runs by itself every six hours when reconciliation is on.
+      responses:
+        "200":
+          description: Result, also stored in the CostDeckConfig status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  source: { type: string, example: AWS Cost Explorer }
+                  factor: { type: string, example: "0.7214" }
+                  from: { type: string }
+                  to: { type: string }
+                  billed: { type: string }
+                  list: { type: string }
+                  currency: { type: string }
+                  error: { type: string }
+        "400": { description: Reconciliation is off }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
   /api/discovery:
     get:
       x-role: viewer
@@ -808,6 +994,102 @@ paths:
                     status: { type: string }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "501": { description: Provider not supported }
+
+  /api/reports:
+    get:
+      x-role: viewer
+      tags: [Reports]
+      summary: Report history and digest schedule
+      description: Stored reports (AI reports and sent digests), newest first, with the digest schedule, when it was last sent and when it is due next.
+      responses:
+        "200":
+          description: Reports
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  reports: { type: array, items: { $ref: "#/components/schemas/ReportEntry" } }
+                  schedule: { $ref: "#/components/schemas/DigestSchedule" }
+                  webexReady: { type: boolean, description: Webex is enabled with a space to post to. }
+                  lastSent: { type: string, format: date-time }
+                  nextDue: { type: string, format: date-time }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/reports/digest:
+    get:
+      x-role: viewer
+      tags: [Reports]
+      summary: Cost digest
+      description: >-
+        The seven days up to yesterday, or the last calendar month, against the period
+        before: node cost, requested and used,
+        schedule savings, the most expensive namespaces and teams, and the top opportunities.
+        Computed from the cost history, with the same text that is posted to Webex.
+      parameters:
+        - { name: period, in: query, schema: { type: string, enum: [week, month], default: week } }
+      responses:
+        "200":
+          description: Digest and its Markdown
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  digest: { type: object }
+                  markdown: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/reports/digest/send:
+    post:
+      x-role: operator
+      tags: [Reports]
+      summary: Post the digest to Webex now
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                period: { type: string, enum: [week, month] }
+            example: { period: week }
+      responses:
+        "200":
+          description: Posted and stored
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReportEntry" }
+        "400": { description: Webex is not enabled or has no space }
+        "502": { description: Webex rejected the message }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/reports/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      x-role: viewer
+      tags: [Reports]
+      summary: One stored report
+      responses:
+        "200":
+          description: The report and its Markdown
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  report: { $ref: "#/components/schemas/ReportEntry" }
+                  markdown: { type: string }
+        "404": { description: No such report }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    delete:
+      x-role: admin
+      tags: [Reports]
+      summary: Delete a stored report
+      responses:
+        "204": { description: Deleted }
+        "404": { description: No such report }
+        "401": { $ref: "#/components/responses/Unauthorized" }
 
   /api/ai/chat:
     post:
@@ -895,7 +1177,19 @@ paths:
       x-role: operator
       tags: [AI]
       summary: Generate a cost report
-      description: Streams a new Markdown report as Server-Sent Events (same event format as chat) and saves it when done.
+      description: >-
+        Streams a new Markdown report as Server-Sent Events (same event format as chat),
+        written by the AI model from the same overview, digest and node data the dashboard
+        shows, for the chosen audience. When done it is stored in the report history and a
+        "saved" event carries its ID.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                audience: { type: string, enum: [executive, engineering, showback], default: executive }
+            example: { audience: engineering }
       responses:
         "200": { description: Event stream, content: { text/event-stream: {} } }
         "401": { $ref: "#/components/responses/Unauthorized" }
@@ -945,6 +1239,22 @@ paths:
                 summary: Use your own prices
                 value:
                   pricing: { cpuCoreHour: "0.031", memoryGiBHour: "0.0042", currency: EUR }
+              budget:
+                summary: A team budget with alerts at 80% and 100%
+                value:
+                  budgets:
+                    - { name: payments, scope: team, value: payments, monthlyLimit: "1200", thresholds: [80, 100], forecast: true }
+                  alerts:
+                    anomalies: { enabled: true, percent: 30, minimumDaily: "5" }
+              billing:
+                summary: Reconcile with AWS Cost Explorer
+                value:
+                  billing: { enabled: true, aws: { tagKey: "aws:eks:cluster-name", tagValue: prod-eu } }
+              weeklyDigest:
+                summary: Post the cost digest every Monday
+                value:
+                  reports:
+                    digest: { enabled: true, frequency: weekly, time: "09:00", timezone: Europe/Berlin }
               azure:
                 summary: Enable Azure with workload identity
                 value:
@@ -1450,6 +1760,119 @@ components:
             activeUntil:
               type: string
               format: date-time
+
+    FinOpsOverview:
+      type: object
+      properties:
+        generatedAt: { type: string, format: date-time }
+        currency: { type: string, example: USD }
+        monthly:
+          type: object
+          description: Monthly amounts at the current run rate.
+          properties:
+            provisioned: { type: number, description: What the nodes cost. }
+            requested: { type: number, description: The part reserved by pod requests. }
+            used: { type: number, description: What pods actually use. }
+            unallocated: { type: number, description: Node capacity no pod requests. }
+            overprovisioned: { type: number, description: Requested but unused. }
+        savings:
+          type: object
+          properties:
+            schedulesMonthly: { type: number, description: What the schedules keep down now, per month. }
+            rightsizingMonthly: { type: number }
+            rightsizingPending: { type: integer }
+            scheduleCandidatesMonthly: { type: number, description: What working hours on unscheduled non-production namespaces would save. }
+        monthToDate:
+          type: object
+          properties:
+            month: { type: string, example: "2026-10" }
+            cost: { type: number }
+            saved: { type: number }
+            forecast: { type: number }
+            partial: { type: boolean, description: The history does not cover the whole month so far. }
+        history:
+          type: object
+          properties:
+            since: { type: string, format: date-time }
+            top: { type: array, items: { type: string } }
+            days:
+              type: array
+              items:
+                type: object
+                properties:
+                  date: { type: string, example: "2026-10-05" }
+                  hours: { type: number }
+                  provisioned: { type: number }
+                  requested: { type: number }
+                  used: { type: number }
+                  saved: { type: number }
+                  namespaces: { type: object, additionalProperties: { type: number } }
+        namespaces:
+          type: array
+          items:
+            type: object
+            properties:
+              name: { type: string }
+              environment: { type: string, enum: [production, non-production, system, unclassified] }
+              team: { type: string }
+              pods: { type: integer }
+              monthlyCost: { type: number }
+              monthlyUsedCost: { type: number }
+              monthlyIdle: { type: number }
+              efficiency: { type: number, description: Used cost over requested cost. }
+              insights: { type: array, items: { type: string } }
+              schedule:
+                type: object
+                properties:
+                  kind: { type: string, enum: [group, config] }
+                  name: { type: string }
+                  desiredState: { type: string }
+                  savedMonthly: { type: number }
+              rightsizingMonthly: { type: number }
+              scheduleSavingMonthly: { type: number }
+              cost7d: { type: number }
+              costPrev7d: { type: number }
+        opportunities:
+          type: array
+          items:
+            type: object
+            properties:
+              kind: { type: string, enum: [rightsizing, schedule, idle-capacity, cost-increase, missing-requests] }
+              namespace: { type: string }
+              title: { type: string }
+              detail: { type: string }
+              monthlySavings: { type: number }
+
+    ReportEntry:
+      type: object
+      properties:
+        id: { type: string }
+        kind: { type: string, enum: [ai, digest] }
+        title: { type: string }
+        audience: { type: string, enum: [executive, engineering, showback] }
+        period: { type: string, enum: [week, month] }
+        generatedAt: { type: string, format: date-time }
+        by: { type: string }
+        delivered: { type: string, example: webex }
+
+    DigestSchedule:
+      type: object
+      properties:
+        enabled: { type: boolean }
+        frequency: { type: string, enum: [weekly, monthly], description: "Weekly on Mondays, monthly on the 1st." }
+        time: { type: string, example: "09:00" }
+        timezone: { type: string, example: Europe/Berlin }
+
+    Budget:
+      type: object
+      required: [name, scope, monthlyLimit]
+      properties:
+        name: { type: string, example: payments }
+        scope: { type: string, enum: [cluster, namespace, team, environment] }
+        value: { type: string, description: "Namespace, team label value or environment; empty for cluster.", example: payments }
+        monthlyLimit: { type: string, example: "1200" }
+        thresholds: { type: array, items: { type: integer }, example: [80, 100] }
+        forecast: { type: boolean, description: Also alert when the month is forecast to exceed the limit. }
 
     ExternalTarget:
       type: object

@@ -364,6 +364,191 @@ type PricingConfig struct {
 	// +kubebuilder:validation:Pattern=`^[A-Za-z]{3}$`
 	// +optional
 	Currency string `json:"currency,omitempty"`
+
+	// StorageGiBMonth is the price of one GiB of persistent volume for a month, e.g.
+	// "0.08". Without it volumes are priced at the cloud's list price for their disk type.
+	// +kubebuilder:validation:Pattern=`^[0-9]+(\.[0-9]+)?$`
+	// +optional
+	StorageGiBMonth string `json:"storageGiBMonth,omitempty"`
+
+	// LoadBalancerMonth is the price of one LoadBalancer Service for a month, before
+	// traffic, e.g. "18". Without it the cloud's list price is used.
+	// +kubebuilder:validation:Pattern=`^[0-9]+(\.[0-9]+)?$`
+	// +optional
+	LoadBalancerMonth string `json:"loadBalancerMonth,omitempty"`
+}
+
+// ReportsConfig schedules the reports CostDeck sends by itself.
+type ReportsConfig struct {
+	// Digest posts a cost summary to the Webex space on a schedule.
+	// +optional
+	Digest DigestSchedule `json:"digest,omitempty"`
+}
+
+// DigestSchedule says when the cost digest is sent.
+type DigestSchedule struct {
+	// Enabled turns the scheduled digest on. It needs Webex with a space ID.
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+
+	// Frequency is weekly (sent on Mondays, covering the previous Monday to Sunday) or
+	// monthly (sent on the 1st, covering the previous month).
+	// +kubebuilder:validation:Enum=weekly;monthly
+	// +optional
+	Frequency string `json:"frequency,omitempty"`
+
+	// Time of day to send it, HH:MM in Timezone. Defaults to 09:00.
+	// +kubebuilder:validation:Pattern=`^([01][0-9]|2[0-3]):[0-5][0-9]$`
+	// +optional
+	Time string `json:"time,omitempty"`
+
+	// Timezone is an IANA time zone such as Europe/Berlin. Defaults to UTC.
+	// +optional
+	Timezone string `json:"timezone,omitempty"`
+}
+
+// Budget caps what part of the cluster may cost in a calendar month.
+type Budget struct {
+	// Name identifies the budget in the dashboard and in alerts.
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=63
+	Name string `json:"name"`
+
+	// Scope is what the budget covers: the whole cluster, one namespace, a team (the
+	// namespaces whose team label has Value) or an environment.
+	// +kubebuilder:validation:Enum=cluster;namespace;team;environment
+	Scope string `json:"scope"`
+
+	// Value names the namespace, team or environment (production, non-production, system
+	// or unclassified). Empty for the cluster.
+	// +optional
+	Value string `json:"value,omitempty"`
+
+	// MonthlyLimit is the budget for a calendar month in the cost currency, e.g. "1200".
+	// +kubebuilder:validation:Pattern=`^[0-9]+(\.[0-9]+)?$`
+	MonthlyLimit string `json:"monthlyLimit"`
+
+	// Thresholds are percentages of the limit that send an alert when spending reaches
+	// them. Defaults to 80 and 100.
+	// +kubebuilder:validation:MaxItems=5
+	// +listType=set
+	// +optional
+	Thresholds []int `json:"thresholds,omitempty"`
+
+	// Forecast also alerts, once a month, when spending is forecast to exceed the limit.
+	// +optional
+	Forecast bool `json:"forecast,omitempty"`
+}
+
+// AlertsConfig configures cost alerts besides budgets.
+type AlertsConfig struct {
+	// Anomalies alerts when a namespace's daily cost jumps above its recent average.
+	// +optional
+	Anomalies AnomalyAlerts `json:"anomalies,omitempty"`
+}
+
+// AnomalyAlerts configures daily cost anomaly alerts.
+type AnomalyAlerts struct {
+	// Enabled turns anomaly alerts on.
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+
+	// Percent above the average of the seven days before that counts as an anomaly.
+	// Defaults to 30.
+	// +kubebuilder:validation:Minimum=5
+	// +kubebuilder:validation:Maximum=1000
+	// +optional
+	Percent int `json:"percent,omitempty"`
+
+	// MinimumDaily is the smallest daily increase worth an alert, in the cost currency,
+	// so small namespaces do not page anyone. Defaults to "1".
+	// +kubebuilder:validation:Pattern=`^[0-9]+(\.[0-9]+)?$`
+	// +optional
+	MinimumDaily string `json:"minimumDaily,omitempty"`
+}
+
+// BillingConfig reconciles cost estimates with the cloud bill, so discounts (Savings
+// Plans, Reserved Instances, committed use, enterprise agreements) and spot prices show up
+// in every figure. It uses the credentials of the matching cloud provider.
+type BillingConfig struct {
+	// Enabled turns reconciliation on.
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+
+	// AWS reads the amortized EC2 cost from Cost Explorer (ce:GetCostAndUsage) for the
+	// instances that carry the cluster's tag. The tag must be activated as a cost
+	// allocation tag in the billing console.
+	// +optional
+	AWS *AWSBilling `json:"aws,omitempty"`
+
+	// Azure reads the amortized virtual machine cost of the cluster's node resource group
+	// from Cost Management (Cost Management Reader on that group).
+	// +optional
+	Azure *AzureBilling `json:"azure,omitempty"`
+
+	// GCP reads the Compute Engine cost of the cluster's nodes, credits included, from the
+	// billing export in BigQuery (BigQuery Job User, and Data Viewer on the dataset).
+	// +optional
+	GCP *GCPBilling `json:"gcp,omitempty"`
+}
+
+// AWSBilling selects the cluster's instances in Cost Explorer.
+type AWSBilling struct {
+	// TagKey is the cost allocation tag on the cluster's instances. Defaults to
+	// aws:eks:cluster-name.
+	// +optional
+	TagKey string `json:"tagKey,omitempty"`
+	// TagValue is the tag's value, usually the cluster name.
+	TagValue string `json:"tagValue"`
+}
+
+// AzureBilling selects the cluster's virtual machines in Cost Management.
+type AzureBilling struct {
+	// ResourceGroup is the AKS node resource group, e.g. MC_rg_cluster_westeurope.
+	// +kubebuilder:validation:Pattern=`^[-\w._()]{1,90}$`
+	ResourceGroup string `json:"resourceGroup"`
+}
+
+// GCPBilling selects the cluster's nodes in the BigQuery billing export.
+type GCPBilling struct {
+	// Table is the billing export table, project.dataset.table.
+	// +kubebuilder:validation:Pattern=`^[a-z][-a-z0-9]{4,28}[a-z0-9]\.[A-Za-z0-9_]+\.[A-Za-z0-9_]+$`
+	Table string `json:"table"`
+	// ClusterName is the GKE cluster name, matched against the goog-k8s-cluster-name label.
+	ClusterName string `json:"clusterName"`
+}
+
+// BillingStatus is the result of the last reconciliation.
+type BillingStatus struct {
+	// Source names the bill, e.g. "AWS Cost Explorer".
+	// +optional
+	Source string `json:"source,omitempty"`
+	// Factor is billed cost over list price for the compared days; it scales every
+	// compute cost. Below 1 means discounts.
+	// +optional
+	Factor string `json:"factor,omitempty"`
+	// From and To are the first and last compared days (UTC, inclusive).
+	// +optional
+	From string `json:"from,omitempty"`
+	// +optional
+	To string `json:"to,omitempty"`
+	// Billed and List are the compared totals.
+	// +optional
+	Billed string `json:"billed,omitempty"`
+	// +optional
+	List string `json:"list,omitempty"`
+	// Currency of Billed.
+	// +optional
+	Currency string `json:"currency,omitempty"`
+	// LastChecked is when the bill was last read.
+	// +optional
+	LastChecked metav1.Time `json:"lastChecked,omitempty"`
+	// LastReconciled is when Factor was last computed.
+	// +optional
+	LastReconciled metav1.Time `json:"lastReconciled,omitempty"`
+	// Error says why the last attempt failed.
+	// +optional
+	Error string `json:"error,omitempty"`
 }
 
 // ─── CostDeckConfig CRD ─────────────────────────────────────────────────────
@@ -394,6 +579,26 @@ type CostDeckConfigSpec struct {
 	// Pricing sets custom cost rates.
 	// +optional
 	Pricing PricingConfig `json:"pricing,omitempty"`
+
+	// Reports schedules the cost digest.
+	// +optional
+	Reports ReportsConfig `json:"reports,omitempty"`
+
+	// Budgets cap monthly spending of the cluster, namespaces, teams or environments and
+	// alert when they are reached or forecast to be exceeded.
+	// +kubebuilder:validation:MaxItems=100
+	// +listType=map
+	// +listMapKey=name
+	// +optional
+	Budgets []Budget `json:"budgets,omitempty"`
+
+	// Alerts configures cost anomaly alerts.
+	// +optional
+	Alerts AlertsConfig `json:"alerts,omitempty"`
+
+	// Billing reconciles estimates with the cloud bill.
+	// +optional
+	Billing BillingConfig `json:"billing,omitempty"`
 }
 
 // ProviderStatus represents the connection status of a single provider.
@@ -440,6 +645,10 @@ type CostDeckConfigStatus struct {
 	// Webex reports whether the bot token is valid and the bot can see its space.
 	// +optional
 	Webex *ProviderStatus `json:"webex,omitempty"`
+
+	// Billing is the last reconciliation with the cloud bill.
+	// +optional
+	Billing *BillingStatus `json:"billing,omitempty"`
 
 	// Conditions represent the current state of the CostDeckConfig resource.
 	// +optional

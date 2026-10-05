@@ -19,6 +19,10 @@ const (
 	// DefaultConfigName is the name of the singleton CostDeckConfig.
 	DefaultConfigName = "default"
 
+	// LeaderElectionID names the Lease the replicas compete for. Its holder runs the
+	// controllers, the Webex poller, the cost history and the digest.
+	LeaderElectionID = "fdcd422b.costdeck.io"
+
 	// defaultOperatorNamespace is used when POD_NAMESPACE is not injected, e.g. `make run`.
 	defaultOperatorNamespace = "costdeck"
 )

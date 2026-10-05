@@ -2,11 +2,12 @@ import { useState, useCallback } from 'react'
 import {
   Cloud, Bot, MessageSquare, Plus, Trash2, RefreshCw,
   CheckCircle2, XCircle, AlertTriangle, Eye, EyeOff, ChevronDown,
-  ChevronUp, Sparkles, ExternalLink, Activity, Plug, Shield
+  ChevronUp, Sparkles, ExternalLink, Activity, Plug, Shield, Info
 } from 'lucide-react'
 import { AWSLogo, AzureLogo, GCPLogo, WebexLogo } from '../components/ProviderLogos'
 import ApiTokens from '../components/ApiTokens'
 import { usePolling } from '../lib/usePolling'
+import { apiError, errorMessage } from '../lib/api'
 import { Button, Tabs } from '../components/ui'
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -116,12 +117,146 @@ interface SettingsData {
   pricing?: {
     cpuCoreHour?: string
     memoryGiBHour?: string
+    storageGiBMonth?: string
+    loadBalancerMonth?: string
     currency?: string
     effective: { cpuCoreHour: number; memoryGiBHour: number; currency: string; basis: string }
   }
 }
 
 // ─── Sub-Components ─────────────────────────────────────────────────────────
+
+type BillingCloud = 'aws' | 'azure' | 'gcp'
+
+interface BillingSettings {
+  enabled?: boolean
+  aws?: { tagKey?: string; tagValue: string }
+  azure?: { resourceGroup: string }
+  gcp?: { table: string; clusterName: string }
+  status?: {
+    source?: string; factor?: string; from?: string; to?: string; billed?: string; list?: string; currency?: string
+    lastChecked?: string; lastReconciled?: string; error?: string
+  }
+}
+
+const billingHelp: Record<BillingCloud, string> = {
+  aws: 'Reads the amortized EC2 cost from Cost Explorer (needs ce:GetCostAndUsage). Activate the tag as a cost allocation tag in the billing console first.',
+  azure: 'Reads the amortized virtual machine cost of the AKS node resource group from Cost Management (Cost Management Reader on that group).',
+  gcp: 'Queries the billing export in BigQuery, credits included (BigQuery Job User, and BigQuery Data Viewer on the dataset).',
+}
+
+// BillingSection sets up reconciliation with the cloud bill and shows its last result.
+function BillingSection() {
+  const [b, setB] = useState<BillingSettings | null>(null)
+  const [cloud, setCloud] = useState<BillingCloud>('aws')
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState<string | null>(null)
+
+  const load = () => fetch('/api/settings').then(r => r.json()).then(d => {
+    const bs: BillingSettings = d.billing || {}
+    setB(bs)
+    setCloud(bs.azure ? 'azure' : bs.gcp ? 'gcp' : 'aws')
+  }).catch(() => setB({}))
+  usePolling(load, null)
+
+  if (!b) return null
+  const st = b.status
+  const set = (patch: Partial<BillingSettings>) => setB({ ...b, ...patch })
+  const field = 'w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm font-mono'
+
+  const save = async () => {
+    setBusy(true)
+    setMessage(null)
+    try {
+      const body = {
+        enabled: !!b.enabled,
+        aws: cloud === 'aws' ? { tagKey: b.aws?.tagKey || 'aws:eks:cluster-name', tagValue: b.aws?.tagValue || '' } : undefined,
+        azure: cloud === 'azure' ? { resourceGroup: b.azure?.resourceGroup || '' } : undefined,
+        gcp: cloud === 'gcp' ? { table: b.gcp?.table || '', clusterName: b.gcp?.clusterName || '' } : undefined,
+      }
+      const res = await fetch('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ billing: body }) })
+      if (!res.ok) throw new Error(await apiError(res))
+      setMessage('Saved.')
+      await load()
+    } catch (e) {
+      setMessage(errorMessage(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+  const reconcile = async () => {
+    setBusy(true)
+    setMessage(null)
+    try {
+      const res = await fetch('/api/billing/reconcile', { method: 'POST' })
+      if (!res.ok) throw new Error(await apiError(res))
+      await load()
+    } catch (e) {
+      setMessage(errorMessage(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="pt-6 border-t border-slate-100">
+      <div className="flex items-center justify-between">
+        <div>
+          <h4 className="font-bold text-slate-800">Reconcile with the cloud bill</h4>
+          <p className="text-sm text-slate-500 mt-1">
+            Compares a week of the real bill for the cluster's nodes with list prices and scales every compute cost by the ratio, so Savings Plans,
+            Reserved Instances, committed use discounts and spot prices show in every figure. Checked every six hours; the bill lags by two days.
+          </p>
+        </div>
+        <label className="relative inline-flex items-center cursor-pointer ml-4">
+          <input type="checkbox" checked={!!b.enabled} onChange={e => set({ enabled: e.target.checked })} className="sr-only peer" />
+          <div className={`w-11 h-6 rounded-full transition-colors ${b.enabled ? 'bg-brand-600' : 'bg-slate-300'}`}>
+            <div className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-md transition-transform ${b.enabled ? 'translate-x-5' : 'translate-x-0'}`} />
+          </div>
+        </label>
+      </div>
+      <div className="mt-4 flex gap-1">
+        {(['aws', 'azure', 'gcp'] as BillingCloud[]).map(c => (
+          <button key={c} type="button" onClick={() => setCloud(c)}
+            className={`px-3 py-1.5 rounded-lg text-sm font-semibold border ${cloud === c ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'}`}>
+            {c === 'aws' ? 'AWS' : c === 'azure' ? 'Azure' : 'Google Cloud'}
+          </button>
+        ))}
+      </div>
+      <p className="mt-2 text-xs text-slate-500">{billingHelp[cloud]} It uses the credentials of the {cloud === 'aws' ? 'AWS' : cloud === 'azure' ? 'Azure' : 'Google Cloud'} provider above, or the pod identity.</p>
+      <div className="mt-3 grid grid-cols-2 gap-3">
+        {cloud === 'aws' && <>
+          <div><label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1 block">Tag key</label>
+            <input className={field} value={b.aws?.tagKey || 'aws:eks:cluster-name'} onChange={e => set({ aws: { tagValue: b.aws?.tagValue || '', tagKey: e.target.value } })} /></div>
+          <div><label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1 block">Tag value (cluster name)</label>
+            <input className={field} value={b.aws?.tagValue || ''} placeholder="prod-eu" onChange={e => set({ aws: { tagKey: b.aws?.tagKey, tagValue: e.target.value } })} /></div>
+        </>}
+        {cloud === 'azure' && (
+          <div className="col-span-2"><label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1 block">Node resource group</label>
+            <input className={field} value={b.azure?.resourceGroup || ''} placeholder="MC_rg-prod_aks-prod_westeurope" onChange={e => set({ azure: { resourceGroup: e.target.value } })} /></div>
+        )}
+        {cloud === 'gcp' && <>
+          <div><label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1 block">Billing export table</label>
+            <input className={field} value={b.gcp?.table || ''} placeholder="billing-project.billing.gcp_billing_export_resource_v1_XXXX" onChange={e => set({ gcp: { clusterName: b.gcp?.clusterName || '', table: e.target.value } })} /></div>
+          <div><label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1 block">GKE cluster name</label>
+            <input className={field} value={b.gcp?.clusterName || ''} placeholder="prod-eu" onChange={e => set({ gcp: { table: b.gcp?.table || '', clusterName: e.target.value } })} /></div>
+        </>}
+      </div>
+      {st && (st.factor || st.error) && (
+        <div className={`mt-4 p-3 rounded-xl border text-xs ${st.error ? 'border-amber-200 bg-amber-50 text-amber-900' : 'border-slate-200 bg-slate-50 text-slate-600'}`}>
+          {st.factor && <div><b className="text-slate-800">Billed {Math.round(Number(st.factor) * 100)}% of list price</b> ({st.from} to {st.to}, {st.billed} {st.currency} billed against {st.list} at list) · {st.source}</div>}
+          {st.error && <div className="mt-0.5">Last attempt: {st.error}</div>}
+          {st.lastChecked && <div className="mt-0.5 text-slate-400">Checked {new Date(st.lastChecked).toLocaleString()}</div>}
+        </div>
+      )}
+      <div className="mt-4 flex items-center gap-2">
+        <Button size="sm" variant="primary" onClick={save} disabled={busy}>Save reconciliation</Button>
+        <Button size="sm" onClick={reconcile} disabled={busy || !b.enabled}>Reconcile now</Button>
+        {message && <span className="text-xs text-slate-600">{message}</span>}
+      </div>
+    </div>
+  )
+}
 
 const StatusBadge = ({ connected, error }: { connected: boolean; error?: string }) => (
   <div className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${connected
@@ -151,7 +286,7 @@ const SecretInput = ({ value, onChange, placeholder }: { value: string; onChange
         value={value}
         onChange={e => onChange(e.target.value)}
         placeholder={placeholder}
-        className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-400 transition-all pr-10 font-mono"
+        className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-400 transition-all pr-10 font-mono"
       />
       <button
         type="button"
@@ -204,20 +339,20 @@ const TagEditor = ({ tags, onChange }: { tags: Record<string, string>; onChange:
           value={newKey}
           onChange={e => setNewKey(e.target.value)}
           placeholder="Tag key"
-          className="flex-1 px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-mono focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-400 transition-all"
+          className="flex-1 px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-mono focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-400 transition-all"
           onKeyDown={e => e.key === 'Enter' && addTag()}
         />
         <input
           value={newValue}
           onChange={e => setNewValue(e.target.value)}
           placeholder="Tag value"
-          className="flex-1 px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-mono focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-400 transition-all"
+          className="flex-1 px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-mono focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-400 transition-all"
           onKeyDown={e => e.key === 'Enter' && addTag()}
         />
         <button
           onClick={addTag}
           disabled={!newKey.trim()}
-          className="px-3 py-2 bg-emerald-500 text-white rounded-lg text-xs font-bold hover:bg-emerald-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+          className="px-3 py-2 bg-brand-600 text-white rounded-lg text-xs font-bold hover:bg-brand-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
         >
           <Plus size={14} /> Add
         </button>
@@ -230,7 +365,7 @@ const TagEditor = ({ tags, onChange }: { tags: Record<string, string>; onChange:
 
 const SectionHeader = ({ icon, title, subtitle }: { icon: React.ReactNode; title: React.ReactNode; subtitle: string }) => (
   <div className="flex items-center gap-3 mb-6">
-    <div className="w-10 h-10 rounded-xl bg-emerald-500/10 flex items-center justify-center">
+    <div className="w-10 h-10 rounded-xl bg-brand-50 flex items-center justify-center">
       {icon}
     </div>
     <div>
@@ -298,7 +433,7 @@ const ProviderCard = ({
   onToggle: (v: boolean) => void; comingSoon?: boolean; expanded: boolean;
   onExpand: () => void; status?: ProviderStatus
 }) => (
-  <div className={`bg-white rounded-xl border shadow-sm transition-all duration-300 ${enabled ? 'border-emerald-200 ring-1 ring-emerald-100' : 'border-slate-200'
+  <div className={`bg-white rounded-xl border shadow-sm transition-all duration-300 ${enabled ? 'border-brand-200 ring-1 ring-brand-100' : 'border-slate-200'
     }`}>
     <div
       className="flex items-center justify-between p-5 cursor-pointer select-none"
@@ -326,7 +461,7 @@ const ProviderCard = ({
             className="sr-only peer"
             disabled={comingSoon}
           />
-          <div className={`w-11 h-6 rounded-full peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-emerald-500/20 transition-colors ${enabled ? 'bg-emerald-500' : 'bg-slate-300'
+          <div className={`w-11 h-6 rounded-full peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-brand-500/20 transition-colors ${enabled ? 'bg-brand-600' : 'bg-slate-300'
             } ${comingSoon ? 'opacity-50 cursor-not-allowed' : ''}`}>
             <div className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-md transition-transform ${enabled ? 'translate-x-5' : 'translate-x-0'
               }`} />
@@ -413,6 +548,8 @@ export default function SettingsPage() {
   const [priceCpu, setPriceCpu] = useState('')
   const [priceMem, setPriceMem] = useState('')
   const [priceCurrency, setPriceCurrency] = useState('')
+  const [priceStorage, setPriceStorage] = useState('')
+  const [priceLB, setPriceLB] = useState('')
   const [aiApiKey, setAiApiKey] = useState('')
   const [aiSkipSslVerify, setAiSkipSslVerify] = useState(false)
   const [aiModels, setAiModels] = useState<string[]>([])
@@ -509,6 +646,8 @@ export default function SettingsPage() {
           setPriceCpu(data.pricing.cpuCoreHour || '')
           setPriceMem(data.pricing.memoryGiBHour || '')
           setPriceCurrency(data.pricing.currency || '')
+          setPriceStorage(data.pricing.storageGiBMonth || '')
+          setPriceLB(data.pricing.loadBalancerMonth || '')
         }
         if (data.auth) {
           setDisableLocalLogin(data.auth.disableLocalLogin)
@@ -600,6 +739,8 @@ export default function SettingsPage() {
         pricing: {
           cpuCoreHour: priceCpu,
           memoryGiBHour: priceMem,
+          storageGiBMonth: priceStorage,
+          loadBalancerMonth: priceLB,
           currency: priceCurrency,
         },
         auth: {
@@ -747,7 +888,7 @@ export default function SettingsPage() {
   if (loading) {
     return (
       <div className="flex h-full items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-emerald-500" />
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-brand-500" />
       </div>
     )
   }
@@ -804,7 +945,7 @@ export default function SettingsPage() {
       {expandedSection === 'providers' && (
         <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
           <SectionHeader
-            icon={<Cloud className="text-emerald-500" size={20} />}
+            icon={<Cloud className="text-brand-600" size={20} />}
             title="Cloud Providers"
             subtitle="Connect your cloud accounts for resource discovery and scaling"
           />
@@ -826,7 +967,7 @@ export default function SettingsPage() {
                 <select
                   value={awsRegion}
                   onChange={e => setAwsRegion(e.target.value)}
-                  className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-400 transition-all appearance-none cursor-pointer"
+                  className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-400 transition-all appearance-none cursor-pointer"
                 >
                   {awsRegions.map(r => <option key={r} value={r}>{r}</option>)}
                 </select>
@@ -907,7 +1048,7 @@ export default function SettingsPage() {
                         type="checkbox"
                         checked={awsResourceTypes.includes(rt.id)}
                         onChange={() => toggleResourceType(rt.id)}
-                        className="mt-0.5 accent-emerald-500"
+                        className="mt-0.5 accent-brand-600"
                       />
                       <div>
                         <span className="text-sm font-bold text-slate-700">{rt.label}</span>
@@ -1016,7 +1157,7 @@ export default function SettingsPage() {
       {expandedSection === 'monitoring' && (
         <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
           <SectionHeader
-            icon={<Activity className="text-amber-500" size={20} />}
+            icon={<Activity className="text-brand-600" size={20} />}
             title="Monitoring"
             subtitle="Where namespace usage and right-sizing advice come from"
           />
@@ -1024,8 +1165,8 @@ export default function SettingsPage() {
           <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
             <div className="flex items-center justify-between mb-6">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-amber-500/10 flex items-center justify-center">
-                  <Activity className="text-amber-500" size={20} />
+                <div className="w-10 h-10 rounded-xl bg-brand-50 flex items-center justify-center">
+                  <Activity className="text-brand-600" size={20} />
                 </div>
                 <div>
                   <span className="font-bold text-slate-800">VictoriaMetrics</span>
@@ -1043,7 +1184,7 @@ export default function SettingsPage() {
                 )}
                 <label className="relative inline-flex items-center cursor-pointer">
                   <input type="checkbox" checked={vmEnabled} onChange={e => setVmEnabled(e.target.checked)} className="sr-only peer" />
-                  <div className={`w-11 h-6 rounded-full ${vmEnabled ? 'bg-amber-500' : 'bg-slate-300'}`}>
+                  <div className={`w-11 h-6 rounded-full ${vmEnabled ? 'bg-brand-600' : 'bg-slate-300'}`}>
                     <div className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-md transition-transform ${vmEnabled ? 'translate-x-5' : 'translate-x-0'}`} />
                   </div>
                 </label>
@@ -1052,9 +1193,9 @@ export default function SettingsPage() {
 
             <div className={`space-y-5 ${!vmEnabled ? 'opacity-50 pointer-events-none' : ''}`}>
               {/* Info banner */}
-              <div className="flex items-start gap-3 p-4 bg-amber-50 rounded-xl border border-amber-100">
-                <AlertTriangle size={16} className="text-amber-500 mt-0.5 flex-shrink-0" />
-                <div className="text-xs text-amber-700">
+              <div className="flex items-start gap-3 p-4 bg-slate-50 rounded-xl border border-slate-200">
+                <Info size={16} className="text-slate-400 mt-0.5 flex-shrink-0" />
+                <div className="text-xs text-slate-600">
                   <p className="font-bold mb-1">Metrics Source Override</p>
                   <p>When enabled, namespace insights, pod usage and right-sizing advice come from VictoriaMetrics instead of the Kubernetes Metrics Server. Changes apply immediately — no operator restart. If VictoriaMetrics is unreachable, CostDeck falls back to metrics-server and reports why.</p>
                 </div>
@@ -1067,7 +1208,7 @@ export default function SettingsPage() {
                   value={vmEndpoint}
                   onChange={e => setVmEndpoint(e.target.value)}
                   placeholder="http://vmselect.monitoring.svc:8481/select/0/prometheus"
-                  className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-amber-500/30 focus:border-amber-400 transition-all"
+                  className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-400 transition-all"
                 />
                 <p className="text-[10px] text-slate-400 mt-1">Single node: http://vmsingle.monitoring.svc:8428 • Cluster: http://vmselect.monitoring.svc:8481/select/0/prometheus • Prometheus also works</p>
               </div>
@@ -1079,7 +1220,7 @@ export default function SettingsPage() {
                   value={vmLabelSelector}
                   onChange={e => setVmLabelSelector(e.target.value)}
                   placeholder='cluster="prod-eu"'
-                  className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-amber-500/30 focus:border-amber-400 transition-all"
+                  className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-400 transition-all"
                 />
                 <p className="text-[10px] text-slate-400 mt-1">Required when one VictoriaMetrics stores several clusters — otherwise namespaces with the same name are summed across clusters.</p>
               </div>
@@ -1094,7 +1235,7 @@ export default function SettingsPage() {
                     max={90}
                     value={vmRetentionDays}
                     onChange={e => setVmRetentionDays(parseInt(e.target.value) || 7)}
-                    className="w-24 px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm text-center focus:outline-none focus:ring-2 focus:ring-amber-500/30 focus:border-amber-400 transition-all"
+                    className="w-24 px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm text-center focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-400 transition-all"
                   />
                   <span className="text-xs text-slate-400">days of history behind right-sizing advice (at most 14 are used)</span>
                 </div>
@@ -1107,7 +1248,7 @@ export default function SettingsPage() {
                   <button
                     onClick={() => setVmAuthMode('bearer')}
                     className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${vmAuthMode === 'bearer'
-                        ? 'bg-amber-500 text-white shadow-sm'
+                        ? 'bg-brand-600 text-white shadow-sm'
                         : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                       }`}
                   >
@@ -1116,7 +1257,7 @@ export default function SettingsPage() {
                   <button
                     onClick={() => setVmAuthMode('basic')}
                     className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${vmAuthMode === 'basic'
-                        ? 'bg-amber-500 text-white shadow-sm'
+                        ? 'bg-brand-600 text-white shadow-sm'
                         : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                       }`}
                   >
@@ -1133,7 +1274,7 @@ export default function SettingsPage() {
                         value={vmUsername}
                         onChange={e => setVmUsername(e.target.value)}
                         placeholder="Username"
-                        className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/30 focus:border-amber-400 transition-all"
+                        className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-400 transition-all"
                       />
                     </div>
                     <div>
@@ -1153,10 +1294,10 @@ export default function SettingsPage() {
                   onChange={e => setVmCaCert(e.target.value)}
                   rows={3}
                   placeholder="-----BEGIN CERTIFICATE----- (optional custom CA, PEM)"
-                  className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-mono focus:outline-none focus:ring-2 focus:ring-amber-500/30 focus:border-amber-400 transition-all"
+                  className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-mono focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-400 transition-all"
                 />
                 <label className="flex items-center gap-2 mt-2 text-xs font-bold text-slate-500 cursor-pointer">
-                  <input type="checkbox" checked={vmSkipSsl} onChange={e => setVmSkipSsl(e.target.checked)} className="accent-amber-500" />
+                  <input type="checkbox" checked={vmSkipSsl} onChange={e => setVmSkipSsl(e.target.checked)} className="accent-brand-600" />
                   Skip TLS verification (insecure — prefer a custom CA)
                 </label>
               </div>
@@ -1181,7 +1322,7 @@ export default function SettingsPage() {
             </div>
 
             {vmEnabled && vmEndpoint && (
-              <div className="flex items-center gap-3 mt-6 pt-4 border-t border-slate-100 justify-center text-amber-500">
+              <div className="flex items-center gap-3 mt-6 pt-4 border-t border-slate-100 justify-center text-brand-600">
                 <Activity size={16} />
                 <span className="text-xs font-medium">Namespace insights will use VictoriaMetrics at {vmEndpoint}</span>
               </div>
@@ -1428,7 +1569,7 @@ export default function SettingsPage() {
       {expandedSection === 'mcp' && (
         <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
           <SectionHeader
-            icon={<Plug className="text-pink-500" size={20} />}
+            icon={<Plug className="text-brand-600" size={20} />}
             title="MCP Server"
             subtitle="Expose CostDeck's data and actions as tools to external AI assistants such as Claude or Cursor."
           />
@@ -1436,8 +1577,8 @@ export default function SettingsPage() {
           <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
             <div className="flex items-center justify-between mb-6">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-pink-500/10 flex items-center justify-center">
-                  <Plug className="text-pink-500" size={20} />
+                <div className="w-10 h-10 rounded-xl bg-brand-50 flex items-center justify-center">
+                  <Plug className="text-brand-600" size={20} />
                 </div>
                 <div>
                   <span className="font-bold text-slate-800">MCP Server</span>
@@ -1445,7 +1586,7 @@ export default function SettingsPage() {
               </div>
               <label className="relative inline-flex items-center cursor-pointer">
                 <input type="checkbox" checked={mcpEnabled} onChange={e => setMcpEnabled(e.target.checked)} className="sr-only peer" />
-                <div className={`w-11 h-6 rounded-full ${mcpEnabled ? 'bg-pink-500' : 'bg-slate-300'}`}>
+                <div className={`w-11 h-6 rounded-full ${mcpEnabled ? 'bg-brand-600' : 'bg-slate-300'}`}>
                   <div className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-md transition-transform ${mcpEnabled ? 'translate-x-5' : 'translate-x-0'}`} />
                 </div>
               </label>
@@ -1461,7 +1602,7 @@ export default function SettingsPage() {
               <div className="bg-brand-50 border border-brand-100 rounded-xl p-4 space-y-3">
                 <div>
                   <h4 className="text-sm font-bold text-brand-800 mb-1">Cursor / any client with remote MCP support</h4>
-                  <pre className="bg-slate-900 rounded-lg p-3 overflow-x-auto text-xs text-emerald-400">{`{
+                  <pre className="bg-slate-900 rounded-lg p-3 overflow-x-auto text-xs text-slate-200">{`{
   "mcpServers": {
     "costdeck": {
       "url": "${window.location.origin}/mcp",
@@ -1472,7 +1613,7 @@ export default function SettingsPage() {
                 </div>
                 <div>
                   <h4 className="text-sm font-bold text-brand-800 mb-1">Claude Code</h4>
-                  <pre className="bg-slate-900 rounded-lg p-3 overflow-x-auto text-xs text-emerald-400">{`claude mcp add --transport http costdeck ${window.location.origin}/mcp \
+                  <pre className="bg-slate-900 rounded-lg p-3 overflow-x-auto text-xs text-slate-200">{`claude mcp add --transport http costdeck ${window.location.origin}/mcp \
   --header "Authorization: Bearer cdk_..."`}</pre>
                 </div>
               </div>
@@ -1485,7 +1626,7 @@ export default function SettingsPage() {
       {expandedSection === 'access' && (
         <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
           <SectionHeader
-            icon={<Shield className="text-sky-600" size={20} />}
+            icon={<Shield className="text-brand-600" size={20} />}
             title="Access & Single Sign-On"
             subtitle="Let people sign in with Microsoft Entra ID and map their groups to CostDeck roles"
           />
@@ -1498,17 +1639,17 @@ export default function SettingsPage() {
               </div>
               <label className="relative inline-flex items-center cursor-pointer">
                 <input type="checkbox" checked={entraEnabled} onChange={e => setEntraEnabled(e.target.checked)} className="sr-only peer" />
-                <div className={`w-11 h-6 rounded-full ${entraEnabled ? 'bg-sky-600' : 'bg-slate-300'}`}>
+                <div className={`w-11 h-6 rounded-full ${entraEnabled ? 'bg-brand-600' : 'bg-slate-300'}`}>
                   <div className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-md transition-transform ${entraEnabled ? 'translate-x-5' : 'translate-x-0'}`} />
                 </div>
               </label>
             </div>
 
-            <div className="p-4 bg-sky-50 border border-sky-100 rounded-xl text-xs text-sky-800 space-y-1.5">
+            <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-600 space-y-1.5">
               <p className="font-bold">App registration redirect URI (add one of them in the Azure portal):</p>
               <p><code className="bg-white px-1.5 py-0.5 rounded">{window.location.origin}/api/auth/entra/callback</code> — web platform, recommended</p>
               <p><code className="bg-white px-1.5 py-0.5 rounded">{window.location.origin}/auth/callback</code> — single-page application</p>
-              <p className="text-sky-600">Add the optional <b>groups</b> claim (Token configuration → Security groups) or define app roles named admin / operator / viewer.</p>
+              <p className="text-slate-500">Add the optional <b>groups</b> claim (Token configuration → Security groups) or define app roles named admin / operator / viewer.</p>
             </div>
 
             <div className="grid grid-cols-2 gap-4">
@@ -1558,7 +1699,7 @@ export default function SettingsPage() {
                 </select>
               </div>
               <label className="flex items-start gap-3 p-3 rounded-xl border border-slate-200 bg-slate-50 cursor-pointer mt-6">
-                <input type="checkbox" checked={entraAutoProvision} onChange={e => setEntraAutoProvision(e.target.checked)} className="mt-0.5 accent-sky-600" />
+                <input type="checkbox" checked={entraAutoProvision} onChange={e => setEntraAutoProvision(e.target.checked)} className="mt-0.5 accent-brand-600" />
                 <span>
                   <span className="block text-sm font-bold text-slate-700">Auto-provision users</span>
                   <span className="block text-[11px] text-slate-400">Anyone in the tenant may sign in with the default role. Off: only mapped groups.</span>
@@ -1617,7 +1758,7 @@ export default function SettingsPage() {
 
           <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
             <label className="flex items-start gap-3 cursor-pointer">
-              <input type="checkbox" checked={disableLocalLogin} onChange={e => setDisableLocalLogin(e.target.checked)} className="mt-1 accent-sky-600" />
+              <input type="checkbox" checked={disableLocalLogin} onChange={e => setDisableLocalLogin(e.target.checked)} className="mt-1 accent-brand-600" />
               <span>
                 <span className="block text-sm font-bold text-slate-700">Hide the username/password form</span>
                 <span className="block text-[11px] text-slate-400">Only takes effect while Microsoft sign-in is enabled, so you cannot lock yourself out. The built-in admin keeps working for the API as break-glass access.</span>
@@ -1631,7 +1772,7 @@ export default function SettingsPage() {
       {expandedSection === 'features' && (
         <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
           <SectionHeader
-            icon={<Sparkles className="text-amber-500" size={20} />}
+            icon={<Sparkles className="text-brand-600" size={20} />}
             title="Features"
             subtitle="Enable or disable core CostDeck capabilities"
           />
@@ -1657,7 +1798,7 @@ export default function SettingsPage() {
               </div>
               <label className="relative inline-flex items-center cursor-pointer ml-4">
                 <input type="checkbox" checked={cloudPricingApi} onChange={e => setCloudPricingApi(e.target.checked)} className="sr-only peer" />
-                <div className={`w-11 h-6 rounded-full peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-emerald-500/20 transition-colors ${cloudPricingApi ? 'bg-emerald-500' : 'bg-slate-300'}`}>
+                <div className={`w-11 h-6 rounded-full peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-brand-500/20 transition-colors ${cloudPricingApi ? 'bg-brand-600' : 'bg-slate-300'}`}>
                   <div className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-md transition-transform ${cloudPricingApi ? 'translate-x-5' : 'translate-x-0'}`} />
                 </div>
               </label>
@@ -1680,7 +1821,19 @@ export default function SettingsPage() {
                   <input value={priceCurrency} onChange={e => setPriceCurrency(e.target.value)} placeholder="USD" maxLength={3} className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm font-mono uppercase" />
                 </div>
               </div>
+              <p className="text-sm text-slate-500 mt-4 mb-3">Volumes and load balancers are priced at the cloud's list price; set your own here, or set them when the currency is not USD.</p>
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1 block">Per GiB-month of volume</label>
+                  <input value={priceStorage} onChange={e => setPriceStorage(e.target.value)} placeholder="0.08" className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm font-mono" />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1 block">Per load balancer-month</label>
+                  <input value={priceLB} onChange={e => setPriceLB(e.target.value)} placeholder="18" className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm font-mono" />
+                </div>
+              </div>
             </div>
+            <BillingSection />
           </div>
         </div>
       )}

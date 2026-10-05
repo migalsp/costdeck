@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -20,6 +21,7 @@ import (
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
 	"github.com/migalsp/costdeck-operator/internal/auth"
 	"github.com/migalsp/costdeck-operator/internal/config"
+	"github.com/migalsp/costdeck-operator/internal/finops"
 	"github.com/migalsp/costdeck-operator/internal/metrics"
 	"github.com/migalsp/costdeck-operator/internal/pricing"
 	"github.com/migalsp/costdeck-operator/internal/scaling"
@@ -36,14 +38,20 @@ type SettingsResponse struct {
 	Features     *FeaturesSettingsResponse    `json:"features,omitempty"`
 	Auth         AuthSettingsResponse         `json:"auth"`
 	Pricing      PricingSettingsResponse      `json:"pricing"`
+	Reports      finopsv1.ReportsConfig       `json:"reports"`
+	Budgets      []finopsv1.Budget            `json:"budgets"`
+	Alerts       finopsv1.AlertsConfig        `json:"alerts"`
+	Billing      BillingSettingsResponse      `json:"billing"`
 }
 
 // PricingSettingsResponse shows the configured custom rates and the rates in effect.
 type PricingSettingsResponse struct {
-	CPUCoreHour  string        `json:"cpuCoreHour,omitempty"`
-	MemoryGBHour string        `json:"memoryGiBHour,omitempty"`
-	Currency     string        `json:"currency,omitempty"`
-	Effective    pricing.Rates `json:"effective"`
+	CPUCoreHour       string        `json:"cpuCoreHour,omitempty"`
+	MemoryGBHour      string        `json:"memoryGiBHour,omitempty"`
+	StorageGiBMonth   string        `json:"storageGiBMonth,omitempty"`
+	LoadBalancerMonth string        `json:"loadBalancerMonth,omitempty"`
+	Currency          string        `json:"currency,omitempty"`
+	Effective         pricing.Rates `json:"effective"`
 }
 
 // AuthSettingsResponse describes sign-in settings. The client secret is never returned.
@@ -157,13 +165,32 @@ type SettingsUpdateRequest struct {
 	Features     *FeaturesUpdateRequest     `json:"features,omitempty"`
 	Auth         *AuthUpdateRequest         `json:"auth,omitempty"`
 	Pricing      *PricingUpdateRequest      `json:"pricing,omitempty"`
+	Reports      *ReportsUpdateRequest      `json:"reports,omitempty"`
+	// Budgets replaces the whole list when present.
+	Budgets *[]finopsv1.Budget     `json:"budgets,omitempty"`
+	Alerts  *finopsv1.AlertsConfig `json:"alerts,omitempty"`
+	// Billing replaces the reconciliation setup when present.
+	Billing *finopsv1.BillingConfig `json:"billing,omitempty"`
+}
+
+// BillingSettingsResponse is the reconciliation setup and its last result.
+type BillingSettingsResponse struct {
+	finopsv1.BillingConfig `json:",inline"`
+	Status                 *finopsv1.BillingStatus `json:"status,omitempty"`
+}
+
+// ReportsUpdateRequest replaces the digest schedule.
+type ReportsUpdateRequest struct {
+	Digest *finopsv1.DigestSchedule `json:"digest,omitempty"`
 }
 
 // PricingUpdateRequest sets custom rates; empty strings clear them.
 type PricingUpdateRequest struct {
-	CPUCoreHour  *string `json:"cpuCoreHour,omitempty"`
-	MemoryGBHour *string `json:"memoryGiBHour,omitempty"`
-	Currency     *string `json:"currency,omitempty"`
+	CPUCoreHour       *string `json:"cpuCoreHour,omitempty"`
+	MemoryGBHour      *string `json:"memoryGiBHour,omitempty"`
+	StorageGiBMonth   *string `json:"storageGiBMonth,omitempty"`
+	LoadBalancerMonth *string `json:"loadBalancerMonth,omitempty"`
+	Currency          *string `json:"currency,omitempty"`
 }
 
 // AuthUpdateRequest changes sign-in settings. Nil fields stay unchanged.
@@ -401,11 +428,21 @@ func (s *Server) buildSettingsResponse(ctx context.Context, cfg *finopsv1.CostDe
 
 	// Pricing
 	resp.Pricing = PricingSettingsResponse{
-		CPUCoreHour:  cfg.Spec.Pricing.CPUCoreHour,
-		MemoryGBHour: cfg.Spec.Pricing.MemoryGBHour,
-		Currency:     cfg.Spec.Pricing.Currency,
-		Effective:    s.costRates(ctx),
+		CPUCoreHour:       cfg.Spec.Pricing.CPUCoreHour,
+		MemoryGBHour:      cfg.Spec.Pricing.MemoryGBHour,
+		StorageGiBMonth:   cfg.Spec.Pricing.StorageGiBMonth,
+		LoadBalancerMonth: cfg.Spec.Pricing.LoadBalancerMonth,
+		Currency:          cfg.Spec.Pricing.Currency,
+		Effective:         s.costRates(ctx),
 	}
+
+	resp.Reports = cfg.Spec.Reports
+	resp.Budgets = cfg.Spec.Budgets
+	if resp.Budgets == nil {
+		resp.Budgets = []finopsv1.Budget{}
+	}
+	resp.Alerts = cfg.Spec.Alerts
+	resp.Billing = BillingSettingsResponse{BillingConfig: cfg.Spec.Billing, Status: cfg.Status.Billing}
 
 	// Sign-in
 	resp.Auth.DisableLocalLogin = cfg.Spec.Auth.DisableLocalLogin
@@ -440,7 +477,7 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 
 	appliers := []func(context.Context, *finopsv1.CostDeckConfig, *SettingsUpdateRequest) error{
 		s.applyAWSSettings, s.applyAzureSettings, s.applyGCPSettings, s.applyAISettings,
-		s.applyWebexSettings, s.applyVictoriaMetricsSettings, applyMCPSettings, applyFeatureSettings, applyPricingSettings, s.applyAuthSettings,
+		s.applyWebexSettings, s.applyVictoriaMetricsSettings, applyMCPSettings, applyFeatureSettings, applyPricingSettings, applyReportSettings, applyBudgetSettings, applyBillingSettings, s.applyAuthSettings,
 	}
 
 	var cfg *finopsv1.CostDeckConfig
@@ -709,7 +746,10 @@ func applyPricingSettings(_ context.Context, cfg *finopsv1.CostDeckConfig, req *
 	for _, f := range []struct {
 		src *string
 		dst *string
-	}{{p.CPUCoreHour, &cfg.Spec.Pricing.CPUCoreHour}, {p.MemoryGBHour, &cfg.Spec.Pricing.MemoryGBHour}} {
+	}{
+		{p.CPUCoreHour, &cfg.Spec.Pricing.CPUCoreHour}, {p.MemoryGBHour, &cfg.Spec.Pricing.MemoryGBHour},
+		{p.StorageGiBMonth, &cfg.Spec.Pricing.StorageGiBMonth}, {p.LoadBalancerMonth, &cfg.Spec.Pricing.LoadBalancerMonth},
+	} {
 		if f.src == nil {
 			continue
 		}
@@ -726,6 +766,112 @@ func applyPricingSettings(_ context.Context, cfg *finopsv1.CostDeckConfig, req *
 		}
 		cfg.Spec.Pricing.Currency = c
 	}
+	return nil
+}
+
+var clockTime = regexp.MustCompile(`^([01][0-9]|2[0-3]):[0-5][0-9]$`)
+
+func applyReportSettings(_ context.Context, cfg *finopsv1.CostDeckConfig, req *SettingsUpdateRequest) error {
+	if req.Reports == nil || req.Reports.Digest == nil {
+		return nil
+	}
+	d := *req.Reports.Digest
+	if d.Frequency != "" && d.Frequency != "weekly" && d.Frequency != "monthly" {
+		return badRequestf("frequency must be weekly or monthly")
+	}
+	if d.Time != "" && !clockTime.MatchString(d.Time) {
+		return badRequestf("time must be HH:MM, got %q", d.Time)
+	}
+	if d.Timezone != "" {
+		if _, err := time.LoadLocation(d.Timezone); err != nil {
+			return badRequestf("unknown time zone %q", d.Timezone)
+		}
+	}
+	cfg.Spec.Reports.Digest = d
+	return nil
+}
+
+var budgetName = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
+
+func applyBudgetSettings(_ context.Context, cfg *finopsv1.CostDeckConfig, req *SettingsUpdateRequest) error {
+	if req.Alerts != nil {
+		a := req.Alerts.Anomalies
+		if a.Percent != 0 && (a.Percent < 5 || a.Percent > 1000) {
+			return badRequestf("the anomaly threshold must be between 5 and 1000 percent")
+		}
+		if a.MinimumDaily != "" && !decimalRate.MatchString(a.MinimumDaily) {
+			return badRequestf("the minimum daily increase must be a plain number such as 5")
+		}
+		cfg.Spec.Alerts = *req.Alerts
+	}
+	if req.Budgets == nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	for _, b := range *req.Budgets {
+		switch {
+		case !budgetName.MatchString(b.Name) || len(b.Name) > 63:
+			return badRequestf("budget name %q must be lowercase letters, digits and dashes", b.Name)
+		case seen[b.Name]:
+			return badRequestf("there are two budgets named %q", b.Name)
+		case b.Scope != finops.ScopeCluster && b.Scope != finops.ScopeNamespace && b.Scope != finops.ScopeTeam && b.Scope != finops.ScopeEnvironment:
+			return badRequestf("budget %q: scope must be cluster, namespace, team or environment", b.Name)
+		case b.Scope != finops.ScopeCluster && b.Value == "":
+			return badRequestf("budget %q: say which %s it covers", b.Name, b.Scope)
+		case len(b.Value) > 253:
+			return badRequestf("budget %q: the %s name is too long", b.Name, b.Scope)
+		case !decimalRate.MatchString(b.MonthlyLimit):
+			return badRequestf("budget %q: the monthly limit must be a plain number such as 1200", b.Name)
+		case len(b.Thresholds) > 5:
+			return badRequestf("budget %q: at most five thresholds", b.Name)
+		}
+		for _, t := range b.Thresholds {
+			if t < 1 || t > 1000 {
+				return badRequestf("budget %q: thresholds are percentages between 1 and 1000", b.Name)
+			}
+		}
+		seen[b.Name] = true
+	}
+	cfg.Spec.Budgets = *req.Budgets
+	return nil
+}
+
+var (
+	resourceGroupName = regexp.MustCompile(`^[-\w._()]{1,90}$`)
+	bigQueryTableName = regexp.MustCompile(`^[a-z][-a-z0-9]{4,28}[a-z0-9]\.[A-Za-z0-9_]+\.[A-Za-z0-9_]+$`)
+)
+
+func applyBillingSettings(_ context.Context, cfg *finopsv1.CostDeckConfig, req *SettingsUpdateRequest) error {
+	if req.Billing == nil {
+		return nil
+	}
+	b := *req.Billing
+	clouds := 0
+	if b.AWS != nil {
+		clouds++
+		if b.AWS.TagValue == "" {
+			return badRequestf("AWS billing needs the tag value that marks the cluster's instances, usually the cluster name")
+		}
+	}
+	if b.Azure != nil {
+		clouds++
+		if !resourceGroupName.MatchString(b.Azure.ResourceGroup) {
+			return badRequestf("Azure billing needs the node resource group, e.g. MC_rg_cluster_westeurope")
+		}
+	}
+	if b.GCP != nil {
+		clouds++
+		if !bigQueryTableName.MatchString(b.GCP.Table) || b.GCP.ClusterName == "" {
+			return badRequestf("Google Cloud billing needs the export table as project.dataset.table and the cluster name")
+		}
+	}
+	if clouds > 1 {
+		return badRequestf("reconcile with one cloud: the one this cluster runs on")
+	}
+	if b.Enabled && clouds == 0 {
+		return badRequestf("say which cloud's bill to read")
+	}
+	cfg.Spec.Billing = b
 	return nil
 }
 

@@ -1,6 +1,6 @@
 import { useAuth } from '../lib/auth'
 import { useState } from 'react'
-import type { MetricDataPoint } from '../pages/Dashboard'
+import type { MetricDataPoint } from '../lib/types'
 import {
   Area,
   AreaChart,
@@ -13,6 +13,7 @@ import {
 } from 'recharts'
 import { AlertTriangle, CheckCircle, Database, Cpu, Lightbulb, RotateCcw } from 'lucide-react'
 import InfoTooltip from './InfoTooltip'
+import { Badge } from './ui'
 import { fetchNamespaceCost, fetchRecommendations } from '../lib/api'
 import { formatMoney } from '../lib/format'
 import type { CostEstimate, OptimizationStatus, Recommendations } from '../lib/types'
@@ -134,7 +135,7 @@ export default function NamespaceCard({ namespace, insights = [], onClick }: Nam
   return (
     <div 
       onClick={onClick}
-      className="bg-white rounded-xl shadow-[0_2px_10px_-3px_rgba(6,81,237,0.1)] border border-slate-100 overflow-hidden flex flex-col cursor-pointer hover:border-emerald-500/50 hover:shadow-md transition-all group"
+      className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col cursor-pointer hover:border-slate-300 hover:shadow-md transition-all group"
     >
       {/* Header */}
       <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-white gap-4">
@@ -142,7 +143,7 @@ export default function NamespaceCard({ namespace, insights = [], onClick }: Nam
           {namespace}
           {namespaceCost && (
             <InfoTooltip content={`Pricing Source: ${namespaceCost.determinedBy || 'Unknown'}`} position="bottom">
-              <span className="text-emerald-500 text-sm font-medium ml-2 tracking-tight animate-in fade-in duration-300 cursor-text">
+              <span className="text-slate-500 text-sm font-medium ml-2 tracking-tight tabular-nums cursor-text">
                 ${namespaceCost.hourlyCost.toFixed(4)}/h &nbsp; ${namespaceCost.monthlyCost.toFixed(2)}/m
               </span>
             </InfoTooltip>
@@ -152,24 +153,15 @@ export default function NamespaceCard({ namespace, insights = [], onClick }: Nam
         <div className="flex flex-wrap justify-end gap-2">
           {insights.length > 0 ? (
             insights.map(tag => (
-              <div 
-                key={tag}
-                className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium border ${
-                  tag === 'Optimized' 
-                    ? 'bg-emerald-50 text-emerald-600 border-emerald-200' 
-                    : tag.includes('Missing') || tag.includes('Uncapped')
-                    ? 'bg-rose-50 text-rose-600 border-rose-200'
-                    : 'bg-amber-50 text-amber-600 border-amber-200'
-                }`}
-              >
-                {tag === 'Optimized' ? <CheckCircle size={14} /> : <AlertTriangle size={14} />}
-                <span>{tag}</span>
-              </div>
+              <span key={tag} className="whitespace-nowrap">
+                <Badge tone={tag === 'Optimized' ? 'success' : tag === 'Uncapped' ? 'neutral' : 'warning'}>
+                  {tag === 'Optimized' ? <CheckCircle size={12} /> : <AlertTriangle size={12} />}
+                  {tag === 'Optimized' ? 'Healthy' : tag === 'Uncapped' ? 'No limits' : tag}
+                </Badge>
+              </span>
             ))
           ) : (
-            <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-50 text-slate-500 border border-slate-200 text-xs font-medium">
-               <span>Collecting data...</span>
-            </div>
+            <Badge>Collecting data…</Badge>
           )}
         </div>
       </div>
@@ -197,7 +189,7 @@ export default function NamespaceCard({ namespace, insights = [], onClick }: Nam
             ) : (
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={history} margin={{ top: 10, right: 0, left: -20, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E2E8F0" />
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
                   <XAxis dataKey="time" tick={{fontSize: 10, fill: '#94a3b8'}} tickLine={false} axisLine={false} minTickGap={20} />
                   <YAxis 
                     tick={{fontSize: 10, fill: '#94a3b8'}} 
@@ -212,19 +204,19 @@ export default function NamespaceCard({ namespace, insights = [], onClick }: Nam
                     formatter={(value) => [`${Number(value ?? 0).toFixed(3)} Cores`, 'Usage']}
                   />
                   {/* Real Usage (Blue) */}
-                  <Area isAnimationActive={false} type="monotone" dataKey="cpuUsage" name="Usage" stroke="#059669" fillOpacity={1} fill="url(#colorCpuUsage)" />
+                  <Area isAnimationActive={false} type="monotone" dataKey="cpuUsage" name="Usage" stroke="#047857" fillOpacity={1} fill="url(#colorCpuUsage)" />
                   {/* Requests (Green Line) and Limit (Red Line) */}
                   {latest.cpuReq > 0 && (
                     <ReferenceLine y={latest.cpuReq} stroke="#64748b" strokeDasharray="3 3" label={{position: 'insideTopLeft', value: `Req: ${latest.cpuReq.toFixed(2)}`, fill: '#64748b', fontSize: 10}} />
                   )}
                   {latest.cpuLim > 0 && (
-                    <ReferenceLine y={latest.cpuLim} stroke="#e11d48" strokeDasharray="3 3" label={{position: 'insideTopLeft', value: `Lim: ${latest.cpuLim.toFixed(2)}`, fill: '#e11d48', fontSize: 10}} />
+                    <ReferenceLine y={latest.cpuLim} stroke="#94a3b8" strokeDasharray="1 4" label={{position: 'insideTopLeft', value: `Lim: ${latest.cpuLim.toFixed(2)}`, fill: '#94a3b8', fontSize: 10}} />
                   )}
                   
                   <defs>
                     <linearGradient id="colorCpuUsage" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#059669" stopOpacity={0.2}/>
-                      <stop offset="95%" stopColor="#059669" stopOpacity={0}/>
+                      <stop offset="5%" stopColor="#047857" stopOpacity={0.2}/>
+                      <stop offset="95%" stopColor="#047857" stopOpacity={0}/>
                     </linearGradient>
                   </defs>
                 </AreaChart>
@@ -257,7 +249,7 @@ export default function NamespaceCard({ namespace, insights = [], onClick }: Nam
             ) : (
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={history} margin={{ top: 10, right: 0, left: -10, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E2E8F0" />
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
                   <XAxis dataKey="time" tick={{fontSize: 10, fill: '#94a3b8'}} tickLine={false} axisLine={false} minTickGap={20} />
                   <YAxis tick={{fontSize: 10, fill: '#94a3b8'}} tickLine={false} axisLine={false} domain={[0, 'auto']} />
                   <Tooltip 
@@ -266,19 +258,19 @@ export default function NamespaceCard({ namespace, insights = [], onClick }: Nam
                     formatter={(value) => [`${Number(value ?? 0).toFixed(1)} MiB`, 'Usage']}
                   />
                   {/* Real Usage (Blue) */}
-                  <Area isAnimationActive={false} type="monotone" dataKey="memUsage" name="Usage (MiB)" stroke="#059669" fillOpacity={1} fill="url(#colorMemUsage)" />
+                  <Area isAnimationActive={false} type="monotone" dataKey="memUsage" name="Usage (MiB)" stroke="#047857" fillOpacity={1} fill="url(#colorMemUsage)" />
                   {/* Requests (Green Line) and Limit (Red Line) */}
                   {latest.memReq > 0 && (
                     <ReferenceLine y={latest.memReq} stroke="#64748b" strokeDasharray="3 3" label={{position: 'insideTopLeft', value: `Req: ${latest.memReq}`, fill: '#64748b', fontSize: 10}} />
                   )}
                   {latest.memLim > 0 && (
-                    <ReferenceLine y={latest.memLim} stroke="#e11d48" strokeDasharray="3 3" label={{position: 'insideTopLeft', value: `Lim: ${latest.memLim}`, fill: '#e11d48', fontSize: 10}} />
+                    <ReferenceLine y={latest.memLim} stroke="#94a3b8" strokeDasharray="1 4" label={{position: 'insideTopLeft', value: `Lim: ${latest.memLim}`, fill: '#94a3b8', fontSize: 10}} />
                   )}
                   
                   <defs>
                     <linearGradient id="colorMemUsage" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#059669" stopOpacity={0.2}/>
-                      <stop offset="95%" stopColor="#059669" stopOpacity={0}/>
+                      <stop offset="5%" stopColor="#047857" stopOpacity={0.2}/>
+                      <stop offset="95%" stopColor="#047857" stopOpacity={0}/>
                     </linearGradient>
                   </defs>
                 </AreaChart>
@@ -308,7 +300,7 @@ export default function NamespaceCard({ namespace, insights = [], onClick }: Nam
         <div className="flex gap-2">
           {advice && advice.monthlySavings >= 0.5 && (
             <span
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-lg font-bold"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-brand-50 text-brand-700 border border-brand-200 rounded-lg font-bold"
               title={`Requests above observed demand. ${advice.basis} Open the namespace for per-workload advice.`}
             >
               <Lightbulb size={14} />

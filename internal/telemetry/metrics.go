@@ -49,11 +49,36 @@ var (
 		Name: "costdeck_namespace_memory_usage_bytes",
 		Help: "Observed working-set memory of all containers in a namespace.",
 	}, []string{"namespace"})
+
+	// ClusterMonthlyCost is the cluster's cost at the current run rate, split into what the
+	// nodes cost, what pods request and what they use.
+	ClusterMonthlyCost = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "costdeck_cluster_estimated_monthly_cost",
+		Help: "Estimated monthly cost of the cluster at the current run rate: part=nodes, storage or network (together the bill), requested or used.",
+	}, []string{"part", "currency"})
+
+	// BudgetSpent and BudgetForecast are spending and forecast as a share of a budget.
+	BudgetSpent = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "costdeck_budget_spent_ratio",
+		Help: "Spending this month as a share of the budget's monthly limit (1 = the whole budget).",
+	}, []string{"budget"})
+	BudgetForecast = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "costdeck_budget_forecast_ratio",
+		Help: "Forecast spending for this month as a share of the budget's monthly limit.",
+	}, []string{"budget"})
 )
 
 func init() {
 	metrics.Registry.MustRegister(DesiredUp, Ready, OverrideActive, HourlySavings,
-		NamespaceMonthlyCost, NamespaceCPUUsage, NamespaceMemoryUsage)
+		NamespaceMonthlyCost, NamespaceCPUUsage, NamespaceMemoryUsage, ClusterMonthlyCost, BudgetSpent, BudgetForecast)
+}
+
+// RecordCluster publishes the cluster's monthly run rate by part.
+func RecordCluster(parts map[string]float64, currency string) {
+	ClusterMonthlyCost.Reset()
+	for part, v := range parts {
+		ClusterMonthlyCost.WithLabelValues(part, currency).Set(v)
+	}
 }
 
 func bool01(b bool) float64 {
@@ -97,4 +122,27 @@ func ForgetNamespace(namespace string) {
 	NamespaceCPUUsage.DeletePartialMatch(labels)
 	NamespaceMemoryUsage.DeletePartialMatch(labels)
 	NamespaceMonthlyCost.DeletePartialMatch(labels)
+}
+
+// RecordBudget publishes one budget's spending and forecast ratios.
+func RecordBudget(name string, spent, forecast float64) {
+	BudgetSpent.WithLabelValues(name).Set(spent)
+	BudgetForecast.WithLabelValues(name).Set(forecast)
+}
+
+var budgetsSeen = map[string]bool{}
+
+// KeepBudgets drops the series of budgets that no longer exist.
+func KeepBudgets(names []string) {
+	keep := map[string]bool{}
+	for _, n := range names {
+		keep[n] = true
+	}
+	for n := range budgetsSeen {
+		if !keep[n] {
+			BudgetSpent.DeleteLabelValues(n)
+			BudgetForecast.DeleteLabelValues(n)
+		}
+	}
+	budgetsSeen = keep
 }

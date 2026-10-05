@@ -2,6 +2,7 @@ package webex
 
 import (
 	"context"
+	"errors"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -20,19 +21,39 @@ type Notifier struct {
 // no-op otherwise, and failures are logged rather than returned: a notification must
 // never hold up scaling.
 func (n *Notifier) Notify(ctx context.Context, markdown string) {
-	log := logf.FromContext(ctx).WithName("webex-notifier")
 	cfg, err := config.Get(ctx, n.Client)
 	if err != nil {
 		return
 	}
 	wx := cfg.Spec.Integrations.Messenger
-	if wx == nil || wx.Webex == nil || !wx.Webex.Enabled || !wx.Webex.NotifyTransitions || wx.Webex.RoomID == "" {
+	if wx == nil || wx.Webex == nil || !wx.Webex.NotifyTransitions {
 		return
 	}
+	if err := n.Post(ctx, markdown); err != nil && !errors.Is(err, ErrNoSpace) {
+		logf.FromContext(ctx).WithName("webex-notifier").Error(err, "Could not send a Webex notification")
+	}
+}
+
+// ErrNoSpace means Webex is off or has no space to post to.
+var ErrNoSpace = errors.New("webex is not enabled or has no space configured")
+
+// Post sends a markdown message to the configured space, whether or not transition
+// notifications are on; the cost digest uses it.
+func (n *Notifier) Post(ctx context.Context, markdown string) error {
+	cfg, err := config.Get(ctx, n.Client)
+	if err != nil {
+		return err
+	}
+	wx := cfg.Spec.Integrations.Messenger
+	if wx == nil || wx.Webex == nil || !wx.Webex.Enabled || wx.Webex.RoomID == "" {
+		return ErrNoSpace
+	}
 	settings, err := LoadSettings(ctx, n.Client)
-	if err != nil || settings == nil || settings.Token == "" {
-		log.Info("Could not send a Webex notification: no bot token", "error", err)
-		return
+	if err != nil {
+		return err
+	}
+	if settings == nil || settings.Token == "" {
+		return errors.New("webex has no bot token")
 	}
 	api := NewClient(settings.Token)
 	if n.NewClient != nil {
@@ -41,7 +62,5 @@ func (n *Notifier) Notify(ctx context.Context, markdown string) {
 	if settings.ClusterName != "" {
 		markdown = "**[" + settings.ClusterName + "]** " + markdown
 	}
-	if err := api.Send(ctx, settings.RoomID, "", markdown); err != nil {
-		log.Error(err, "Could not send a Webex notification", "room", settings.RoomID)
-	}
+	return api.Send(ctx, settings.RoomID, "", markdown)
 }

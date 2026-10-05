@@ -56,6 +56,14 @@ func (s *Server) toolRegistry() []ai.Tool {
 			Run:         func(ctx context.Context, _ map[string]any) (string, error) { return s.toolClusterOverview(ctx) },
 		},
 		{
+			Name: "get_cost_overview",
+			Description: "The FinOps summary: monthly run rate split into used, requested-but-idle and unrequested capacity, " +
+				"cost efficiency, month to date and forecast, what schedules save, the most expensive namespaces, and the " +
+				"savings opportunities ranked by what they save. Start here for questions about cost, waste or savings.",
+			Parameters: obj(map[string]any{}),
+			Run:        func(ctx context.Context, _ map[string]any) (string, error) { return s.toolCostOverview(ctx) },
+		},
+		{
 			Name:        "list_scaling_groups",
 			Description: "All ScalingGroups with their mode, desired state, phase, readiness, next scheduled change and dependencies.",
 			Parameters:  obj(map[string]any{}),
@@ -283,6 +291,68 @@ func (s *Server) toolClusterOverview(ctx context.Context) (string, error) {
 		"currency":                          rates.Currency,
 		"pricing":                           rates.Basis,
 	})
+}
+
+func (s *Server) toolCostOverview(ctx context.Context) (string, error) {
+	o, err := s.finopsOverview(ctx)
+	if err != nil {
+		return "", err
+	}
+	rows := slices.Clone(o.Namespaces)
+	sort.Slice(rows, func(i, j int) bool { return rows[i].MonthlyCost > rows[j].MonthlyCost })
+	if len(rows) > 10 {
+		rows = rows[:10]
+	}
+	top := make([]map[string]any, 0, len(rows))
+	for _, n := range rows {
+		row := map[string]any{
+			"namespace": n.Name, "environment": n.Environment, "monthlyCost": round2(n.MonthlyCost),
+			"monthlyIdle": round2(n.MonthlyIdle), "findings": n.Insights,
+		}
+		if n.Team != "" {
+			row["team"] = n.Team
+		}
+		if n.Efficiency != nil {
+			row["efficiency"] = round2(*n.Efficiency)
+		}
+		if n.Schedule != nil {
+			row["schedule"] = n.Schedule.Name
+		}
+		if save := n.ScheduleSavingMonthly + ptrValue(n.RightsizingMonthly); save > 0 {
+			row["couldSaveMonthly"] = round2(save)
+		}
+		top = append(top, row)
+	}
+	m := o.Monthly
+	efficiency := 0.0
+	if m.Provisioned > 0 {
+		efficiency = m.Used / m.Provisioned
+	}
+	return toJSON(map[string]any{
+		"currency": o.Currency, "pricing": o.Rates.Basis,
+		"monthlyRunRate": map[string]any{
+			"nodes": round2(m.Provisioned), "requestedByPods": round2(m.Requested), "usedByPods": round2(m.Used),
+			"notRequested": round2(m.Unallocated), "requestedNotUsed": round2(m.Overprovisioned),
+		},
+		"costEfficiency": round2(efficiency),
+		"monthToDate": map[string]any{
+			"cost": round2(o.MonthToDate.Cost), "saved": round2(o.MonthToDate.Saved),
+			"forecast": round2(o.MonthToDate.Forecast), "incompleteHistory": o.MonthToDate.Partial,
+		},
+		"savings": map[string]any{
+			"schedulesMonthly": round2(o.Savings.SchedulesMonthly), "rightsizingMonthly": round2(o.Savings.RightsizingMonthly),
+			"scheduleCandidatesMonthly": round2(o.Savings.ScheduleCandidatesMonthly), "namespacesStillAnalysed": o.Savings.RightsizingPending,
+		},
+		"topNamespaces": top,
+		"opportunities": o.Opportunities,
+	})
+}
+
+func ptrValue(v *float64) float64 {
+	if v == nil {
+		return 0
+	}
+	return *v
 }
 
 func describeTransition(t *finopsv1.ScheduledTransition) string {

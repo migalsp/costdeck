@@ -1,7 +1,10 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Scaling, Server, LineChart, Activity, BookOpen, FileText, LogOut, Settings, UserCircle2 } from 'lucide-react'
+import { Scaling, Server, LineChart, Activity, BookOpen, FileText, LogOut, Settings, UserCircle2, LayoutDashboard, HardDrive, Target } from 'lucide-react'
 import type { ReactNode } from 'react'
-import Dashboard from './pages/Dashboard'
+import NamespaceInsights from './pages/NamespaceInsights'
+import Overview from './pages/Overview'
+import StoragePage from './pages/StoragePage'
+import BudgetsPage from './pages/BudgetsPage'
 import NamespaceDetails from './pages/NamespaceDetails'
 import OperatorHealth from './pages/OperatorHealth'
 import ScalingPage from './pages/ScalingPage'
@@ -55,7 +58,7 @@ function NavItem({ icon, label, active, onClick }: { icon: ReactNode; label: str
 }
 
 function App() {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'scale' | 'cluster' | 'operator' | 'api-docs' | 'settings' | 'reports'>('dashboard')
+  const [activeTab, setActiveTab] = useState<'overview' | 'dashboard' | 'scale' | 'cluster' | 'storage' | 'budgets' | 'operator' | 'api-docs' | 'settings' | 'reports'>('overview')
   const [selectedNamespace, setSelectedNamespace] = useState<string | null>(null)
   const [selectedScalingNS, setSelectedScalingNS] = useState<string | null>(null)
   const [appVersion, setAppVersion] = useState('...')
@@ -118,15 +121,18 @@ function App() {
 
         <nav className="flex-1 px-4 mt-2 space-y-6 overflow-y-auto">
           <NavGroup title="Analytics">
+            <NavItem icon={<LayoutDashboard size={18} />} label="Cost Overview" active={activeTab === 'overview'} onClick={() => setActiveTab('overview')} />
             <NavItem icon={<LineChart size={18} />} label="Namespace Insights" active={activeTab === 'dashboard'} onClick={() => { setActiveTab('dashboard'); setSelectedNamespace(null) }} />
             <NavItem icon={<Server size={18} />} label="Cluster Node Map" active={activeTab === 'cluster'} onClick={() => setActiveTab('cluster')} />
+            <NavItem icon={<HardDrive size={18} />} label="Storage & Network" active={activeTab === 'storage'} onClick={() => setActiveTab('storage')} />
             <NavItem icon={<Activity size={18} />} label="Cost Deck Health" active={activeTab === 'operator'} onClick={() => setActiveTab('operator')} />
           </NavGroup>
           <NavGroup title="Management">
+            <NavItem icon={<Target size={18} />} label="Budgets & Alerts" active={activeTab === 'budgets'} onClick={() => setActiveTab('budgets')} />
             <NavItem icon={<Scaling size={18} />} label="Scaling Schedules" active={activeTab === 'scale'} onClick={() => { setActiveTab('scale'); setSelectedScalingNS(null) }} />
           </NavGroup>
           <NavGroup title="Reporting">
-            <NavItem icon={<FileText size={18} />} label="AI Reports" active={activeTab === 'reports'} onClick={() => setActiveTab('reports')} />
+            <NavItem icon={<FileText size={18} />} label="Reports" active={activeTab === 'reports'} onClick={() => setActiveTab('reports')} />
           </NavGroup>
           <NavGroup title="Help">
             <NavItem icon={<BookOpen size={18} />} label="Documentation" active={activeTab === 'api-docs'} onClick={() => setActiveTab('api-docs')} />
@@ -176,10 +182,18 @@ function App() {
               onBack={() => setSelectedNamespace(null)} 
             />
           ) : (
-            <Dashboard onSelectNamespace={setSelectedNamespace} />
+            <NamespaceInsights onSelectNamespace={setSelectedNamespace} />
           )
         )}
+        {activeTab === 'overview' && (
+          <Overview
+            onSelectNamespace={name => { setSelectedNamespace(name); setActiveTab('dashboard') }}
+            onNavigate={tab => { setSelectedNamespace(null); setSelectedScalingNS(null); setActiveTab(tab) }}
+          />
+        )}
         {activeTab === 'cluster' && <ClusterDashboard />}
+        {activeTab === 'storage' && <StoragePage />}
+        {activeTab === 'budgets' && <BudgetsPage />}
         {activeTab === 'operator' && <OperatorHealth />}
         {activeTab === 'api-docs' && <Documentation />}
         {activeTab === 'settings' && isAdmin && <SettingsPage />}

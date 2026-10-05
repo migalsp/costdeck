@@ -31,6 +31,41 @@ type Rates struct {
 	Currency     string  `json:"currency"`
 	// Basis says where the rates come from, so an estimate is never mistaken for a quote.
 	Basis string `json:"basis"`
+	// Factor is the billing reconciliation applied to list prices (billed ÷ list); 0 or 1
+	// when none is. List prices are the rates divided by it.
+	Factor float64 `json:"factor,omitempty"`
+}
+
+// ListFactor is what to divide by to get back to list prices.
+func (r Rates) ListFactor() float64 {
+	if r.Factor <= 0 {
+		return 1
+	}
+	return r.Factor
+}
+
+// billingMaxAge bounds how long a reconciliation factor is trusted.
+const billingMaxAge = 8 * 24 * time.Hour
+
+// reconcile scales list-price rates by the billing factor when reconciliation is on and
+// its result is recent. Custom rates are never scaled: they are what you pay already.
+func reconcile(rates Rates, cfg *finopsv1.CostDeckConfig) Rates {
+	st := cfg.Status.Billing
+	if !cfg.Spec.Billing.Enabled || st == nil || st.Factor == "" || time.Since(st.LastReconciled.Time) > billingMaxAge {
+		return rates
+	}
+	f, err := strconv.ParseFloat(st.Factor, 64)
+	if err != nil || f <= 0 {
+		return rates
+	}
+	rates.CPUCoreHour *= f
+	rates.MemoryGBHour *= f
+	rates.Factor = f
+	if st.Currency != "" {
+		rates.Currency = st.Currency
+	}
+	rates.Basis += fmt.Sprintf(" — reconciled with %s: billed %.0f%% of list price (%s to %s)", st.Source, f*100, st.From, st.To)
+	return rates
 }
 
 // Hourly is the cost of the given CPU and memory for one hour.
@@ -94,7 +129,7 @@ func (r *Resolver) Rates(ctx context.Context) Rates {
 		if r.cached != nil && r.cacheKey == key && time.Since(r.cachedAt) < r.ttl() {
 			rates := *r.cached
 			r.mu.Unlock()
-			return rates
+			return reconcile(rates, cfg)
 		}
 		r.mu.Unlock()
 
@@ -102,14 +137,14 @@ func (r *Resolver) Rates(ctx context.Context) Rates {
 		if err != nil {
 			logf.FromContext(ctx).Info("Could not price nodes with the cloud price list, using heuristic rates", "cloud", cloud, "error", err.Error())
 			fallback.Basis += " — " + cloudNames[cloud] + " pricing unavailable: " + err.Error()
-			return fallback
+			return reconcile(fallback, cfg)
 		}
 		r.mu.Lock()
 		r.cached, r.cachedAt, r.cacheKey = &rates, time.Now(), key
 		r.mu.Unlock()
-		return rates
+		return reconcile(rates, cfg)
 	}
-	return fallback
+	return reconcile(fallback, cfg)
 }
 
 // pricerFor returns the price list builder for a cloud, or nil when there is none.
@@ -121,6 +156,25 @@ func (r *Resolver) pricerFor(cloud string) func(context.Context, *finopsv1.CostD
 		return r.Azure
 	}
 	return nil
+}
+
+// InstancePrice is the live list price of an instance type, when cloud list prices are on
+// and the cloud has a price list CostDeck can read.
+func (r *Resolver) InstancePrice(ctx context.Context, cloud, region, instanceType string) (float64, bool) {
+	cfg, err := config.Get(ctx, r.Client)
+	if err != nil || !cfg.Spec.Features.CloudPricingAPI || region == "" {
+		return 0, false
+	}
+	build := r.pricerFor(cloud)
+	if build == nil {
+		return 0, false
+	}
+	pricer, err := build(ctx, cfg)
+	if err != nil {
+		return 0, false
+	}
+	price, err := pricer.HourlyPrice(ctx, region, instanceType)
+	return price, err == nil && price > 0
 }
 
 var cloudNames = map[string]string{"aws": "AWS", "azure": "Azure", "gcp": "Google Cloud"}
@@ -214,7 +268,7 @@ func nodeRates(ctx context.Context, cloud string, build func(context.Context, *f
 			}
 			prices[key] = price
 		}
-		if isSpot(n) {
+		if IsSpot(n) {
 			spot++
 		}
 		types[instanceType] = true
@@ -238,7 +292,8 @@ func nodeRates(ctx context.Context, cloud string, build func(context.Context, *f
 	return Rates{CPUCoreHour: base[0] * scale, MemoryGBHour: base[1] * scale, Currency: "USD", Basis: basis}, nil
 }
 
-func isSpot(n corev1.Node) bool {
+// IsSpot reports whether a node runs on spot or low-priority capacity.
+func IsSpot(n corev1.Node) bool {
 	return strings.EqualFold(n.Labels["eks.amazonaws.com/capacityType"], "SPOT") ||
 		strings.EqualFold(n.Labels["karpenter.sh/capacity-type"], "spot") ||
 		strings.EqualFold(n.Labels["kubernetes.azure.com/scalesetpriority"], "spot")

@@ -17,8 +17,11 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	"crypto/tls"
+	"errors"
 	"flag"
+	"fmt"
 	"os"
 
 	// Embeds the IANA timezone database into the binary. The runtime image is
@@ -48,6 +51,7 @@ import (
 	"github.com/migalsp/costdeck-operator/internal/api"
 	cdconfig "github.com/migalsp/costdeck-operator/internal/config"
 	"github.com/migalsp/costdeck-operator/internal/controller"
+	"github.com/migalsp/costdeck-operator/internal/finops"
 	"github.com/migalsp/costdeck-operator/internal/metrics"
 	"github.com/migalsp/costdeck-operator/internal/pricing"
 	"github.com/migalsp/costdeck-operator/internal/webex"
@@ -113,7 +117,7 @@ func main() {
 		WebhookServer:          webhookServer,
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
-		LeaderElectionID:       "fdcd422b.costdeck.io",
+		LeaderElectionID:       cdconfig.LeaderElectionID,
 	})
 	if err != nil {
 		setupLog.Error(err, "Failed to start manager")
@@ -144,6 +148,7 @@ func main() {
 
 	apiServer := &api.Server{
 		Client:        mgr.GetClient(),
+		APIReader:     mgr.GetAPIReader(),
 		K8sClient:     k8sClient,
 		MetricsClient: metricsClient,
 		Metrics:       metricsProvider,
@@ -160,6 +165,51 @@ func main() {
 	}
 	if err := mgr.Add(webexPoller); err != nil {
 		setupLog.Error(err, "Failed to add Webex poller to manager")
+		os.Exit(1)
+	}
+
+	// The daily cost history behind trends, month to date and week-over-week changes.
+	costHistory := &finops.Collector{
+		Client:    mgr.GetClient(),
+		Pricing:   pricingResolver,
+		Namespace: cdconfig.OperatorNamespace(),
+		Live:      mgr.GetAPIReader(),
+	}
+	if err := mgr.Add(costHistory); err != nil {
+		setupLog.Error(err, "Failed to add cost history collector to manager")
+		os.Exit(1)
+	}
+
+	// The scheduled cost digest, posted to the Webex space; the leader sends it.
+	digest := &finops.DigestScheduler{
+		Client:    mgr.GetClient(),
+		Pricing:   pricingResolver,
+		Poster:    &webex.Notifier{Client: mgr.GetClient()},
+		Namespace: cdconfig.OperatorNamespace(),
+		Overview:  apiServer.FinOpsOverview,
+	}
+	if err := mgr.Add(digest); err != nil {
+		setupLog.Error(err, "Failed to add digest scheduler to manager")
+		os.Exit(1)
+	}
+
+	// Budgets and anomaly alerts, sent to the Webex space when there is one.
+	alerter := &finops.Alerter{
+		Client:    mgr.GetClient(),
+		Live:      mgr.GetAPIReader(),
+		Pricing:   pricingResolver,
+		Poster:    alertPoster{&webex.Notifier{Client: mgr.GetClient()}},
+		Namespace: cdconfig.OperatorNamespace(),
+	}
+	if err := mgr.Add(alerter); err != nil {
+		setupLog.Error(err, "Failed to add the budget alerter to manager")
+		os.Exit(1)
+	}
+
+	// Reconciliation with the cloud bill, so discounts and spot prices reach every figure.
+	billing := &finops.BillingReconciler{Client: mgr.GetClient(), Namespace: cdconfig.OperatorNamespace()}
+	if err := mgr.Add(billing); err != nil {
+		setupLog.Error(err, "Failed to add the billing reconciler to manager")
 		os.Exit(1)
 	}
 
@@ -285,4 +335,15 @@ func setupMetricsOptions(flags map[string]string, secure bool) metricsserver.Opt
 		opts.KeyName = flags["metricsCertKey"]
 	}
 	return opts
+}
+
+// alertPoster posts alerts to Webex; without a Webex space they are only recorded.
+type alertPoster struct{ n *webex.Notifier }
+
+func (p alertPoster) Post(ctx context.Context, markdown string) error {
+	err := p.n.Post(ctx, markdown)
+	if errors.Is(err, webex.ErrNoSpace) {
+		return fmt.Errorf("%w: %v", finops.ErrNoDestination, err)
+	}
+	return err
 }

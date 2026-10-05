@@ -55,7 +55,7 @@ func NewAWSProvider(ctx context.Context) (*AWSProvider, error) {
 // NewAWSProviderFromCredentials creates an AWS provider using static credentials.
 func NewAWSProviderFromCredentials(ctx context.Context, accessKey, secretKey, region string) (*AWSProvider, error) {
 	if region == "" {
-		region = "us-east-1"
+		region = usEast1
 	}
 
 	customHTTPClient := &http.Client{
@@ -95,7 +95,7 @@ func NewAWSProviderFromSecret(ctx context.Context, k8sClient client.Reader, secr
 		region = secretRegion
 	}
 	if region == "" {
-		region = "us-east-1"
+		region = usEast1
 	}
 
 	customHTTPClient := &http.Client{

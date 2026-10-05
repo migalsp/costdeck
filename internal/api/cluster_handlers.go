@@ -6,11 +6,14 @@ import (
 	"os"
 	"runtime"
 	"slices"
+	"sort"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/version"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -233,6 +236,51 @@ func (s *Server) gatherNodeInfo(n corev1.Node, nodeMetricsMap map[string]corev1.
 	}
 }
 
+// Replica is one operator pod.
+type Replica struct {
+	Name     string `json:"name"`
+	Ready    bool   `json:"ready"`
+	Node     string `json:"node"`
+	Restarts int32  `json:"restarts"`
+}
+
+// operatorReplicas lists the pods of this operator's Deployment: the pods in the operator
+// namespace that carry this pod's app.kubernetes.io labels.
+func (s *Server) operatorReplicas(ctx context.Context) []Replica {
+	out := []Replica{}
+	podName, ns := os.Getenv("HOSTNAME"), config.OperatorNamespace()
+	if s.K8sClient == nil || podName == "" {
+		return out
+	}
+	self := &corev1.Pod{}
+	if err := s.Client.Get(ctx, client.ObjectKey{Namespace: ns, Name: podName}, self); err != nil {
+		return out
+	}
+	var selector []string
+	for _, k := range []string{"app.kubernetes.io/name", "app.kubernetes.io/instance", "control-plane"} {
+		if v := self.Labels[k]; v != "" {
+			selector = append(selector, k+"="+v)
+		}
+	}
+	if len(selector) == 0 {
+		return append(out, Replica{Name: self.Name, Ready: true, Node: self.Spec.NodeName})
+	}
+	sel, err := labels.Parse(strings.Join(selector, ","))
+	if err != nil {
+		return out
+	}
+	var pods corev1.PodList
+	if err := s.Client.List(ctx, &pods, client.InNamespace(ns), client.MatchingLabelsSelector{Selector: sel}); err != nil {
+		return out
+	}
+	for _, p := range pods.Items {
+		ready, _, rs := podHealth(&p)
+		out = append(out, Replica{Name: p.Name, Ready: ready, Node: p.Spec.NodeName, Restarts: rs})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
 func (s *Server) handleOperatorHealth(w http.ResponseWriter, r *http.Request) {
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
@@ -274,6 +322,9 @@ func (s *Server) handleOperatorHealth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	health := map[string]any{
+		"pod":               podName,
+		"leader":            s.leaderPod(r.Context()),
+		"replicas":          s.operatorReplicas(r.Context()),
 		"status":            "healthy",
 		"managedNamespaces": managedNamespaces,
 		"memoryUsage":       usageMem,
@@ -312,9 +363,29 @@ func (s *Server) handleOperatorLogsDownload(w http.ResponseWriter, r *http.Reque
 	s.streamOperatorLogs(w, r, 0, true)
 }
 
+// leaderPod returns the pod that holds the leader Lease, or "" when it cannot be told:
+// leader election off, the Lease unreadable, or a holder that is not a pod name.
+func (s *Server) leaderPod(ctx context.Context) string {
+	if s.K8sClient == nil {
+		return ""
+	}
+	lease, err := s.K8sClient.CoordinationV1().Leases(config.OperatorNamespace()).Get(ctx, config.LeaderElectionID, metav1.GetOptions{})
+	if err != nil || lease.Spec.HolderIdentity == nil {
+		return ""
+	}
+	// controller-runtime writes "<hostname>_<uuid>"; the hostname is the pod name.
+	holder, _, _ := strings.Cut(*lease.Spec.HolderIdentity, "_")
+	return holder
+}
+
+// streamOperatorLogs returns the leader's logs, where the controllers write; with leader
+// election off, or before a leader is known, this pod's own.
 func (s *Server) streamOperatorLogs(w http.ResponseWriter, r *http.Request, tail int64, attachment bool) {
 	podName := os.Getenv("HOSTNAME")
 	podNs := os.Getenv("POD_NAMESPACE")
+	if leader := s.leaderPod(r.Context()); leader != "" {
+		podName = leader
+	}
 	if podName == "" || podNs == "" {
 		writeError(w, http.StatusInternalServerError, "Operator environment not detected (HOSTNAME/POD_NAMESPACE missing)")
 		return
@@ -331,8 +402,9 @@ func (s *Server) streamOperatorLogs(w http.ResponseWriter, r *http.Request, tail
 	}
 
 	if attachment {
-		w.Header().Set("Content-Disposition", "attachment; filename=costdeck-operator.log")
+		w.Header().Set("Content-Disposition", "attachment; filename="+podName+".log")
 	}
+	w.Header().Set("X-Costdeck-Pod", podName)
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	_, _ = w.Write(logs)
 }

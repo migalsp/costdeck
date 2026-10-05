@@ -87,7 +87,8 @@ securityContext:
     drop:
       - ALL
 
-# Only meaningful with replicaCount > 1: with a single replica a PDB would block node drains.
+# Created automatically when replicaCount > 1 (a PDB on a single replica would block node
+# drains); set enabled to force it.
 podDisruptionBudget:
   enabled: false
   minAvailable: 1
@@ -103,3 +104,7 @@ nodeSelector: {}
 tolerations: []
 
 affinity: {}
+
+# With replicaCount > 1 and nothing set here, replicas are spread over nodes
+# (kubernetes.io/hostname, ScheduleAnyway).
+topologySpreadConstraints: []

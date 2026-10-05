@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { Activity, BookOpen, CalendarClock, Cloud, ExternalLink, FileCode2, LifeBuoy, MessageSquare, Plug, Rocket, Search, Shield, Sparkles, Wallet } from 'lucide-react'
+import { Activity, BookOpen, CalendarClock, Cloud, ExternalLink, FileCode2, FileText, HardDrive, LifeBuoy, MessageSquare, Plug, Rocket, Search, Server, Shield, Sparkles, Target, Wallet } from 'lucide-react'
 import { guides, proseOf, textOf, type Guide } from './docs/content'
 import { BlockView, Inline } from './docs/blocks'
 import ApiExplorer from './docs/ApiExplorer'
@@ -9,6 +9,10 @@ const icons: Record<Guide['icon'], ReactNode> = {
   schedule: <CalendarClock size={17} />,
   cloud: <Cloud size={17} />,
   cost: <Wallet size={17} />,
+  nodes: <Server size={17} />,
+  storage: <HardDrive size={17} />,
+  budgets: <Target size={17} />,
+  reports: <FileText size={17} />,
   access: <Shield size={17} />,
   ai: <Sparkles size={17} />,
   mcp: <Plug size={17} />,

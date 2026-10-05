@@ -157,12 +157,34 @@ right-sizing advice based on a single reading.
 
 - **Custom rates** (CPU core-hour, memory GiB-hour, currency) always win: use them for
   negotiated prices, on-premises clusters or Google Cloud.
+- **Volumes and load balancers** are priced at list prices per disk type (gp3, Premium
+  SSD, pd-balanced, …) and per load balancer, or at your own storage and load balancer
+  rates, which you need when the currency is not USD. Reading them needs list access to
+  PersistentVolumeClaims, PersistentVolumes, StorageClasses, Services and EndpointSlices,
+  which the chart's ClusterRole grants.
 - **Cloud list prices** derive per-core and per-GiB rates from the list prices of the
   instance types your nodes actually run: the AWS Price List (needs
   `pricing:GetProducts`) or the public Azure Retail Prices API (no credentials). Spot
   nodes are counted at the regular rate. Google Cloud clusters keep the estimate.
 - Otherwise a list-price heuristic is used, and every cost figure says which basis it came
   from.
+
+## Reconciling with the cloud bill
+
+**Settings → Features → Reconcile with the cloud bill** reads what the cloud charged for
+the cluster's nodes over the week ending two days ago, compares it with list prices for
+the same days, and scales every compute cost by the ratio. It uses the credentials of the
+matching cloud provider, or the pod identity, and needs read access to the bill:
+
+| Cloud | Reads | Grant |
+| :--- | :--- | :--- |
+| AWS | Amortized EC2 cost from Cost Explorer, filtered by a tag (`aws:eks:cluster-name` by default) | `ce:GetCostAndUsage`; activate the tag as a cost allocation tag in the billing console |
+| Azure | Amortized virtual machine cost of the AKS node resource group from Cost Management | Cost Management Reader on the node resource group |
+| Google Cloud | Compute Engine cost with credits from the BigQuery billing export, by the `goog-k8s-cluster-name` label | BigQuery Job User in the provider's project, BigQuery Data Viewer on the export dataset |
+
+The result, including why the last attempt failed, is in
+`kubectl get costdeckconfig default -n costdeck -o jsonpath='{.status.billing}'`. A ratio
+below 10% or above 300% of list price is never applied.
 
 ## AWS: Aurora, EC2 and pricing
 
@@ -251,6 +273,13 @@ Webex can message a bot directly.
   Polling stops while a secret is set.
 - **Notify transitions**: posts to the space when a schedule finishes scaling up or down.
   Needs a space ID.
+- **Budget and anomaly alerts**: budgets (under **Budgets & Alerts**, stored in
+  `spec.budgets`) alert at their thresholds and when the month is heading over, and
+  anomaly alerts when a namespace's daily cost jumps. They are posted to the space when
+  there is one and always listed in the dashboard.
+- **Cost digest**: under **Reports → Scheduled digest**, a weekly (Mondays) or monthly
+  (the 1st) summary of cost, savings and the top opportunities is posted to the same
+  space. It is stored in `spec.reports.digest` of the `CostDeckConfig`.
 
 Commands (`help` lists them):
 
@@ -341,6 +370,9 @@ The manager exports metrics on the `costdeck-operator-metrics` Service (port 808
 | `costdeck_scaling_ready` | kind, name | 1 when every target reached the desired state |
 | `costdeck_scaling_override_active` | kind, name | 1 while a manual override ignores the schedule |
 | `costdeck_estimated_hourly_savings` | kind, name, currency | Cost of what is currently kept down |
+| `costdeck_cluster_estimated_monthly_cost` | part (nodes, storage, network, requested, used), currency | Cluster run rate |
+| `costdeck_budget_spent_ratio` | budget | Spending this month over the budget's limit |
+| `costdeck_budget_forecast_ratio` | budget | Forecast for the month over the budget's limit |
 | `costdeck_namespace_estimated_monthly_cost` | namespace, currency | Cost of running pods' requests |
 | `costdeck_namespace_cpu_usage_cores` | namespace | Observed CPU |
 | `costdeck_namespace_memory_usage_bytes` | namespace | Observed working-set memory |
@@ -358,6 +390,28 @@ metrics:
 `GET /metrics`; bind the generated `costdeck-operator-metrics-reader` ClusterRole to
 Prometheus' service account.
 
+## One replica or more
+
+One replica is enough for scaling. Schedules are reconciled from their state every
+minute, so a restart only delays the next change briefly. While the pod restarts, the
+dashboard, API, MCP and the Webex webhook are unavailable.
+
+Run two replicas when teams or tools rely on the dashboard and API:
+
+```bash
+helm upgrade costdeck-operator oci://ghcr.io/migalsp/costdeck/charts/costdeck-operator \
+  -n costdeck --reset-then-reuse-values --set replicaCount=2
+```
+
+- Every replica serves the dashboard, API and MCP. Sessions are signed cookies, so any
+  replica accepts them.
+- One leader (Lease `fdcd422b.costdeck.io`) runs the controllers, the Webex poller, the
+  cost history and the scheduled digest. A standby takes over within about 15 seconds.
+- With `replicaCount` above 1 the chart spreads the replicas over nodes and creates a
+  PodDisruptionBudget, unless you set `topologySpreadConstraints` or `affinity` yourself.
+- The health page lists the replicas and marks the leader; its logs are the leader's.
+- Keep `leaderElection.enabled: true`, or every replica would scale the same workloads.
+
 ## Chart values
 
 | Value | Default | Notes |
@@ -373,7 +427,8 @@ Prometheus' service account.
 | `metrics.serviceMonitor.enabled` | `false` | Needs Prometheus Operator CRDs |
 | `resources` | 100m / 128Mi requests, 200m / 256Mi limits | |
 | `podSecurityContext`, `securityContext` | restricted (non-root, read-only root FS, no capabilities) | |
-| `podDisruptionBudget.enabled` | `false` | Only useful with more than one replica |
+| `podDisruptionBudget.enabled` | `false` | Created anyway when `replicaCount` > 1 |
+| `topologySpreadConstraints` | `[]` | With `replicaCount` > 1 and none set, replicas spread over nodes |
 | `imagePullSecrets`, `podAnnotations`, `podLabels`, `priorityClassName` | empty | |
 | `extraArgs`, `extraEnv` | `[]` | e.g. `--zap-log-level=debug` |
 | `nodeSelector`, `tolerations`, `affinity` | empty | |

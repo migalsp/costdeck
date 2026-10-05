@@ -212,7 +212,7 @@ export default function AIChatWidget() {
     <>
       <button
         onClick={() => setIsOpen(true)}
-        className={`fixed bottom-8 right-8 w-14 h-14 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl shadow-lg flex items-center justify-center transition-all duration-300 hover:scale-105 z-50 ring-1 ring-white/20 ${isOpen ? 'scale-0 opacity-0 pointer-events-none' : 'scale-100 opacity-100'}`}
+        className={`fixed bottom-8 right-8 w-14 h-14 bg-brand-600 hover:bg-brand-700 text-white rounded-xl shadow-lg flex items-center justify-center transition-all duration-300 hover:scale-105 z-50 ring-1 ring-white/20 ${isOpen ? 'scale-0 opacity-0 pointer-events-none' : 'scale-100 opacity-100'}`}
         aria-label="Open CostDeck AI"
       >
         <Sparkles size={24} />
@@ -221,7 +221,7 @@ export default function AIChatWidget() {
       <div
         className={`fixed bottom-8 right-8 w-[520px] max-w-[calc(100vw-2rem)] h-[720px] max-h-[calc(100vh-4rem)] bg-white rounded-xl shadow-2xl flex flex-col overflow-hidden transition-all duration-300 z-50 border border-slate-200 transform origin-bottom-right ${isOpen ? 'scale-100 opacity-100' : 'scale-75 opacity-0 pointer-events-none'}`}
       >
-        <div className="bg-emerald-500 p-4 flex items-center justify-between text-white shrink-0 shadow-sm z-10 border-b border-emerald-600">
+        <div className="bg-brand-600 p-4 flex items-center justify-between text-white shrink-0 shadow-sm z-10 border-b border-brand-700">
           <div className="flex items-center gap-3">
             <div className="w-8 h-8 bg-white/20 rounded-lg flex items-center justify-center border border-white/20 shadow-sm">
               <Sparkles size={18} className="text-white" />
@@ -332,7 +332,7 @@ export default function AIChatWidget() {
               </button>
             ) : (
               <button type="submit" disabled={!input.trim()}
-                className={`absolute right-2.5 p-2 rounded-lg transition-all ${input.trim() ? 'bg-emerald-500 text-white hover:bg-emerald-600 shadow-sm' : 'text-slate-300 bg-transparent'}`}
+                className={`absolute right-2.5 p-2 rounded-lg transition-all ${input.trim() ? 'bg-brand-600 text-white hover:bg-brand-700 shadow-sm' : 'text-slate-300 bg-transparent'}`}
                 aria-label="Send">
                 <Send size={16} />
               </button>

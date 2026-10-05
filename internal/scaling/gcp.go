@@ -48,19 +48,21 @@ var (
 
 // GCPProvider starts and stops Compute Engine instances and Cloud SQL instances.
 type GCPProvider struct {
-	project     string
-	rest        *restClient
-	computeBase string
-	sqlBase     string
+	project      string
+	rest         *restClient
+	computeBase  string
+	sqlBase      string
+	bigqueryBase string
 }
 
 // NewGCPProvider builds a provider for a project from an OAuth2 token source.
 func NewGCPProvider(ctx context.Context, ts oauth2.TokenSource, project string) *GCPProvider {
 	return &GCPProvider{
-		project:     project,
-		rest:        newRESTClient(ctx, ts),
-		computeBase: "https://compute.googleapis.com/compute/v1",
-		sqlBase:     "https://sqladmin.googleapis.com/v1",
+		project:      project,
+		rest:         newRESTClient(ctx, ts),
+		computeBase:  "https://compute.googleapis.com/compute/v1",
+		sqlBase:      "https://sqladmin.googleapis.com/v1",
+		bigqueryBase: "https://bigquery.googleapis.com/bigquery/v2",
 	}
 }
 

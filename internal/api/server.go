@@ -19,6 +19,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/migalsp/costdeck-operator/internal/auth"
+	"github.com/migalsp/costdeck-operator/internal/finops"
 	"github.com/migalsp/costdeck-operator/internal/metrics"
 	"github.com/migalsp/costdeck-operator/internal/pricing"
 )
@@ -36,7 +37,9 @@ var Version = "dev"
 
 // Server serves the REST API and the embedded dashboard.
 type Server struct {
-	Client        client.Client
+	Client client.Client
+	// APIReader reads without the cache, for objects not worth an informer; nil means Client.
+	APIReader     client.Reader
 	K8sClient     kubernetes.Interface
 	MetricsClient metricsv.Interface
 	Metrics       *metrics.Provider
@@ -55,10 +58,18 @@ type Server struct {
 	healthHistory []map[string]any
 
 	recommendationCache recommendationCache
+	warm                warmup
 
 	versionMu sync.Mutex
 	version   *version.Info
 	versionAt time.Time
+
+	ledgerMu sync.Mutex
+	ledger   *finops.Ledger
+	ledgerAt time.Time
+
+	// Poster delivers cost digests; nil means the Webex space.
+	Poster finops.Poster
 
 	// rootCtx lives as long as the server; background work started by a request uses it.
 	rootCtx context.Context
@@ -192,6 +203,19 @@ func (s *Server) routes() *http.ServeMux {
 	viewer("GET /api/namespaces/{ns}/optimization", s.handleNamespaceOptimizationInfo)
 	viewer("GET /api/namespaces/{ns}/recommendations", s.handleRecommendations)
 	viewer("POST /api/costing", s.handleCosting)
+	viewer("GET /api/finops/overview", s.handleFinOpsOverview)
+	viewer("GET /api/finops/nodes", s.handleFinOpsNodes)
+	viewer("GET /api/finops/infra", s.handleFinOpsInfra)
+	viewer("GET /api/budgets", s.handleBudgets)
+	admin("POST /api/billing/reconcile", s.handleBillingReconcile)
+	viewer("GET /api/finops/nodes/{name}/pods", s.handleFinOpsNodePods)
+
+	// Reports
+	viewer("GET /api/reports", s.handleListReports)
+	viewer("GET /api/reports/digest", s.handleDigest)
+	operator("POST /api/reports/digest/send", s.handleSendDigest)
+	viewer("GET /api/reports/{id}", s.handleGetReport)
+	admin("DELETE /api/reports/{id}", s.handleDeleteReport)
 
 	// Scaling
 	viewer("GET /api/scaling/groups", s.listScalingGroups)

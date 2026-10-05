@@ -164,3 +164,26 @@ export interface Recommendations {
   monthlySavings: number
   workloads: WorkloadAdvice[]
 }
+
+// NamespaceFinOps is GET /api/namespaces: the per-minute usage samples of one namespace.
+export interface ResourceMetrics {
+  usage: string
+  requests: string
+  limits: string
+}
+
+export interface MetricDataPoint {
+  timestamp: string
+  cpu: ResourceMetrics
+  memory: ResourceMetrics
+}
+
+export interface NamespaceFinOps {
+  metadata: { name: string; creationTimestamp: string }
+  spec: { targetNamespace: string }
+  status?: {
+    lastUpdated?: string
+    insights?: string[]
+    history?: MetricDataPoint[]
+  }
+}

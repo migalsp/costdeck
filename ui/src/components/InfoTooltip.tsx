@@ -32,7 +32,7 @@ export default function InfoTooltip({ content, position = 'top', children }: Inf
       onMouseLeave={() => setVisible(false)}
     >
       {children ? children : (
-        <Info size={14} className="text-emerald-500/60 hover:text-emerald-500 transition-colors cursor-help" />
+        <Info size={14} className="text-slate-400 hover:text-slate-600 transition-colors cursor-help" />
       )}
       
       {visible && (

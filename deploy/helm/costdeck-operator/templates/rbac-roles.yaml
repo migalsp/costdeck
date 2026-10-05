@@ -10,7 +10,10 @@ rules:
   resources:
   - namespaces
   - nodes
+  - persistentvolumeclaims
+  - persistentvolumes
   - pods
+  - services
   verbs:
   - get
   - list
@@ -36,6 +39,14 @@ rules:
   - patch
   - watch
 - apiGroups:
+  - discovery.k8s.io
+  resources:
+  - endpointslices
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
   - keda.sh
   resources:
   - scaledobjects
@@ -48,6 +59,14 @@ rules:
   resources:
   - nodes
   - pods
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - storage.k8s.io
+  resources:
+  - storageclasses
   verbs:
   - get
   - list
