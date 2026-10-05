@@ -24,6 +24,10 @@ type Bot struct {
 	K8s         client.Client
 	Namespace   string
 	ClusterName string
+	// SpaceID is the configured CostDeck space. Scaling commands are only accepted there,
+	// so membership of that space is what authorizes changes; without one the bot is
+	// read-only. Anyone on Webex can open a direct message with a bot.
+	SpaceID string
 	// Me is the bot's own identity, used to ignore its own messages and to strip the
 	// mention Webex prepends in group spaces.
 	Me *Person
@@ -222,12 +226,29 @@ func (b *Bot) execute(ctx context.Context, msg *Message, cmd command) (string, e
 		return b.overview(ctx)
 	case verbStatus:
 		return b.status(ctx, cmd)
-	case verbScale:
-		return b.scale(ctx, msg, cmd)
-	case verbResume:
+	case verbScale, verbResume:
+		if refusal := b.refuseChange(msg); refusal != "" {
+			return refusal, nil
+		}
+		if cmd.verb == verbScale {
+			return b.scale(ctx, msg, cmd)
+		}
 		return b.resume(ctx, cmd)
 	}
 	return "", nil
+}
+
+// refuseChange explains why a scaling command cannot run from where it was sent, or
+// returns "" when it may.
+func (b *Bot) refuseChange(msg *Message) string {
+	switch {
+	case b.SpaceID == "":
+		return "Scaling from chat is turned off until a CostDeck space is configured (Settings → Messengers → Webex → Space ID). " +
+			"Only members of that space can scale; `list` and `status` work here."
+	case msg.RoomID != b.SpaceID:
+		return "Scaling commands are only accepted in the CostDeck space. `list` and `status` work here."
+	}
+	return ""
 }
 
 func (b *Bot) prefix() string {

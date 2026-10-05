@@ -94,6 +94,7 @@ func newTestBot(t *testing.T, clusterName string, objs ...client.Object) (*Bot, 
 		K8s:         k8s,
 		Namespace:   "costdeck",
 		ClusterName: clusterName,
+		SpaceID:     "room",
 		Me:          &api.me,
 	}, api, k8s
 }
@@ -328,5 +329,36 @@ func TestNotifierPostsOnlyWhenEnabled(t *testing.T) {
 	replies := api.replies()
 	if len(replies) != 1 || replies[0]["roomId"] != "room" || !strings.HasPrefix(replies[0]["markdown"], "**[prod]**") {
 		t.Errorf("notification = %v", replies)
+	}
+}
+
+func TestBotScalesOnlyInTheConfiguredSpace(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		spaceID string
+		msg     *Message
+		refusal string
+	}{
+		{"no space configured", "", groupMsg("FinOps Bot scale group pps1 down"), "turned off until a CostDeck space is configured"},
+		{"direct message", "room", &Message{ID: "d1", RoomID: "dm", RoomType: "direct", Text: "scale group pps1 down", PersonID: "stranger"}, "only accepted in the CostDeck space"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bot, api, k8s := newTestBot(t, "", scheduledGroup("pps1"))
+			bot.SpaceID = tc.spaceID
+			if err := bot.ProcessMessage(context.Background(), tc.msg); err != nil {
+				t.Fatal(err)
+			}
+			g := &finopsv1.ScalingGroup{}
+			if err := k8s.Get(context.Background(), client.ObjectKey{Name: "pps1", Namespace: "costdeck"}, g); err != nil {
+				t.Fatal(err)
+			}
+			if g.Spec.Active != nil {
+				t.Errorf("the group was overridden from %s", tc.name)
+			}
+			replies := api.replies()
+			if len(replies) == 0 || !strings.Contains(replies[len(replies)-1]["markdown"], tc.refusal) {
+				t.Errorf("replies = %v, want a refusal containing %q", replies, tc.refusal)
+			}
+		})
 	}
 }

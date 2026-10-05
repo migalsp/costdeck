@@ -89,7 +89,7 @@ func (s *Server) processWebexMessage(settings *webex.Settings, messageID string)
 		log.Error(err, "Could not fetch Webex message", "messageId", messageID)
 		return
 	}
-	bot := &webex.Bot{API: api, K8s: s.Client, Namespace: config.OperatorNamespace(), ClusterName: settings.ClusterName, Me: me, Background: ctx}
+	bot := &webex.Bot{API: api, K8s: s.Client, Namespace: config.OperatorNamespace(), ClusterName: settings.ClusterName, SpaceID: settings.RoomID, Me: me, Background: ctx}
 	if err := bot.ProcessMessage(ctx, msg); err != nil {
 		log.Error(err, "Could not process Webex message", "messageId", messageID)
 	}

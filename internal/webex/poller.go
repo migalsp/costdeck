@@ -117,7 +117,7 @@ func (p *Poller) Poll(ctx context.Context) {
 		return
 	}
 
-	bot := &Bot{API: api, K8s: p.Client, Namespace: config.OperatorNamespace(), ClusterName: settings.ClusterName, Me: me, Background: ctx}
+	bot := &Bot{API: api, K8s: p.Client, Namespace: config.OperatorNamespace(), ClusterName: settings.ClusterName, SpaceID: settings.RoomID, Me: me, Background: ctx}
 	for _, room := range rooms {
 		msgs, err := api.Messages(ctx, room.ID, room.Type != "direct", 20)
 		if err != nil {

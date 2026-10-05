@@ -1214,13 +1214,16 @@ export default function SettingsPage() {
               </div>
 
               <div>
-                <label className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5 block">Space ID <span className="normal-case font-normal text-slate-400">(optional)</span></label>
+                <label className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5 block">Space ID <span className="normal-case font-normal text-slate-400">(needed to scale from chat)</span></label>
                 <input
                   value={webexRoomId}
                   onChange={e => setWebexRoomId(e.target.value)}
-                  placeholder="Leave empty to answer in every space the bot is added to"
+                  placeholder="The space whose members may scale"
                   className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm"
                 />
+                <p className="mt-1 text-[11px] text-slate-400">
+                  Scaling commands are accepted only in this space, so its members are who may scale. Without it the bot answers <code>list</code> and <code>status</code> but changes nothing: anyone on Webex can message a bot directly.
+                </p>
               </div>
 
               <label className="flex items-start gap-3 p-3 rounded-xl border border-slate-200 bg-slate-50 cursor-pointer">

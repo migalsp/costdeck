@@ -193,8 +193,10 @@ tags you configure. Discovered resources are added to a schedule under **⋯ →
 ## Webex
 
 **Settings → Messengers → Webex**: a bot token from
-[developer.webex.com](https://developer.webex.com/my-apps) and, optionally, a space (room)
-ID.
+[developer.webex.com](https://developer.webex.com/my-apps) and the ID of the space your team
+uses for CostDeck. Scaling commands are accepted only in that space, so its members are who
+may scale. Without a space the bot only answers `list` and `status`, because anyone on
+Webex can message a bot directly.
 
 - **Polling** (default): the operator reads new messages every 10 seconds. Nothing has to
   reach the cluster from outside. In group spaces the bot only sees messages that
