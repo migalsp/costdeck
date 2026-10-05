@@ -170,7 +170,9 @@ export default function NamespaceScalingPanel({ namespace }: { namespace: string
             Edit schedule
           </button>
         )}
-        {can('admin') && (
+        {/* Rules only matter under a schedule. A rules-only config on an unscheduled namespace
+            would count as "always on" and start every workload that sits at zero. */}
+        {controller && can('admin') && (
           <button onClick={openRules} className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-slate-500 text-xs font-bold hover:bg-slate-100"
             title="Keep some workloads running while the rest scale down, or set the order workloads start in">
             <ListChecks size={13} /> Workload rules{rules > 0 && <span className="text-indigo-500">({rules})</span>}
