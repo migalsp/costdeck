@@ -143,21 +143,6 @@ func (p *Provider) PodUsage(ctx context.Context, namespace string) (map[string]U
 	return u, Result{Source: SourceMetricsServer, Degraded: vmErr}, err
 }
 
-// NamespaceAverage returns the average usage over the configured lookback window. Only
-// VictoriaMetrics keeps history; otherwise ErrUnsupported is returned so the caller can
-// fall back to the in-cluster NamespaceFinOps history.
-func (p *Provider) NamespaceAverage(ctx context.Context, namespace string) (Usage, time.Duration, error) {
-	vm, lookback, err := p.resolve(ctx)
-	if vm == nil {
-		if err == nil {
-			err = ErrUnsupported
-		}
-		return Usage{}, lookback, err
-	}
-	u, err := vm.NamespaceAverage(ctx, namespace, lookback)
-	return u, lookback, err
-}
-
 // Validate checks the currently configured VictoriaMetrics endpoint. It returns
 // (false, nil) when the integration is disabled.
 func (p *Provider) Validate(ctx context.Context) (bool, error) {

@@ -244,8 +244,8 @@ spec:
                       retentionDays:
                         default: 7
                         description: |-
-                          RetentionDays is the lookback window for historical queries.
-                          Used by the Optimize feature to compute resource recommendations.
+                          RetentionDays is the lookback window for historical queries. Right-sizing advice
+                          uses it, capped at 14 days.
                         minimum: 1
                         type: integer
                       secretRef:

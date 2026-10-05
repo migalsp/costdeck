@@ -1018,7 +1018,7 @@ export default function SettingsPage() {
           <SectionHeader
             icon={<Activity className="text-amber-500" size={20} />}
             title="Monitoring"
-            subtitle="Configure metrics data source for namespace insights and optimization"
+            subtitle="Where namespace usage and right-sizing advice come from"
           />
 
           <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
@@ -1056,7 +1056,7 @@ export default function SettingsPage() {
                 <AlertTriangle size={16} className="text-amber-500 mt-0.5 flex-shrink-0" />
                 <div className="text-xs text-amber-700">
                   <p className="font-bold mb-1">Metrics Source Override</p>
-                  <p>When enabled, namespace insights, pod usage and Optimize recommendations come from VictoriaMetrics instead of the Kubernetes Metrics Server. Changes apply immediately — no operator restart. If VictoriaMetrics is unreachable, CostDeck falls back to metrics-server and reports why.</p>
+                  <p>When enabled, namespace insights, pod usage and right-sizing advice come from VictoriaMetrics instead of the Kubernetes Metrics Server. Changes apply immediately — no operator restart. If VictoriaMetrics is unreachable, CostDeck falls back to metrics-server and reports why.</p>
                 </div>
               </div>
 
@@ -1096,7 +1096,7 @@ export default function SettingsPage() {
                     onChange={e => setVmRetentionDays(parseInt(e.target.value) || 7)}
                     className="w-24 px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm text-center focus:outline-none focus:ring-2 focus:ring-amber-500/30 focus:border-amber-400 transition-all"
                   />
-                  <span className="text-xs text-slate-400">days of metrics lookback for Optimize recommendations</span>
+                  <span className="text-xs text-slate-400">days of history behind right-sizing advice (at most 14 are used)</span>
                 </div>
               </div>
 
@@ -1196,7 +1196,7 @@ export default function SettingsPage() {
           <SectionHeader
             icon={<Bot className="text-brand-500" size={20} />}
             title="AI Models"
-            subtitle="Connect AI models for intelligent cost optimization insights"
+            subtitle="The model behind the assistant and the cost reports"
           />
 
           <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">

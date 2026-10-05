@@ -183,7 +183,6 @@ func (s *Server) routes() *http.ServeMux {
 	viewer("GET /api/namespaces/{ns}/pods", s.servePods)
 	viewer("GET /api/namespaces/{ns}/workloads", s.serveWorkloads)
 	operator("PUT /api/namespaces/{ns}/workloads/{name}", s.serveWorkloadAction)
-	operator("POST /api/namespaces/{ns}/optimize", s.handleNamespaceOptimize)
 	operator("POST /api/namespaces/{ns}/revert", s.handleNamespaceRevert)
 	viewer("GET /api/namespaces/{ns}/optimization", s.handleNamespaceOptimizationInfo)
 	viewer("GET /api/namespaces/{ns}/recommendations", s.handleRecommendations)

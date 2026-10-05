@@ -142,23 +142,6 @@ func TestVMClientQueriesAndAuth(t *testing.T) {
 	}
 }
 
-func TestVMClientNamespaceAverageUsesWindow(t *testing.T) {
-	prom := &fakePromQL{answer: func(string) []map[string]any { return []map[string]any{sample(nil, "2")} }}
-	srv := httptest.NewServer(prom)
-	defer srv.Close()
-
-	c, err := NewVMClient(VMOptions{Endpoint: srv.URL})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := c.NamespaceAverage(context.Background(), "shop", 14*24*time.Hour); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(prom.queries[0], "avg_over_time(") || !strings.Contains(prom.queries[0], "[14d:5m]") {
-		t.Errorf("average query does not cover the configured window: %s", prom.queries[0])
-	}
-}
-
 func TestVMClientValidateDiagnostics(t *testing.T) {
 	t.Run("connected without cAdvisor series", func(t *testing.T) {
 		srv := httptest.NewServer(&fakePromQL{})
@@ -209,10 +192,6 @@ func (s stubSource) NamespaceUsage(context.Context, string) (Usage, error) {
 	return Usage{CPU: *resourceMilli(s.cpuMilli)}, nil
 }
 func (s stubSource) PodUsage(context.Context, string) (map[string]Usage, error) { return nil, nil }
-func (s stubSource) NamespaceAverage(context.Context, string, time.Duration) (Usage, error) {
-	return Usage{}, ErrUnsupported
-}
-
 func TestProviderFollowsConfigChangesAndFallsBack(t *testing.T) {
 	t.Setenv("POD_NAMESPACE", "costdeck")
 	scheme := runtime.NewScheme()

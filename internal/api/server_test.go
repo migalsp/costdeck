@@ -255,33 +255,6 @@ func TestServeWorkloads(t *testing.T) {
 	}
 }
 
-func TestHandleNamespaceOptimize(t *testing.T) {
-	t.Setenv("POD_NAMESPACE", "costdeck")
-
-	server := buildMockServerWithK8s()
-
-	// Pre-create the required finops object
-	nsFinOps := &finopsv1.NamespaceFinOps{
-		ObjectMeta: metav1.ObjectMeta{Name: "test-ns", Namespace: "costdeck"},
-		Status: finopsv1.NamespaceFinOpsStatus{
-			History: []finopsv1.MetricDataPoint{
-				{Timestamp: metav1.Now(), CPU: finopsv1.ResourceMetrics{Usage: "100m"}},
-			},
-		},
-	}
-	if err := server.Client.Create(context.Background(), nsFinOps); err != nil {
-		t.Fatal(err)
-	}
-
-	req, _ := http.NewRequest("POST", "/api/namespaces/test-ns/optimize", nil)
-	rr := httptest.NewRecorder()
-	server.routes().ServeHTTP(rr, req)
-
-	if rr.Code != http.StatusInternalServerError {
-		t.Errorf("expected 500 InternalsServerError when no metrics client exists, got %v", rr.Code)
-	}
-}
-
 func TestHandleNamespaceRevert(t *testing.T) {
 	t.Setenv("POD_NAMESPACE", "costdeck")
 

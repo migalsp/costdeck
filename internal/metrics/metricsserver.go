@@ -3,7 +3,6 @@ package metrics
 import (
 	"context"
 	"fmt"
-	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	metricsv "k8s.io/metrics/pkg/client/clientset/versioned"
@@ -50,9 +49,4 @@ func (s *MetricsServerSource) PodUsage(ctx context.Context, namespace string) (m
 		usage[pm.Name] = u
 	}
 	return usage, nil
-}
-
-// NamespaceAverage implements Source. metrics-server keeps no history.
-func (s *MetricsServerSource) NamespaceAverage(context.Context, string, time.Duration) (Usage, error) {
-	return Usage{}, ErrUnsupported
 }

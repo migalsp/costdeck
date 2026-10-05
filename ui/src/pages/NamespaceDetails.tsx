@@ -165,7 +165,7 @@ export default function NamespaceDetails({ namespace, onBack }: NamespaceDetails
             <h2 className="text-2xl font-bold tracking-tight text-slate-900 flex items-center gap-2">{namespace}</h2>
             <p className="mt-1 text-sm text-slate-500">Usage, cost, scaling and right-sizing for this namespace</p>
           </div>
-          <InfoTooltip content="This view shows real-time metrics for each pod. Strike-through values indicate optimized resources. Green values are currently active." position="bottom" />
+          <InfoTooltip content="This view shows real-time metrics for each pod. Struck-through values were changed by an automatic right-sizing in an earlier version; green values are the ones in effect." position="bottom" />
         </div>
       </div>
 

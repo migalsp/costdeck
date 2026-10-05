@@ -5,7 +5,6 @@ package metrics
 import (
 	"context"
 	"errors"
-	"time"
 
 	"k8s.io/apimachinery/pkg/api/resource"
 )
@@ -28,9 +27,6 @@ type Source interface {
 	NamespaceUsage(ctx context.Context, namespace string) (Usage, error)
 	// PodUsage returns the current usage of every pod in a namespace, keyed by pod name.
 	PodUsage(ctx context.Context, namespace string) (map[string]Usage, error)
-	// NamespaceAverage returns the average namespace usage over the given window, or
-	// ErrUnsupported when the source keeps no history.
-	NamespaceAverage(ctx context.Context, namespace string, window time.Duration) (Usage, error)
 }
 
 // Source names used in conditions and API responses.

@@ -172,20 +172,6 @@ func (c *VMClient) PodUsage(ctx context.Context, namespace string) (map[string]U
 	return usage, nil
 }
 
-// NamespaceAverage implements Source using a PromQL subquery over the window.
-func (c *VMClient) NamespaceAverage(ctx context.Context, namespace string, window time.Duration) (Usage, error) {
-	rng := promDuration(window)
-	cpu, err := c.scalar(ctx, fmt.Sprintf("avg_over_time(sum(%s)[%s:5m])", c.cpuExpr(namespace), rng))
-	if err != nil {
-		return Usage{}, fmt.Errorf("query average namespace CPU: %w", err)
-	}
-	mem, err := c.scalar(ctx, fmt.Sprintf("avg_over_time(sum(%s)[%s:5m])", c.memExpr(namespace), rng))
-	if err != nil {
-		return Usage{}, fmt.Errorf("query average namespace memory: %w", err)
-	}
-	return newUsage(cpu, mem), nil
-}
-
 // Name implements Source.
 func (c *VMClient) Name() string { return SourceVictoriaMetrics }
 
