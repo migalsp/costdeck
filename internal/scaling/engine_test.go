@@ -14,6 +14,7 @@ import (
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -639,5 +640,36 @@ func TestEngineProviderFallsBackToResolver(t *testing.T) {
 	e.Resolver = nil
 	if _, err := e.Provider(context.Background(), "aws"); err == nil {
 		t.Error("expected an error with neither a registration nor a resolver")
+	}
+}
+
+func TestKeptDownCountsMissingReplicas(t *testing.T) {
+	e := buildMockEngine()
+	ctx := context.Background()
+	zero, one := int32(0), int32(1)
+	podSpec := corev1.PodSpec{
+		InitContainers: []corev1.Container{{Name: "migrate", Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{
+			corev1.ResourceMemory: resource.MustParse("2Gi"),
+		}}}},
+		Containers: []corev1.Container{{Name: "app", Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{
+			corev1.ResourceCPU: resource.MustParse("500m"), corev1.ResourceMemory: resource.MustParse("1Gi"),
+		}}}},
+	}
+	must(t, e.Client.Create(ctx, &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "test-ns"},
+		Spec:       appsv1.DeploymentSpec{Replicas: &zero, Template: corev1.PodTemplateSpec{Spec: podSpec}},
+	}))
+	must(t, e.Client.Create(ctx, &appsv1.StatefulSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "db", Namespace: "test-ns"},
+		Spec:       appsv1.StatefulSetSpec{Replicas: &one, Template: corev1.PodTemplateSpec{Spec: podSpec}},
+	}))
+
+	cpu, mem, err := e.KeptDown(ctx, "test-ns", map[string]int32{"*v1.Deployment/api": 3, "*v1.StatefulSet/db": 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// api: 3 missing replicas x (500m, max(1Gi, 2Gi init)); db is at its original count.
+	if cpu.MilliValue() != 1500 || mem.Value() != 6<<30 {
+		t.Errorf("KeptDown() = %s CPU, %s memory; want 1500m and 6Gi", cpu.String(), mem.String())
 	}
 }

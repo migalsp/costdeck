@@ -35,6 +35,8 @@ import (
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
 	"github.com/migalsp/costdeck-operator/internal/metrics"
+	"github.com/migalsp/costdeck-operator/internal/pricing"
+	"github.com/migalsp/costdeck-operator/internal/telemetry"
 )
 
 // NamespaceFinOpsReconciler reconciles a NamespaceFinOps object
@@ -42,6 +44,8 @@ type NamespaceFinOpsReconciler struct {
 	client.Client
 	Scheme  *runtime.Scheme
 	Metrics *metrics.Provider
+	// Pricing values the namespace's requests for the cost metric; optional.
+	Pricing *pricing.Resolver
 }
 
 // ConditionMetricsAvailable reports whether usage could be collected and from where.
@@ -61,6 +65,7 @@ func (r *NamespaceFinOpsReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	var nsFinOps finopsv1.NamespaceFinOps
 	if err := r.Get(ctx, req.NamespacedName, &nsFinOps); err != nil {
 		if apierrors.IsNotFound(err) {
+			telemetry.ForgetNamespace(req.Name)
 			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{}, err
@@ -145,6 +150,12 @@ func (r *NamespaceFinOpsReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 	if len(insights) == 0 && len(podList.Items) > 0 {
 		insights = append(insights, "Optimized")
+	}
+
+	if r.Pricing != nil {
+		rates := r.Pricing.Rates(ctx)
+		telemetry.RecordNamespace(targetNs, totalCpuUsage.AsApproximateFloat64(), totalMemUsage.AsApproximateFloat64(),
+			rates.Monthly(totalCpuReq, totalMemReq), rates.Currency)
 	}
 
 	// 3. Create the data point

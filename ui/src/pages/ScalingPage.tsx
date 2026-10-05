@@ -37,7 +37,18 @@ interface ScheduleStatus {
   desiredState?: 'Up' | 'Down';
   overrideExpiresAt?: string;
   nextTransition?: { time: string; desiredState: 'Up' | 'Down' };
+  estimatedHourlySavings?: string;
+  currency?: string;
 }
+
+// formatMoney renders an amount in the status currency.
+const formatMoney = (amount: number, currency = 'USD') => {
+  try {
+    return new Intl.NumberFormat(undefined, { style: 'currency', currency, maximumFractionDigits: amount < 10 ? 2 : 0 }).format(amount);
+  } catch {
+    return `${amount.toFixed(2)} ${currency}`;
+  }
+};
 
 interface ScalingGroup {
   metadata: {
@@ -437,9 +448,15 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
       Dependency: 'bg-violet-50 text-violet-600 border-violet-100',
     };
     const next = status.nextTransition;
+    const saving = parseFloat(status.estimatedHourlySavings || '');
     return (
       <div className="flex items-center gap-2 flex-wrap text-[10px] font-bold mb-3">
         <span className={`px-2 py-0.5 rounded-md border uppercase tracking-wider ${tone[status.mode] || tone.Schedule}`}>{label[status.mode] || status.mode}</span>
+        {saving > 0 && (
+          <span className="px-2 py-0.5 rounded-md border bg-emerald-50 border-emerald-100 text-emerald-600" title="Estimated cost of the workloads kept scaled down, at the current rates">
+            Saving ~{formatMoney(saving, status.currency)}/h
+          </span>
+        )}
         {next && (
           <span className="text-slate-400 flex items-center gap-1" title={new Date(next.time).toLocaleString()}>
             <CalendarClock size={11} /> {next.desiredState === 'Up' ? 'Up' : 'Down'} {relativeTime(next.time)}
@@ -661,6 +678,11 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
         <span className={`text-[12px] font-bold leading-none block break-words ${managedBy ? 'text-slate-800' : 'text-slate-400'}`}>
           {managedBy ? `Managed by: ${managedBy}` : 'Self-managed'}
         </span>
+        {!managedBy && parseFloat(config.status?.estimatedHourlySavings || '') > 0 && (
+          <span className="text-[10px] font-bold text-emerald-600">
+            Saving ~{formatMoney(parseFloat(config.status!.estimatedHourlySavings!), config.status!.currency)}/h
+          </span>
+        )}
         {!managedBy && config.status?.nextTransition && (
           <span className="text-[10px] font-bold text-slate-400" title={new Date(config.status.nextTransition.time).toLocaleString()}>
             {config.status.nextTransition.desiredState} {relativeTime(config.status.nextTransition.time)}
@@ -747,6 +769,16 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
         <div>
           <h1 className="text-3xl font-black text-slate-800 tracking-tight">Workload Scaling</h1>
           <p className="text-slate-500 mt-1">Orchestrate infrastructure availability by schedule or on-demand.</p>
+          {(() => {
+            const items = [...groups.map(g => g.status), ...policies.map(p => p.status)];
+            const hourly = items.reduce((sum, st) => sum + (parseFloat(st?.estimatedHourlySavings || '') || 0), 0);
+            const currency = items.find(st => st?.currency)?.currency || 'USD';
+            return hourly > 0 ? (
+              <p className="mt-2 inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-emerald-50 border border-emerald-100 text-emerald-700 text-sm font-bold">
+                Scaled-down workloads are saving ~{formatMoney(hourly, currency)}/h right now (≈ {formatMoney(hourly * 730, currency)}/month at this rate)
+              </p>
+            ) : null;
+          })()}
         </div>
         <div className="flex gap-3">
           {can('admin') && <button 

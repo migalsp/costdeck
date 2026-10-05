@@ -197,6 +197,7 @@ type ScalingGroupStatus struct {
 // +kubebuilder:printcolumn:name="Ready",type=integer,JSONPath=".status.namespacesReady"
 // +kubebuilder:printcolumn:name="Total",type=integer,JSONPath=".status.namespacesTotal",priority=1
 // +kubebuilder:printcolumn:name="Next change",type=date,JSONPath=".status.nextTransition.time"
+// +kubebuilder:printcolumn:name="Saving/h",type=string,JSONPath=".status.estimatedHourlySavings",priority=1
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=".metadata.creationTimestamp"
 
 // ScalingGroup is the Schema for the scalinggroups API

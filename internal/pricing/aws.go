@@ -8,9 +8,14 @@ import (
 	"strconv"
 	"sync"
 
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awspricing "github.com/aws/aws-sdk-go-v2/service/pricing"
 	"github.com/aws/aws-sdk-go-v2/service/pricing/types"
+
+	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
+	"github.com/migalsp/costdeck-operator/internal/scaling"
 )
 
 // awsPriceListRegion hosts the Price List API endpoint.
@@ -109,4 +114,36 @@ func onDemandUSD(priceList []string) (float64, error) {
 		return 0, errors.New("the Price List API has no matching product")
 	}
 	return 0, fmt.Errorf("no hourly on-demand USD price in %d product(s)", len(priceList))
+}
+
+// AWSFromConfig builds AWS Price List clients with the credentials configured for
+// the AWS provider, or the pod identity when none are stored.
+func AWSFromConfig(c client.Reader) func(context.Context, *finopsv1.CostDeckConfig) (NodePricer, error) {
+	var mu sync.Mutex
+	var cached *AWSPricer
+	var cachedKey string
+	return func(ctx context.Context, cfg *finopsv1.CostDeckConfig) (NodePricer, error) {
+		secretRef, region := "", ""
+		if a := cfg.Spec.Providers.AWS; a != nil {
+			secretRef, region = a.SecretRef, a.Region
+		}
+		key := secretRef + "|" + region
+		mu.Lock()
+		defer mu.Unlock()
+		if cached != nil && cachedKey == key {
+			return cached, nil
+		}
+		var prov *scaling.AWSProvider
+		var err error
+		if secretRef != "" {
+			prov, err = scaling.NewAWSProviderFromSecret(ctx, c, secretRef, cfg.Namespace, region)
+		} else {
+			prov, err = scaling.NewAWSProvider(ctx)
+		}
+		if err != nil {
+			return nil, err
+		}
+		cached, cachedKey = NewAWSPricer(prov.Config()), key
+		return cached, nil
+	}
 }

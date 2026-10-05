@@ -10,6 +10,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -344,4 +345,57 @@ func (e *Engine) ComputePhase(ctx context.Context, ns string, targetActive bool)
 	default:
 		return PhaseScalingDown
 	}
+}
+
+// KeptDown returns the CPU and memory requests CostDeck currently keeps off in a
+// namespace: for every workload with a recorded original replica count, the per-pod
+// requests times the replicas it is short of that count.
+func (e *Engine) KeptDown(ctx context.Context, ns string, originals map[string]int32) (resource.Quantity, resource.Quantity, error) {
+	var cpu, mem resource.Quantity
+	if len(originals) == 0 {
+		return cpu, mem, nil
+	}
+	objs, err := e.listScalableResources(ctx, ns, nil)
+	if err != nil {
+		return cpu, mem, err
+	}
+	for _, obj := range objs {
+		original, ok := originals[originalKey(obj)]
+		missing := int64(original - getReplicas(obj))
+		if !ok || missing <= 0 {
+			continue
+		}
+		var tmpl corev1.PodTemplateSpec
+		switch v := obj.(type) {
+		case *appsv1.Deployment:
+			tmpl = v.Spec.Template
+		case *appsv1.StatefulSet:
+			tmpl = v.Spec.Template
+		}
+		podCPU, podMem := PodRequests(tmpl.Spec)
+		podCPU.Mul(missing)
+		podMem.Mul(missing)
+		cpu.Add(podCPU)
+		mem.Add(podMem)
+	}
+	return cpu, mem, nil
+}
+
+// PodRequests returns the effective requests of a pod spec: the sum of its containers,
+// or its largest init container when that is bigger, as the scheduler counts them.
+func PodRequests(spec corev1.PodSpec) (resource.Quantity, resource.Quantity) {
+	var cpu, mem resource.Quantity
+	for _, c := range spec.Containers {
+		cpu.Add(*c.Resources.Requests.Cpu())
+		mem.Add(*c.Resources.Requests.Memory())
+	}
+	for _, c := range spec.InitContainers {
+		if q := c.Resources.Requests.Cpu(); q.Cmp(cpu) > 0 {
+			cpu = q.DeepCopy()
+		}
+		if q := c.Resources.Requests.Memory(); q.Cmp(mem) > 0 {
+			mem = q.DeepCopy()
+		}
+	}
+	return cpu, mem
 }

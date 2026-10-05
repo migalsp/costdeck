@@ -38,6 +38,10 @@ spec:
     - jsonPath: .status.nextTransition.time
       name: Next change
       type: date
+    - jsonPath: .status.estimatedHourlySavings
+      name: Saving/h
+      priority: 1
+      type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
@@ -322,8 +326,16 @@ spec:
                 items:
                   type: string
                 type: array
+              currency:
+                description: Currency of EstimatedHourlySavings.
+                type: string
               desiredState:
                 description: DesiredState is Up or Down.
+                type: string
+              estimatedHourlySavings:
+                description: |-
+                  EstimatedHourlySavings is what the workloads CostDeck keeps scaled down would cost
+                  per hour at the current rates (requests x missing replicas), e.g. "1.2400".
                 type: string
               lastAction:
                 description: LastAction is the timestamp of the last scaling event

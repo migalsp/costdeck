@@ -20,11 +20,13 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
@@ -35,14 +37,19 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
+	"github.com/migalsp/costdeck-operator/internal/pricing"
 	"github.com/migalsp/costdeck-operator/internal/scaling"
+	"github.com/migalsp/costdeck-operator/internal/telemetry"
 )
 
+// ScalingGroupReconciler scales a set of namespaces (and external targets) as one unit.
 type ScalingGroupReconciler struct {
 	client.Client
 	Scheme   *runtime.Scheme
 	Engine   *scaling.Engine
 	Recorder record.EventRecorder
+	// Pricing values the savings of kept-down workloads; optional.
+	Pricing *pricing.Resolver
 }
 
 // +kubebuilder:rbac:groups=finops.costdeck.io,namespace=costdeck,resources=scalinggroups,verbs=get;list;watch;create;update;patch;delete
@@ -58,6 +65,7 @@ func (r *ScalingGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	group := &finopsv1.ScalingGroup{}
 	if err := r.Get(ctx, req.NamespacedName, group); err != nil {
 		if errors.IsNotFound(err) {
+			telemetry.ForgetScaling("ScalingGroup", req.Name)
 			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{}, err
@@ -147,11 +155,36 @@ func (r *ScalingGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request
 
 	// 5. Update Status
 	applyDecision(&group.Status.ScheduleStatus, &group.Status.Conditions, decision, group.Generation, "group")
+	r.recordGroupSavings(ctx, group, plan.ConflictingNamespaces)
 	detail := ""
 	if len(blockingNamespaces) > 0 {
 		detail = "Waiting for: " + strings.Join(blockingNamespaces, ", ")
 	}
 	return r.updateStatusAndPhase(ctx, group, allReady, managedCount, namespacesReady, namespacesTotal, readyNamespaces, decision, detail)
+}
+
+// recordGroupSavings estimates what the group's kept-down workloads would cost per hour.
+func (r *ScalingGroupReconciler) recordGroupSavings(ctx context.Context, group *finopsv1.ScalingGroup, skip []string) {
+	var cpu, mem resource.Quantity
+	for _, ns := range group.Spec.Namespaces {
+		if slices.Contains(skip, ns) {
+			continue
+		}
+		prefix := ns + "/"
+		originals := map[string]int32{}
+		for k, v := range group.Status.OriginalReplicas {
+			if rest, ok := strings.CutPrefix(k, prefix); ok {
+				originals[rest] = v
+			}
+		}
+		c, m, err := r.Engine.KeptDown(ctx, ns, originals)
+		if err != nil {
+			continue
+		}
+		cpu.Add(c)
+		mem.Add(m)
+	}
+	recordSavings(ctx, &group.Status.ScheduleStatus, r.Pricing, cpu, mem)
 }
 
 // stageTimeoutMinutes returns the configured skip-on-timeout window, defaulting to five.
@@ -253,7 +286,7 @@ func (r *ScalingGroupReconciler) getScalingStages(group *finopsv1.ScalingGroup, 
 	if len(group.Spec.Sequence) > 0 {
 		for _, s := range group.Spec.Sequence {
 			var nsInStage []string
-			for _, target := range strings.Fields(s) {
+			for target := range strings.FieldsSeq(s) {
 				if !slices.Contains(skip, target) {
 					nsInStage = append(nsInStage, target)
 				}
@@ -430,6 +463,9 @@ func (r *ScalingGroupReconciler) updateStatusAndPhase(ctx context.Context, group
 	if err := r.Status().Update(ctx, group); err != nil {
 		return ctrl.Result{}, err
 	}
+	savings, _ := strconv.ParseFloat(group.Status.EstimatedHourlySavings, 64)
+	telemetry.RecordScaling("ScalingGroup", group.Name, targetActive, allReady,
+		decision.Mode == scaling.ModeManualUp || decision.Mode == scaling.ModeManualDown, savings, group.Status.Currency)
 
 	if !allReady {
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil

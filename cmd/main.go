@@ -49,6 +49,7 @@ import (
 	cdconfig "github.com/migalsp/costdeck-operator/internal/config"
 	"github.com/migalsp/costdeck-operator/internal/controller"
 	"github.com/migalsp/costdeck-operator/internal/metrics"
+	"github.com/migalsp/costdeck-operator/internal/pricing"
 	"github.com/migalsp/costdeck-operator/internal/webex"
 	// +kubebuilder:scaffold:imports
 )
@@ -134,12 +135,15 @@ func main() {
 	// The metrics source is resolved from the live CostDeckConfig on every query, so
 	// VictoriaMetrics settings saved in the UI apply without a restart.
 	metricsProvider := metrics.NewProvider(mgr.GetClient(), &metrics.MetricsServerSource{Client: metricsClient})
+	// One rate resolver for every cost estimate: API, assistant, savings and metrics.
+	pricingResolver := &pricing.Resolver{Client: mgr.GetClient(), AWS: pricing.AWSFromConfig(mgr.GetClient())}
 
 	apiServer := &api.Server{
 		Client:        mgr.GetClient(),
 		K8sClient:     k8sClient,
 		MetricsClient: metricsClient,
 		Metrics:       metricsProvider,
+		Pricing:       pricingResolver,
 		Port:          "8082",
 	}
 	if err := mgr.Add(apiServer); err != nil {
@@ -159,6 +163,7 @@ func main() {
 		Client:  mgr.GetClient(),
 		Scheme:  mgr.GetScheme(),
 		Metrics: metricsProvider,
+		Pricing: pricingResolver,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "NamespaceFinOps")
 		os.Exit(1)
@@ -172,15 +177,17 @@ func main() {
 		os.Exit(1)
 	}
 	if err := (&controller.ScalingConfigReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:  mgr.GetClient(),
+		Scheme:  mgr.GetScheme(),
+		Pricing: pricingResolver,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "ScalingConfig")
 		os.Exit(1)
 	}
 	if err := (&controller.ScalingGroupReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:  mgr.GetClient(),
+		Scheme:  mgr.GetScheme(),
+		Pricing: pricingResolver,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "ScalingGroup")
 		os.Exit(1)

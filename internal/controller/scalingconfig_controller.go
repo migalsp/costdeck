@@ -31,7 +31,9 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
+	"github.com/migalsp/costdeck-operator/internal/pricing"
 	"github.com/migalsp/costdeck-operator/internal/scaling"
+	"github.com/migalsp/costdeck-operator/internal/telemetry"
 )
 
 // PhaseOverriddenByGroup marks a ScalingConfig whose namespace belongs to a ScalingGroup.
@@ -42,6 +44,8 @@ type ScalingConfigReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
 	Engine *scaling.Engine
+	// Pricing values the savings of kept-down workloads; optional.
+	Pricing *pricing.Resolver
 }
 
 // +kubebuilder:rbac:groups=finops.costdeck.io,namespace=costdeck,resources=scalingconfigs,verbs=get;list;watch;create;update;patch;delete
@@ -56,6 +60,7 @@ func (r *ScalingConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	config := &finopsv1.ScalingConfig{}
 	if err := r.Get(ctx, req.NamespacedName, config); err != nil {
 		if errors.IsNotFound(err) {
+			telemetry.ForgetScaling("ScalingConfig", req.Name)
 			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{}, err
@@ -94,10 +99,16 @@ func (r *ScalingConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		}
 	}
 	setReadyCondition(&config.Status.Conditions, config.Status.Phase, targetActive, config.Generation, "")
+	var savings float64
+	if cpu, mem, err := r.Engine.KeptDown(ctx, config.Spec.TargetNamespace, config.Status.OriginalReplicas); err == nil {
+		savings = recordSavings(ctx, &config.Status.ScheduleStatus, r.Pricing, cpu, mem)
+	}
 
 	if err := r.Status().Update(ctx, config); err != nil {
 		return ctrl.Result{}, err
 	}
+	telemetry.RecordScaling("ScalingConfig", config.Name, targetActive, ready,
+		decision.Mode == scaling.ModeManualUp || decision.Mode == scaling.ModeManualDown, savings, config.Status.Currency)
 
 	// Faster requeue if scaling is in progress
 	if !ready {

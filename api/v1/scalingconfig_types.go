@@ -92,6 +92,15 @@ type ScheduleStatus struct {
 	// schedule boundary or when the override expires. Unset when it never does.
 	// +optional
 	NextTransition *ScheduledTransition `json:"nextTransition,omitempty"`
+
+	// EstimatedHourlySavings is what the workloads CostDeck keeps scaled down would cost
+	// per hour at the current rates (requests x missing replicas), e.g. "1.2400".
+	// +optional
+	EstimatedHourlySavings string `json:"estimatedHourlySavings,omitempty"`
+
+	// Currency of EstimatedHourlySavings.
+	// +optional
+	Currency string `json:"currency,omitempty"`
 }
 
 // ScheduledTransition is a future change of the desired state.
@@ -173,6 +182,7 @@ type ScalingConfigStatus struct {
 // +kubebuilder:printcolumn:name="Desired",type=string,JSONPath=".status.desiredState"
 // +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=".status.phase"
 // +kubebuilder:printcolumn:name="Next change",type=date,JSONPath=".status.nextTransition.time"
+// +kubebuilder:printcolumn:name="Saving/h",type=string,JSONPath=".status.estimatedHourlySavings",priority=1
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=".metadata.creationTimestamp"
 
 // ScalingConfig is the Schema for the scalingconfigs API

@@ -1,13 +1,17 @@
 package controller
 
 import (
+	"context"
 	"fmt"
+	"strconv"
 	"time"
 
 	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
+	"github.com/migalsp/costdeck-operator/internal/pricing"
 	"github.com/migalsp/costdeck-operator/internal/scaling"
 )
 
@@ -81,6 +85,22 @@ func applyDecision(st *finopsv1.ScheduleStatus, conds *[]metav1.Condition, d sca
 		cond.Message = "The schedule decides the desired state."
 	}
 	meta.SetStatusCondition(conds, cond)
+}
+
+// recordSavings stores what the kept-down requests would cost per hour and returns the
+// amount (zero without a pricing resolver).
+func recordSavings(ctx context.Context, st *finopsv1.ScheduleStatus, resolver *pricing.Resolver, cpu, mem resource.Quantity) float64 {
+	st.EstimatedHourlySavings, st.Currency = "", ""
+	if resolver == nil {
+		return 0
+	}
+	rates := resolver.Rates(ctx)
+	hourly := rates.Hourly(cpu, mem)
+	if hourly > 0 {
+		st.EstimatedHourlySavings = strconv.FormatFloat(hourly, 'f', 4, 64)
+		st.Currency = rates.Currency
+	}
+	return hourly
 }
 
 // setReadyCondition records whether the observed phase matches the desired state.
