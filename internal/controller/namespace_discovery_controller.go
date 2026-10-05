@@ -9,9 +9,11 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
@@ -35,9 +37,12 @@ func (r *NamespaceDiscoveryReconciler) Reconcile(ctx context.Context, req ctrl.R
 	var ns corev1.Namespace
 	if err := r.Get(ctx, req.NamespacedName, &ns); err != nil {
 		if apierrors.IsNotFound(err) {
-			return ctrl.Result{}, nil
+			return ctrl.Result{}, r.forget(ctx, req.Name)
 		}
 		return ctrl.Result{}, err
+	}
+	if !ns.DeletionTimestamp.IsZero() {
+		return ctrl.Result{}, r.forget(ctx, ns.Name)
 	}
 
 	if ns.Name != "default" {
@@ -87,9 +92,43 @@ func (r *NamespaceDiscoveryReconciler) Reconcile(ctx context.Context, req ctrl.R
 	return ctrl.Result{}, nil
 }
 
+// forget deletes the NamespaceFinOps that tracked a namespace which no longer exists, so a
+// deleted namespace stops showing up in the dashboard, the cost lists and the metrics.
+func (r *NamespaceDiscoveryReconciler) forget(ctx context.Context, namespace string) error {
+	var list finopsv1.NamespaceFinOpsList
+	if err := r.List(ctx, &list, client.InNamespace(config.OperatorNamespace())); err != nil {
+		return err
+	}
+	for i := range list.Items {
+		nf := &list.Items[i]
+		if nf.Spec.TargetNamespace != namespace {
+			continue
+		}
+		if err := r.Delete(ctx, nf); client.IgnoreNotFound(err) != nil {
+			return err
+		}
+		log.FromContext(ctx).Info("Deleted NamespaceFinOps of a deleted namespace", "name", nf.Name, "namespace", namespace)
+	}
+	return nil
+}
+
 func (r *NamespaceDiscoveryReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&corev1.Namespace{}).
+		// Every NamespaceFinOps re-checks its target namespace, which also sweeps up the
+		// ones orphaned before deleted namespaces were cleaned up.
+		Watches(
+			&finopsv1.NamespaceFinOps{},
+			handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
+				nf, ok := obj.(*finopsv1.NamespaceFinOps)
+				if !ok || nf.Spec.TargetNamespace == "" {
+					return nil
+				}
+				return []reconcile.Request{{NamespacedName: types.NamespacedName{Name: nf.Spec.TargetNamespace}}}
+			}),
+			// Status writes (usage history every minute) change nothing here.
+			builder.WithPredicates(predicate.GenerationChangedPredicate{}),
+		).
 		Watches(
 			&corev1.Pod{},
 			handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
