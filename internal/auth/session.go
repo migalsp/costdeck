@@ -105,19 +105,44 @@ func LoadOrCreateKey(ctx context.Context, c client.Client) ([]byte, error) {
 	if k := os.Getenv(keyEnv); k != "" {
 		return []byte(k), nil
 	}
-	key := client.ObjectKey{Name: keySecretName, Namespace: config.OperatorNamespace()}
+	data, err := loadOrCreateSecret(ctx, c, keySecretName,
+		func(d map[string][]byte) bool { return len(d[keySecretKey]) >= 32 },
+		func() (map[string][]byte, error) {
+			fresh := make([]byte, 48)
+			_, err := rand.Read(fresh)
+			return map[string][]byte{keySecretKey: fresh}, err
+		})
+	if err != nil {
+		return nil, err
+	}
+	return data[keySecretKey], nil
+}
+
+// loadOrCreateSecret returns the data of a Secret in the operator namespace, creating it
+// with generate() when it is missing or invalid. Replicas racing to create it all end up
+// with the winner's data.
+func loadOrCreateSecret(ctx context.Context, c client.Client, name string, valid func(map[string][]byte) bool, generate func() (map[string][]byte, error)) (map[string][]byte, error) {
+	key := client.ObjectKey{Name: name, Namespace: config.OperatorNamespace()}
 	secret := &corev1.Secret{}
 	err := c.Get(ctx, key, secret)
-	if err == nil && len(secret.Data[keySecretKey]) >= 32 {
-		return secret.Data[keySecretKey], nil
+	if err == nil && valid(secret.Data) {
+		return secret.Data, nil
 	}
 	if err != nil && !apierrors.IsNotFound(err) {
-		return nil, fmt.Errorf("read session key secret: %w", err)
+		return nil, fmt.Errorf("read Secret %s: %w", name, err)
 	}
 
-	fresh := make([]byte, 48)
-	if _, err := rand.Read(fresh); err != nil {
-		return nil, err
+	data, genErr := generate()
+	if genErr != nil {
+		return nil, genErr
+	}
+	if err == nil {
+		// The Secret exists but is unusable (emptied by hand, say): repair it in place.
+		secret.Data = data
+		if err := c.Update(ctx, secret); err != nil {
+			return nil, fmt.Errorf("update Secret %s: %w", name, err)
+		}
+		return data, nil
 	}
 	secret = &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
@@ -125,19 +150,19 @@ func LoadOrCreateKey(ctx context.Context, c client.Client) ([]byte, error) {
 			Labels: map[string]string{"app.kubernetes.io/managed-by": "costdeck-operator"},
 		},
 		Type: corev1.SecretTypeOpaque,
-		Data: map[string][]byte{keySecretKey: fresh},
+		Data: data,
 	}
 	if err := c.Create(ctx, secret); err != nil {
-		if apierrors.IsAlreadyExists(err) {
-			// Another replica won the race; use its key.
-			if err := c.Get(ctx, key, secret); err != nil {
-				return nil, err
-			}
-			return secret.Data[keySecretKey], nil
+		if !apierrors.IsAlreadyExists(err) {
+			return nil, fmt.Errorf("create Secret %s: %w", name, err)
 		}
-		return nil, fmt.Errorf("create session key secret: %w", err)
+		// Another replica won the race; use its data.
+		if err := c.Get(ctx, key, secret); err != nil {
+			return nil, err
+		}
+		return secret.Data, nil
 	}
-	return fresh, nil
+	return data, nil
 }
 
 // Sign returns the signed, base64url-encoded form of v.

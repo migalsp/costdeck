@@ -148,8 +148,13 @@ func TestMiddlewareAndRoles(t *testing.T) {
 		t.Errorf("operator POST = %d, want 200", code)
 	}
 
-	// With no sign-in method configured, everything runs as an anonymous admin.
+	// Missing credentials alone never open the API.
 	svc.localUser, svc.localPassword = "", ""
+	if code := do(http.MethodPost, "/api/thing", nil); code != http.StatusUnauthorized {
+		t.Errorf("no credentials POST = %d, want 401", code)
+	}
+	// Only the explicit development switch runs everything as an anonymous admin.
+	svc.disabled = true
 	if code := do(http.MethodPost, "/api/thing", nil); code != http.StatusOK {
 		t.Errorf("auth disabled POST = %d, want 200", code)
 	}

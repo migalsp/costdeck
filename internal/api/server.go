@@ -87,7 +87,7 @@ func (s *Server) Start(ctx context.Context) error {
 		s.Auth = svc
 	}
 	if s.Auth.Disabled(ctx) {
-		log.Info("Authentication is disabled: set COSTDECK_AUTH_USER/COSTDECK_AUTH_PASSWORD or enable Entra SSO")
+		log.Info("Authentication is disabled by COSTDECK_AUTH_DISABLED: every request runs as an anonymous admin. Never use this outside local development")
 	}
 
 	handler, err := s.Handler()

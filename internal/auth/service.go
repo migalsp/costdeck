@@ -2,9 +2,11 @@ package auth
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"os"
@@ -41,11 +43,26 @@ type Service struct {
 
 	localUser     string
 	localPassword string
-	limiters      sync.Map // client IP -> *rate.Limiter
+	// disabled is set by COSTDECK_AUTH_DISABLED=true, for local development only.
+	disabled bool
+
+	limitersMu sync.Mutex
+	limiters   map[string]*rate.Limiter // client address -> password attempts
 }
 
-// NewService reads the built-in admin credentials from COSTDECK_AUTH_USER and
-// COSTDECK_AUTH_PASSWORD and loads (or creates) the session signing key.
+// Built-in admin account.
+const (
+	envAuthUser      = "COSTDECK_AUTH_USER"
+	envAuthPassword  = "COSTDECK_AUTH_PASSWORD"
+	envAuthDisabled  = "COSTDECK_AUTH_DISABLED"
+	adminSecretName  = "costdeck-admin-credentials"
+	defaultAdminUser = "costdeck-admin"
+)
+
+// NewService loads (or creates) the session signing key and the built-in admin account:
+// COSTDECK_AUTH_USER and COSTDECK_AUTH_PASSWORD when set (the Helm chart sets them),
+// otherwise credentials generated once into the costdeck-admin-credentials Secret. An
+// install that forgot to configure them is locked, never open.
 func NewService(ctx context.Context, c client.Client) (*Service, error) {
 	key, err := LoadOrCreateKey(ctx, c)
 	if err != nil {
@@ -55,23 +72,39 @@ func NewService(ctx context.Context, c client.Client) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Service{
+	svc := &Service{
 		Client:        c,
 		Sessions:      sessions,
 		Entra:         &Entra{Client: c, Sessions: sessions},
 		Tokens:        &Tokens{Client: c},
-		localUser:     os.Getenv("COSTDECK_AUTH_USER"),
-		localPassword: os.Getenv("COSTDECK_AUTH_PASSWORD"),
-	}, nil
+		localUser:     os.Getenv(envAuthUser),
+		localPassword: os.Getenv(envAuthPassword),
+		disabled:      strings.EqualFold(os.Getenv(envAuthDisabled), "true"),
+	}
+	if !svc.disabled && !svc.localConfigured() {
+		data, err := loadOrCreateSecret(ctx, c, adminSecretName,
+			func(d map[string][]byte) bool { return len(d["username"]) > 0 && len(d["password"]) >= 16 },
+			func() (map[string][]byte, error) {
+				return map[string][]byte{"username": []byte(defaultAdminUser), "password": []byte(rand.Text())}, nil
+			})
+		if err != nil {
+			return nil, fmt.Errorf("prepare the built-in admin account: %w", err)
+		}
+		svc.localUser, svc.localPassword = string(data["username"]), string(data["password"])
+		logf.FromContext(ctx).Info("Using generated admin credentials", "secret", adminSecretName,
+			"namespace", config.OperatorNamespace(), "user", svc.localUser)
+	}
+	return svc, nil
 }
 
 // localConfigured reports whether the built-in admin account exists.
 func (s *Service) localConfigured() bool { return s.localUser != "" && s.localPassword != "" }
 
-// Disabled reports whether no sign-in method is configured at all, in which case every
-// request is treated as an anonymous administrator (development mode).
+// Disabled reports whether every request runs as an anonymous administrator. That needs
+// COSTDECK_AUTH_DISABLED=true and no single sign-on: a development setting, never a
+// fallback for missing configuration.
 func (s *Service) Disabled(ctx context.Context) bool {
-	return !s.localConfigured() && !s.Entra.Enabled(ctx)
+	return s.disabled && !s.Entra.Enabled(ctx)
 }
 
 // anonymousAdmin is the identity used while authentication is disabled.
@@ -220,15 +253,45 @@ func (s *Service) localLoginHidden(ctx context.Context) bool {
 	return s.Entra.Enabled(ctx)
 }
 
+const (
+	loginBurst = 5
+	// maxLimiters bounds the memory spent on tracking clients; idle entries are pruned
+	// once it is reached.
+	maxLimiters = 4096
+)
+
 // limiter allows five password attempts per minute per client address.
 func (s *Service) limiter(ip string) *rate.Limiter {
-	l, _ := s.limiters.LoadOrStore(ip, rate.NewLimiter(rate.Every(12*time.Second), 5))
-	return l.(*rate.Limiter)
+	s.limitersMu.Lock()
+	defer s.limitersMu.Unlock()
+	if s.limiters == nil {
+		s.limiters = map[string]*rate.Limiter{}
+	}
+	if l, ok := s.limiters[ip]; ok {
+		return l
+	}
+	if len(s.limiters) >= maxLimiters {
+		for k, l := range s.limiters {
+			// A limiter back at full burst has seen no attempts for a minute.
+			if l.Tokens() >= loginBurst {
+				delete(s.limiters, k)
+			}
+		}
+	}
+	l := rate.NewLimiter(rate.Every(12*time.Second), loginBurst)
+	s.limiters[ip] = l
+	return l
 }
 
+// clientIP returns the address that rate limiting applies to. Behind an Ingress, that is
+// the last X-Forwarded-For entry, appended by the proxy itself; earlier entries come
+// from the client and would let it pick a fresh address for every attempt.
 func clientIP(r *http.Request) string {
 	if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
-		return strings.TrimSpace(strings.Split(fwd, ",")[0])
+		parts := strings.Split(fwd, ",")
+		if last := strings.TrimSpace(parts[len(parts)-1]); last != "" {
+			return last
+		}
 	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {

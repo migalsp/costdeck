@@ -38,8 +38,10 @@ Every release also has an `install.yaml` asset (namespace `costdeck`):
 kubectl apply -f https://github.com/migalsp/costdeck/releases/download/v<version>/install.yaml
 ```
 
-The Helm chart is the better-maintained path: it generates the admin password, supports
-Ingress, ServiceMonitor and pod security settings, and keeps the CRDs on uninstall.
+The operator generates the admin password on first start and keeps it in the
+`costdeck-admin-credentials` Secret (user `costdeck-admin`). The Helm chart is the
+better-maintained path: it also supports Ingress, ServiceMonitor and pod security
+settings, and keeps the CRDs on uninstall.
 
 ### Check the installation
 
