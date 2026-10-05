@@ -73,33 +73,20 @@ func (r *CostDeckConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 	l.Info("Reconciling CostDeckConfig", "name", config.Name)
 
-	// Validate and test AWS provider if configured
-	if config.Spec.Providers.AWS != nil && config.Spec.Providers.AWS.Enabled {
-		awsStatus := r.reconcileAWSProvider(ctx, &config)
-		config.Status.AWS = awsStatus
-	} else {
-		config.Status.AWS = nil
-	}
-
-	// Azure and GCP are stubs - just report not connected
-	if config.Spec.Providers.Azure != nil && config.Spec.Providers.Azure.Enabled {
-		config.Status.Azure = &finopsv1.ProviderStatus{
-			Connected:   false,
-			LastChecked: metav1.Now(),
-			Error:       "Azure provider is not yet implemented",
+	// Every enabled cloud gets a live connectivity check and a resource count.
+	for _, name := range scaling.CloudProviders {
+		var st *finopsv1.ProviderStatus
+		if scaling.CloudSettingsFor(&config, name).Enabled {
+			st = r.reconcileCloudProvider(ctx, &config, name)
 		}
-	} else {
-		config.Status.Azure = nil
-	}
-
-	if config.Spec.Providers.GCP != nil && config.Spec.Providers.GCP.Enabled {
-		config.Status.GCP = &finopsv1.ProviderStatus{
-			Connected:   false,
-			LastChecked: metav1.Now(),
-			Error:       "GCP provider is not yet implemented",
+		switch name {
+		case scaling.ProviderAWS:
+			config.Status.AWS = st
+		case scaling.ProviderAzure:
+			config.Status.Azure = st
+		case scaling.ProviderGCP:
+			config.Status.GCP = st
 		}
-	} else {
-		config.Status.GCP = nil
 	}
 
 	config.Status.VictoriaMetrics = r.reconcileVictoriaMetrics(ctx, &config)
@@ -115,63 +102,51 @@ func (r *CostDeckConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	return ctrl.Result{RequeueAfter: 5 * time.Minute}, nil
 }
 
-func (r *CostDeckConfigReconciler) reconcileAWSProvider(ctx context.Context, config *finopsv1.CostDeckConfig) *finopsv1.ProviderStatus {
-	l := log.FromContext(ctx)
-	awsCfg := config.Spec.Providers.AWS
-	status := &finopsv1.ProviderStatus{
-		LastChecked: metav1.Now(),
-	}
+// reconcileCloudProvider checks a cloud provider's credentials and counts the resources
+// it can discover. A provider without a Secret uses the pod identity (IRSA, AKS or GKE
+// workload identity), which is a valid setup rather than a missing credential.
+func (r *CostDeckConfigReconciler) reconcileCloudProvider(ctx context.Context, config *finopsv1.CostDeckConfig, name string) *finopsv1.ProviderStatus {
+	l := log.FromContext(ctx).WithValues("provider", name)
+	settings := scaling.CloudSettingsFor(config, name)
+	status := &finopsv1.ProviderStatus{LastChecked: metav1.Now()}
 
-	if awsCfg.SecretRef == "" {
-		status.Error = "No credentials configured (secretRef is empty)"
-		return status
-	}
-
-	// Verify the referenced secret exists
-	secret := &corev1.Secret{}
-	if err := r.Get(ctx, types.NamespacedName{
-		Name:      awsCfg.SecretRef,
-		Namespace: config.Namespace,
-	}, secret); err != nil {
-		if errors.IsNotFound(err) {
-			status.Error = fmt.Sprintf("Referenced secret %q not found", awsCfg.SecretRef)
-		} else {
-			status.Error = fmt.Sprintf("Failed to read secret: %v", err)
+	if settings.SecretRef != "" {
+		secret := &corev1.Secret{}
+		if err := r.Get(ctx, types.NamespacedName{Name: settings.SecretRef, Namespace: config.Namespace}, secret); err != nil {
+			if errors.IsNotFound(err) {
+				status.Error = fmt.Sprintf("Referenced secret %q not found", settings.SecretRef)
+			} else {
+				status.Error = fmt.Sprintf("Failed to read secret: %v", err)
+			}
+			return status
 		}
-		return status
+		if err := r.ensureSecretOwnership(ctx, config, secret); err != nil {
+			l.Error(err, "Failed to set owner reference on secret")
+		}
 	}
 
-	// Ensure owner reference is set on the secret
-	if err := r.ensureSecretOwnership(ctx, config, secret); err != nil {
-		l.Error(err, "Failed to set owner reference on secret")
-	}
-
-	// Try to initialize the provider and validate connectivity
-	provider, err := scaling.NewAWSProviderFromSecret(ctx, r.Client, awsCfg.SecretRef, config.Namespace, awsCfg.Region)
+	provider, err := scaling.BuildProvider(ctx, r.Client, config, name, nil)
 	if err != nil {
-		status.Error = fmt.Sprintf("Failed to initialize AWS provider: %v", err)
+		status.Error = err.Error()
 		return status
 	}
-
-	// Discover resources to test connectivity and count resources
-	totalDiscovered := 0
-	resourceTypes := awsCfg.ResourceTypes
-	if len(resourceTypes) == 0 {
-		resourceTypes = []string{"aurora"}
+	if err := provider.ValidateConnectivity(ctx); err != nil {
+		status.Error = err.Error()
+		return status
 	}
-
-	for _, rt := range resourceTypes {
-		targets, err := provider.Discover(ctx, rt, awsCfg.DiscoveryTags)
+	total := 0
+	for _, rt := range settings.ResourceTypes {
+		targets, err := provider.Discover(ctx, rt, settings.Filter)
 		if err != nil {
 			status.Error = fmt.Sprintf("Discovery failed for %s: %v", rt, err)
 			return status
 		}
-		totalDiscovered += len(targets)
+		total += len(targets)
 	}
-
 	status.Connected = true
-	status.DiscoveredResources = totalDiscovered
-	l.Info("AWS provider validated successfully", "discoveredResources", totalDiscovered)
+	status.DiscoveredResources = total
+	status.Message = fmt.Sprintf("%d resources discoverable", total)
+	l.Info("Validated cloud provider", "discoveredResources", total)
 	return status
 }
 

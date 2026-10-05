@@ -136,7 +136,11 @@ func main() {
 	// VictoriaMetrics settings saved in the UI apply without a restart.
 	metricsProvider := metrics.NewProvider(mgr.GetClient(), &metrics.MetricsServerSource{Client: metricsClient})
 	// One rate resolver for every cost estimate: API, assistant, savings and metrics.
-	pricingResolver := &pricing.Resolver{Client: mgr.GetClient(), AWS: pricing.AWSFromConfig(mgr.GetClient())}
+	pricingResolver := &pricing.Resolver{
+		Client: mgr.GetClient(),
+		AWS:    pricing.AWSFromConfig(mgr.GetClient()),
+		Azure:  pricing.AzureRetail(),
+	}
 
 	apiServer := &api.Server{
 		Client:        mgr.GetClient(),

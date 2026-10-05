@@ -50,38 +50,65 @@ type AWSProviderConfig struct {
 	ResourceTypes []string `json:"resourceTypes,omitempty"`
 }
 
-// AzureProviderConfig holds configuration for the Azure cloud provider (stub).
+// AzureProviderConfig configures Azure: discovery, and start/stop of virtual machines
+// (deallocated, so compute stops billing) and PostgreSQL/MySQL flexible servers.
 type AzureProviderConfig struct {
 	// Enabled toggles the Azure provider on/off
 	// +optional
 	Enabled bool `json:"enabled,omitempty"`
 
-	// SecretRef is the name of the K8s Secret holding Azure credentials
+	// SecretRef names the Secret holding a service principal (AZURE_TENANT_ID,
+	// AZURE_CLIENT_ID, AZURE_CLIENT_SECRET). Without it the pod identity is used (AKS
+	// workload identity or a managed identity).
 	// +optional
 	SecretRef string `json:"secretRef,omitempty"`
 
-	// SubscriptionID is the Azure subscription ID
+	// SubscriptionID is the subscription whose resources are discovered and scaled.
+	// +kubebuilder:validation:Pattern=`^$|^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`
 	// +optional
 	SubscriptionID string `json:"subscriptionId,omitempty"`
 
-	// TenantID is the Azure AD tenant ID
+	// TenantID is the Entra ID tenant of the service principal.
 	// +optional
 	TenantID string `json:"tenantId,omitempty"`
+
+	// DiscoveryTags limits discovery to resources carrying all of these tags.
+	// +optional
+	DiscoveryTags map[string]string `json:"discoveryTags,omitempty"`
+
+	// ResourceTypes lists the types to discover and manage; all when empty.
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:items:Enum=vm;postgres;mysql
+	ResourceTypes []string `json:"resourceTypes,omitempty"`
 }
 
-// GCPProviderConfig holds configuration for the GCP cloud provider (stub).
+// GCPProviderConfig configures Google Cloud: discovery, and start/stop of Compute Engine
+// instances and Cloud SQL instances.
 type GCPProviderConfig struct {
 	// Enabled toggles the GCP provider on/off
 	// +optional
 	Enabled bool `json:"enabled,omitempty"`
 
-	// SecretRef is the name of the K8s Secret holding GCP service account JSON
+	// SecretRef names the Secret holding a service account key (credentials.json).
+	// Without it the pod identity is used (GKE workload identity).
 	// +optional
 	SecretRef string `json:"secretRef,omitempty"`
 
-	// ProjectID is the GCP project ID
+	// ProjectID is the project whose resources are discovered and scaled; defaults to the
+	// project of the service account key.
 	// +optional
 	ProjectID string `json:"projectId,omitempty"`
+
+	// DiscoveryLabels limits discovery to resources carrying all of these labels.
+	// +optional
+	DiscoveryLabels map[string]string `json:"discoveryLabels,omitempty"`
+
+	// ResourceTypes lists the types to discover and manage; all when empty.
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:items:Enum=gce;cloudsql
+	ResourceTypes []string `json:"resourceTypes,omitempty"`
 }
 
 // ProvidersConfig groups all cloud provider configurations.
@@ -90,11 +117,11 @@ type ProvidersConfig struct {
 	// +optional
 	AWS *AWSProviderConfig `json:"aws,omitempty"`
 
-	// Azure provider configuration (coming soon)
+	// Azure provider configuration
 	// +optional
 	Azure *AzureProviderConfig `json:"azure,omitempty"`
 
-	// GCP provider configuration (coming soon)
+	// GCP provider configuration
 	// +optional
 	GCP *GCPProviderConfig `json:"gcp,omitempty"`
 }

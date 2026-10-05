@@ -42,31 +42,20 @@ func (r *ConfigProviderResolver) Resolve(ctx context.Context, name string) (Exte
 		return nil, err
 	}
 
-	switch name {
-	case "aws":
-		aws := cfg.Spec.Providers.AWS
-		if aws == nil || !aws.Enabled {
-			return nil, fmt.Errorf("the AWS provider is not enabled in CostDeckConfig")
-		}
-		key := "aws|" + aws.SecretRef + "|" + aws.Region
-		if p := r.cached(key); p != nil {
-			return p, nil
-		}
-		var p *AWSProvider
-		if aws.SecretRef != "" {
-			p, err = NewAWSProviderFromSecret(ctx, r.Client, aws.SecretRef, cfg.Namespace, aws.Region)
-		} else {
-			// No stored keys: use the pod identity (IRSA, EKS Pod Identity, env vars).
-			p, err = NewAWSProvider(ctx)
-		}
-		if err != nil {
-			return nil, err
-		}
-		r.store(key, p)
-		return p, nil
-	default:
-		return nil, fmt.Errorf("external provider %q is not supported", name)
+	settings := CloudSettingsFor(cfg, name)
+	if !settings.Enabled {
+		return nil, fmt.Errorf("the %s provider is not enabled in CostDeckConfig", name)
 	}
+	key := cacheKey(cfg, name)
+	if p := r.cached(key); p != nil {
+		return p, nil
+	}
+	p, err := BuildProvider(ctx, r.Client, cfg, name, nil)
+	if err != nil {
+		return nil, err
+	}
+	r.store(key, p)
+	return p, nil
 }
 
 func (r *ConfigProviderResolver) cached(key string) ExternalProvider {

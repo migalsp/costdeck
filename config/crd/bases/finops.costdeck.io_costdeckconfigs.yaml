@@ -312,34 +312,75 @@ spec:
                         type: string
                     type: object
                   azure:
-                    description: Azure provider configuration (coming soon)
+                    description: Azure provider configuration
                     properties:
+                      discoveryTags:
+                        additionalProperties:
+                          type: string
+                        description: DiscoveryTags limits discovery to resources carrying
+                          all of these tags.
+                        type: object
                       enabled:
                         description: Enabled toggles the Azure provider on/off
                         type: boolean
+                      resourceTypes:
+                        description: ResourceTypes lists the types to discover and
+                          manage; all when empty.
+                        items:
+                          enum:
+                          - vm
+                          - postgres
+                          - mysql
+                          type: string
+                        type: array
+                        x-kubernetes-list-type: set
                       secretRef:
-                        description: SecretRef is the name of the K8s Secret holding
-                          Azure credentials
+                        description: |-
+                          SecretRef names the Secret holding a service principal (AZURE_TENANT_ID,
+                          AZURE_CLIENT_ID, AZURE_CLIENT_SECRET). Without it the pod identity is used (AKS
+                          workload identity or a managed identity).
                         type: string
                       subscriptionId:
-                        description: SubscriptionID is the Azure subscription ID
+                        description: SubscriptionID is the subscription whose resources
+                          are discovered and scaled.
+                        pattern: ^$|^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
                         type: string
                       tenantId:
-                        description: TenantID is the Azure AD tenant ID
+                        description: TenantID is the Entra ID tenant of the service
+                          principal.
                         type: string
                     type: object
                   gcp:
-                    description: GCP provider configuration (coming soon)
+                    description: GCP provider configuration
                     properties:
+                      discoveryLabels:
+                        additionalProperties:
+                          type: string
+                        description: DiscoveryLabels limits discovery to resources
+                          carrying all of these labels.
+                        type: object
                       enabled:
                         description: Enabled toggles the GCP provider on/off
                         type: boolean
                       projectId:
-                        description: ProjectID is the GCP project ID
+                        description: |-
+                          ProjectID is the project whose resources are discovered and scaled; defaults to the
+                          project of the service account key.
                         type: string
+                      resourceTypes:
+                        description: ResourceTypes lists the types to discover and
+                          manage; all when empty.
+                        items:
+                          enum:
+                          - gce
+                          - cloudsql
+                          type: string
+                        type: array
+                        x-kubernetes-list-type: set
                       secretRef:
-                        description: SecretRef is the name of the K8s Secret holding
-                          GCP service account JSON
+                        description: |-
+                          SecretRef names the Secret holding a service account key (credentials.json).
+                          Without it the pod identity is used (GKE workload identity).
                         type: string
                     type: object
                 type: object

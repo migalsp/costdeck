@@ -32,7 +32,7 @@ type CostRequest struct {
 func (s *Server) pricingResolver() *pricing.Resolver {
 	s.pricingOnce.Do(func() {
 		if s.Pricing == nil {
-			s.Pricing = &pricing.Resolver{Client: s.Client, AWS: pricing.AWSFromConfig(s.Client)}
+			s.Pricing = &pricing.Resolver{Client: s.Client, AWS: pricing.AWSFromConfig(s.Client), Azure: pricing.AzureRetail()}
 		}
 	})
 	return s.Pricing

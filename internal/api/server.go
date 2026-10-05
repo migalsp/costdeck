@@ -203,6 +203,7 @@ func (s *Server) routes() *http.ServeMux {
 	admin("PUT /api/scaling/configs/{name}", s.updateScalingConfig)
 	admin("DELETE /api/scaling/configs/{name}", s.deleteScalingConfig)
 	operator("POST /api/scaling/configs/{name}/manual", s.handleScalingConfigManual)
+	viewer("GET /api/discovery", s.handleDiscoverAll)
 	viewer("GET /api/discovery/{provider}/{type}", s.handleDiscovery)
 
 	// Settings

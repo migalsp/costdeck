@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
@@ -139,11 +140,25 @@ func TestHandleDiscovery(t *testing.T) {
 	server := buildMockServerWithK8s()
 
 	// Test 1: Unsupported provider
-	req, _ := http.NewRequest("GET", "/api/discovery/gcp/aurora", nil)
+	req, _ := http.NewRequest("GET", "/api/discovery/oracle/db", nil)
 	rr := httptest.NewRecorder()
 	server.routes().ServeHTTP(rr, req)
 	if rr.Code != http.StatusNotImplemented {
-		t.Errorf("expected 501 Not Implemented for gcp, got %v", rr.Code)
+		t.Errorf("expected 501 Not Implemented for oracle, got %v", rr.Code)
+	}
+
+	// Azure and Google Cloud are supported; while disabled they discover nothing.
+	for _, p := range []string{"/api/discovery/azure/vm", "/api/discovery/gcp/gce"} {
+		rr = httptest.NewRecorder()
+		server.routes().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, p, nil))
+		if rr.Code != http.StatusOK || strings.TrimSpace(rr.Body.String()) != "[]" {
+			t.Errorf("GET %s = %d %s, want 200 []", p, rr.Code, rr.Body.String())
+		}
+	}
+	rr = httptest.NewRecorder()
+	server.routes().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/discovery", nil))
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), `"resources":[]`) {
+		t.Errorf("GET /api/discovery = %d %s", rr.Code, rr.Body.String())
 	}
 
 	// Test 2: AWS disabled

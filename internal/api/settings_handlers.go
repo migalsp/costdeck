@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"net/http"
 	"regexp"
@@ -88,15 +89,19 @@ type AzureSettingsResponse struct {
 	Enabled        bool                     `json:"enabled"`
 	SubscriptionID string                   `json:"subscriptionId,omitempty"`
 	TenantID       string                   `json:"tenantId,omitempty"`
+	DiscoveryTags  map[string]string        `json:"discoveryTags,omitempty"`
+	ResourceTypes  []string                 `json:"resourceTypes,omitempty"`
 	HasCredentials bool                     `json:"hasCredentials"`
 	Status         *finopsv1.ProviderStatus `json:"status,omitempty"`
 }
 
 type GCPSettingsResponse struct {
-	Enabled        bool                     `json:"enabled"`
-	ProjectID      string                   `json:"projectId,omitempty"`
-	HasCredentials bool                     `json:"hasCredentials"`
-	Status         *finopsv1.ProviderStatus `json:"status,omitempty"`
+	Enabled         bool                     `json:"enabled"`
+	ProjectID       string                   `json:"projectId,omitempty"`
+	DiscoveryLabels map[string]string        `json:"discoveryLabels,omitempty"`
+	ResourceTypes   []string                 `json:"resourceTypes,omitempty"`
+	HasCredentials  bool                     `json:"hasCredentials"`
+	Status          *finopsv1.ProviderStatus `json:"status,omitempty"`
 }
 
 type IntegrationsSettingsResponse struct {
@@ -202,17 +207,21 @@ type AWSUpdateRequest struct {
 }
 
 type AzureUpdateRequest struct {
-	Enabled        *bool  `json:"enabled,omitempty"`
-	SubscriptionID string `json:"subscriptionId,omitempty"`
-	TenantID       string `json:"tenantId,omitempty"`
-	ClientID       string `json:"clientId,omitempty"`
-	ClientSecret   string `json:"clientSecret,omitempty"`
+	Enabled        *bool             `json:"enabled,omitempty"`
+	SubscriptionID string            `json:"subscriptionId,omitempty"`
+	TenantID       string            `json:"tenantId,omitempty"`
+	ClientID       string            `json:"clientId,omitempty"`
+	ClientSecret   string            `json:"clientSecret,omitempty"`
+	DiscoveryTags  map[string]string `json:"discoveryTags,omitempty"`
+	ResourceTypes  []string          `json:"resourceTypes,omitempty"`
 }
 
 type GCPUpdateRequest struct {
-	Enabled            *bool  `json:"enabled,omitempty"`
-	ProjectID          string `json:"projectId,omitempty"`
-	ServiceAccountJSON string `json:"serviceAccountJson,omitempty"`
+	Enabled            *bool             `json:"enabled,omitempty"`
+	ProjectID          string            `json:"projectId,omitempty"`
+	ServiceAccountJSON string            `json:"serviceAccountJson,omitempty"`
+	DiscoveryLabels    map[string]string `json:"discoveryLabels,omitempty"`
+	ResourceTypes      []string          `json:"resourceTypes,omitempty"`
 }
 
 type IntegrationsUpdateRequest struct {
@@ -316,6 +325,8 @@ func (s *Server) buildSettingsResponse(ctx context.Context, cfg *finopsv1.CostDe
 			Enabled:        cfg.Spec.Providers.Azure.Enabled,
 			SubscriptionID: cfg.Spec.Providers.Azure.SubscriptionID,
 			TenantID:       cfg.Spec.Providers.Azure.TenantID,
+			DiscoveryTags:  cfg.Spec.Providers.Azure.DiscoveryTags,
+			ResourceTypes:  cfg.Spec.Providers.Azure.ResourceTypes,
 			HasCredentials: hasCreds,
 			Status:         cfg.Status.Azure,
 		}
@@ -325,10 +336,12 @@ func (s *Server) buildSettingsResponse(ctx context.Context, cfg *finopsv1.CostDe
 	if cfg.Spec.Providers.GCP != nil {
 		hasCreds := cfg.Spec.Providers.GCP.SecretRef != "" && s.secretExists(ctx, cfg.Spec.Providers.GCP.SecretRef, cfg.Namespace)
 		resp.Providers.GCP = &GCPSettingsResponse{
-			Enabled:        cfg.Spec.Providers.GCP.Enabled,
-			ProjectID:      cfg.Spec.Providers.GCP.ProjectID,
-			HasCredentials: hasCreds,
-			Status:         cfg.Status.GCP,
+			Enabled:         cfg.Spec.Providers.GCP.Enabled,
+			ProjectID:       cfg.Spec.Providers.GCP.ProjectID,
+			DiscoveryLabels: cfg.Spec.Providers.GCP.DiscoveryLabels,
+			ResourceTypes:   cfg.Spec.Providers.GCP.ResourceTypes,
+			HasCredentials:  hasCreds,
+			Status:          cfg.Status.GCP,
 		}
 	}
 
@@ -514,8 +527,20 @@ func (s *Server) applyAzureSettings(ctx context.Context, cfg *finopsv1.CostDeckC
 	if azureReq.TenantID != "" {
 		azure.TenantID = azureReq.TenantID
 	}
+	if azureReq.DiscoveryTags != nil {
+		azure.DiscoveryTags = azureReq.DiscoveryTags
+	}
+	if azureReq.ResourceTypes != nil {
+		azure.ResourceTypes = azureReq.ResourceTypes
+	}
+	if azure.SubscriptionID != "" && !subscriptionID.MatchString(azure.SubscriptionID) {
+		return badRequestf("the Azure subscription ID must be a GUID")
+	}
 	if azureReq.ClientID == "" || azureReq.ClientSecret == "" {
 		return nil
+	}
+	if azure.TenantID == "" {
+		return badRequestf("a tenant ID is required with a client secret")
 	}
 	return s.storeCredentials(ctx, "costdeck-azure-credentials", map[string][]byte{
 		"AZURE_CLIENT_ID":     []byte(azureReq.ClientID),
@@ -539,8 +564,17 @@ func (s *Server) applyGCPSettings(ctx context.Context, cfg *finopsv1.CostDeckCon
 	if gcpReq.ProjectID != "" {
 		gcp.ProjectID = gcpReq.ProjectID
 	}
+	if gcpReq.DiscoveryLabels != nil {
+		gcp.DiscoveryLabels = gcpReq.DiscoveryLabels
+	}
+	if gcpReq.ResourceTypes != nil {
+		gcp.ResourceTypes = gcpReq.ResourceTypes
+	}
 	if gcpReq.ServiceAccountJSON == "" {
 		return nil
+	}
+	if err := validServiceAccountKey(gcpReq.ServiceAccountJSON); err != nil {
+		return badRequest{err}
 	}
 	return s.storeCredentials(ctx, "costdeck-gcp-credentials", map[string][]byte{
 		"credentials.json": []byte(gcpReq.ServiceAccountJSON),
@@ -785,8 +819,8 @@ func (s *Server) handleTestProvider(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch providerName {
-	case "aws":
-		s.testAWSProvider(w, ctx, cfg, r)
+	case scaling.ProviderAWS, scaling.ProviderAzure, scaling.ProviderGCP:
+		s.testCloudProvider(w, r, cfg, providerName)
 	case "ai":
 		s.testAIProvider(w, r)
 	case "victoriametrics":
@@ -795,76 +829,112 @@ func (s *Server) handleTestProvider(w http.ResponseWriter, r *http.Request) {
 		s.testWebex(w, ctx, r)
 	case "entra":
 		s.testEntra(w, ctx, cfg, r)
-	case "azure":
-		writeJSON(w, http.StatusOK, map[string]any{
-			"connected": false,
-			"error":     "Azure provider is not yet implemented",
-		})
-	case "gcp":
-		writeJSON(w, http.StatusOK, map[string]any{
-			"connected": false,
-			"error":     "GCP provider is not yet implemented",
-		})
 	default:
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("Unknown provider: %s", providerName))
 	}
 }
 
-func (s *Server) testAWSProvider(w http.ResponseWriter, ctx context.Context, cfg *finopsv1.CostDeckConfig, r *http.Request) {
-	var provider *scaling.AWSProvider
-	var err error
-
-	// Try to parse credentials from the request body first (unsaved UI form data)
-	var req AWSUpdateRequest
-	if r.Body != nil {
-		err := json.NewDecoder(r.Body).Decode(&req)
-		if err == nil && req.AccessKeyID != "" && req.SecretAccessKey != "" {
-			provider, err = scaling.NewAWSProviderFromCredentials(ctx, req.AccessKeyID, req.SecretAccessKey, req.Region)
-			if err != nil {
-				writeJSON(w, http.StatusOK, map[string]any{
-					"connected": false,
-					"error":     fmt.Sprintf("Failed to initialize with provided credentials: %v", err),
-				})
+// testCloudProvider checks a cloud provider with the values typed into the settings form,
+// before they are saved: unsaved credentials override the stored Secret, and unsaved
+// region, subscription or project override the saved ones. It reports how many resources
+// discovery finds, so "connected but sees nothing" is visible straight away.
+func (s *Server) testCloudProvider(w http.ResponseWriter, r *http.Request, saved *finopsv1.CostDeckConfig, name string) {
+	ctx := r.Context()
+	cfg := saved.DeepCopy()
+	var override map[string][]byte
+	body, _ := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+	switch name {
+	case scaling.ProviderAWS:
+		var req AWSUpdateRequest
+		_ = json.Unmarshal(body, &req)
+		if cfg.Spec.Providers.AWS == nil {
+			cfg.Spec.Providers.AWS = &finopsv1.AWSProviderConfig{}
+		}
+		if req.Region != "" {
+			cfg.Spec.Providers.AWS.Region = req.Region
+		}
+		if req.AccessKeyID != "" && req.SecretAccessKey != "" {
+			override = map[string][]byte{"AWS_ACCESS_KEY_ID": []byte(req.AccessKeyID), "AWS_SECRET_ACCESS_KEY": []byte(req.SecretAccessKey)}
+		}
+	case scaling.ProviderAzure:
+		var req AzureUpdateRequest
+		_ = json.Unmarshal(body, &req)
+		if cfg.Spec.Providers.Azure == nil {
+			cfg.Spec.Providers.Azure = &finopsv1.AzureProviderConfig{}
+		}
+		if req.SubscriptionID != "" {
+			cfg.Spec.Providers.Azure.SubscriptionID = req.SubscriptionID
+		}
+		if req.TenantID != "" {
+			cfg.Spec.Providers.Azure.TenantID = req.TenantID
+		}
+		if req.ClientID != "" && req.ClientSecret != "" {
+			override = map[string][]byte{scaling.AzureSecretClientID: []byte(req.ClientID), scaling.AzureSecretClientSecret: []byte(req.ClientSecret)}
+		}
+	case scaling.ProviderGCP:
+		var req GCPUpdateRequest
+		_ = json.Unmarshal(body, &req)
+		if cfg.Spec.Providers.GCP == nil {
+			cfg.Spec.Providers.GCP = &finopsv1.GCPProviderConfig{}
+		}
+		if req.ProjectID != "" {
+			cfg.Spec.Providers.GCP.ProjectID = req.ProjectID
+		}
+		if req.ServiceAccountJSON != "" {
+			if err := validServiceAccountKey(req.ServiceAccountJSON); err != nil {
+				writeJSON(w, http.StatusOK, map[string]any{"connected": false, "error": err.Error()})
 				return
 			}
+			override = map[string][]byte{scaling.GCPSecretKey: []byte(req.ServiceAccountJSON)}
 		}
 	}
 
-	// Fallback to stored credentials if no body or body belongs to another provider
-	if provider == nil {
-		if cfg.Spec.Providers.AWS == nil || cfg.Spec.Providers.AWS.SecretRef == "" {
-			writeJSON(w, http.StatusOK, map[string]any{
-				"connected": false,
-				"error":     "No AWS credentials configured",
-			})
-			return
-		}
-
-		provider, err = scaling.NewAWSProviderFromSecret(ctx, s.Client,
-			cfg.Spec.Providers.AWS.SecretRef,
-			cfg.Namespace,
-			cfg.Spec.Providers.AWS.Region,
-		)
-		if err != nil {
-			writeJSON(w, http.StatusOK, map[string]any{
-				"connected": false,
-				"error":     err.Error(),
-			})
-			return
-		}
-	}
-
-	if err := provider.ValidateConnectivity(ctx); err != nil {
-		writeJSON(w, http.StatusOK, map[string]any{
-			"connected": false,
-			"error":     err.Error(),
-		})
+	fail := func(err error) { writeJSON(w, http.StatusOK, map[string]any{"connected": false, "error": err.Error()}) }
+	provider, err := scaling.BuildProvider(ctx, s.Client, cfg, name, override)
+	if err != nil {
+		fail(err)
 		return
 	}
+	if err := provider.ValidateConnectivity(ctx); err != nil {
+		fail(err)
+		return
+	}
+	settings := scaling.CloudSettingsFor(cfg, name)
+	types := settings.ResourceTypes
+	if len(types) == 0 {
+		types = provider.ResourceTypes()
+	}
+	total := 0
+	for _, rt := range types {
+		targets, err := provider.Discover(ctx, rt, settings.Filter)
+		if err != nil {
+			fail(fmt.Errorf("connected, but listing %s failed: %w", rt, err))
+			return
+		}
+		total += len(targets)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"connected": true, "message": fmt.Sprintf("Connected. %d resources found.", total)})
+}
 
-	writeJSON(w, http.StatusOK, map[string]any{
-		"connected": true,
-	})
+// subscriptionID matches an Azure subscription GUID.
+var subscriptionID = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+
+// validServiceAccountKey accepts only Google service account keys. Other credential file
+// types (external accounts, for example) can make the client library fetch tokens from
+// URLs chosen by the file.
+func validServiceAccountKey(raw string) error {
+	var key struct {
+		Type        string `json:"type"`
+		ClientEmail string `json:"client_email"`
+		PrivateKey  string `json:"private_key"`
+	}
+	if err := json.Unmarshal([]byte(raw), &key); err != nil {
+		return fmt.Errorf("the service account key is not valid JSON: %w", err)
+	}
+	if key.Type != "service_account" || key.ClientEmail == "" || key.PrivateKey == "" {
+		return errors.New("paste a service account key (a JSON file with \"type\": \"service_account\")")
+	}
+	return nil
 }
 
 // testEntra validates Entra SSO settings (unsaved form values first, stored ones otherwise):

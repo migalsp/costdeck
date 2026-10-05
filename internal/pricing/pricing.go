@@ -59,8 +59,10 @@ type NodePricer interface {
 type Resolver struct {
 	Client client.Reader
 	// AWS builds an AWS Price List client from the live CostDeckConfig; nil disables
-	// cloud pricing.
+	// AWS pricing.
 	AWS func(ctx context.Context, cfg *finopsv1.CostDeckConfig) (NodePricer, error)
+	// Azure returns the Azure Retail Prices client; nil disables Azure pricing.
+	Azure func(ctx context.Context, cfg *finopsv1.CostDeckConfig) (NodePricer, error)
 	// TTL bounds how long cloud-derived rates are reused (prices change rarely).
 	TTL time.Duration
 
@@ -86,7 +88,7 @@ func (r *Resolver) Rates(ctx context.Context) Rates {
 	}
 	fallback := heuristicRates(cloud, cfg.Spec.Pricing.Currency)
 
-	if cfg.Spec.Features.CloudPricingAPI && cloud == "aws" && r.AWS != nil && len(nodes.Items) > 0 {
+	if build := r.pricerFor(cloud); cfg.Spec.Features.CloudPricingAPI && build != nil && len(nodes.Items) > 0 {
 		key := nodeFingerprint(nodes.Items)
 		r.mu.Lock()
 		if r.cached != nil && r.cacheKey == key && time.Since(r.cachedAt) < r.ttl() {
@@ -96,10 +98,10 @@ func (r *Resolver) Rates(ctx context.Context) Rates {
 		}
 		r.mu.Unlock()
 
-		rates, err := r.awsRates(ctx, cfg, nodes.Items)
+		rates, err := nodeRates(ctx, cloud, build, cfg, nodes.Items)
 		if err != nil {
-			logf.FromContext(ctx).Info("Could not price nodes with the AWS Price List API, using heuristic rates", "error", err.Error())
-			fallback.Basis += " — AWS pricing unavailable: " + err.Error()
+			logf.FromContext(ctx).Info("Could not price nodes with the cloud price list, using heuristic rates", "cloud", cloud, "error", err.Error())
+			fallback.Basis += " — " + cloudNames[cloud] + " pricing unavailable: " + err.Error()
 			return fallback
 		}
 		r.mu.Lock()
@@ -109,6 +111,22 @@ func (r *Resolver) Rates(ctx context.Context) Rates {
 	}
 	return fallback
 }
+
+// pricerFor returns the price list builder for a cloud, or nil when there is none.
+func (r *Resolver) pricerFor(cloud string) func(context.Context, *finopsv1.CostDeckConfig) (NodePricer, error) {
+	switch cloud {
+	case "aws":
+		return r.AWS
+	case "azure":
+		return r.Azure
+	}
+	return nil
+}
+
+var cloudNames = map[string]string{"aws": "AWS", "azure": "Azure", "gcp": "Google Cloud"}
+
+// priceLabels describe each cloud's list price in the rates' basis.
+var priceLabels = map[string]string{"aws": "AWS on-demand list prices", "azure": "Azure pay-as-you-go list prices"}
 
 func (r *Resolver) ttl() time.Duration {
 	if r.TTL > 0 {
@@ -169,15 +187,15 @@ func nodeFingerprint(nodes []corev1.Node) string {
 	return fmt.Sprint(counts)
 }
 
-// awsRates prices every node at its on-demand list price and splits the total into a
-// per-core and a per-GiB rate. The split keeps the heuristic CPU:memory price ratio and
-// scales it so that the rates reproduce the cluster's real hourly bill.
-func (r *Resolver) awsRates(ctx context.Context, cfg *finopsv1.CostDeckConfig, nodes []corev1.Node) (Rates, error) {
-	pricer, err := r.AWS(ctx, cfg)
+// nodeRates prices every node at its list price and splits the total into a per-core and
+// a per-GiB rate. The split keeps the heuristic CPU:memory price ratio and scales it so
+// that the rates reproduce the cluster's real hourly bill.
+func nodeRates(ctx context.Context, cloud string, build func(context.Context, *finopsv1.CostDeckConfig) (NodePricer, error), cfg *finopsv1.CostDeckConfig, nodes []corev1.Node) (Rates, error) {
+	pricer, err := build(ctx, cfg)
 	if err != nil {
 		return Rates{}, err
 	}
-	base := heuristics["aws"]
+	base := heuristics[cloud]
 	prices := map[string]float64{}
 	var billed, modelled float64
 	spot := 0
@@ -213,16 +231,24 @@ func (r *Resolver) awsRates(ctx context.Context, cfg *finopsv1.CostDeckConfig, n
 	for t := range types {
 		names = append(names, t)
 	}
-	basis := fmt.Sprintf("AWS on-demand list prices for %d node(s) (%s)", len(nodes), strings.Join(sortedFirst(names, 4), ", "))
+	basis := fmt.Sprintf("%s for %d node(s) (%s)", priceLabels[cloud], len(nodes), strings.Join(sortedFirst(names, 4), ", "))
 	if spot > 0 {
-		basis += fmt.Sprintf("; %d spot node(s) priced at on-demand", spot)
+		basis += fmt.Sprintf("; %d spot node(s) priced at the regular rate", spot)
 	}
 	return Rates{CPUCoreHour: base[0] * scale, MemoryGBHour: base[1] * scale, Currency: "USD", Basis: basis}, nil
 }
 
 func isSpot(n corev1.Node) bool {
 	return strings.EqualFold(n.Labels["eks.amazonaws.com/capacityType"], "SPOT") ||
-		strings.EqualFold(n.Labels["karpenter.sh/capacity-type"], "spot")
+		strings.EqualFold(n.Labels["karpenter.sh/capacity-type"], "spot") ||
+		strings.EqualFold(n.Labels["kubernetes.azure.com/scalesetpriority"], "spot")
+}
+
+// AzureRetail returns the shared Azure Retail Prices client. The API is public, so the
+// configuration is not needed.
+func AzureRetail() func(context.Context, *finopsv1.CostDeckConfig) (NodePricer, error) {
+	pricer := NewAzurePricer()
+	return func(context.Context, *finopsv1.CostDeckConfig) (NodePricer, error) { return pricer, nil }
 }
 
 func sortedFirst(items []string, n int) []string {

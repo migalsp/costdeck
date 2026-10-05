@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"runtime"
+	"slices"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -314,49 +315,61 @@ func (s *Server) streamOperatorLogs(w http.ResponseWriter, r *http.Request, tail
 	_, _ = w.Write(logs)
 }
 
+// handleDiscovery lists one resource type of one provider: GET /api/discovery/{provider}/{type}.
 func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request) {
 	providerName := r.PathValue("provider")
 	resourceType := r.PathValue("type")
-
-	if providerName != scaling.ProviderAWS {
-		writeErrorf(w, http.StatusNotImplemented, "Provider '%s' not supported yet", providerName)
+	if !slices.Contains(scaling.CloudProviders, providerName) {
+		writeErrorf(w, http.StatusNotImplemented, "Provider '%s' is not supported", providerName)
 		return
 	}
-
 	ctx := r.Context()
 	cfg, err := config.Get(ctx, s.Client)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-
-	awsCfg := cfg.Spec.Providers.AWS
-	if awsCfg == nil || !awsCfg.Enabled {
+	settings := scaling.CloudSettingsFor(cfg, providerName)
+	if !settings.Enabled {
 		writeJSON(w, http.StatusOK, []any{})
 		return
 	}
-
-	// Credentials from the CostDeckConfig secret first, then the pod identity (IRSA/env).
-	var awsProv *scaling.AWSProvider
-	if awsCfg.SecretRef != "" {
-		awsProv, err = scaling.NewAWSProviderFromSecret(ctx, s.Client, awsCfg.SecretRef, cfg.Namespace, awsCfg.Region)
-	} else {
-		awsProv, err = scaling.NewAWSProvider(ctx)
-	}
+	provider, err := scaling.BuildProvider(ctx, s.Client, cfg, providerName, nil)
 	if err != nil {
-		logf.Log.Error(err, "Failed to initialize AWS Discovery provider")
-		writeError(w, http.StatusInternalServerError, "Cloud provider configuration error")
+		logf.Log.Error(err, "Could not initialise cloud provider", "provider", providerName)
+		writeError(w, http.StatusInternalServerError, "Cloud provider configuration error: "+err.Error())
 		return
 	}
-
-	targets, err := awsProv.Discover(ctx, resourceType, awsCfg.DiscoveryTags)
+	targets, err := provider.Discover(ctx, resourceType, settings.Filter)
 	if err != nil {
-		logf.Log.Error(err, "Failed to discover resources", "provider", providerName, "type", resourceType)
-		writeError(w, http.StatusInternalServerError, "Failed to discover external resources")
+		logf.Log.Error(err, "Could not discover resources", "provider", providerName, "type", resourceType)
+		writeError(w, http.StatusInternalServerError, "Failed to discover external resources: "+err.Error())
 		return
 	}
-	if targets == nil {
-		targets = []finopsv1.ExternalTarget{}
+	writeJSON(w, http.StatusOK, nonNil(targets))
+}
+
+// handleDiscoverAll lists every configured resource type of every enabled provider:
+// GET /api/discovery. Providers that fail are reported in "errors" without hiding the rest.
+func (s *Server) handleDiscoverAll(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	cfg, err := config.Get(ctx, s.Client)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
 	}
-	writeJSON(w, http.StatusOK, targets)
+	targets, errs := scaling.DiscoverAll(ctx, s.Client, cfg)
+	messages := map[string]string{}
+	for name, err := range errs {
+		logf.Log.Error(err, "Could not discover resources", "provider", name)
+		messages[name] = err.Error()
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"resources": nonNil(targets), "errors": messages})
+}
+
+func nonNil[T any](v []T) []T {
+	if v == nil {
+		return []T{}
+	}
+	return v
 }

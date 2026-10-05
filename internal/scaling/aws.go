@@ -131,6 +131,12 @@ func (p *AWSProvider) Name() string {
 	return ProviderAWS
 }
 
+// AWSResourceTypes lists every type the AWS provider supports.
+var AWSResourceTypes = []string{AWSTypeAurora, AWSTypeEC2}
+
+// ResourceTypes implements CloudProvider.
+func (p *AWSProvider) ResourceTypes() []string { return AWSResourceTypes }
+
 func (p *AWSProvider) Scale(ctx context.Context, target finopsv1.ExternalTarget, active bool) error {
 	switch target.Type {
 	case AWSTypeAurora:
@@ -232,7 +238,7 @@ func (p *AWSProvider) isAuroraReady(ctx context.Context, target finopsv1.Externa
 	if active {
 		return status == "available", nil
 	}
-	return status == "stopped", nil
+	return status == stateStopped, nil
 }
 
 func (p *AWSProvider) discoverAurora(ctx context.Context, tags map[string]string) ([]finopsv1.ExternalTarget, error) {

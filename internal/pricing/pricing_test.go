@@ -2,8 +2,11 @@ package pricing
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"math"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -118,5 +121,53 @@ func TestAWSPricerParsesPriceList(t *testing.T) {
 	}
 	if _, err := (&AWSPricer{API: fakeProducts{}}).HourlyPrice(context.Background(), "eu-central-1", "x"); err == nil {
 		t.Error("an empty price list must be an error")
+	}
+}
+
+func TestAzurePricerTakesLinuxPayAsYouGo(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		f := r.URL.Query().Get("$filter")
+		if !strings.Contains(f, "armRegionName eq 'westeurope'") || !strings.Contains(f, "armSkuName eq 'Standard_D4s_v5'") {
+			http.Error(w, "unexpected filter "+f, http.StatusBadRequest)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"Items": []map[string]any{
+			{"retailPrice": 0.384, "unitOfMeasure": "1 Hour", "productName": "Virtual Machines Dsv5 Series Windows", "skuName": "D4s v5", "type": "Consumption"},
+			{"retailPrice": 0.0384, "unitOfMeasure": "1 Hour", "productName": "Virtual Machines Dsv5 Series", "skuName": "D4s v5 Spot", "type": "Consumption"},
+			{"retailPrice": 0.192, "unitOfMeasure": "1 Hour", "productName": "Virtual Machines Dsv5 Series", "skuName": "D4s v5", "type": "Consumption"},
+		}})
+	}))
+	defer srv.Close()
+
+	p := &AzurePricer{HTTP: srv.Client(), BaseURL: srv.URL}
+	price, err := p.HourlyPrice(context.Background(), "westeurope", "Standard_D4s_v5")
+	if err != nil || price != 0.192 {
+		t.Fatalf("HourlyPrice() = %v, %v; want the Linux pay-as-you-go 0.192", price, err)
+	}
+}
+
+func TestAzureNodesArePricedFromRetailPrices(t *testing.T) {
+	t.Setenv("POD_NAMESPACE", "costdeck")
+	scheme := runtime.NewScheme()
+	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+	utilruntime.Must(finopsv1.AddToScheme(scheme))
+	node := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: "aks-1", Labels: map[string]string{corev1.LabelTopologyRegion: "westeurope", corev1.LabelInstanceTypeStable: "Standard_D4s_v5"}},
+		Spec:       corev1.NodeSpec{ProviderID: "azure:///subscriptions/x/resourceGroups/mc/providers/Microsoft.Compute/virtualMachineScaleSets/aks/virtualMachines/0"},
+		Status:     corev1.NodeStatus{Capacity: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("4"), corev1.ResourceMemory: resource.MustParse("16Gi")}},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(node, &finopsv1.CostDeckConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: "costdeck"},
+		Spec:       finopsv1.CostDeckConfigSpec{Features: finopsv1.FeaturesConfig{CloudPricingAPI: true}},
+	}).Build()
+	r := &Resolver{Client: c, Azure: func(context.Context, *finopsv1.CostDeckConfig) (NodePricer, error) {
+		return fakePricer{"westeurope/Standard_D4s_v5": 0.192}, nil
+	}}
+	rates := r.Rates(context.Background())
+	if !strings.Contains(rates.Basis, "Azure pay-as-you-go") {
+		t.Fatalf("Basis = %q", rates.Basis)
+	}
+	if got := rates.Hourly(resource.MustParse("4"), resource.MustParse("16Gi")); math.Abs(got-0.192) > 1e-9 {
+		t.Errorf("the node priced at %.4f/h, want its list price 0.192", got)
 	}
 }
