@@ -106,6 +106,25 @@ jobs:
             --set metrics.secure=true,metrics.serviceMonitor.enabled=true,ingress.enabled=true,podDisruptionBudget.enabled=true \
             | ./kubeconform -strict -summary -ignore-missing-schemas
 
+  install-bundle:
+    name: Kustomize install bundle
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Build dist/install.yaml
+        run: make build-installer IMG=ghcr.io/${{ github.repository }}/costdeck-operator:ci
+      - name: Every generated CRD is in the bundle
+        run: |
+          want=$(ls config/crd/bases/*.yaml | wc -l)
+          got=$(grep -c '^kind: CustomResourceDefinition' dist/install.yaml)
+          if [ "$got" -ne "$want" ]; then
+            echo "::error::dist/install.yaml has $got CRDs but config/crd/bases has $want. Add the missing file to config/crd/kustomization.yaml."
+            exit 1
+          fi
+
   vulnerabilities:
     name: Known vulnerabilities
     runs-on: ubuntu-latest
