@@ -4,7 +4,7 @@ import { DAY_SHORT, WEEK_ORDER, describePlan, planProblem, specFromPlan, timeZon
 import type { ScalingSchedule } from '../lib/types'
 import WeekTimeline from './WeekTimeline'
 
-const input = 'bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-sm font-semibold text-slate-700 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/10'
+const input = 'bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-sm font-semibold text-slate-700 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/10'
 
 function DayPicker({ days, onChange }: { days: number[]; onChange: (days: number[]) => void }) {
   return (
@@ -13,7 +13,7 @@ function DayPicker({ days, onChange }: { days: number[]; onChange: (days: number
         const on = days.includes(d)
         return (
           <button key={d} type="button" onClick={() => onChange(on ? days.filter(x => x !== d) : [...days, d])}
-            className={`w-10 py-1.5 rounded-lg text-xs font-bold border transition-colors ${on ? 'bg-indigo-600 border-indigo-600 text-white' : 'bg-white border-slate-200 text-slate-400 hover:border-slate-300'}`}>
+            className={`w-10 py-1.5 rounded-lg text-xs font-bold border transition-colors ${on ? 'bg-brand-600 border-brand-600 text-white' : 'bg-white border-slate-200 text-slate-400 hover:border-slate-300'}`}>
             {DAY_SHORT[d]}
           </button>
         )
@@ -71,7 +71,7 @@ function CustomWindows({ windows, onChange }: { windows: ScalingSchedule[]; onCh
         )
       })}
       <button type="button" onClick={() => onChange([...windows, { days: [1, 2, 3, 4, 5], startTime: '08:00', endTime: '20:00' }])}
-        className="flex items-center gap-1 text-xs font-bold text-indigo-600 hover:text-indigo-700">
+        className="flex items-center gap-1 text-xs font-bold text-brand-600 hover:text-brand-700">
         <Plus size={14} /> Add window
       </button>
       <p className="text-[11px] text-slate-400">Up whenever any window is open. An end time earlier than the start runs overnight.</p>
@@ -92,8 +92,8 @@ function PresetCard({ id, current, icon, title, hint, onSelect }: PresetCardProp
   const on = id === current
   return (
     <button type="button" onClick={() => onSelect(id)}
-      className={`text-left p-3 rounded-xl border-2 transition-all ${on ? 'border-indigo-500 bg-indigo-50/60' : 'border-slate-200 bg-white hover:border-slate-300'}`}>
-      <div className={`flex items-center gap-2 font-bold text-sm ${on ? 'text-indigo-700' : 'text-slate-700'}`}>{icon}{title}</div>
+      className={`text-left p-3 rounded-xl border-2 transition-all ${on ? 'border-brand-500 bg-brand-50/60' : 'border-slate-200 bg-white hover:border-slate-300'}`}>
+      <div className={`flex items-center gap-2 font-bold text-sm ${on ? 'text-brand-700' : 'text-slate-700'}`}>{icon}{title}</div>
       <div className="text-[11px] text-slate-500 mt-1 leading-snug">{hint}</div>
     </button>
   )

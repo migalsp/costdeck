@@ -42,7 +42,7 @@ function CopyButton({ text }: { text: string }) {
           setTimeout(() => setCopied(false), 1500)
         })
       }}
-      className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors"
+      className="p-1.5 rounded-lg text-slate-400 hover:text-brand-600 hover:bg-brand-50 transition-colors"
       title={`Copy as YAML:\n\n${text}`}
     >
       {copied ? <Check size={14} className="text-emerald-500" /> : <Copy size={14} />}
@@ -91,7 +91,7 @@ export default function RecommendationsPanel({ namespace }: { namespace: string 
           </div>
         </div>
         <div className="text-right">
-          <div className="text-2xl font-black text-emerald-600">
+          <div className="text-2xl font-bold text-emerald-600">
             {report.monthlySavings >= 0.01 ? `~${formatMoney(report.monthlySavings, report.currency)}` : formatMoney(0, report.currency)}
             <span className="text-sm font-bold text-slate-400">/mo</span>
           </div>

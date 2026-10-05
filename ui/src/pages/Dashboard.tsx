@@ -82,10 +82,10 @@ export default function Dashboard({ onSelectNamespace }: DashboardProps) {
       <div className="flex justify-between items-center mb-8">
         <div>
           <div className="flex items-center gap-2">
-            <h2 className="text-3xl font-black tracking-tight text-slate-900 uppercase">Namespace Insights</h2>
+            <h2 className="text-2xl font-bold tracking-tight text-slate-900 flex items-center gap-2">Namespace Insights</h2>
             <InfoTooltip content="This dashboard identifies 'Overprovisioned' namespaces where allocated CPU/RAM significantly exceeds actual usage. Use the 'Optimize' button to reclaim resources." position="bottom" />
           </div>
-          <p className="text-slate-500 mt-1 font-medium">Real-time resource utilization and overprovisioning analytics</p>
+          <p className="mt-1 text-sm text-slate-500">Real-time resource utilization and overprovisioning analytics</p>
         </div>
         
         <div className="flex gap-4">
@@ -104,13 +104,13 @@ export default function Dashboard({ onSelectNamespace }: DashboardProps) {
       </div>
 
       {error && !import.meta.env.DEV && (
-        <div className="bg-red-50 border-l-4 border-red-500 p-4 mb-8 rounded-r-lg">
+        <div className="bg-rose-50 border-l-4 border-rose-500 p-4 mb-8 rounded-r-lg">
           <div className="flex">
             <div className="flex-shrink-0">
-              <AlertCircle className="h-5 w-5 text-red-500" />
+              <AlertCircle className="h-5 w-5 text-rose-500" />
             </div>
             <div className="ml-3">
-              <p className="text-sm text-red-700">{error}</p>
+              <p className="text-sm text-rose-700">{error}</p>
             </div>
           </div>
         </div>

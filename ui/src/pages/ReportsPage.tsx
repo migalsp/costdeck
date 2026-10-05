@@ -4,6 +4,7 @@ import ReactMarkdown from 'react-markdown'
 import { apiError } from '../lib/api'
 import { useAuth } from '../lib/auth'
 import remarkGfm from 'remark-gfm'
+import { Button } from '../components/ui'
 
 export default function ReportsPage() {
   const { can } = useAuth()
@@ -97,11 +98,10 @@ export default function ReportsPage() {
     <div className="p-8 max-w-[1200px] mx-auto w-full print-page">
       <div className="flex items-center justify-between mb-8 print-hide">
         <div>
-          <h1 className="text-3xl font-black tracking-tight text-slate-900 flex items-center gap-3">
-            <FileText className="text-emerald-500" size={32} />
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900 flex items-center gap-2">
             AI Cost & Health Reports
           </h1>
-          <p className="text-slate-500 mt-2 font-medium">
+          <p className="mt-1 text-sm text-slate-500">
             AI-driven insights &mdash; Discover hidden bottlenecks, eliminate waste
           </p>
           {generatedAt && (
@@ -110,31 +110,30 @@ export default function ReportsPage() {
         </div>
 
         <div className="flex gap-3">
-          {can('operator') && <button
+          {can('operator') && <Button
+            variant="primary"
             onClick={handleGenerate}
             disabled={isGenerating}
-            className="flex items-center gap-2 bg-emerald-500 text-white px-5 py-2.5 rounded-xl font-bold shadow-lg shadow-emerald-500/20 hover:bg-emerald-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            icon={isGenerating ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
           >
-            {isGenerating ? <Loader2 size={18} className="animate-spin" /> : <RefreshCw size={18} />}
-            {isGenerating ? 'Generating...' : 'Generate New Report'}
-          </button>}
+            {isGenerating ? 'Generating…' : 'Generate new report'}
+          </Button>}
           
-          <button
+          <Button
             onClick={handleExportPDF}
             disabled={isGenerating || !report}
-            className="flex items-center gap-2 bg-white text-slate-700 border-2 border-slate-200 px-5 py-2.5 rounded-xl font-bold hover:bg-slate-50 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            icon={<Download size={16} />}
           >
-            <Download size={18} />
             Export PDF
-          </button>
+          </Button>
         </div>
       </div>
 
       {error && (
-        <div className="mb-6 p-4 bg-red-50 border border-red-100 rounded-2xl text-sm font-medium text-red-600 print-hide">{error}</div>
+        <div className="mb-6 p-4 bg-rose-50 border border-rose-100 rounded-xl text-sm font-medium text-rose-600 print-hide">{error}</div>
       )}
 
-      <div className="bg-white rounded-2xl shadow-xl shadow-slate-200/50 border border-slate-100 min-h-[600px] print-container">
+      <div className="bg-white rounded-xl shadow-xl border border-slate-100 min-h-[600px] print-container">
         {isLoading ? (
           <div className="flex items-center justify-center h-[600px]">
             <Loader2 size={32} className="animate-spin text-emerald-500" />
@@ -149,7 +148,7 @@ export default function ReportsPage() {
           <div className="flex flex-col items-center justify-center h-[600px] text-slate-400">
             <FileText size={64} className="mb-4 opacity-20" />
             <p className="font-medium text-lg text-slate-600">No reports have been generated yet.</p>
-            <p className="text-sm mt-1 text-slate-500">Click "Generate New Report" to start your first deep-dive FinOps analysis.</p>
+            <p className="text-sm mt-1 text-slate-500">Click "Generate new report" to start your first deep-dive FinOps analysis.</p>
           </div>
         )}
       </div>

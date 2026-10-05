@@ -1,12 +1,31 @@
 @import "tailwindcss";
 @plugin "@tailwindcss/typography";
+/* Design tokens. "brand" is the single accent colour (the emerald of the logo); change it
+   here to re-theme every primary action, selection and focus ring. */
 @theme {
-  --color-operator-blue: #0ea5e9;
-  --color-operator-green: #10b981;
-  --color-operator-red: #ef4444;
-  --color-operator-bg: #f8fafc;
-  --color-operator-card: #ffffff;
-  --color-operator-sidebar: #0f172a;
+  --color-brand-50: var(--color-emerald-50);
+  --color-brand-100: var(--color-emerald-100);
+  --color-brand-200: var(--color-emerald-200);
+  --color-brand-300: var(--color-emerald-300);
+  --color-brand-400: var(--color-emerald-400);
+  --color-brand-500: var(--color-emerald-500);
+  --color-brand-600: var(--color-emerald-600);
+  --color-brand-700: var(--color-emerald-700);
+  --color-brand-800: var(--color-emerald-800);
+  --color-brand-900: var(--color-emerald-900);
+  --color-brand-950: var(--color-emerald-950);
+
+  --animate-slide-in: slide-in 180ms ease-out;
+  --animate-pop: pop 140ms ease-out;
+
+  @keyframes slide-in {
+    from { transform: translateX(24px); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
+  }
+  @keyframes pop {
+    from { transform: scale(0.97); opacity: 0; }
+    to { transform: scale(1); opacity: 1; }
+  }
 }
 
 body {

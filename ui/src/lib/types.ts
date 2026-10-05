@@ -79,8 +79,17 @@ export interface ScalingGroupSpec {
   activation?: 'Schedule' | 'OnDemand'
 }
 
+// Condition is a metav1.Condition as the API returns it.
+export interface Condition {
+  type: string
+  status: 'True' | 'False' | 'Unknown'
+  reason?: string
+  message?: string
+  observedGeneration?: number
+}
+
 export interface ScalingGroup {
-  metadata: { name: string }
+  metadata: { name: string; generation?: number }
   spec: ScalingGroupSpec
   status?: ScheduleStatus & {
     phase: string
@@ -92,6 +101,7 @@ export interface ScalingGroup {
     readyNamespaces?: string[]
     requiredBy?: string[]
     conflictingNamespaces?: string[]
+    conditions?: Condition[]
   }
 }
 
@@ -105,12 +115,13 @@ export interface ScalingConfigSpec {
 }
 
 export interface ScalingConfig {
-  metadata: { name: string }
+  metadata: { name: string; generation?: number }
   spec: ScalingConfigSpec
   status?: ScheduleStatus & {
     phase: string
     lastAction: string
     originalReplicas?: Record<string, number>
+    conditions?: Condition[]
   }
 }
 

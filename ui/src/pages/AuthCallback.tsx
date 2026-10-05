@@ -32,10 +32,10 @@ export default function AuthCallback({ onSignedIn }: { onSignedIn: (returnTo: st
 
   return (
     <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
-      <div className="bg-white/5 border border-white/10 rounded-2xl p-8 max-w-md w-full text-center">
+      <div className="bg-white/5 border border-white/10 rounded-xl p-8 max-w-md w-full text-center">
         {error ? (
           <>
-            <ShieldAlert className="mx-auto text-red-400 mb-4" size={36} />
+            <ShieldAlert className="mx-auto text-rose-400 mb-4" size={36} />
             <h1 className="text-white font-bold text-lg mb-2">Microsoft sign-in failed</h1>
             <p className="text-slate-400 text-sm mb-6">{error}</p>
             <a href="/" className="inline-block px-5 py-2.5 bg-emerald-500 hover:bg-emerald-400 text-white font-bold rounded-xl text-sm">Back to sign-in</a>

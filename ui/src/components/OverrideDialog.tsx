@@ -29,14 +29,14 @@ export default function OverrideDialog({ name, kind, active, hasSchedule, onCanc
 
   return (
     <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[200] flex items-center justify-center p-4" onClick={onCancel}>
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md" onClick={e => e.stopPropagation()}>
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-md" onClick={e => e.stopPropagation()}>
         <div className="p-6 border-b border-slate-100 flex items-start justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${active ? 'bg-emerald-50 text-emerald-500' : 'bg-rose-50 text-rose-500'}`}>
               {active ? <Play size={18} /> : <Square size={18} />}
             </div>
             <div>
-              <h3 className="font-black text-slate-800">Force {active ? 'up' : 'down'}</h3>
+              <h3 className="font-bold text-slate-800">Force {active ? 'up' : 'down'}</h3>
               <p className="text-xs text-slate-500">{kind === 'group' ? 'Group' : 'Namespace'} <b className="text-slate-700">{name}</b></p>
             </div>
           </div>
@@ -48,8 +48,8 @@ export default function OverrideDialog({ name, kind, active, hasSchedule, onCanc
             While a manual override is active the schedule is ignored. Choose when it should hand control back.
           </p>
           {options.map(o => (
-            <label key={o.id} className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-all ${choice === o.id ? 'border-indigo-300 bg-indigo-50/50' : 'border-slate-200 hover:border-slate-300'}`}>
-              <input type="radio" name="override-until" checked={choice === o.id} onChange={() => setChoice(o.id)} className="mt-0.5 accent-indigo-600" />
+            <label key={o.id} className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-all ${choice === o.id ? 'border-brand-300 bg-brand-50/50' : 'border-slate-200 hover:border-slate-300'}`}>
+              <input type="radio" name="override-until" checked={choice === o.id} onChange={() => setChoice(o.id)} className="mt-0.5 accent-brand-600" />
               <span>
                 <span className="block text-sm font-bold text-slate-700">{o.label}</span>
                 {o.hint && <span className="block text-[11px] text-slate-400">{o.hint}</span>}
@@ -61,7 +61,7 @@ export default function OverrideDialog({ name, kind, active, hasSchedule, onCanc
           <button onClick={onCancel} className="flex-1 px-4 py-2.5 rounded-xl font-bold text-slate-500 border border-slate-200 hover:bg-slate-50">Cancel</button>
           <button
             onClick={() => onConfirm(choice)}
-            className={`flex-1 px-4 py-2.5 rounded-xl font-bold text-white shadow-lg ${active ? 'bg-emerald-500 hover:bg-emerald-600 shadow-emerald-500/20' : 'bg-rose-500 hover:bg-rose-600 shadow-rose-500/20'}`}
+            className={`flex-1 px-4 py-2.5 rounded-xl font-bold text-white shadow-lg ${active ? 'bg-emerald-500 hover:bg-emerald-600' : 'bg-rose-500 hover:bg-rose-600'}`}
           >
             Scale {active ? 'up' : 'down'}
           </button>

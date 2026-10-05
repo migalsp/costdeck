@@ -105,7 +105,7 @@ export default function NamespaceScalingPanel({ namespace }: { namespace: string
     }
   }
 
-  if (!loaded) return <div className="h-28 bg-slate-100 rounded-2xl animate-pulse mb-8" />
+  if (!loaded) return <div className="h-28 bg-slate-100 rounded-xl animate-pulse mb-8" />
 
   const line = controller && statusLine({ phase: controller.status?.phase, status: controller.status, dependsOn: controller.spec.dependsOn, activeUntil: controller.spec.activeUntil })
   const manual = controller && (controller.status?.mode === 'ManualUp' || controller.status?.mode === 'ManualDown' || (controller.spec.active !== undefined && controller.spec.active !== null))
@@ -113,15 +113,15 @@ export default function NamespaceScalingPanel({ namespace }: { namespace: string
   const rules = (config?.spec.exclusions?.length || 0) + (config?.spec.sequence?.length || 0)
 
   return (
-    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 mb-8">
+    <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 mb-8">
       <div className="flex flex-wrap items-start gap-6">
         <div className="flex items-start gap-3 min-w-0 flex-1">
-          <div className="p-2.5 rounded-xl bg-indigo-50 text-indigo-500"><CalendarClock size={22} /></div>
+          <div className="p-2.5 rounded-xl bg-brand-50 text-brand-500"><CalendarClock size={22} /></div>
           <div className="min-w-0">
             {controller ? (
               <>
                 <div className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                  {controller.type === 'group' ? <>Scheduled by <span className="text-indigo-600">{controller.name}</span>{controller.size > 1 && ` with ${controller.size - 1} other namespace${controller.size > 2 ? 's' : ''}`}</> : 'Own schedule'}
+                  {controller.type === 'group' ? <>Scheduled by <span className="text-brand-600">{controller.name}</span>{controller.size > 1 && ` with ${controller.size - 1} other namespace${controller.size > 2 ? 's' : ''}`}</> : 'Own schedule'}
                 </div>
                 <div className="mt-1"><span className="font-bold text-slate-800">{line!.title}</span>{line!.detail && <span className="text-slate-500"> · {line!.detail}</span>}</div>
                 <div className="text-xs text-slate-400 mt-0.5">{describeSpec(controller.spec)}</div>
@@ -160,7 +160,7 @@ export default function NamespaceScalingPanel({ namespace }: { namespace: string
           <span className="text-[11px] text-slate-400">applies to all of {controller.name}</span>
         )}
         {!controller && can('admin') && (
-          <button onClick={() => setWizard({ kind: 'group', initialNamespaces: [namespace] })} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-xs font-bold hover:bg-indigo-700">
+          <button onClick={() => setWizard({ kind: 'group', initialNamespaces: [namespace] })} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-brand-600 text-white text-xs font-bold hover:bg-brand-700">
             <Plus size={13} /> Schedule this namespace
           </button>
         )}
@@ -175,7 +175,7 @@ export default function NamespaceScalingPanel({ namespace }: { namespace: string
         {controller && can('admin') && (
           <button onClick={openRules} className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-slate-500 text-xs font-bold hover:bg-slate-100"
             title="Keep some workloads running while the rest scale down, or set the order workloads start in">
-            <ListChecks size={13} /> Workload rules{rules > 0 && <span className="text-indigo-500">({rules})</span>}
+            <ListChecks size={13} /> Workload rules{rules > 0 && <span className="text-brand-500">({rules})</span>}
           </button>
         )}
         {error && <span className="w-full text-xs font-semibold text-rose-600">{error}</span>}

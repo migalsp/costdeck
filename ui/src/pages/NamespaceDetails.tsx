@@ -162,8 +162,8 @@ export default function NamespaceDetails({ namespace, onBack }: NamespaceDetails
         </button>
         <div className="flex items-center gap-2">
           <div>
-            <h2 className="text-3xl font-black tracking-tight text-slate-900 uppercase">Namespace Insight: {namespace}</h2>
-            <p className="text-slate-500 mt-1 font-medium italic">Detailed resource analytics and scaling management</p>
+            <h2 className="text-2xl font-bold tracking-tight text-slate-900 flex items-center gap-2">{namespace}</h2>
+            <p className="mt-1 text-sm text-slate-500">Usage, cost, scaling and right-sizing for this namespace</p>
           </div>
           <InfoTooltip content="This view shows real-time metrics for each pod. Strike-through values indicate optimized resources. Green values are currently active." position="bottom" />
         </div>
@@ -186,13 +186,13 @@ export default function NamespaceDetails({ namespace, onBack }: NamespaceDetails
           />
         </div>
         <div className="flex gap-4">
-          <div className="px-3 py-1 bg-blue-50 text-blue-700 rounded-lg text-sm font-medium border border-blue-100 flex items-center gap-2">
+          <div className="px-3 py-1 bg-brand-50 text-brand-700 rounded-lg text-sm font-medium border border-brand-100 flex items-center gap-2">
             <Activity size={14} />
             {pods.length} Total Pods
           </div>
           {namespaceCost && (
             <div className="flex flex-col items-end">
-              <span className="text-xl font-black text-slate-900 flex items-center gap-1.5">
+              <span className="text-xl font-bold text-slate-900 flex items-center gap-1.5">
                 ${namespaceCost.hourlyCost.toFixed(4)}/hr • ${namespaceCost.monthlyCost.toFixed(2)}/mo
               </span>
             </div>
@@ -201,7 +201,7 @@ export default function NamespaceDetails({ namespace, onBack }: NamespaceDetails
       </div>
 
       {error && (
-        <div className="bg-red-50 text-red-700 p-4 rounded-lg mb-6 flex items-center gap-2">
+        <div className="bg-rose-50 text-rose-700 p-4 rounded-lg mb-6 flex items-center gap-2">
           <AlertCircle size={18} />
           {error}
         </div>
@@ -226,37 +226,37 @@ export default function NamespaceDetails({ namespace, onBack }: NamespaceDetails
                   Status {sortField === 'status' && (sortDirection === 'asc' ? '↑' : '↓')}
                 </th>
                 <th 
-                  className="px-6 py-4 text-xs font-semibold text-slate-600 uppercase tracking-wider bg-blue-50/30 cursor-pointer hover:bg-blue-100/30 transition-colors"
+                  className="px-6 py-4 text-xs font-semibold text-slate-600 uppercase tracking-wider bg-brand-50/30 cursor-pointer hover:bg-brand-100/30 transition-colors"
                   onClick={() => handleSort('cpuUsage')}
                 >
                   CPU Usage {sortField === 'cpuUsage' && (sortDirection === 'asc' ? '↑' : '↓')}
                 </th>
                 <th 
-                  className="px-6 py-4 text-xs font-semibold text-slate-600 uppercase tracking-wider bg-blue-50/30 cursor-pointer hover:bg-blue-100/30 transition-colors"
+                  className="px-6 py-4 text-xs font-semibold text-slate-600 uppercase tracking-wider bg-brand-50/30 cursor-pointer hover:bg-brand-100/30 transition-colors"
                   onClick={() => handleSort('cpuReq')}
                 >
                   CPU Req {sortField === 'cpuReq' && (sortDirection === 'asc' ? '↑' : '↓')}
                 </th>
                 <th 
-                  className="px-6 py-4 text-xs font-semibold text-slate-600 uppercase tracking-wider bg-blue-50/30 border-r border-slate-100 cursor-pointer hover:bg-blue-100/30 transition-colors"
+                  className="px-6 py-4 text-xs font-semibold text-slate-600 uppercase tracking-wider bg-brand-50/30 border-r border-slate-100 cursor-pointer hover:bg-brand-100/30 transition-colors"
                   onClick={() => handleSort('cpuLim')}
                 >
                   CPU Lim {sortField === 'cpuLim' && (sortDirection === 'asc' ? '↑' : '↓')}
                 </th>
                 <th 
-                  className="px-6 py-4 text-xs font-semibold text-slate-600 uppercase tracking-wider bg-indigo-50/30 cursor-pointer hover:bg-indigo-100/30 transition-colors"
+                  className="px-6 py-4 text-xs font-semibold text-slate-600 uppercase tracking-wider bg-brand-50/30 cursor-pointer hover:bg-brand-100/30 transition-colors"
                   onClick={() => handleSort('memUsage')}
                 >
                   RAM Usage {sortField === 'memUsage' && (sortDirection === 'asc' ? '↑' : '↓')}
                 </th>
                 <th 
-                  className="px-6 py-4 text-xs font-semibold text-slate-600 uppercase tracking-wider bg-indigo-50/30 cursor-pointer hover:bg-indigo-100/30 transition-colors"
+                  className="px-6 py-4 text-xs font-semibold text-slate-600 uppercase tracking-wider bg-brand-50/30 cursor-pointer hover:bg-brand-100/30 transition-colors"
                   onClick={() => handleSort('memReq')}
                 >
                   RAM Req {sortField === 'memReq' && (sortDirection === 'asc' ? '↑' : '↓')}
                 </th>
                 <th 
-                  className="px-6 py-4 text-xs font-semibold text-slate-600 uppercase tracking-wider bg-indigo-50/30 cursor-pointer hover:bg-indigo-100/30 transition-colors border-r border-slate-100"
+                  className="px-6 py-4 text-xs font-semibold text-slate-600 uppercase tracking-wider bg-brand-50/30 cursor-pointer hover:bg-brand-100/30 transition-colors border-r border-slate-100"
                   onClick={() => handleSort('memLim')}
                 >
                   RAM Lim {sortField === 'memLim' && (sortDirection === 'asc' ? '↑' : '↓')}
@@ -295,19 +295,19 @@ export default function NamespaceDetails({ namespace, onBack }: NamespaceDetails
                         </span>
                       </td>
                       {/* CPU Group */}
-                      <td className="px-6 py-4 bg-blue-50/10 font-mono text-xs">{formatCpu(pod.cpu.usage)}</td>
-                      <td className="px-6 py-4 bg-blue-50/10 font-mono text-xs text-slate-500">
+                      <td className="px-6 py-4 bg-brand-50/10 font-mono text-xs">{formatCpu(pod.cpu.usage)}</td>
+                      <td className="px-6 py-4 bg-brand-50/10 font-mono text-xs text-slate-500">
                         {opt ? (
                           <div className="flex flex-col animate-in fade-in slide-in-from-left duration-500">
                             <span className="line-through opacity-40 text-[10px]">{formatCpu(opt.original.cpuRequest)}</span>
-                            <span className="text-emerald-600 font-black flex items-center gap-1">
+                            <span className="text-emerald-600 font-bold flex items-center gap-1">
                               {formatCpu(pod.cpu.requests)}
                               <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse shadow-[0_0_5px_rgba(16,185,129,0.5)]" />
                             </span>
                           </div>
                         ) : formatCpu(pod.cpu.requests)}
                       </td>
-                      <td className="px-6 py-4 bg-blue-50/10 font-mono text-xs text-slate-500 border-r border-slate-50">
+                      <td className="px-6 py-4 bg-brand-50/10 font-mono text-xs text-slate-500 border-r border-slate-50">
                         {opt ? (
                           <div className="flex flex-col">
                             <span className="line-through opacity-50">{formatCpu(opt.original.cpuLimit)}</span>
@@ -316,8 +316,8 @@ export default function NamespaceDetails({ namespace, onBack }: NamespaceDetails
                         ) : formatCpu(pod.cpu.limits)}
                       </td>
                       {/* RAM Group */}
-                      <td className="px-6 py-4 bg-indigo-50/10 font-mono text-xs">{formatMem(pod.memory.usage)}</td>
-                      <td className="px-6 py-4 bg-indigo-50/10 font-mono text-xs text-slate-500">
+                      <td className="px-6 py-4 bg-brand-50/10 font-mono text-xs">{formatMem(pod.memory.usage)}</td>
+                      <td className="px-6 py-4 bg-brand-50/10 font-mono text-xs text-slate-500">
                         {opt ? (
                           <div className="flex flex-col">
                             <span className="line-through opacity-50">{formatMem(opt.original.memoryRequest)}</span>
@@ -325,7 +325,7 @@ export default function NamespaceDetails({ namespace, onBack }: NamespaceDetails
                           </div>
                         ) : formatMem(pod.memory.requests)}
                       </td>
-                      <td className="px-6 py-4 bg-indigo-50/10 font-mono text-xs text-slate-500 border-r border-slate-50">
+                      <td className="px-6 py-4 bg-brand-50/10 font-mono text-xs text-slate-500 border-r border-slate-50">
                         {opt ? (
                           <div className="flex flex-col">
                             <span className="line-through opacity-50">{formatMem(opt.original.memoryLimit)}</span>

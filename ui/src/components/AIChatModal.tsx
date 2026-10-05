@@ -221,7 +221,7 @@ export default function AIChatWidget() {
     <>
       <button
         onClick={() => setIsOpen(true)}
-        className={`fixed bottom-8 right-8 w-14 h-14 bg-emerald-500 hover:bg-emerald-600 text-white rounded-2xl shadow-lg shadow-emerald-500/30 flex items-center justify-center transition-all duration-300 hover:scale-105 z-50 ring-1 ring-white/20 ${isOpen ? 'scale-0 opacity-0 pointer-events-none' : 'scale-100 opacity-100'}`}
+        className={`fixed bottom-8 right-8 w-14 h-14 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl shadow-lg flex items-center justify-center transition-all duration-300 hover:scale-105 z-50 ring-1 ring-white/20 ${isOpen ? 'scale-0 opacity-0 pointer-events-none' : 'scale-100 opacity-100'}`}
         aria-label="Open CostDeck AI"
       >
         <CostDeckLogo size={24} />
@@ -280,7 +280,7 @@ export default function AIChatWidget() {
               {item.activity.length > 0 && (
                 <div className="flex flex-col gap-1">
                   {item.activity.map((a, i) => (
-                    <div key={i} className={`flex items-start gap-1.5 text-[11px] ${a.isError ? 'text-red-500' : 'text-slate-400'}`} title={a.result}>
+                    <div key={i} className={`flex items-start gap-1.5 text-[11px] ${a.isError ? 'text-rose-500' : 'text-slate-400'}`} title={a.result}>
                       {a.result === undefined ? <Loader2 size={12} className="animate-spin mt-0.5 shrink-0" /> : a.isError ? <XCircle size={12} className="mt-0.5 shrink-0" /> : <Wrench size={12} className="mt-0.5 shrink-0" />}
                       <span>{TOOL_LABELS[a.tool] || a.tool}{a.isError && a.result ? ` — ${a.result}` : ''}</span>
                     </div>
@@ -308,13 +308,13 @@ export default function AIChatWidget() {
                   )}
                   {c.status === 'running' && <div className="flex items-center gap-1.5 mt-2 text-xs text-amber-700"><Loader2 size={12} className="animate-spin" /> Applying…</div>}
                   {c.status === 'done' && <div className="flex items-center gap-1.5 mt-2 text-xs text-emerald-700"><CheckCircle2 size={12} /> {c.result}</div>}
-                  {c.status === 'failed' && <div className="flex items-center gap-1.5 mt-2 text-xs text-red-600"><XCircle size={12} /> {c.result}</div>}
+                  {c.status === 'failed' && <div className="flex items-center gap-1.5 mt-2 text-xs text-rose-600"><XCircle size={12} /> {c.result}</div>}
                   {c.status === 'dismissed' && <div className="mt-2 text-xs text-slate-400">Dismissed — nothing was changed.</div>}
                 </div>
               ))}
 
               {item.error && (
-                <div className="mt-1 p-3 rounded-xl border border-red-200 bg-red-50 text-xs text-red-600 font-medium">{item.error}</div>
+                <div className="mt-1 p-3 rounded-xl border border-rose-200 bg-rose-50 text-xs text-rose-600 font-medium">{item.error}</div>
               )}
 
               {item.role === 'assistant' && isLoading && item.id === items[items.length - 1]?.id && !item.text && item.activity.length === 0 && (
@@ -343,7 +343,7 @@ export default function AIChatWidget() {
               </button>
             ) : (
               <button type="submit" disabled={!input.trim()}
-                className={`absolute right-2.5 p-2 rounded-lg transition-all ${input.trim() ? 'bg-emerald-500 text-white hover:bg-emerald-600 shadow-sm shadow-emerald-500/20' : 'text-slate-300 bg-transparent'}`}
+                className={`absolute right-2.5 p-2 rounded-lg transition-all ${input.trim() ? 'bg-emerald-500 text-white hover:bg-emerald-600 shadow-sm' : 'text-slate-300 bg-transparent'}`}
                 aria-label="Send">
                 <Send size={16} />
               </button>

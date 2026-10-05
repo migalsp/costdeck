@@ -117,10 +117,10 @@ export default function ScheduleWizard(props: Props) {
 
   return (
     <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[92vh] flex flex-col animate-in fade-in zoom-in duration-200">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-3xl max-h-[92vh] flex flex-col animate-in fade-in zoom-in duration-200">
         <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
           <div>
-            <h2 className="text-xl font-black text-slate-800">{editing ? `Edit ${existing!.metadata.name}` : 'New schedule'}</h2>
+            <h2 className="text-xl font-bold text-slate-800">{editing ? `Edit ${existing!.metadata.name}` : 'New schedule'}</h2>
             <p className="text-xs text-slate-500">Workloads are scaled to zero outside the hours you choose and restored afterwards.</p>
           </div>
           <button onClick={onClose} className="p-2 rounded-full text-slate-400 hover:bg-slate-100"><X size={18} /></button>
@@ -128,13 +128,13 @@ export default function ScheduleWizard(props: Props) {
 
         <div className="p-6 space-y-6 overflow-y-auto">
           <section>
-            <h3 className="text-sm font-bold text-slate-700 mb-2"><span className="text-indigo-500">1.</span> Which namespaces?</h3>
+            <h3 className="text-sm font-bold text-slate-700 mb-2"><span className="text-brand-500">1.</span> Which namespaces?</h3>
             {isGroup ? (
               <>
                 <div className="relative mb-2">
                   <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                   <input value={filter} onChange={e => setFilter(e.target.value)} placeholder="Filter namespaces"
-                    className="w-full pl-8 pr-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-lg outline-none focus:border-indigo-500" />
+                    className="w-full pl-8 pr-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-lg outline-none focus:border-brand-500" />
                 </div>
                 <div className="max-h-44 overflow-y-auto grid grid-cols-2 md:grid-cols-3 gap-1.5 pr-1">
                   {shown.map(ns => {
@@ -146,8 +146,8 @@ export default function ScheduleWizard(props: Props) {
                         title={owner ? `Already scheduled by ${owner}` : undefined}
                         className={`flex items-center gap-2 px-2.5 py-2 rounded-lg border text-left text-sm transition-colors ${
                           owner ? 'border-transparent bg-slate-50 text-slate-300 cursor-not-allowed'
-                            : on ? 'border-indigo-300 bg-indigo-50 text-indigo-800' : 'border-slate-200 hover:border-slate-300 text-slate-700'}`}>
-                        <span className={`w-4 h-4 shrink-0 rounded border flex items-center justify-center ${on ? 'bg-indigo-600 border-indigo-600' : 'border-slate-300 bg-white'}`}>
+                            : on ? 'border-brand-300 bg-brand-50 text-brand-800' : 'border-slate-200 hover:border-slate-300 text-slate-700'}`}>
+                        <span className={`w-4 h-4 shrink-0 rounded border flex items-center justify-center ${on ? 'bg-brand-600 border-brand-600' : 'border-slate-300 bg-white'}`}>
                           {on && <Check size={12} className="text-white" />}
                         </span>
                         <span className="truncate font-semibold">{ns}</span>
@@ -164,7 +164,7 @@ export default function ScheduleWizard(props: Props) {
           </section>
 
           <section>
-            <h3 className="text-sm font-bold text-slate-700 mb-2"><span className="text-indigo-500">2.</span> When should they run?</h3>
+            <h3 className="text-sm font-bold text-slate-700 mb-2"><span className="text-brand-500">2.</span> When should they run?</h3>
             <ScheduleEditor plan={plan} onChange={setPlan} allowOnDemand={isGroup} />
             {editing && overrideActive && scheduleChanged && (
               <p className="mt-2 text-xs font-semibold text-amber-600">Saving ends the current manual override, so the new schedule applies straight away.</p>
@@ -173,10 +173,10 @@ export default function ScheduleWizard(props: Props) {
 
           {isGroup && (
             <section>
-              <h3 className="text-sm font-bold text-slate-700 mb-2"><span className="text-indigo-500">3.</span> Name</h3>
+              <h3 className="text-sm font-bold text-slate-700 mb-2"><span className="text-brand-500">3.</span> Name</h3>
               <input value={editing ? existing!.metadata.name : nameTouched ? name : suggestName(selected)} disabled={editing}
                 onChange={e => { setName(e.target.value); setNameTouched(true) }} placeholder="for example pps1"
-                className="w-full md:w-80 px-3 py-2 text-sm font-semibold bg-slate-50 border border-slate-200 rounded-lg outline-none focus:border-indigo-500 disabled:opacity-60" />
+                className="w-full md:w-80 px-3 py-2 text-sm font-semibold bg-slate-50 border border-slate-200 rounded-lg outline-none focus:border-brand-500 disabled:opacity-60" />
               {!editing && finalName && finalName !== (nameTouched ? name : suggestName(selected)) && (
                 <p className="text-[11px] text-slate-400 mt-1">Saved as <b>{finalName}</b></p>
               )}
@@ -187,7 +187,7 @@ export default function ScheduleWizard(props: Props) {
             <section className="border-t border-slate-100 pt-4">
               <button type="button" onClick={() => setAdvanced(!advanced)} className="flex items-center gap-1 text-sm font-bold text-slate-500 hover:text-slate-700">
                 {advanced ? <ChevronDown size={16} /> : <ChevronRight size={16} />} Advanced
-                {(dependsOn.length > 0 || giveUp) && <span className="ml-1 text-[10px] font-bold text-indigo-500">(in use)</span>}
+                {(dependsOn.length > 0 || giveUp) && <span className="ml-1 text-[10px] font-bold text-brand-500">(in use)</span>}
               </button>
               {advanced && (
                 <div className="mt-3 space-y-5 pl-5">
@@ -199,7 +199,7 @@ export default function ScheduleWizard(props: Props) {
                         const on = dependsOn.includes(g.metadata.name)
                         return (
                           <button key={g.metadata.name} type="button" onClick={() => setDependsOn(on ? dependsOn.filter(d => d !== g.metadata.name) : [...dependsOn, g.metadata.name])}
-                            className={`px-2.5 py-1 rounded-lg text-xs font-bold border ${on ? 'bg-violet-600 border-violet-600 text-white' : 'bg-white border-slate-200 text-slate-500 hover:border-slate-300'}`}>
+                            className={`px-2.5 py-1 rounded-lg text-xs font-bold border ${on ? 'bg-brand-600 border-brand-600 text-white' : 'bg-white border-slate-200 text-slate-500 hover:border-slate-300'}`}>
                             {g.metadata.name}
                           </button>
                         )
@@ -210,7 +210,7 @@ export default function ScheduleWizard(props: Props) {
                   <div>
                     <div className="text-sm font-bold text-slate-700">Don't wait forever</div>
                     <label className="flex items-center gap-2 text-xs text-slate-600 mt-1">
-                      <input type="checkbox" checked={giveUp} onChange={e => setGiveUp(e.target.checked)} className="accent-indigo-600" />
+                      <input type="checkbox" checked={giveUp} onChange={e => setGiveUp(e.target.checked)} className="accent-brand-600" />
                       Move on if a namespace is not ready after
                       <input type="number" min={1} max={60} value={giveUpMinutes} disabled={!giveUp}
                         onChange={e => setGiveUpMinutes(Math.max(1, Math.min(60, Number(e.target.value) || 10)))}
@@ -222,7 +222,7 @@ export default function ScheduleWizard(props: Props) {
                     <div className="text-sm font-bold text-slate-700">Section</div>
                     <p className="text-[11px] text-slate-500 mb-1">Groups schedules on the page, for example Platform or Environments.</p>
                     <input value={category} onChange={e => setCategory(e.target.value)} placeholder="General" list="schedule-sections"
-                      className="w-56 px-3 py-1.5 text-sm bg-slate-50 border border-slate-200 rounded-lg outline-none focus:border-indigo-500" />
+                      className="w-56 px-3 py-1.5 text-sm bg-slate-50 border border-slate-200 rounded-lg outline-none focus:border-brand-500" />
                     <datalist id="schedule-sections">{categories.map(c => <option key={c} value={c} />)}</datalist>
                   </div>
                 </div>
@@ -235,7 +235,7 @@ export default function ScheduleWizard(props: Props) {
           <span className="flex-1 text-xs font-semibold text-rose-600">{error || (problem && selected.length > 0 ? problem : '')}</span>
           <button onClick={onClose} className="px-4 py-2 rounded-lg text-sm font-bold text-slate-500 hover:bg-slate-100">Cancel</button>
           <button onClick={save} disabled={!!problem || saving}
-            className="px-5 py-2 rounded-lg text-sm font-bold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">
+            className="px-5 py-2 rounded-lg text-sm font-bold bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-40">
             {saving ? 'Saving…' : editing ? 'Save changes' : 'Create schedule'}
           </button>
         </div>

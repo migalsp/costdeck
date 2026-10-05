@@ -6,12 +6,13 @@ import type { ExternalTarget, ScalingConfig, ScalingGroup, ScalingSpec } from '.
 import { usePolling } from '../lib/usePolling'
 import type { NamespaceFinOps } from './Dashboard'
 import ScalingConfigModal from '../components/ScalingConfigModal'
-import ScalingPipelineModal from '../components/ScalingPipelineModal'
 import ScheduleCard from '../components/ScheduleCard'
+import ScheduleDrawer, { type DrawerTab } from '../components/ScheduleDrawer'
 import ScheduleWizard from '../components/ScheduleWizard'
 import { AWSLogo } from '../components/ProviderLogos'
 import { useAuth } from '../lib/auth'
 import OverrideDialog, { type OverrideUntil } from '../components/OverrideDialog'
+import { Button, SectionTitle } from '../components/ui'
 
 type Target = { type: 'group' | 'config'; name: string }
 
@@ -31,9 +32,9 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
   const [error, setError] = useState<string | null>(null);
 
   const [wizard, setWizard] = useState<WizardState | null>(null);
+  // Workload rules (exclusions and workload order) of a single-namespace config.
   const [ordering, setOrdering] = useState<{ name: string; spec: ScalingSpec } | null>(null);
-  const [viewingPipelineGroupName, setViewingPipelineGroupName] = useState<string | null>(null);
-  const [deletingGroupName, setDeletingGroupName] = useState<string | null>(null);
+  const [details, setDetails] = useState<{ kind: 'group' | 'config'; name: string; tab: DrawerTab } | null>(null);
   const [isScalingMap, setIsScalingMap] = useState<Record<string, boolean>>({});
   const [overridePrompt, setOverridePrompt] = useState<Target & { active: boolean; hasSchedule: boolean } | null>(null);
   const [cloudExpanded, setCloudExpanded] = useState(false);
@@ -139,15 +140,14 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
     }
   };
 
-  const confirmDeleteGroup = async () => {
-    if (!deletingGroupName) return;
+  const deleteGroup = async (name: string) => {
     try {
-      await fetch(`/api/scaling/groups/${deletingGroupName}`, { method: 'DELETE' });
+      const res = await fetch(`/api/scaling/groups/${name}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error(await res.text());
+      setDetails(null);
       fetchData();
     } catch (err) {
-      console.error("Failed to delete group", err);
-    } finally {
-      setDeletingGroupName(null);
+      setError(`Could not delete ${name}: ${errorMessage(err)}`);
     }
   };
 
@@ -172,29 +172,27 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
       name={group.metadata.name}
       namespaces={group.spec.namespaces}
       spec={group.spec}
+      generation={group.metadata.generation}
       status={group.status}
       busy={isScalingMap[`group-${group.metadata.name}`]}
       canOperate={can('operator')}
       canAdmin={can('admin')}
+      onOpen={tab => setDetails({ kind: 'group', name: group.metadata.name, tab })}
       onStart={() => prompt('group', group.metadata.name, true, group.spec)}
       onStop={() => prompt('group', group.metadata.name, false, group.spec)}
       onResume={() => handleManualScale('group', group.metadata.name, null)}
       onEdit={() => setWizard({ kind: 'group', existing: group })}
-      onOrder={() => setOrdering({ name: group.metadata.name, spec: { ...group.spec } })}
-      onActivity={() => setViewingPipelineGroupName(group.metadata.name)}
-      onDelete={() => setDeletingGroupName(group.metadata.name)}
-      onSelectNamespace={onSelectNamespace}
     />
   );
 
   const ResourceCard = ({ item }: { item: ExternalTarget }) => (
-    <div className="bg-white border border-slate-200 rounded-2xl p-4 flex flex-col group hover:border-indigo-300 hover:shadow-md transition-all cursor-default relative overflow-hidden">
+    <div className="bg-white border border-slate-200 rounded-xl p-4 flex flex-col group hover:border-brand-300 hover:shadow-md transition-all cursor-default relative overflow-hidden">
       <div className="flex items-center gap-3 min-w-0 mb-3 mt-1">
         <AWSLogo className="grayscale group-hover:grayscale-0 transition-all" />
         <div className="flex flex-col min-w-0">
           <span className="font-bold text-slate-700 text-sm whitespace-nowrap overflow-hidden text-ellipsis">{item.name || item.identifier}</span>
           <div className="flex items-center gap-2">
-            <span className="text-[11px] font-bold text-indigo-500 uppercase tracking-wider">{item.type}</span>
+            <span className="text-[11px] font-bold text-brand-500 uppercase tracking-wider">{item.type}</span>
             {item.status && (
               <span className={`flex items-center gap-1 text-[10px] font-bold uppercase ${item.status === 'available' || item.status === 'running' ? 'text-emerald-500' : item.status === 'stopped' ? 'text-rose-500' : 'text-amber-500'}`}>
                 <span className={`w-1.5 h-1.5 rounded-full ${item.status === 'available' || item.status === 'running' ? 'bg-emerald-500' : item.status === 'stopped' ? 'bg-rose-500' : 'bg-amber-500'}`}></span>
@@ -214,8 +212,8 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
     <div className="p-8 max-w-7xl mx-auto min-h-full">
       <div className="flex flex-wrap justify-between items-start gap-4 mb-8">
         <div>
-          <h1 className="text-3xl font-black text-slate-800 tracking-tight">Scaling</h1>
-          <p className="text-slate-500 mt-1">Scale non-production namespaces to zero when nobody needs them, and bring them back on time.</p>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900 flex items-center gap-2">Scaling</h1>
+          <p className="mt-1 text-sm text-slate-500">Scale non-production namespaces to zero when nobody needs them, and bring them back on time.</p>
           {totalHourly > 0 && (
             <p className="mt-2 inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-emerald-50 border border-emerald-100 text-emerald-700 text-sm font-bold">
               Saving ~{formatMoney(totalHourly, currency)}/h right now (≈ {formatMoney(totalHourly * 730, currency)}/month at this rate)
@@ -223,15 +221,12 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
           )}
         </div>
         {can('admin') && (
-          <button onClick={() => setWizard({ kind: 'group' })}
-            className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 rounded-xl font-bold shadow-lg shadow-indigo-600/20 transition-all">
-            <Plus size={20} /> New schedule
-          </button>
+          <Button variant="primary" icon={<Plus size={16} />} onClick={() => setWizard({ kind: 'group' })}>New schedule</Button>
         )}
       </div>
 
       {error && (
-        <div className="mb-6 p-4 bg-rose-50 border border-rose-100 rounded-2xl flex items-center gap-3 text-rose-600">
+        <div className="mb-6 p-4 bg-rose-50 border border-rose-100 rounded-xl flex items-center gap-3 text-rose-600">
           <div className="flex-1 text-sm font-bold">{error}</div>
           <button onClick={() => setError(null)} className="p-1 hover:bg-rose-100 rounded-full text-rose-400"><Plus size={16} className="rotate-45" /></button>
         </div>
@@ -239,22 +234,22 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
 
       {loading ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {[1, 2, 3].map(i => <div key={i} className="h-64 bg-slate-100 rounded-2xl animate-pulse" />)}
+          {[1, 2, 3].map(i => <div key={i} className="h-64 bg-slate-100 rounded-xl animate-pulse" />)}
         </div>
       ) : (
         <div className="space-y-10">
           {groups.length === 0 && standaloneConfigs.length === 0 ? (
-            <div className="py-14 px-6 border-2 border-dashed border-slate-200 rounded-3xl text-center">
-              <CalendarClock size={40} className="mx-auto text-indigo-400" />
-              <h2 className="mt-3 text-xl font-black text-slate-700">No schedules yet</h2>
+            <div className="py-14 px-6 border-2 border-dashed border-slate-200 rounded-2xl text-center">
+              <CalendarClock size={40} className="mx-auto text-brand-400" />
+              <h2 className="mt-3 text-xl font-bold text-slate-700">No schedules yet</h2>
               <p className="mt-1 text-slate-500 max-w-xl mx-auto">Pick namespaces and the hours they should run. Outside those hours CostDeck scales their workloads to zero and restores them afterwards.</p>
               <div className="mt-6 grid gap-3 sm:grid-cols-3 max-w-3xl mx-auto text-left">
-                <div className="p-4 rounded-xl bg-slate-50"><MoonStar size={18} className="text-indigo-500" /><div className="mt-2 text-sm font-bold text-slate-700">Off at night and at weekends</div><div className="text-xs text-slate-500">Weekdays 08:00–20:00 keeps a dev environment down 64% of the week.</div></div>
-                <div className="p-4 rounded-xl bg-slate-50"><Link2 size={18} className="text-violet-500" /><div className="mt-2 text-sm font-bold text-slate-700">Shared platforms on demand</div><div className="text-xs text-slate-500">A platform can start only when an environment that needs it is running.</div></div>
+                <div className="p-4 rounded-xl bg-slate-50"><MoonStar size={18} className="text-brand-500" /><div className="mt-2 text-sm font-bold text-slate-700">Off at night and at weekends</div><div className="text-xs text-slate-500">Weekdays 08:00–20:00 keeps a dev environment down 64% of the week.</div></div>
+                <div className="p-4 rounded-xl bg-slate-50"><Link2 size={18} className="text-brand-500" /><div className="mt-2 text-sm font-bold text-slate-700">Shared platforms on demand</div><div className="text-xs text-slate-500">A platform can start only when an environment that needs it is running.</div></div>
                 <div className="p-4 rounded-xl bg-slate-50"><Hand size={18} className="text-amber-500" /><div className="mt-2 text-sm font-bold text-slate-700">Override any time</div><div className="text-xs text-slate-500">Start or stop now with one click; the schedule takes over again later.</div></div>
               </div>
               {can('admin') && (
-                <button onClick={() => setWizard({ kind: 'group' })} className="mt-6 px-5 py-2.5 rounded-xl bg-indigo-600 text-white font-bold hover:bg-indigo-700">
+                <button onClick={() => setWizard({ kind: 'group' })} className="mt-6 px-5 py-2.5 rounded-xl bg-brand-600 text-white font-bold hover:bg-brand-700">
                   Create your first schedule
                 </button>
               )}
@@ -264,10 +259,7 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
               {categories.map(category => (
                 <section key={category}>
                   {categories.length > 1 && (
-                    <div className="flex items-center gap-3 mb-4">
-                      <h2 className="text-lg font-bold text-slate-700">{category}</h2>
-                      <div className="h-px flex-1 bg-slate-200/60" />
-                    </div>
+                    <SectionTitle>{category}</SectionTitle>
                   )}
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                     {groups.filter(g => (g.spec.category || 'General') === category).map(groupCard)}
@@ -277,10 +269,7 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
 
               {standaloneConfigs.length > 0 && (
                 <section>
-                  <div className="flex items-center gap-3 mb-4">
-                    <h2 className="text-lg font-bold text-slate-700">Single-namespace schedules</h2>
-                    <div className="h-px flex-1 bg-slate-200/60" />
-                  </div>
+                  <SectionTitle>Single-namespace schedules</SectionTitle>
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                     {standaloneConfigs.map(config => (
                       <ScheduleCard
@@ -288,16 +277,16 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
                         name={config.spec.targetNamespace}
                         namespaces={[config.spec.targetNamespace]}
                         spec={config.spec}
+                        generation={config.metadata.generation}
                         status={config.status}
                         busy={isScalingMap[`config-${config.metadata.name}`]}
                         canOperate={can('operator')}
                         canAdmin={can('admin')}
+                        onOpen={() => setDetails({ kind: 'config', name: config.metadata.name, tab: 'overview' })}
                         onStart={() => prompt('config', config.metadata.name, true, config.spec)}
                         onStop={() => prompt('config', config.metadata.name, false, config.spec)}
                         onResume={() => handleManualScale('config', config.metadata.name, null)}
                         onEdit={() => setWizard({ kind: 'config', existing: config })}
-                        onOrder={() => setOrdering({ name: config.metadata.name, spec: config.spec })}
-                        onSelectNamespace={onSelectNamespace}
                       />
                     ))}
                   </div>
@@ -308,18 +297,14 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
 
           {unscheduled.length > 0 && (
             <section>
-              <div className="flex items-center gap-3 mb-3">
-                <h2 className="text-lg font-bold text-slate-700">Not scheduled yet</h2>
-                <span className="text-xs text-slate-400">always on</span>
-                <div className="h-px flex-1 bg-slate-200/60" />
-              </div>
+              <SectionTitle aside={<span className="text-xs text-slate-400">always on until you give them a schedule</span>}>Not scheduled yet</SectionTitle>
               <div className="flex flex-wrap gap-2">
                 {unscheduled.map(ns => (
                   <div key={ns} className="flex items-center rounded-xl border border-slate-200 bg-white overflow-hidden">
-                    <button onClick={() => onSelectNamespace(ns)} className="px-3 py-1.5 text-sm font-semibold text-slate-600 hover:text-indigo-600">{ns}</button>
+                    <button onClick={() => onSelectNamespace(ns)} className="px-3 py-1.5 text-sm font-semibold text-slate-600 hover:text-brand-600">{ns}</button>
                     {can('admin') && (
                       <button onClick={() => setWizard({ kind: 'group', initialNamespaces: [ns] })} title={`Schedule ${ns}`}
-                        className="px-2 py-1.5 border-l border-slate-200 text-slate-400 hover:bg-indigo-50 hover:text-indigo-600">
+                        className="px-2 py-1.5 border-l border-slate-200 text-slate-400 hover:bg-brand-50 hover:text-brand-600">
                         <Plus size={14} />
                       </button>
                     )}
@@ -330,20 +315,23 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
           )}
 
           <section>
-            <button onClick={() => setCloudExpanded(!cloudExpanded)} className="w-full flex items-center gap-3 mb-4 text-left">
-              <Cloud size={18} className="text-amber-500" />
-              <h2 className="text-lg font-bold text-slate-700">Cloud resources</h2>
-              <span className="text-xs text-slate-400">{Object.values(discoveredResources).flat().length} discovered · add them to a schedule under Start order</span>
-              <div className="h-px flex-1 bg-slate-200/60" />
-              {cloudExpanded ? <ChevronUp size={18} className="text-slate-400" /> : <ChevronDown size={18} className="text-slate-400" />}
+            <button onClick={() => setCloudExpanded(!cloudExpanded)} className="w-full text-left">
+              <SectionTitle aside={
+                <span className="inline-flex items-center gap-2 text-xs text-slate-400">
+                  {Object.values(discoveredResources).flat().length} discovered · add them to a schedule under Start order
+                  {cloudExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                </span>
+              }>
+                <span className="inline-flex items-center gap-2"><Cloud size={16} className="text-amber-500" /> Cloud resources</span>
+              </SectionTitle>
             </button>
             {cloudExpanded && (
               Object.keys(discoveredResources).length > 0 ? (
                 <div className="space-y-4">
-                  <div className="flex p-1 bg-slate-100/80 rounded-2xl w-fit">
+                  <div className="flex p-1 bg-slate-100/80 rounded-xl w-fit">
                     {Object.keys(discoveredResources).map(tab => (
                       <button key={tab} onClick={() => setActiveDiscoveryTab(tab)}
-                        className={`flex items-center gap-2 px-5 py-1.5 rounded-xl text-sm font-bold transition-all ${discoveryTab === tab ? 'bg-white text-indigo-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
+                        className={`flex items-center gap-2 px-5 py-1.5 rounded-xl text-sm font-bold transition-all ${discoveryTab === tab ? 'bg-white text-brand-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
                         {tab === 'Databases' ? <Database size={16} /> : <Layers size={16} />}
                         {tab} <span className="text-[10px] text-slate-400">{discoveredResources[tab].length}</span>
                       </button>
@@ -373,19 +361,6 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
         />
       )}
 
-      {deletingGroupName && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[200] flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-8 text-center">
-            <h3 className="text-xl font-black text-slate-800 mb-2">Delete {deletingGroupName}?</h3>
-            <p className="text-slate-500 text-sm mb-6">Its namespaces stay at their current size and are no longer scaled on a schedule.</p>
-            <div className="flex gap-3">
-              <button onClick={() => setDeletingGroupName(null)} className="flex-1 px-4 py-3 rounded-xl font-bold text-slate-500 hover:bg-slate-50 border border-slate-200">Cancel</button>
-              <button onClick={confirmDeleteGroup} className="flex-1 px-4 py-3 rounded-xl bg-rose-500 text-white font-bold hover:bg-rose-600">Delete</button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {overridePrompt && (
         <OverrideDialog
           name={overridePrompt.name}
@@ -411,12 +386,35 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
         />
       )}
 
-      {viewingPipelineGroupName && groups.find(g => g.metadata.name === viewingPipelineGroupName) && (
-        <ScalingPipelineModal
-          group={groups.find(g => g.metadata.name === viewingPipelineGroupName)!}
-          onClose={() => setViewingPipelineGroupName(null)}
-        />
-      )}
+      {details && (() => {
+        const group = details.kind === 'group' ? groups.find(g => g.metadata.name === details.name) : undefined;
+        const config = details.kind === 'config' ? policies.find(c => c.metadata.name === details.name) : undefined;
+        if (!group && !config) return null;
+        const kind = details.kind;
+        const name = details.name;
+        const spec = (group || config)!.spec;
+        return (
+          <ScheduleDrawer
+            target={group ? { kind: 'group', group } : { kind: 'config', config: config! }}
+            groups={groups}
+            discovered={Object.values(discoveredResources).flat()}
+            tab={details.tab}
+            onTab={tab => setDetails({ ...details, tab })}
+            busy={isScalingMap[`${kind}-${name}`]}
+            canOperate={can('operator')}
+            canAdmin={can('admin')}
+            onClose={() => setDetails(null)}
+            onStart={() => prompt(kind, name, true, spec)}
+            onStop={() => prompt(kind, name, false, spec)}
+            onResume={() => handleManualScale(kind, name, null)}
+            onEdit={() => group ? setWizard({ kind: 'group', existing: group }) : setWizard({ kind: 'config', existing: config! })}
+            onDelete={group ? () => deleteGroup(name) : undefined}
+            onRules={config ? () => setOrdering({ name, spec: config.spec }) : undefined}
+            onSaved={fetchData}
+            onSelectNamespace={ns => { setDetails(null); onSelectNamespace(ns); }}
+          />
+        );
+      })()}
     </div>
   );
 };

@@ -894,9 +894,9 @@ const apiGroups: { section: string; items: Endpoint[] }[] = [
 
 const methodColors: Record<string, string> = {
   GET: 'bg-emerald-500/10 text-emerald-600 border-emerald-200',
-  POST: 'bg-blue-500/10 text-blue-600 border-blue-200',
+  POST: 'bg-brand-500/10 text-brand-600 border-brand-200',
   PUT: 'bg-amber-500/10 text-amber-600 border-amber-200',
-  DELETE: 'bg-red-500/10 text-red-600 border-red-200',
+  DELETE: 'bg-rose-500/10 text-rose-600 border-rose-200',
 }
 
 function CodeBlock({ code, label }: { code: string, label: string }) {
@@ -936,8 +936,8 @@ export default function ApiReference() {
       {/* Documentation Sidebar */}
       <div className="w-64 min-w-[256px] border-r border-slate-200 bg-slate-50/50 flex flex-col h-full overflow-y-auto">
         <div className="p-6 pb-2">
-          <h2 className="text-lg font-black tracking-tight text-slate-900 flex items-center gap-2">
-            <BookOpen className="text-blue-500" size={20} />
+          <h2 className="text-lg font-bold tracking-tight text-slate-900 flex items-center gap-2">
+            <BookOpen className="text-brand-500" size={20} />
             Documentation
           </h2>
           <p className="text-[11px] text-slate-400 mt-1">Everything you need to know about CostDeck</p>
@@ -945,18 +945,18 @@ export default function ApiReference() {
 
         <div className="px-4 py-4 space-y-6">
           <div>
-            <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2 px-2">Guides</h3>
+            <h3 className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2 px-2">Guides</h3>
             <div className="space-y-0.5">
               {guides.map(g => (
                 <button
                   key={g.id}
                   onClick={() => setActiveTab(g.id)}
                   className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors text-[13px] font-semibold ${activeTab === g.id
-                      ? 'bg-blue-50 text-blue-600'
+                      ? 'bg-brand-50 text-brand-600'
                       : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
                     }`}
                 >
-                  <span className={activeTab === g.id ? 'text-blue-500' : 'text-slate-400'}>{g.icon}</span>
+                  <span className={activeTab === g.id ? 'text-brand-500' : 'text-slate-400'}>{g.icon}</span>
                   {g.title}
                 </button>
               ))}
@@ -964,16 +964,16 @@ export default function ApiReference() {
           </div>
 
           <div>
-            <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2 px-2">Reference</h3>
+            <h3 className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2 px-2">Reference</h3>
             <div className="space-y-0.5">
               <button
                 onClick={() => setActiveTab('api-docs')}
                 className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors text-[13px] font-semibold ${activeTab === 'api-docs'
-                    ? 'bg-blue-50 text-blue-600'
+                    ? 'bg-brand-50 text-brand-600'
                     : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
                   }`}
               >
-                <Code2 size={18} className={activeTab === 'api-docs' ? 'text-blue-500' : 'text-slate-400'} />
+                <Code2 size={18} className={activeTab === 'api-docs' ? 'text-brand-500' : 'text-slate-400'} />
                 REST API
               </button>
             </div>
@@ -989,11 +989,11 @@ export default function ApiReference() {
           {!isApiMode && currentGuide && (
             <div>
               <div className="flex items-center gap-3 mb-8">
-                <div className="w-10 h-10 bg-blue-50 border border-blue-100 rounded-xl flex items-center justify-center text-blue-500">
+                <div className="w-10 h-10 bg-brand-50 border border-brand-100 rounded-xl flex items-center justify-center text-brand-500">
                   {currentGuide.icon}
                 </div>
                 <div>
-                  <h1 className="text-2xl font-black tracking-tight text-slate-900">{currentGuide.title}</h1>
+                  <h1 className="text-2xl font-bold tracking-tight text-slate-900">{currentGuide.title}</h1>
                 </div>
               </div>
 
@@ -1018,12 +1018,12 @@ export default function ApiReference() {
                   return (
                     <>
                       {prevItem ? (
-                        <button onClick={() => setActiveTab(prevItem)} className="text-sm text-blue-600 font-semibold hover:text-blue-700">
+                        <button onClick={() => setActiveTab(prevItem)} className="text-sm text-brand-600 font-semibold hover:text-brand-700">
                           ← {getName(prevItem)}
                         </button>
                       ) : <div />}
                       {nextItem ? (
-                        <button onClick={() => setActiveTab(nextItem)} className="text-sm text-blue-600 font-semibold hover:text-blue-700">
+                        <button onClick={() => setActiveTab(nextItem)} className="text-sm text-brand-600 font-semibold hover:text-brand-700">
                           {getName(nextItem)} →
                         </button>
                       ) : <div />}
@@ -1039,10 +1039,10 @@ export default function ApiReference() {
             <div>
               <div className="mb-8">
                 <div className="flex items-center gap-3 mb-4">
-                  <div className="w-10 h-10 bg-blue-50 border border-blue-100 rounded-xl flex items-center justify-center text-blue-500">
+                  <div className="w-10 h-10 bg-brand-50 border border-brand-100 rounded-xl flex items-center justify-center text-brand-500">
                     <Code2 size={18} />
                   </div>
-                  <h1 className="text-2xl font-black tracking-tight text-slate-900">REST API Reference</h1>
+                  <h1 className="text-2xl font-bold tracking-tight text-slate-900">REST API Reference</h1>
                 </div>
                 <p className="text-slate-500 text-sm mb-4">Interactive documentation for all CostDeck API endpoints.</p>
                 <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl text-sm text-slate-600">
@@ -1055,7 +1055,7 @@ export default function ApiReference() {
 
               {apiGroups.map(group => (
                 <div key={group.section} className="mb-10">
-                  <h3 className="text-sm font-black uppercase tracking-widest text-slate-400 mb-4 px-1">{group.section}</h3>
+                  <h3 className="text-sm font-bold uppercase tracking-widest text-slate-400 mb-4 px-1">{group.section}</h3>
                   <div className="space-y-3">
                     {group.items.map(ep => {
                       const key = `${ep.method}:${ep.path}`
@@ -1066,7 +1066,7 @@ export default function ApiReference() {
                             onClick={() => setExpandedApi(isOpen ? null : key)}
                             className="w-full flex items-center gap-4 p-4 text-left bg-slate-50/50 hover:bg-slate-50 transition-colors"
                           >
-                            <span className={`w-16 text-center px-2 py-1 rounded-md text-xs font-black border ${methodColors[ep.method] || 'bg-slate-100 text-slate-600'}`}>
+                            <span className={`w-16 text-center px-2 py-1 rounded-md text-xs font-bold border ${methodColors[ep.method] || 'bg-slate-100 text-slate-600'}`}>
                               {ep.method}
                             </span>
                             <code className="text-sm font-mono text-slate-700 flex-1">{ep.path}</code>
@@ -1093,7 +1093,7 @@ export default function ApiReference() {
 
               {/* Back navigation */}
               <div className="mt-12 pt-6 border-t border-slate-100">
-                <button onClick={() => setActiveTab('auth')} className="text-sm text-blue-600 font-semibold hover:text-blue-700">
+                <button onClick={() => setActiveTab('auth')} className="text-sm text-brand-600 font-semibold hover:text-brand-700">
                   ← Authentication
                 </button>
               </div>

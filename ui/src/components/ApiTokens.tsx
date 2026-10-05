@@ -55,7 +55,7 @@ export default function ApiTokens() {
   }
 
   return (
-    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4">
+    <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 space-y-4">
       <div className="flex items-center gap-3">
         <div className="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center"><KeyRound size={18} className="text-slate-600" /></div>
         <div>
@@ -101,7 +101,7 @@ export default function ApiTokens() {
           <Plus size={14} /> Create
         </button>
       </div>
-      {error && <p className="text-xs text-red-500">{error}</p>}
+      {error && <p className="text-xs text-rose-500">{error}</p>}
 
       {tokens.length > 0 && (
         <table className="w-full text-xs">
@@ -118,7 +118,7 @@ export default function ApiTokens() {
                 <td title={t.createdBy}>{new Date(t.createdAt).toLocaleDateString()}</td>
                 <td>{t.expiresAt ? new Date(t.expiresAt).toLocaleDateString() : 'never'}</td>
                 <td className="text-right">
-                  <button onClick={() => revoke(t.name)} className="p-1 text-slate-300 hover:text-red-500" title="Revoke"><Trash2 size={14} /></button>
+                  <button onClick={() => revoke(t.name)} className="p-1 text-slate-300 hover:text-rose-500" title="Revoke"><Trash2 size={14} /></button>
                 </td>
               </tr>
             ))}

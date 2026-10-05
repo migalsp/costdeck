@@ -1,4 +1,4 @@
-import type { ScalingSchedule, ScalingSpec, ScheduleStatus } from './types'
+import type { Condition, ScalingSchedule, ScalingSpec, ScheduleStatus } from './types'
 
 // Day indexes follow the operator: Sunday = 0.
 export const DAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -200,23 +200,32 @@ export function when(iso: string, now = new Date()): string {
   return t.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
 
-export type Tone = 'up' | 'down' | 'busy' | 'manual' | 'blocked'
+export type StatusTone = 'up' | 'down' | 'busy' | 'manual' | 'blocked'
 
 export interface StatusLine {
-  tone: Tone
+  tone: StatusTone
   title: string
   detail?: string
 }
 
 interface StatusInput {
   phase?: string
-  status?: ScheduleStatus & { requiredBy?: string[]; namespacesReady?: number; namespacesTotal?: number }
+  status?: ScheduleStatus & { requiredBy?: string[]; namespacesReady?: number; namespacesTotal?: number; conditions?: Condition[] }
   dependsOn?: string[]
   activeUntil?: string
+  generation?: number
+}
+
+// pendingChange reports whether the operator has not yet acted on the latest spec, so the
+// status still describes the previous one.
+export function pendingChange(generation: number | undefined, conditions: Condition[] | undefined): boolean {
+  const ready = conditions?.find(c => c.type === 'Ready')
+  return !!generation && !!ready?.observedGeneration && ready.observedGeneration < generation
 }
 
 // statusLine answers "is it up, who decided, and what happens next?" in plain words.
-export function statusLine({ phase, status, dependsOn, activeUntil }: StatusInput): StatusLine {
+export function statusLine({ phase, status, dependsOn, activeUntil, generation }: StatusInput): StatusLine {
+  if (pendingChange(generation, status?.conditions)) return { tone: 'busy', title: 'Applying changes…' }
   const next = status?.nextTransition
   const progress = status?.namespacesTotal ? ` · ${status.namespacesReady || 0} of ${status.namespacesTotal} ready` : ''
   switch (phase) {

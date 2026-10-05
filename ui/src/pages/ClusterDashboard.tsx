@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Server, Cpu, Database, Activity, DollarSign, Globe } from 'lucide-react'
+import { Server, Cpu, Database, DollarSign, Globe } from 'lucide-react'
 import InfoTooltip from '../components/InfoTooltip'
 import type { CostEstimate } from '../lib/types'
 
@@ -117,14 +117,14 @@ export default function ClusterDashboard() {
   if (!data) return <div className="p-8">No data available</div>
 
   const getUsageColor = (percent: number) => {
-    if (percent > 90) return 'bg-red-500'
+    if (percent > 90) return 'bg-rose-500'
     if (percent > 70) return 'bg-orange-500'
     if (percent > 50) return 'bg-amber-400'
     return 'bg-emerald-500'
   }
 
   const getUsageText = (percent: number) => {
-    if (percent > 90) return 'text-red-600'
+    if (percent > 90) return 'text-rose-600'
     if (percent > 70) return 'text-orange-600'
     return 'text-emerald-600'
   }
@@ -135,13 +135,12 @@ export default function ClusterDashboard() {
       <div className="flex justify-between items-end">
         <div>
           <div className="flex items-center gap-2">
-            <h1 className="text-3xl font-black text-slate-900 tracking-tight flex items-center gap-3 uppercase">
-              <Activity className="text-emerald-500" size={32} />
+            <h1 className="text-2xl font-bold tracking-tight text-slate-900 flex items-center gap-2">
               Cluster Node Map
             </h1>
             <InfoTooltip content="This view shows all nodes in your cluster. Usage bars use a heatmap color scheme: Green (<50%), Amber (50-70%), Orange (70-90%), and Red (>90%). It displays both 'Requested' (allocation) and 'Actual Usage' (live metrics)." position="bottom" />
           </div>
-          <p className="text-slate-500 mt-1 font-medium italic">Real-time infrastructure capacity and heatmap utilization</p>
+          <p className="mt-1 text-sm text-slate-500">Real-time infrastructure capacity and heatmap utilization</p>
         </div>
         <div className="flex items-center gap-3 h-full">
           {/* Total Cost Badge (Left) */}
@@ -154,7 +153,7 @@ export default function ClusterDashboard() {
               {clusterCost ? (
                 <InfoTooltip content={`Pricing Source: ${clusterCost.determinedBy}`} position="bottom">
                   <div className="flex items-baseline gap-1.5 cursor-text">
-                    <span className="font-black text-sm leading-none">${clusterCost.monthlyCost.toFixed(2)}<span className="text-[10px] font-bold text-emerald-700/70">/mo</span></span>
+                    <span className="font-bold text-sm leading-none">${clusterCost.monthlyCost.toFixed(2)}<span className="text-[10px] font-bold text-emerald-700/70">/mo</span></span>
                     <span className="text-[10px] font-bold text-emerald-600/70 leading-none">${clusterCost.hourlyCost.toFixed(4)}/hr</span>
                   </div>
                 </InfoTooltip>
@@ -171,7 +170,7 @@ export default function ClusterDashboard() {
             </div>
             <div className="flex flex-col justify-center">
               <span className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-0.5">K8s Version</span>
-              <span className="font-mono text-sm font-black leading-none">{data.k8sVersion}</span>
+              <span className="font-mono text-sm font-bold leading-none">{data.k8sVersion}</span>
             </div>
           </div>
         </div>
@@ -179,26 +178,26 @@ export default function ClusterDashboard() {
 
       {/* Cluster Overview Stats */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 flex items-center gap-5">
-          <div className="w-14 h-14 bg-emerald-50 rounded-2xl flex items-center justify-center text-emerald-600">
+        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-5">
+          <div className="w-14 h-14 bg-emerald-50 rounded-xl flex items-center justify-center text-emerald-600">
             <Server size={28} />
           </div>
           <div>
             <p className="text-sm font-bold text-slate-400 uppercase tracking-wider">Nodes</p>
-            <p className="text-3xl font-black text-slate-900">{data.nodes.length}</p>
+            <p className="text-2xl font-bold tracking-tight text-slate-900 flex items-center gap-2">{data.nodes.length}</p>
           </div>
         </div>
 
-        <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100">
+        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
           <div className="flex justify-between items-start mb-4">
             <div className="flex items-center gap-3">
-              <div className="p-2 bg-blue-50 text-blue-600 rounded-lg">
+              <div className="p-2 bg-brand-50 text-brand-600 rounded-lg">
                 <Cpu size={20} />
               </div>
               <span className="text-sm font-bold text-slate-400 uppercase tracking-wider">Total CPU</span>
             </div>
             <div className="text-right">
-              <div className={`text-lg font-black ${getUsageText((data.totalRequested?.cpu / data.totalCapacity.cpu) * 100 || 0)}`}>
+              <div className={`text-lg font-bold ${getUsageText((data.totalRequested?.cpu / data.totalCapacity.cpu) * 100 || 0)}`}>
                 {((data.totalRequested?.cpu / data.totalCapacity.cpu) * 100 || 0).toFixed(1)}% Req
               </div>
               <div className={`text-xs font-bold ${getUsageText((data.totalUsage.cpu / data.totalCapacity.cpu) * 100)}`}>
@@ -224,16 +223,16 @@ export default function ClusterDashboard() {
 
 
 
-        <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100">
+        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
           <div className="flex justify-between items-start mb-4">
             <div className="flex items-center gap-3">
-              <div className="p-2 bg-purple-50 text-purple-600 rounded-lg">
+              <div className="p-2 bg-brand-50 text-brand-600 rounded-lg">
                 <Database size={20} />
               </div>
               <span className="text-sm font-bold text-slate-400 uppercase tracking-wider">Total RAM</span>
             </div>
             <div className="text-right">
-              <div className={`text-lg font-black ${getUsageText((data.totalRequested?.mem / data.totalCapacity.mem) * 100 || 0)}`}>
+              <div className={`text-lg font-bold ${getUsageText((data.totalRequested?.mem / data.totalCapacity.mem) * 100 || 0)}`}>
                 {((data.totalRequested?.mem / data.totalCapacity.mem) * 100 || 0).toFixed(1)}% Req
               </div>
               <div className={`text-xs font-bold ${getUsageText((data.totalUsage.mem / data.totalCapacity.mem) * 100)}`}>
@@ -259,17 +258,17 @@ export default function ClusterDashboard() {
       </div>
 
       {/* Nodes Table/Grid */}
-      <div className="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden">
+      <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
         <div className="px-8 py-6 border-b border-slate-50 flex items-center justify-between bg-slate-50/50">
           <h2 className="font-bold text-slate-800 tracking-tight">Node breakdown</h2>
-          <span className="text-[10px] font-black bg-slate-200 text-slate-600 px-2 py-1 rounded-md uppercase tracking-tighter">
+          <span className="text-[10px] font-bold bg-slate-200 text-slate-600 px-2 py-1 rounded-md uppercase tracking-tighter">
             {data.nodes.length} Active
           </span>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left">
             <thead>
-              <tr className="text-[10px] font-black text-slate-400 uppercase tracking-widest bg-slate-50/30">
+              <tr className="text-[10px] font-bold text-slate-400 uppercase tracking-widest bg-slate-50/30">
                 <th className="px-8 py-4">Node Name</th>
                 <th className="px-4 py-4 text-center">Status</th>
                 <th className="px-4 py-4">Est. Cost / Hour</th>
@@ -296,8 +295,8 @@ export default function ClusterDashboard() {
                       </div>
                     </td>
                     <td className="px-4 py-5 text-center">
-                      <span className={`px-2 py-1 rounded-md text-[10px] font-black uppercase tracking-tight ${
-                        node.status === 'Ready' ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'
+                      <span className={`px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-tight ${
+                        node.status === 'Ready' ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'
                       }`}>
                         {node.status}
                       </span>
@@ -315,7 +314,7 @@ export default function ClusterDashboard() {
                     <td className="px-4 py-5 w-[25%]">
                       <div className="flex flex-col gap-3 pr-4">
                         <div className="flex flex-col gap-1">
-                          <div className="flex justify-between text-[9px] font-black uppercase tracking-wider">
+                          <div className="flex justify-between text-[9px] font-bold uppercase tracking-wider">
                             <span className="text-slate-400">Requested</span>
                             <span className={getUsageText(cpuReqPct)}>{cpuReqPct.toFixed(1)}% <span className="text-slate-400">({(node.cpu.requested || 0).toFixed(2)} / {node.cpu.capacity} cores)</span></span>
                           </div>
@@ -324,7 +323,7 @@ export default function ClusterDashboard() {
                           </div>
                         </div>
                         <div className="flex flex-col gap-1">
-                          <div className="flex justify-between text-[9px] font-black uppercase tracking-wider">
+                          <div className="flex justify-between text-[9px] font-bold uppercase tracking-wider">
                             <span className="text-slate-400">Actual Usage</span>
                             <span className={getUsageText(cpuUsePct)}>{cpuUsePct.toFixed(1)}% <span className="text-slate-400">({node.cpu.used.toFixed(2)} cores)</span></span>
                           </div>
@@ -337,7 +336,7 @@ export default function ClusterDashboard() {
                     <td className="px-4 py-5 w-[25%]">
                       <div className="flex flex-col gap-3 pr-4">
                         <div className="flex flex-col gap-1">
-                          <div className="flex justify-between text-[9px] font-black uppercase tracking-wider">
+                          <div className="flex justify-between text-[9px] font-bold uppercase tracking-wider">
                             <span className="text-slate-400">Requested</span>
                             <span className={getUsageText(memReqPct)}>{memReqPct.toFixed(1)}% <span className="text-slate-400">{((node.mem.requested || 0) / 1024 / 1024 / 1024).toFixed(1)} / {(node.mem.capacity / 1024 / 1024 / 1024).toFixed(0)} GiB</span></span>
                           </div>
@@ -346,7 +345,7 @@ export default function ClusterDashboard() {
                           </div>
                         </div>
                         <div className="flex flex-col gap-1">
-                          <div className="flex justify-between text-[9px] font-black uppercase tracking-wider">
+                          <div className="flex justify-between text-[9px] font-bold uppercase tracking-wider">
                             <span className="text-slate-400">Actual Usage</span>
                             <span className={getUsageText(memUsePct)}>{memUsePct.toFixed(1)}% <span className="text-slate-400">{(node.mem.used / 1024 / 1024 / 1024).toFixed(1)} GiB</span></span>
                           </div>

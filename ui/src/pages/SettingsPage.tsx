@@ -1,12 +1,13 @@
 import { useState, useCallback } from 'react'
 import {
-  Settings, Cloud, Bot, MessageSquare, Plus, Trash2, RefreshCw,
+  Cloud, Bot, MessageSquare, Plus, Trash2, RefreshCw,
   CheckCircle2, XCircle, AlertTriangle, Eye, EyeOff, ChevronDown,
   ChevronUp, Sparkles, ExternalLink, Activity, Plug, Shield
 } from 'lucide-react'
 import { AWSLogo, AzureLogo, GCPLogo, WebexLogo } from '../components/ProviderLogos'
 import ApiTokens from '../components/ApiTokens'
 import { usePolling } from '../lib/usePolling'
+import { Button, Tabs } from '../components/ui'
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -122,7 +123,7 @@ const StatusBadge = ({ connected, error }: { connected: boolean; error?: string 
   <div className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${connected
       ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200'
       : error
-        ? 'bg-red-50 text-red-600 ring-1 ring-red-200'
+        ? 'bg-rose-50 text-rose-600 ring-1 ring-rose-200'
         : 'bg-slate-100 text-slate-500 ring-1 ring-slate-200'
     }`}>
     {connected ? <CheckCircle2 size={12} /> : error ? <XCircle size={12} /> : <AlertTriangle size={12} />}
@@ -131,7 +132,7 @@ const StatusBadge = ({ connected, error }: { connected: boolean; error?: string 
 )
 
 const ComingSoonBadge = () => (
-  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider bg-violet-50 text-violet-600 ring-1 ring-violet-200">
+  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider bg-brand-50 text-brand-600 ring-1 ring-brand-200">
     <Sparkles size={10} />
     Coming Soon
   </span>
@@ -185,7 +186,7 @@ const TagEditor = ({ tags, onChange }: { tags: Record<string, string>; onChange:
             <span className="font-bold">{k}</span>
             <span className="text-emerald-400">=</span>
             <span>{v}</span>
-            <button onClick={() => removeTag(k)} className="ml-1 text-emerald-400 hover:text-red-500 transition-colors">
+            <button onClick={() => removeTag(k)} className="ml-1 text-emerald-400 hover:text-rose-500 transition-colors">
               <Trash2 size={12} />
             </button>
           </div>
@@ -242,7 +243,7 @@ const ProviderCard = ({
   onToggle: (v: boolean) => void; comingSoon?: boolean; expanded: boolean;
   onExpand: () => void; status?: ProviderStatus
 }) => (
-  <div className={`bg-white rounded-2xl border shadow-sm transition-all duration-300 ${enabled ? 'border-emerald-200 ring-1 ring-emerald-100' : 'border-slate-200'
+  <div className={`bg-white rounded-xl border shadow-sm transition-all duration-300 ${enabled ? 'border-emerald-200 ring-1 ring-emerald-100' : 'border-slate-200'
     }`}>
     <div
       className="flex items-center justify-between p-5 cursor-pointer select-none"
@@ -662,52 +663,40 @@ export default function SettingsPage() {
       {/* Header */}
       <div className="flex justify-between items-center mb-8">
         <div>
-          <h2 className="text-3xl font-bold tracking-tight text-slate-800 flex items-center gap-3">
-            <Settings className="text-emerald-500" size={32} />
+          <h2 className="text-2xl font-bold tracking-tight text-slate-900 flex items-center gap-2">
             Settings
           </h2>
-          <p className="text-slate-500 mt-1">Configure providers, integrations, and credentials</p>
+          <p className="mt-1 text-sm text-slate-500">Configure providers, integrations, and credentials</p>
         </div>
         <div className="flex items-center gap-3">
           {saveMessage && (
-            <span className={`text-xs font-bold px-3 py-1.5 rounded-lg animate-in fade-in duration-300 ${saveMessage.includes('success') ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'
+            <span className={`text-xs font-bold px-3 py-1.5 rounded-lg animate-in fade-in duration-300 ${saveMessage.includes('success') ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'
               }`}>
               {saveMessage}
             </span>
           )}
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            className="flex items-center gap-2 px-5 py-2.5 bg-emerald-500 text-white rounded-xl shadow-lg shadow-emerald-500/20 hover:bg-emerald-600 transition-all font-bold text-sm disabled:opacity-50"
-          >
-            {saving ? <RefreshCw size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}
-            Save Changes
-          </button>
+          <Button variant="primary" onClick={handleSave} disabled={saving}
+            icon={saving ? <RefreshCw size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}>
+            Save changes
+          </Button>
         </div>
       </div>
 
       {/* Section Tabs */}
-      <div className="flex gap-1 mb-6 bg-slate-100 p-1 rounded-xl w-fit">
-        {[
-          { id: 'providers', icon: <Cloud size={16} />, label: 'Cloud Providers' },
-          { id: 'monitoring', icon: <Activity size={16} />, label: 'Monitoring' },
-          { id: 'ai', icon: <Bot size={16} />, label: 'AI Models' },
-          { id: 'messengers', icon: <MessageSquare size={16} />, label: 'Messengers' },
-          { id: 'mcp', icon: <Plug size={16} />, label: 'MCP Server' },
-          { id: 'access', icon: <Shield size={16} />, label: 'Access & SSO' },
-          { id: 'features', icon: <Sparkles size={16} />, label: 'Features' },
-        ].map(tab => (
-          <button
-            key={tab.id}
-            onClick={() => setExpandedSection(tab.id)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all ${expandedSection === tab.id
-                ? 'bg-white text-slate-800 shadow-sm'
-                : 'text-slate-500 hover:text-slate-700'
-              }`}
-          >
-            {tab.icon} {tab.label}
-          </button>
-        ))}
+      <div className="mb-6 overflow-x-auto">
+        <Tabs
+          value={expandedSection}
+          onChange={setExpandedSection}
+          tabs={[
+            { id: 'providers', icon: <Cloud size={14} />, label: 'Cloud providers' },
+            { id: 'monitoring', icon: <Activity size={14} />, label: 'Monitoring' },
+            { id: 'ai', icon: <Bot size={14} />, label: 'AI models' },
+            { id: 'messengers', icon: <MessageSquare size={14} />, label: 'Messengers' },
+            { id: 'mcp', icon: <Plug size={14} />, label: 'MCP server' },
+            { id: 'access', icon: <Shield size={14} />, label: 'Access & SSO' },
+            { id: 'features', icon: <Sparkles size={14} />, label: 'Features' },
+          ].map(t => ({ id: t.id, label: <span className="inline-flex items-center gap-1.5 whitespace-nowrap">{t.icon}{t.label}</span> }))}
+        />
       </div>
 
       {/* ─── Cloud Providers Section ─────────────────────────────────────── */}
@@ -778,7 +767,7 @@ export default function SettingsPage() {
                   Test Connection
                 </button>
                 {testResult?.provider === 'aws' && (
-                  <span className={`text-xs font-bold flex items-center gap-1 ${testResult.connected ? 'text-emerald-600' : 'text-red-500'}`}>
+                  <span className={`text-xs font-bold flex items-center gap-1 ${testResult.connected ? 'text-emerald-600' : 'text-rose-500'}`}>
                     {testResult.connected ? <CheckCircle2 size={14} /> : <XCircle size={14} />}
                     {testResult.connected ? 'Connection successful' : testResult.error || 'Connection failed'}
                   </span>
@@ -864,16 +853,16 @@ export default function SettingsPage() {
       {expandedSection === 'monitoring' && (
         <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
           <SectionHeader
-            icon={<Activity className="text-orange-500" size={20} />}
+            icon={<Activity className="text-amber-500" size={20} />}
             title="Monitoring"
             subtitle="Configure metrics data source for namespace insights and optimization"
           />
 
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
             <div className="flex items-center justify-between mb-6">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-orange-500/10 flex items-center justify-center">
-                  <Activity className="text-orange-500" size={20} />
+                <div className="w-10 h-10 rounded-xl bg-amber-500/10 flex items-center justify-center">
+                  <Activity className="text-amber-500" size={20} />
                 </div>
                 <div>
                   <span className="font-bold text-slate-800">VictoriaMetrics</span>
@@ -891,7 +880,7 @@ export default function SettingsPage() {
                 )}
                 <label className="relative inline-flex items-center cursor-pointer">
                   <input type="checkbox" checked={vmEnabled} onChange={e => setVmEnabled(e.target.checked)} className="sr-only peer" />
-                  <div className={`w-11 h-6 rounded-full ${vmEnabled ? 'bg-orange-500' : 'bg-slate-300'}`}>
+                  <div className={`w-11 h-6 rounded-full ${vmEnabled ? 'bg-amber-500' : 'bg-slate-300'}`}>
                     <div className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-md transition-transform ${vmEnabled ? 'translate-x-5' : 'translate-x-0'}`} />
                   </div>
                 </label>
@@ -900,9 +889,9 @@ export default function SettingsPage() {
 
             <div className={`space-y-5 ${!vmEnabled ? 'opacity-50 pointer-events-none' : ''}`}>
               {/* Info banner */}
-              <div className="flex items-start gap-3 p-4 bg-orange-50 rounded-xl border border-orange-100">
-                <AlertTriangle size={16} className="text-orange-500 mt-0.5 flex-shrink-0" />
-                <div className="text-xs text-orange-700">
+              <div className="flex items-start gap-3 p-4 bg-amber-50 rounded-xl border border-amber-100">
+                <AlertTriangle size={16} className="text-amber-500 mt-0.5 flex-shrink-0" />
+                <div className="text-xs text-amber-700">
                   <p className="font-bold mb-1">Metrics Source Override</p>
                   <p>When enabled, namespace insights, pod usage and Optimize recommendations come from VictoriaMetrics instead of the Kubernetes Metrics Server. Changes apply immediately — no operator restart. If VictoriaMetrics is unreachable, CostDeck falls back to metrics-server and reports why.</p>
                 </div>
@@ -915,7 +904,7 @@ export default function SettingsPage() {
                   value={vmEndpoint}
                   onChange={e => setVmEndpoint(e.target.value)}
                   placeholder="http://vmselect.monitoring.svc:8481/select/0/prometheus"
-                  className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-orange-500/30 focus:border-orange-400 transition-all"
+                  className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-amber-500/30 focus:border-amber-400 transition-all"
                 />
                 <p className="text-[10px] text-slate-400 mt-1">Single node: http://vmsingle.monitoring.svc:8428 • Cluster: http://vmselect.monitoring.svc:8481/select/0/prometheus • Prometheus also works</p>
               </div>
@@ -927,7 +916,7 @@ export default function SettingsPage() {
                   value={vmLabelSelector}
                   onChange={e => setVmLabelSelector(e.target.value)}
                   placeholder='cluster="prod-eu"'
-                  className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-orange-500/30 focus:border-orange-400 transition-all"
+                  className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-amber-500/30 focus:border-amber-400 transition-all"
                 />
                 <p className="text-[10px] text-slate-400 mt-1">Required when one VictoriaMetrics stores several clusters — otherwise namespaces with the same name are summed across clusters.</p>
               </div>
@@ -942,7 +931,7 @@ export default function SettingsPage() {
                     max={90}
                     value={vmRetentionDays}
                     onChange={e => setVmRetentionDays(parseInt(e.target.value) || 7)}
-                    className="w-24 px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm text-center focus:outline-none focus:ring-2 focus:ring-orange-500/30 focus:border-orange-400 transition-all"
+                    className="w-24 px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm text-center focus:outline-none focus:ring-2 focus:ring-amber-500/30 focus:border-amber-400 transition-all"
                   />
                   <span className="text-xs text-slate-400">days of metrics lookback for Optimize recommendations</span>
                 </div>
@@ -955,7 +944,7 @@ export default function SettingsPage() {
                   <button
                     onClick={() => setVmAuthMode('bearer')}
                     className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${vmAuthMode === 'bearer'
-                        ? 'bg-orange-500 text-white shadow-sm'
+                        ? 'bg-amber-500 text-white shadow-sm'
                         : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                       }`}
                   >
@@ -964,7 +953,7 @@ export default function SettingsPage() {
                   <button
                     onClick={() => setVmAuthMode('basic')}
                     className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${vmAuthMode === 'basic'
-                        ? 'bg-orange-500 text-white shadow-sm'
+                        ? 'bg-amber-500 text-white shadow-sm'
                         : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                       }`}
                   >
@@ -981,7 +970,7 @@ export default function SettingsPage() {
                         value={vmUsername}
                         onChange={e => setVmUsername(e.target.value)}
                         placeholder="Username"
-                        className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-orange-500/30 focus:border-orange-400 transition-all"
+                        className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/30 focus:border-amber-400 transition-all"
                       />
                     </div>
                     <div>
@@ -1001,10 +990,10 @@ export default function SettingsPage() {
                   onChange={e => setVmCaCert(e.target.value)}
                   rows={3}
                   placeholder="-----BEGIN CERTIFICATE----- (optional custom CA, PEM)"
-                  className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-mono focus:outline-none focus:ring-2 focus:ring-orange-500/30 focus:border-orange-400 transition-all"
+                  className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-mono focus:outline-none focus:ring-2 focus:ring-amber-500/30 focus:border-amber-400 transition-all"
                 />
                 <label className="flex items-center gap-2 mt-2 text-xs font-bold text-slate-500 cursor-pointer">
-                  <input type="checkbox" checked={vmSkipSsl} onChange={e => setVmSkipSsl(e.target.checked)} className="accent-orange-500" />
+                  <input type="checkbox" checked={vmSkipSsl} onChange={e => setVmSkipSsl(e.target.checked)} className="accent-amber-500" />
                   Skip TLS verification (insecure — prefer a custom CA)
                 </label>
               </div>
@@ -1020,7 +1009,7 @@ export default function SettingsPage() {
                   Test Connection
                 </button>
                 {testResult?.provider === 'victoriametrics' && (
-                  <span className={`text-xs font-bold flex items-center gap-1 ${testResult.connected ? 'text-emerald-600' : 'text-red-500'}`}>
+                  <span className={`text-xs font-bold flex items-center gap-1 ${testResult.connected ? 'text-emerald-600' : 'text-rose-500'}`}>
                     {testResult.connected ? <CheckCircle2 size={14} /> : <XCircle size={14} />}
                     {testResult.connected ? 'Connected — container metrics found' : testResult.error || 'Connection failed'}
                   </span>
@@ -1029,7 +1018,7 @@ export default function SettingsPage() {
             </div>
 
             {vmEnabled && vmEndpoint && (
-              <div className="flex items-center gap-3 mt-6 pt-4 border-t border-slate-100 justify-center text-orange-500">
+              <div className="flex items-center gap-3 mt-6 pt-4 border-t border-slate-100 justify-center text-amber-500">
                 <Activity size={16} />
                 <span className="text-xs font-medium">Namespace insights will use VictoriaMetrics at {vmEndpoint}</span>
               </div>
@@ -1042,16 +1031,16 @@ export default function SettingsPage() {
       {expandedSection === 'ai' && (
         <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
           <SectionHeader
-            icon={<Bot className="text-violet-500" size={20} />}
+            icon={<Bot className="text-brand-500" size={20} />}
             title="AI Models"
             subtitle="Connect AI models for intelligent cost optimization insights"
           />
 
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
             <div className="flex items-center justify-between mb-6">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-violet-500/10 flex items-center justify-center">
-                  <Sparkles className="text-violet-500" size={20} />
+                <div className="w-10 h-10 rounded-xl bg-brand-500/10 flex items-center justify-center">
+                  <Sparkles className="text-brand-500" size={20} />
                 </div>
                 <div>
                   <span className="font-bold text-slate-800">AI-Powered Insights</span>
@@ -1059,7 +1048,7 @@ export default function SettingsPage() {
               </div>
               <label className="relative inline-flex items-center cursor-pointer">
                 <input type="checkbox" checked={aiEnabled} onChange={e => setAiEnabled(e.target.checked)} className="sr-only peer" />
-                <div className={`w-11 h-6 rounded-full ${aiEnabled ? 'bg-violet-500' : 'bg-slate-300'}`}>
+                <div className={`w-11 h-6 rounded-full ${aiEnabled ? 'bg-brand-500' : 'bg-slate-300'}`}>
                   <div className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-md transition-transform ${aiEnabled ? 'translate-x-5' : 'translate-x-0'}`} />
                 </div>
               </label>
@@ -1076,7 +1065,7 @@ export default function SettingsPage() {
                       setAiModel('')
                       setAiModels([])
                     }}
-                    className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm appearance-none focus:outline-none focus:ring-2 focus:ring-violet-500/30 focus:border-violet-400 transition-all"
+                    className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm appearance-none focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-400 transition-all"
                   >
                     <option value="anthropic">Anthropic (Claude)</option>
                     <option value="openai">OpenAI</option>
@@ -1088,7 +1077,7 @@ export default function SettingsPage() {
                   <label className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5 flex items-center justify-between">
                     <span>Model</span>
                     <button type="button" onClick={loadAIModels} disabled={aiModelsLoading}
-                      className="normal-case tracking-normal text-[10px] font-bold text-violet-600 hover:text-violet-800 disabled:opacity-50">
+                      className="normal-case tracking-normal text-[10px] font-bold text-brand-600 hover:text-brand-800 disabled:opacity-50">
                       {aiModelsLoading ? 'Loading…' : 'Load available models'}
                     </button>
                   </label>
@@ -1097,12 +1086,12 @@ export default function SettingsPage() {
                     value={aiModel}
                     onChange={e => setAiModel(e.target.value)}
                     placeholder={DEFAULT_MODEL[aiProvider] ? `${DEFAULT_MODEL[aiProvider]} (default)` : 'e.g. llama3.1'}
-                    className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-violet-500/30 focus:border-violet-400 transition-all"
+                    className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-400 transition-all"
                   />
                   <datalist id="ai-model-options">
                     {(aiModels.length > 0 ? aiModels : MODEL_SUGGESTIONS[aiProvider] || []).map(m => <option key={m} value={m} />)}
                   </datalist>
-                  {aiModelsError && <p className="text-[10px] text-red-500 mt-1">{aiModelsError}</p>}
+                  {aiModelsError && <p className="text-[10px] text-rose-500 mt-1">{aiModelsError}</p>}
                   {aiModels.length > 0 && <p className="text-[10px] text-slate-400 mt-1">{aiModels.length} models available to this key</p>}
                 </div>
               </div>
@@ -1122,11 +1111,11 @@ export default function SettingsPage() {
                     value={aiBaseUrl}
                     onChange={e => setAiBaseUrl(e.target.value)}
                     placeholder={aiProvider === 'local' ? 'http://ollama.ai.svc:11434/v1' : aiProvider === 'anthropic' ? 'https://api.anthropic.com' : aiProvider === 'gemini' ? 'https://generativelanguage.googleapis.com/v1beta' : 'https://api.openai.com/v1'}
-                    className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-violet-500/30 focus:border-violet-400 transition-all"
+                    className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-400 transition-all"
                   />
                 </div>
                 <label className="flex items-center gap-2 mt-6 text-xs font-bold text-slate-500 cursor-pointer">
-                  <input type="checkbox" checked={aiSkipSslVerify} onChange={e => setAiSkipSslVerify(e.target.checked)} className="accent-violet-500" />
+                  <input type="checkbox" checked={aiSkipSslVerify} onChange={e => setAiSkipSslVerify(e.target.checked)} className="accent-brand-500" />
                   Skip TLS verification (insecure)
                 </label>
               </div>
@@ -1142,7 +1131,7 @@ export default function SettingsPage() {
                   Test Connection
                 </button>
                 {testResult?.provider === 'ai' && (
-                  <span className={`text-xs font-bold flex items-center gap-1 ${testResult.connected ? 'text-emerald-600' : 'text-red-500'}`}>
+                  <span className={`text-xs font-bold flex items-center gap-1 ${testResult.connected ? 'text-emerald-600' : 'text-rose-500'}`}>
                     {testResult.connected ? <CheckCircle2 size={14} /> : <XCircle size={14} />}
                     {testResult.connected ? testResult.message || 'Connection successful' : testResult.error || 'Connection failed'}
                   </span>
@@ -1151,7 +1140,7 @@ export default function SettingsPage() {
             </div>
 
             {aiEnabled && (
-              <div className="flex items-center gap-3 mt-6 pt-4 border-t border-slate-100 justify-center text-violet-500">
+              <div className="flex items-center gap-3 mt-6 pt-4 border-t border-slate-100 justify-center text-brand-500">
                 <Sparkles size={16} />
                 <span className="text-xs font-medium">The assistant reads live cluster data through tools; changes it proposes run only after a user with the operator role confirms them.</span>
               </div>
@@ -1164,12 +1153,12 @@ export default function SettingsPage() {
       {expandedSection === 'messengers' && (
         <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
           <SectionHeader
-            icon={<MessageSquare className="text-blue-500" size={20} />}
+            icon={<MessageSquare className="text-brand-500" size={20} />}
             title="Messengers"
             subtitle="Connect messaging platforms to control Cost Deck remotely"
           />
 
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
             <div className="flex items-center justify-between mb-6">
               <div className="flex items-center gap-3">
                 <WebexLogo />
@@ -1192,7 +1181,7 @@ export default function SettingsPage() {
               </div>
               <label className="relative inline-flex items-center cursor-pointer">
                 <input type="checkbox" checked={webexEnabled} onChange={e => setWebexEnabled(e.target.checked)} className="sr-only peer" />
-                <div className={`w-11 h-6 rounded-full ${webexEnabled ? 'bg-blue-500' : 'bg-slate-300'}`}>
+                <div className={`w-11 h-6 rounded-full ${webexEnabled ? 'bg-brand-500' : 'bg-slate-300'}`}>
                   <div className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-md transition-transform ${webexEnabled ? 'translate-x-5' : 'translate-x-0'}`} />
                 </div>
               </label>
@@ -1227,7 +1216,7 @@ export default function SettingsPage() {
               </div>
 
               <label className="flex items-start gap-3 p-3 rounded-xl border border-slate-200 bg-slate-50 cursor-pointer">
-                <input type="checkbox" checked={webexNotify} onChange={e => setWebexNotify(e.target.checked)} className="mt-0.5 accent-blue-600" />
+                <input type="checkbox" checked={webexNotify} onChange={e => setWebexNotify(e.target.checked)} className="mt-0.5 accent-brand-600" />
                 <span>
                   <span className="block text-sm font-bold text-slate-700">Announce scaling transitions</span>
                   <span className="block text-[11px] text-slate-400">Post to the space above whenever a group or namespace finishes scaling up or down, with who triggered it and the estimated savings.</span>
@@ -1254,7 +1243,7 @@ export default function SettingsPage() {
                   Test Connection
                 </button>
                 {testResult?.provider === 'webex' && (
-                  <span className={`text-xs font-bold flex items-center gap-1 ${testResult.connected ? 'text-emerald-600' : 'text-red-500'}`}>
+                  <span className={`text-xs font-bold flex items-center gap-1 ${testResult.connected ? 'text-emerald-600' : 'text-rose-500'}`}>
                     {testResult.connected ? <CheckCircle2 size={14} /> : <XCircle size={14} />}
                     {testResult.connected ? testResult.message : testResult.error || 'Connection failed'}
                   </span>
@@ -1281,7 +1270,7 @@ export default function SettingsPage() {
             subtitle="Expose CostDeck's data and actions as tools to external AI assistants such as Claude or Cursor."
           />
 
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
             <div className="flex items-center justify-between mb-6">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-xl bg-pink-500/10 flex items-center justify-center">
@@ -1306,9 +1295,9 @@ export default function SettingsPage() {
                 <p className="text-[10px] text-slate-400 mt-1.5">Streamable HTTP on the dashboard's own host — no extra port or ingress. Clients authenticate with an API token (Access &amp; SSO → API tokens). Viewer tokens see read-only tools; operator tokens can also scale and right-size.</p>
               </div>
 
-              <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 space-y-3">
+              <div className="bg-brand-50 border border-brand-100 rounded-xl p-4 space-y-3">
                 <div>
-                  <h4 className="text-sm font-bold text-blue-800 mb-1">Cursor / any client with remote MCP support</h4>
+                  <h4 className="text-sm font-bold text-brand-800 mb-1">Cursor / any client with remote MCP support</h4>
                   <pre className="bg-slate-900 rounded-lg p-3 overflow-x-auto text-xs text-emerald-400">{`{
   "mcpServers": {
     "costdeck": {
@@ -1319,7 +1308,7 @@ export default function SettingsPage() {
 }`}</pre>
                 </div>
                 <div>
-                  <h4 className="text-sm font-bold text-blue-800 mb-1">Claude Code</h4>
+                  <h4 className="text-sm font-bold text-brand-800 mb-1">Claude Code</h4>
                   <pre className="bg-slate-900 rounded-lg p-3 overflow-x-auto text-xs text-emerald-400">{`claude mcp add --transport http costdeck ${window.location.origin}/mcp \
   --header "Authorization: Bearer cdk_..."`}</pre>
                 </div>
@@ -1338,7 +1327,7 @@ export default function SettingsPage() {
             subtitle="Let people sign in with Microsoft Entra ID and map their groups to CostDeck roles"
           />
 
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-5">
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 space-y-5">
             <div className="flex items-center justify-between">
               <div>
                 <span className="font-bold text-slate-800">Microsoft Entra ID</span>
@@ -1430,7 +1419,7 @@ export default function SettingsPage() {
                       <option value="admin">admin</option>
                     </select>
                     <button onClick={() => setEntraMapping(prev => prev.filter((_, j) => j !== i))}
-                      className="px-2 text-slate-300 hover:text-red-500"><Trash2 size={14} /></button>
+                      className="px-2 text-slate-300 hover:text-rose-500"><Trash2 size={14} /></button>
                   </div>
                 ))}
                 <button onClick={() => setEntraMapping(prev => [...prev, { group: '', role: 'operator' }])}
@@ -1453,7 +1442,7 @@ export default function SettingsPage() {
                 Test Connection
               </button>
               {testResult?.provider === 'entra' && (
-                <span className={`text-xs font-bold flex items-center gap-1 ${testResult.connected ? 'text-emerald-600' : 'text-red-500'}`}>
+                <span className={`text-xs font-bold flex items-center gap-1 ${testResult.connected ? 'text-emerald-600' : 'text-rose-500'}`}>
                   {testResult.connected ? <CheckCircle2 size={14} /> : <XCircle size={14} />}
                   {testResult.connected ? testResult.message : testResult.error || 'Connection failed'}
                 </span>
@@ -1463,7 +1452,7 @@ export default function SettingsPage() {
 
           <ApiTokens />
 
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
             <label className="flex items-start gap-3 cursor-pointer">
               <input type="checkbox" checked={disableLocalLogin} onChange={e => setDisableLocalLogin(e.target.checked)} className="mt-1 accent-sky-600" />
               <span>
@@ -1484,7 +1473,7 @@ export default function SettingsPage() {
             subtitle="Enable or disable core CostDeck capabilities"
           />
 
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-6">
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 space-y-6">
             {settings?.pricing?.effective && (
               <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-600">
                 <span className="font-bold text-slate-800">Rates in effect:</span>{' '}

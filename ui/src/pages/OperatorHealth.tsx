@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { usePolling } from '../lib/usePolling'
-import { Activity, AlertTriangle, Shield, Cpu, Database, Download, RefreshCw, Terminal, Box, Zap, Recycle } from 'lucide-react'
+import { Activity, AlertTriangle, Cpu, Database, Download, RefreshCw, Terminal, Box, Zap, Recycle } from 'lucide-react'
+import { Button } from '../components/ui'
 import {
   AreaChart,
   Area,
@@ -121,19 +122,14 @@ export default function OperatorHealth() {
     <div className="p-8 max-w-[1200px] mx-auto animate-in fade-in duration-500">
       <div className="flex justify-between items-center mb-8">
         <div>
-          <h2 className="text-3xl font-bold tracking-tight text-slate-800 flex items-center gap-3">
-            <Shield className="text-emerald-500" size={32} />
+          <h2 className="text-2xl font-bold tracking-tight text-slate-900 flex items-center gap-2">
             Cost Deck Health
           </h2>
-          <p className="text-slate-500 mt-1">Real-time health metrics and internal system logs</p>
+          <p className="mt-1 text-sm text-slate-500">Real-time health metrics and internal system logs</p>
         </div>
-        <button
-          onClick={handleRefresh}
-          className={`flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-lg shadow-sm hover:bg-slate-50 transition-all ${refreshing ? 'text-slate-400 cursor-not-allowed' : 'text-slate-700'}`}
-        >
-          <RefreshCw size={18} className={refreshing ? 'animate-spin' : ''} />
+        <Button onClick={handleRefresh} disabled={refreshing} icon={<RefreshCw size={16} className={refreshing ? 'animate-spin' : ''} />}>
           Refresh
-        </button>
+        </Button>
       </div>
 
       {/* Top Cards - Go Runtime Metrics */}
@@ -145,22 +141,22 @@ export default function OperatorHealth() {
           subtitle={hasErrors ? 'Check operator logs below' : 'Operator is running'}
           variant={hasErrors ? 'warning' : 'default'}
         />
-        <HealthCard icon={<Box className="text-blue-500" />} title="Managed" value={health?.managedNamespaces || 0} subtitle="Active namespaces" />
+        <HealthCard icon={<Box className="text-brand-500" />} title="Managed" value={health?.managedNamespaces || 0} subtitle="Active namespaces" />
         <HealthCard icon={<Zap className="text-amber-500" />} title="Goroutines" value={health?.goroutines || 0} subtitle={`${health?.cpuCores || 0} CPU cores available`} />
-        <HealthCard icon={<Recycle className="text-violet-500" />} title="GC Cycles" value={health?.gcCycles || 0} subtitle={`Heap: ${health?.heapAllocMiB?.toFixed(1) || '0'} MiB · Sys: ${health?.sysMemoryMiB?.toFixed(0) || '0'} MiB`} />
+        <HealthCard icon={<Recycle className="text-brand-500" />} title="GC Cycles" value={health?.gcCycles || 0} subtitle={`Heap: ${health?.heapAllocMiB?.toFixed(1) || '0'} MiB · Sys: ${health?.sysMemoryMiB?.toFixed(0) || '0'} MiB`} />
       </div>
 
       {/* Charts Section */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-10">
         {/* CPU Chart */}
-        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col">
+        <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex flex-col">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2 text-slate-800">
-              <div className="p-1.5 bg-indigo-50 text-indigo-500 rounded-lg"><Cpu size={16} /></div>
+              <div className="p-1.5 bg-brand-50 text-brand-500 rounded-lg"><Cpu size={16} /></div>
               <span className="font-bold text-sm">CPU Usage (Cores)</span>
             </div>
             {health && (
-              <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
                 {health.cpuUsage.toFixed(3)} / {cpuLim} Cores
               </span>
             )}
@@ -170,8 +166,8 @@ export default function OperatorHealth() {
               <AreaChart data={history} margin={{ top: 10, right: 20, left: 10, bottom: 20 }}>
                 <defs>
                   <linearGradient id="colorCpu" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#6366f1" stopOpacity={0.15} />
-                    <stop offset="95%" stopColor="#6366f1" stopOpacity={0} />
+                    <stop offset="5%" stopColor="#059669" stopOpacity={0.15} />
+                    <stop offset="95%" stopColor="#059669" stopOpacity={0} />
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
@@ -196,14 +192,14 @@ export default function OperatorHealth() {
                   formatter={(value) => [`${Number(value).toFixed(4)} cores`, 'CPU Usage']}
                 />
                 <Legend iconType="circle" wrapperStyle={{ fontSize: '10px', paddingTop: '8px' }} />
-                <Area type="monotone" dataKey="cpuUsage" name="Usage" stroke="#6366f1" strokeWidth={2} fillOpacity={1} fill="url(#colorCpu)" dot={false} />
+                <Area isAnimationActive={false} type="monotone" dataKey="cpuUsage" name="Usage" stroke="#059669" strokeWidth={2} fillOpacity={1} fill="url(#colorCpu)" dot={false} />
                 {cpuReq > 0 && (
-                  <ReferenceLine y={cpuReq} stroke="#6366f1" strokeDasharray="6 3" strokeWidth={1.5}
-                    label={{ position: 'right', value: `Req ${cpuReq}`, fill: '#6366f1', fontSize: 9, fontWeight: 'bold' }} />
+                  <ReferenceLine y={cpuReq} stroke="#64748b" strokeDasharray="6 3" strokeWidth={1.5}
+                    label={{ position: 'right', value: `Req ${cpuReq}`, fill: '#64748b', fontSize: 9, fontWeight: 'bold' }} />
                 )}
                 {cpuLim > 0 && (
-                  <ReferenceLine y={cpuLim} stroke="#f43f5e" strokeDasharray="6 3" strokeWidth={1.5}
-                    label={{ position: 'right', value: `Lim ${cpuLim}`, fill: '#f43f5e', fontSize: 9, fontWeight: 'bold' }} />
+                  <ReferenceLine y={cpuLim} stroke="#e11d48" strokeDasharray="6 3" strokeWidth={1.5}
+                    label={{ position: 'right', value: `Lim ${cpuLim}`, fill: '#e11d48', fontSize: 9, fontWeight: 'bold' }} />
                 )}
               </AreaChart>
             </ResponsiveContainer>
@@ -211,14 +207,14 @@ export default function OperatorHealth() {
         </div>
 
         {/* Memory Chart */}
-        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col">
+        <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex flex-col">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2 text-slate-800">
               <div className="p-1.5 bg-emerald-50 text-emerald-500 rounded-lg"><Database size={16} /></div>
               <span className="font-bold text-sm">RAM Memory (MiB)</span>
             </div>
             {health && (
-              <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
                 {Math.round(health.memoryUsage)} / {Math.round(memLim)} MiB
               </span>
             )}
@@ -228,8 +224,8 @@ export default function OperatorHealth() {
               <AreaChart data={history} margin={{ top: 10, right: 20, left: 10, bottom: 20 }}>
                 <defs>
                   <linearGradient id="colorMem" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#10b981" stopOpacity={0.15} />
-                    <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
+                    <stop offset="5%" stopColor="#059669" stopOpacity={0.15} />
+                    <stop offset="95%" stopColor="#059669" stopOpacity={0} />
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
@@ -254,14 +250,14 @@ export default function OperatorHealth() {
                   formatter={(value) => [`${Number(value).toFixed(1)} MiB`, 'Memory Usage']}
                 />
                 <Legend iconType="circle" wrapperStyle={{ fontSize: '10px', paddingTop: '8px' }} />
-                <Area type="monotone" dataKey="memoryUsage" name="Usage" stroke="#10b981" strokeWidth={2} fillOpacity={1} fill="url(#colorMem)" dot={false} />
+                <Area isAnimationActive={false} type="monotone" dataKey="memoryUsage" name="Usage" stroke="#059669" strokeWidth={2} fillOpacity={1} fill="url(#colorMem)" dot={false} />
                 {memReq > 0 && (
-                  <ReferenceLine y={memReq} stroke="#10b981" strokeDasharray="6 3" strokeWidth={1.5}
-                    label={{ position: 'right', value: `Req ${Math.round(memReq)}`, fill: '#10b981', fontSize: 9, fontWeight: 'bold' }} />
+                  <ReferenceLine y={memReq} stroke="#64748b" strokeDasharray="6 3" strokeWidth={1.5}
+                    label={{ position: 'right', value: `Req ${Math.round(memReq)}`, fill: '#64748b', fontSize: 9, fontWeight: 'bold' }} />
                 )}
                 {memLim > 0 && (
-                  <ReferenceLine y={memLim} stroke="#f43f5e" strokeDasharray="6 3" strokeWidth={1.5}
-                    label={{ position: 'right', value: `Lim ${Math.round(memLim)}`, fill: '#f43f5e', fontSize: 9, fontWeight: 'bold' }} />
+                  <ReferenceLine y={memLim} stroke="#e11d48" strokeDasharray="6 3" strokeWidth={1.5}
+                    label={{ position: 'right', value: `Lim ${Math.round(memLim)}`, fill: '#e11d48', fontSize: 9, fontWeight: 'bold' }} />
                 )}
               </AreaChart>
             </ResponsiveContainer>

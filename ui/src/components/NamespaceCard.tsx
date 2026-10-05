@@ -158,7 +158,7 @@ export default function NamespaceCard({ namespace, insights = [], onClick }: Nam
                   tag === 'Optimized' 
                     ? 'bg-emerald-50 text-emerald-600 border-emerald-200' 
                     : tag.includes('Missing') || tag.includes('Uncapped')
-                    ? 'bg-red-50 text-red-600 border-red-200'
+                    ? 'bg-rose-50 text-rose-600 border-rose-200'
                     : 'bg-amber-50 text-amber-600 border-amber-200'
                 }`}
               >
@@ -180,7 +180,7 @@ export default function NamespaceCard({ namespace, insights = [], onClick }: Nam
         <div className="flex flex-col">
           <div className="flex justify-between items-end mb-4">
             <div className="flex items-center gap-2 text-slate-700">
-               <div className="p-1.5 bg-blue-50 text-blue-500 rounded-md">
+               <div className="p-1.5 bg-brand-50 text-brand-500 rounded-md">
                  <Cpu size={18} />
                </div>
                <span className="font-medium">CPU (Cores)</span>
@@ -212,19 +212,19 @@ export default function NamespaceCard({ namespace, insights = [], onClick }: Nam
                     formatter={(value) => [`${Number(value ?? 0).toFixed(3)} Cores`, 'Usage']}
                   />
                   {/* Real Usage (Blue) */}
-                  <Area type="monotone" dataKey="cpuUsage" name="Usage" stroke="#3b82f6" fillOpacity={1} fill="url(#colorCpuUsage)" />
+                  <Area isAnimationActive={false} type="monotone" dataKey="cpuUsage" name="Usage" stroke="#059669" fillOpacity={1} fill="url(#colorCpuUsage)" />
                   {/* Requests (Green Line) and Limit (Red Line) */}
                   {latest.cpuReq > 0 && (
-                    <ReferenceLine y={latest.cpuReq} stroke="#10b981" strokeDasharray="3 3" label={{position: 'insideTopLeft', value: `Req: ${latest.cpuReq.toFixed(2)}`, fill: '#10b981', fontSize: 10}} />
+                    <ReferenceLine y={latest.cpuReq} stroke="#64748b" strokeDasharray="3 3" label={{position: 'insideTopLeft', value: `Req: ${latest.cpuReq.toFixed(2)}`, fill: '#64748b', fontSize: 10}} />
                   )}
                   {latest.cpuLim > 0 && (
-                    <ReferenceLine y={latest.cpuLim} stroke="#ef4444" strokeDasharray="3 3" label={{position: 'insideTopLeft', value: `Lim: ${latest.cpuLim.toFixed(2)}`, fill: '#ef4444', fontSize: 10}} />
+                    <ReferenceLine y={latest.cpuLim} stroke="#e11d48" strokeDasharray="3 3" label={{position: 'insideTopLeft', value: `Lim: ${latest.cpuLim.toFixed(2)}`, fill: '#e11d48', fontSize: 10}} />
                   )}
                   
                   <defs>
                     <linearGradient id="colorCpuUsage" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.2}/>
-                      <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
+                      <stop offset="5%" stopColor="#059669" stopOpacity={0.2}/>
+                      <stop offset="95%" stopColor="#059669" stopOpacity={0}/>
                     </linearGradient>
                   </defs>
                 </AreaChart>
@@ -240,7 +240,7 @@ export default function NamespaceCard({ namespace, insights = [], onClick }: Nam
         <div className="flex flex-col">
           <div className="flex justify-between items-end mb-4">
             <div className="flex items-center gap-2 text-slate-700">
-               <div className="p-1.5 bg-indigo-50 text-indigo-500 rounded-md">
+               <div className="p-1.5 bg-brand-50 text-brand-500 rounded-md">
                  <Database size={18} />
                </div>
                <span className="font-medium">Memory (MiB)</span>
@@ -266,19 +266,19 @@ export default function NamespaceCard({ namespace, insights = [], onClick }: Nam
                     formatter={(value) => [`${Number(value ?? 0).toFixed(1)} MiB`, 'Usage']}
                   />
                   {/* Real Usage (Blue) */}
-                  <Area type="monotone" dataKey="memUsage" name="Usage (MiB)" stroke="#6366f1" fillOpacity={1} fill="url(#colorMemUsage)" />
+                  <Area isAnimationActive={false} type="monotone" dataKey="memUsage" name="Usage (MiB)" stroke="#059669" fillOpacity={1} fill="url(#colorMemUsage)" />
                   {/* Requests (Green Line) and Limit (Red Line) */}
                   {latest.memReq > 0 && (
-                    <ReferenceLine y={latest.memReq} stroke="#10b981" strokeDasharray="3 3" label={{position: 'insideTopLeft', value: `Req: ${latest.memReq}`, fill: '#10b981', fontSize: 10}} />
+                    <ReferenceLine y={latest.memReq} stroke="#64748b" strokeDasharray="3 3" label={{position: 'insideTopLeft', value: `Req: ${latest.memReq}`, fill: '#64748b', fontSize: 10}} />
                   )}
                   {latest.memLim > 0 && (
-                    <ReferenceLine y={latest.memLim} stroke="#ef4444" strokeDasharray="3 3" label={{position: 'insideTopLeft', value: `Lim: ${latest.memLim}`, fill: '#ef4444', fontSize: 10}} />
+                    <ReferenceLine y={latest.memLim} stroke="#e11d48" strokeDasharray="3 3" label={{position: 'insideTopLeft', value: `Lim: ${latest.memLim}`, fill: '#e11d48', fontSize: 10}} />
                   )}
                   
                   <defs>
                     <linearGradient id="colorMemUsage" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#6366f1" stopOpacity={0.2}/>
-                      <stop offset="95%" stopColor="#6366f1" stopOpacity={0}/>
+                      <stop offset="5%" stopColor="#059669" stopOpacity={0.2}/>
+                      <stop offset="95%" stopColor="#059669" stopOpacity={0}/>
                     </linearGradient>
                   </defs>
                 </AreaChart>
