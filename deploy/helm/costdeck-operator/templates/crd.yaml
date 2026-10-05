@@ -910,8 +910,10 @@ spec:
                 format: date-time
                 type: string
               exclusions:
-                description: Exclusions lists resources that should never be scaled
-                  down
+                description: |-
+                  Exclusions lists workloads that are never scaled down, by name or prefix glob
+                  ("redis-*"). They also apply to the CronJobs CostDeck suspends and the KEDA
+                  ScaledObjects it pauses while the namespace is down.
                 items:
                   type: string
                 type: array

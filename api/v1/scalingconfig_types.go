@@ -134,7 +134,9 @@ type ScalingConfigSpec struct {
 	// +listType=atomic
 	Sequence []string `json:"sequence,omitempty"`
 
-	// Exclusions lists resources that should never be scaled down
+	// Exclusions lists workloads that are never scaled down, by name or prefix glob
+	// ("redis-*"). They also apply to the CronJobs CostDeck suspends and the KEDA
+	// ScaledObjects it pauses while the namespace is down.
 	// +optional
 	// +listType=atomic
 	Exclusions []string `json:"exclusions,omitempty"`

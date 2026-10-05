@@ -86,6 +86,13 @@ func TestPlanGroupsPlatformFollowsItsDependents(t *testing.T) {
 		}
 	})
 
+	t.Run("an environment still scaling down after hours keeps the platform", func(t *testing.T) {
+		plans := e.PlanGroups(at(t, time.Tuesday, "18:02"), greenZone(PhaseScaledUp, PhaseScaledUp, PhaseScalingDown, PhaseScaledDown))
+		if got := plans["platform"].RequiredBy; !slices.Equal(got, []string{"pps1", "stag1"}) {
+			t.Errorf("RequiredBy = %v, want [pps1 stag1]", got)
+		}
+	})
+
 	t.Run("weekday night: only pps1 keeps the platform up", func(t *testing.T) {
 		plans := e.PlanGroups(at(t, time.Tuesday, "23:00"), greenZone(PhaseScaledUp, PhaseScaledUp, PhaseScaledDown, PhaseScaledDown))
 		if got := plans["platform"].RequiredBy; !slices.Equal(got, []string{"pps1"}) {
@@ -113,10 +120,10 @@ func TestPlanGroupsManualOverrideOnDependencyWins(t *testing.T) {
 
 func TestPlanGroupsMissingDependencyBlocks(t *testing.T) {
 	groups := []finopsv1.ScalingGroup{group("app", time.Now(), finopsv1.ScalingGroupSpec{
-		Namespaces: []string{"app"}, DependsOn: []string{"platfrom"},
+		Namespaces: []string{"app"}, DependsOn: []string{"platform-typo"},
 	}, "")}
 	p := (&Engine{}).PlanGroups(time.Now(), groups)["app"]
-	if !p.BlockedOnDependencies() || !slices.Equal(p.MissingDependencies, []string{"platfrom"}) {
+	if !p.BlockedOnDependencies() || !slices.Equal(p.MissingDependencies, []string{"platform-typo"}) {
 		t.Errorf("plan = %+v, want it blocked on the missing dependency", p)
 	}
 }

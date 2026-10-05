@@ -20,6 +20,8 @@ type Engine struct {
 	Providers map[string]ExternalProvider
 	// Resolver builds providers from the live CostDeckConfig when one is not registered.
 	Resolver ProviderResolver
+
+	keda kedaProbe
 }
 
 // ExternalProvider defines the interface for 3rd party cloud service scaling
@@ -216,6 +218,13 @@ func (e *Engine) ScaleTarget(ctx context.Context, ns string, active bool, sequen
 		originalReplicas = make(map[string]int32)
 	}
 
+	// Before scaling down, stop the things that would bring pods straight back.
+	if !active {
+		if err := e.holdCompanions(ctx, ns, exclusions); err != nil {
+			return originalReplicas, false, err
+		}
+	}
+
 	// 1 & 2. List and Filter
 	scalableResources, err := e.listScalableResources(ctx, ns, exclusions)
 	if err != nil {
@@ -238,5 +247,11 @@ func (e *Engine) ScaleTarget(ctx context.Context, ns string, active bool, sequen
 		}
 	}
 
+	// Hand CronJobs and autoscalers back only once every workload is up again.
+	if active {
+		if err := e.releaseCompanions(ctx, ns, exclusions); err != nil {
+			return originalReplicas, false, err
+		}
+	}
 	return originalReplicas, true, nil
 }
