@@ -1,4 +1,8 @@
 import { useState, useEffect } from 'react'
+import { errorMessage } from '../lib/api'
+import type { ExternalTarget, ScalingConfig, ScalingGroup, ScalingSchedule, ScalingSpec, ScheduleStatus } from '../lib/types'
+import { usePolling } from '../lib/usePolling'
+import type { NamespaceFinOps } from './Dashboard'
 import { 
   Plus, 
   Clock, 
@@ -22,24 +26,7 @@ import { useAuth } from '../lib/auth'
 import OverrideDialog, { type OverrideUntil } from '../components/OverrideDialog'
 import { relativeTime } from '../lib/time'
 
-interface ScalingSchedule {
-  days?: number[];
-  startDay?: number;
-  endDay?: number;
-  startTime: string;
-  endTime: string;
-  timezone?: string;
-}
-
-// ScheduleStatus mirrors what the operator reports about who is in control.
-interface ScheduleStatus {
-  mode?: 'Schedule' | 'ManualUp' | 'ManualDown' | 'AlwaysOn' | 'Dependency';
-  desiredState?: 'Up' | 'Down';
-  overrideExpiresAt?: string;
-  nextTransition?: { time: string; desiredState: 'Up' | 'Down' };
-  estimatedHourlySavings?: string;
-  currency?: string;
-}
+type Mode = NonNullable<ScheduleStatus['mode']>;
 
 // formatMoney renders an amount in the status currency.
 const formatMoney = (amount: number, currency = 'USD') => {
@@ -49,54 +36,6 @@ const formatMoney = (amount: number, currency = 'USD') => {
     return `${amount.toFixed(2)} ${currency}`;
   }
 };
-
-interface ScalingGroup {
-  metadata: {
-    name: string;
-  };
-  spec: {
-    category: string;
-    namespaces: string[];
-    active?: boolean;
-    activeUntil?: string;
-    schedules?: ScalingSchedule[];
-    sequence?: string[];
-    exclusions?: string[];
-    featureFlags?: {
-      skipOnTimeout: boolean;
-      timeoutMinutes: number;
-    };
-    dependsOn?: string[];
-    activation?: 'Schedule' | 'OnDemand';
-  };
-  status?: ScheduleStatus & {
-    phase: string;
-    lastAction: string;
-    managedCount: number;
-    namespacesReady?: number;
-    namespacesTotal?: number;
-    requiredBy?: string[];
-    conflictingNamespaces?: string[];
-  };
-}
-
-interface ScalingConfig {
-  metadata: {
-    name: string;
-  };
-  spec: {
-    targetNamespace: string;
-    active?: boolean;
-    activeUntil?: string;
-    schedules?: ScalingSchedule[];
-    sequence?: string[];
-    exclusions?: string[];
-  };
-  status?: ScheduleStatus & {
-    phase: string;
-    lastAction: string;
-  };
-}
 
 const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ onSelectNamespace }) => {
   const { can } = useAuth();
@@ -109,7 +48,7 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
   const [editingGroup, setEditingGroup] = useState<ScalingGroup | null>(null);
   const [viewingPipelineGroupName, setViewingPipelineGroupName] = useState<string | null>(null);
   const [isAddingGroup, setIsAddingGroup] = useState(false);
-  const [editingPolicy, setEditingPolicy] = useState<{ mode: 'schedule' | 'sequence' | 'group', name: string, spec: any } | null>(null);
+  const [editingPolicy, setEditingPolicy] = useState<{ mode: 'schedule' | 'sequence' | 'group', name: string, spec: ScalingSpec } | null>(null);
   const [newGroupName, setNewGroupName] = useState('');
   const [newGroupCategory, setNewGroupCategory] = useState('Solution');
   const [selectedNS, setSelectedNS] = useState<string[]>([]);
@@ -127,8 +66,10 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
   const [discoveredCollapsed, setDiscoveredCollapsed] = useState(false);
 
   // Discovery State
-  const [discoveredResources, setDiscoveredResources] = useState<Record<string, any[]>>({});
+  const [discoveredResources, setDiscoveredResources] = useState<Record<string, ExternalTarget[]>>({});
   const [activeDiscoveryTab, setActiveDiscoveryTab] = useState<string>('');
+  // Fall back to the first tab when nothing (or a tab that has since emptied) is selected.
+  const discoveryTab = discoveredResources[activeDiscoveryTab] ? activeDiscoveryTab : Object.keys(discoveredResources)[0] ?? '';
 
   useEffect(() => {
     const fetchDiscovery = async () => {
@@ -141,30 +82,17 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
         const aurora = await auroraRes.json() || [];
         const ec2 = await ec2Res.json() || [];
         
-        const resources: Record<string, any[]> = {};
+        const resources: Record<string, ExternalTarget[]> = {};
         if (aurora.length > 0) resources['Databases'] = aurora;
         if (ec2.length > 0) resources['Compute'] = ec2;
         
         setDiscoveredResources(resources);
-        
-        // Auto-select first available tab if none selected
-        if (!activeDiscoveryTab || !resources[activeDiscoveryTab]) {
-          const firstTab = Object.keys(resources)[0];
-          if (firstTab) setActiveDiscoveryTab(firstTab);
-        }
       } catch (err) {
         console.error("Failed to fetch discovered resources", err);
       }
     };
 
     fetchDiscovery();
-  }, []);
-
-  useEffect(() => {
-    fetchData();
-    // Auto-refresh every 10 seconds for real-time status (silent)
-    const interval = setInterval(() => fetchData(true), 10000);
-    return () => clearInterval(interval);
   }, []);
 
   const fetchData = async (silent = false) => {
@@ -179,18 +107,21 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
       const policiesData = await policiesRes.json();
       const nsData = await nsRes.json();
       
-      setGroups((groupsData || []).sort((a: any, b: any) => a.metadata.name.localeCompare(b.metadata.name)));
-      setPolicies((policiesData || []).sort((a: any, b: any) => a.spec.targetNamespace.localeCompare(b.spec.targetNamespace)));
+      setGroups(((groupsData || []) as ScalingGroup[]).sort((a, b) => a.metadata.name.localeCompare(b.metadata.name)));
+      setPolicies(((policiesData || []) as ScalingConfig[]).sort((a, b) => a.spec.targetNamespace.localeCompare(b.spec.targetNamespace)));
       // deduplicate and sort namespaces
-      const uniqueNamespaces = Array.from(new Set(nsData.map((n: any) => n.spec.targetNamespace || n.metadata.name))) as string[];
+      const uniqueNamespaces = Array.from(new Set((nsData as NamespaceFinOps[]).map(n => n.spec.targetNamespace || n.metadata.name)));
       uniqueNamespaces.sort((a, b) => a.localeCompare(b));
       setNamespaces(uniqueNamespaces);
     } catch (err) {
       console.error("Failed to fetch scaling data", err);
     } finally {
-      if (!silent) setLoading(false);
+      setLoading(false);
     }
   };
+
+  // Status refreshes silently every 10 seconds; the first load clears the spinner.
+  usePolling(() => fetchData(true), 10000);
 
   const handleUpsertGroup = async () => {
     if (!newGroupName) return;
@@ -253,9 +184,9 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
       setDependsOn([]);
       setOnDemand(false);
       fetchData();
-    } catch (err: any) {
+    } catch (err) {
       console.error("Failed to save group", err);
-      setError(`Failed to save group: ${err.message}`);
+      setError(`Failed to save group: ${errorMessage(err)}`);
     }
   };
 
@@ -269,9 +200,9 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
 
     // Optimistic UI update
     if (type === 'group') {
-      setGroups(prev => prev.map((g: any) => g.metadata.name === name ? {
+      setGroups(prev => prev.map(g => g.metadata.name === name ? {
         ...g,
-        status: { ...(g.status || {}), phase: 'Scaling...', lastAction: g.status?.lastAction || '' }
+        status: { managedCount: 0, ...g.status, phase: 'Scaling...', lastAction: g.status?.lastAction || '' }
       } : g));
     } else {
       setPolicies(prev => prev.map(p => p.metadata.name === name ? {
@@ -308,7 +239,7 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
     }
   };
 
-  const handleUpdateConfig = async (updatedSpec: any) => {
+  const handleUpdateConfig = async (updatedSpec: ScalingSpec) => {
     if (!editingPolicy) return;
     // Determine endpoint: check if name matches a group
     const isGroup = groups.some(g => g.metadata.name === editingPolicy.name);
@@ -317,9 +248,10 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
     // When saving schedule, clear manual override so schedule takes control.
     // activeUntil has to go with it: a deadline without an override is meaningless and
     // the API rejects it.
+    const spec = { ...updatedSpec };
     if (editingPolicy.mode === 'schedule') {
-      delete updatedSpec.active;
-      delete updatedSpec.activeUntil;
+      delete spec.active;
+      delete spec.activeUntil;
     }
     
     try {
@@ -328,7 +260,7 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           metadata: { name: editingPolicy.name },
-          spec: updatedSpec 
+          spec
         })
       });
 
@@ -340,9 +272,9 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
       setEditingPolicy(null);
       setError(null);
       fetchData(true);
-    } catch (err: any) {
+    } catch (err) {
       console.error("Failed to update config", err);
-      setError(`Failed to update configuration: ${err.message}`);
+      setError(`Failed to update configuration: ${errorMessage(err)}`);
     }
   };
 
@@ -436,16 +368,19 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
   // ScheduleLine answers "who is in control, and what happens next?" at a glance.
   const ScheduleLine = ({ status }: { status?: ScheduleStatus }) => {
     if (!status?.mode) return null;
-    const label: Record<string, string> = {
+    // Exhaustive over the operator's modes, so a new one cannot render as a raw enum.
+    const label: Record<Mode, string> = {
       Schedule: 'Schedule', ManualUp: 'Manual · up', ManualDown: 'Manual · down',
       AlwaysOn: 'No schedule · always on', Dependency: 'Kept up by dependents',
+      OnDemand: 'On demand · idle',
     };
-    const tone: Record<string, string> = {
+    const tone: Record<Mode, string> = {
       Schedule: 'bg-indigo-50 text-indigo-600 border-indigo-100',
       ManualUp: 'bg-amber-50 text-amber-700 border-amber-200',
       ManualDown: 'bg-amber-50 text-amber-700 border-amber-200',
       AlwaysOn: 'bg-slate-50 text-slate-500 border-slate-200',
       Dependency: 'bg-violet-50 text-violet-600 border-violet-100',
+      OnDemand: 'bg-slate-50 text-slate-500 border-slate-200',
     };
     const next = status.nextTransition;
     const saving = parseFloat(status.estimatedHourlySavings || '');
@@ -735,7 +670,7 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
     );
   };
 
-  const ResourceCard = ({ item }: { item: any }) => (
+  const ResourceCard = ({ item }: { item: ExternalTarget }) => (
     <div className="bg-white border border-slate-200 rounded-2xl p-4 flex flex-col group hover:border-indigo-300 hover:shadow-md transition-all cursor-default relative overflow-hidden">
       {item.executeAfter && (
          <div className="absolute top-0 right-0 bg-indigo-100 text-indigo-700 text-[9px] font-black px-2 py-0.5 rounded-bl-lg uppercase">
@@ -917,7 +852,7 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
                           key={tab}
                           onClick={() => setActiveDiscoveryTab(tab)}
                           className={`flex items-center gap-2 px-6 py-2 rounded-xl text-sm font-bold transition-all ${
-                            activeDiscoveryTab === tab 
+                            discoveryTab === tab 
                               ? 'bg-white text-indigo-900 shadow-sm' 
                               : 'text-slate-500 hover:text-slate-700 hover:bg-white/50'
                           }`}
@@ -925,7 +860,7 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
                           {tab === 'Databases' ? <Database size={16} /> : <Layers size={16} />}
                           {tab}
                           <span className={`px-1.5 py-0.5 rounded-lg text-[10px] ml-1 ${
-                            activeDiscoveryTab === tab ? 'bg-indigo-50 text-indigo-600' : 'bg-slate-200 text-slate-500'
+                            discoveryTab === tab ? 'bg-indigo-50 text-indigo-600' : 'bg-slate-200 text-slate-500'
                           }`}>
                             {discoveredResources[tab].length}
                           </span>
@@ -934,9 +869,9 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
                     </div>
 
                     {/* Active tab content */}
-                    {activeDiscoveryTab && discoveredResources[activeDiscoveryTab] && (
+                    {discoveryTab && (
                       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 animate-in fade-in duration-300">
-                        {discoveredResources[activeDiscoveryTab].map((item, i) => (
+                        {discoveredResources[discoveryTab].map((item, i) => (
                           <ResourceCard key={i} item={item} />
                         ))}
                       </div>

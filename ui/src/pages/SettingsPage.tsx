@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useCallback } from 'react'
 import {
   Settings, Cloud, Bot, MessageSquare, Plus, Trash2, RefreshCw,
   CheckCircle2, XCircle, AlertTriangle, Eye, EyeOff, ChevronDown,
@@ -6,6 +6,7 @@ import {
 } from 'lucide-react'
 import { AWSLogo, AzureLogo, GCPLogo, WebexLogo } from '../components/ProviderLogos'
 import ApiTokens from '../components/ApiTokens'
+import { usePolling } from '../lib/usePolling'
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -455,13 +456,13 @@ export default function SettingsPage() {
     }
   }, [])
 
-  useEffect(() => { fetchSettings() }, [fetchSettings])
+  usePolling(fetchSettings, null)
 
   const handleSave = async () => {
     setSaving(true)
     setSaveMessage(null)
     try {
-      const body: any = {
+      const body = {
         providers: {
           aws: {
             enabled: awsEnabled,
@@ -569,7 +570,7 @@ export default function SettingsPage() {
     setTesting(provider)
     setTestResult(null)
     try {
-      const body: any = {}
+      const body: Record<string, unknown> = {}
       if (provider === 'aws') {
         body.accessKeyId = awsAccessKey
         body.secretAccessKey = awsSecretKey

@@ -1,21 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Layers, Terminal, X, RefreshCw, Check } from 'lucide-react';
-
-interface ScalingGroup {
-  metadata: { name: string };
-  spec: {
-    namespaces: string[];
-    sequence?: string[];
-    active?: boolean;
-  };
-  status?: {
-    phase: string;
-    originalReplicas?: Record<string, number>;
-    namespacesReady?: number;
-    namespacesTotal?: number;
-    readyNamespaces?: string[];
-  };
-}
+import type { ScalingGroup } from '../lib/types';
+import { usePolling } from '../lib/usePolling';
 
 interface Event {
   metadata: { name: string; creationTimestamp: string };
@@ -66,11 +52,7 @@ const ScalingPipelineModal: React.FC<ScalingPipelineModalProps> = ({ group, onCl
     }
   };
 
-  useEffect(() => {
-    fetchData();
-    const interval = setInterval(fetchData, 2000);
-    return () => clearInterval(interval);
-  }, [group.metadata.name]);
+  usePolling(fetchData, 2000, group.metadata.name);
 
   useEffect(() => {
     if (terminalRef.current) {
@@ -102,21 +84,22 @@ const ScalingPipelineModal: React.FC<ScalingPipelineModalProps> = ({ group, onCl
   }
 
   // If Scaling Down, the backend reverses the sequence execution. We must mirror this visually.
-  const isScalingDown = liveGroup.spec.active === false;
+  // The schedule, not just a manual override, decides the direction, so read it from status.
+  const targetPhase = liveGroup.status?.phase;
+  const isScalingDown = liveGroup.status?.desiredState
+    ? liveGroup.status.desiredState === 'Down'
+    : targetPhase === 'ScalingDown' || targetPhase === 'ScaledDown' || liveGroup.spec.active === false;
   if (isScalingDown) {
     stages = [...stages].reverse();
   }
 
   // Pre-calculate ranges to determine which stage is currently running
-  let runningCount = 0;
-  const stageRanges = stages.map(stage => {
-    const start = runningCount;
-    runningCount += stage.length;
-    return { start, end: runningCount };
-  });
+  const stageRanges = stages.reduce<{ start: number; end: number }[]>((ranges, stage) => {
+    const start = ranges.length > 0 ? ranges[ranges.length - 1].end : 0;
+    return [...ranges, { start, end: start + stage.length }];
+  }, []);
 
   const readyCount = liveGroup.status?.namespacesReady || 0;
-  const targetPhase = liveGroup.status?.phase;
   const isScaling = targetPhase === 'ScalingUp' || targetPhase === 'ScalingDown' || targetPhase === 'Scaling...';
   const isDone = targetPhase === 'ScaledUp' || targetPhase === 'ScaledDown';
 
@@ -174,7 +157,7 @@ const ScalingPipelineModal: React.FC<ScalingPipelineModalProps> = ({ group, onCl
               }
 
               let boxClass = "bg-white rounded-2xl p-5 w-64 flex flex-col shadow-[0_2px_12px_-4px_rgba(0,0,0,0.06)] ring-1 transition-all ";
-              let headerClass = "flex items-center gap-2 mb-4 pb-3 border-b border-slate-50 ";
+              const headerClass = "flex items-center gap-2 mb-4 pb-3 border-b border-slate-50 ";
               let badgeClass = "w-6 h-6 rounded-full flex items-center justify-center font-bold text-xs shrink-0 ";
               
               if (status === 'done') {

@@ -1,14 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, Clock, Shield, ChevronUp, ChevronDown } from 'lucide-react';
-
-interface ScalingSchedule {
-  days?: number[];
-  startDay?: number;
-  endDay?: number;
-  startTime: string;
-  endTime: string;
-  timezone?: string;
-}
+import type { ExternalTarget, ScalingSchedule, ScalingSpec } from '../lib/types';
 
 const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -55,37 +47,23 @@ const describeWindow = (s: ScalingSchedule): string => {
 interface ScalingConfigModalProps {
   name: string;
   mode: 'schedule' | 'sequence' | 'group';
-  spec: {
-    schedules?: ScalingSchedule[];
-    sequence?: string[];
-    exclusions?: string[];
-    namespaces?: string[];
-    targetNamespace?: string;
-    externalTargets?: {
-      provider: string;
-      type: string;
-      identifier: string;
-      region: string;
-      executeAfter?: string;
-    }[];
-    [key: string]: any;
-  };
+  spec: ScalingSpec;
   onClose: () => void;
-  onSave: (updatedSpec: any) => void;
+  onSave: (updatedSpec: ScalingSpec) => void;
 }
 
 const ScalingConfigModal: React.FC<ScalingConfigModalProps> = ({ name, mode, spec, onClose, onSave }) => {
   const [editingSpec, setEditingSpec] = React.useState({ ...spec, externalTargets: spec.externalTargets || [] });
 
   // External Targets State
-  const [availableAuroraClusters, setAvailableAuroraClusters] = useState<any[]>([]);
-  const [loadingAurora, setLoadingAurora] = useState(false);
+  const [availableAuroraClusters, setAvailableAuroraClusters] = useState<ExternalTarget[]>([]);
+  // Only the sequence editor offers external targets, so only it starts out loading them.
+  const [loadingAurora, setLoadingAurora] = useState(mode === 'sequence');
   const [showExternalDropdownForStage, setShowExternalDropdownForStage] = useState<number | null>(null);
 
   useEffect(() => {
     if (mode === 'sequence') {
       // Fetch external targets (just AWS Aurora for now)
-      setLoadingAurora(true);
       fetch('/api/discovery/aws/aurora')
         .then(res => res.json())
         .then(data => setAvailableAuroraClusters(data || []))
@@ -319,9 +297,9 @@ const ScalingConfigModal: React.FC<ScalingConfigModalProps> = ({ name, mode, spe
                           </div>
 
                           <button onClick={() => {
-                            const seq = editingSpec.sequence?.filter((_: any, i: number) => i !== idx);
+                            const seq = editingSpec.sequence?.filter((_, i) => i !== idx);
                             // Also remove any external targets dependent on this stage
-                            const remainingTargets = (editingSpec.externalTargets || []).filter((t: any) => !stageTargets.includes(t.identifier));
+                            const remainingTargets = (editingSpec.externalTargets || []).filter(t => !stageTargets.includes(t.identifier));
                             setEditingSpec({ ...editingSpec, sequence: seq, externalTargets: remainingTargets });
                           }} className="text-slate-300 hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-lg hover:bg-rose-50" title="Remove Stage">
                             <Plus size={18} className="rotate-45" />
@@ -340,7 +318,7 @@ const ScalingConfigModal: React.FC<ScalingConfigModalProps> = ({ name, mode, spe
                               const isSelected = stageNamespaces.includes(ns);
                               return (
                                 <button key={ns} onClick={() => {
-                                  let newStageNs = isSelected ? stageNamespaces.filter(n => n !== ns) : [...stageNamespaces, ns];
+                                  const newStageNs = isSelected ? stageNamespaces.filter(n => n !== ns) : [...stageNamespaces, ns];
                                   const seq = [...(editingSpec.sequence || [])];
                                   seq[idx] = [...newStageNs, ...stageTargets.map(t => `ext:${t}`)].join(' ');
                                   setEditingSpec({ ...editingSpec, sequence: seq });
@@ -370,7 +348,7 @@ const ScalingConfigModal: React.FC<ScalingConfigModalProps> = ({ name, mode, spe
                         {/* External Targets block for this Stage */}
                         <div className="ml-8 pl-4 border-l-2 border-indigo-100/50 mt-4 mb-2">
                           {/* List assigned external targets */}
-                          {(editingSpec.externalTargets || []).filter((t: any) => stageTargets.includes(t.identifier)).map((target: any, tIdx: number) => (
+                          {(editingSpec.externalTargets || []).filter(t => stageTargets.includes(t.identifier)).map((target, tIdx) => (
                             <div key={`ext-${idx}-${tIdx}`} className="flex items-center gap-2 mb-2 p-2.5 bg-amber-50 rounded-xl border border-amber-100/50">
                               <div className="w-6 h-6 rounded-lg bg-white shadow-sm flex items-center justify-center">
                                 <img src="https://upload.wikimedia.org/wikipedia/commons/9/93/Amazon_Web_Services_Logo.svg" alt="AWS" className="w-3.5 opacity-60 grayscale" />
@@ -380,7 +358,7 @@ const ScalingConfigModal: React.FC<ScalingConfigModalProps> = ({ name, mode, spe
                                 <span className="text-xs font-bold text-amber-900 truncate">{target.identifier}</span>
                               </div>
                               <button onClick={() => {
-                                const newTargets = editingSpec.externalTargets?.filter((t: any) => t.identifier !== target.identifier);
+                                const newTargets = editingSpec.externalTargets?.filter(t => t.identifier !== target.identifier);
                                 const seq = [...(editingSpec.sequence || [])];
                                 seq[idx] = stageItems.filter(n => n !== `ext:${target.identifier}`).join(' ');
                                 setEditingSpec({ ...editingSpec, sequence: seq, externalTargets: newTargets });
@@ -410,7 +388,7 @@ const ScalingConfigModal: React.FC<ScalingConfigModalProps> = ({ name, mode, spe
                                 ) : (
                                   <div className="max-h-48 overflow-y-auto">
                                     {availableAuroraClusters.map(cluster => {
-                                      const isAdded = (editingSpec.externalTargets || []).some((t: any) => t.identifier === cluster.identifier);
+                                      const isAdded = (editingSpec.externalTargets || []).some(t => t.identifier === cluster.identifier);
                                       return (
                                         <button
                                           key={cluster.identifier}

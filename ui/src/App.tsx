@@ -14,6 +14,24 @@ import AIChatWidget from './components/AIChatModal'
 import AuthCallback from './pages/AuthCallback'
 import { AuthContext, type User } from './lib/auth'
 
+interface Session {
+  authenticated: boolean
+  user: User | null
+  version?: string
+}
+
+async function fetchSession(): Promise<Session> {
+  try {
+    const res = await fetch('/api/auth/me')
+    if (res.status === 401) return { authenticated: false, user: null }
+    const user: User | null = res.ok ? await res.json() : null
+    const v = await fetch('/api/version').then(r => r.json()).catch(() => null)
+    return { authenticated: true, user, version: v ? v.version || 'dev' : undefined }
+  } catch {
+    return { authenticated: false, user: null }
+  }
+}
+
 function App() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'scale' | 'cluster' | 'operator' | 'api-docs' | 'settings' | 'reports'>('dashboard')
   const [selectedNamespace, setSelectedNamespace] = useState<string | null>(null)
@@ -23,26 +41,18 @@ function App() {
   const [user, setUser] = useState<User | null>(null)
   const isSSOCallback = window.location.pathname === '/auth/callback'
 
-  const loadSession = useCallback(async () => {
-    try {
-      const res = await fetch('/api/auth/me')
-      if (res.status === 401) {
-        setUser(null)
-        setIsAuthenticated(false)
-        return
-      }
-      if (res.ok) setUser(await res.json())
-      setIsAuthenticated(true)
-      const v = await fetch('/api/version').then(r => r.json()).catch(() => null)
-      if (v) setAppVersion(v.version || 'dev')
-    } catch {
-      setIsAuthenticated(false)
-    }
+  // applySession runs after the fetch resolves, never synchronously inside an effect.
+  const applySession = useCallback((session: Session) => {
+    setUser(session.user)
+    setIsAuthenticated(session.authenticated)
+    if (session.version) setAppVersion(session.version)
   }, [])
 
+  const loadSession = useCallback(() => fetchSession().then(applySession), [applySession])
+
   useEffect(() => {
-    if (!isSSOCallback) loadSession()
-  }, [isSSOCallback, loadSession])
+    if (!isSSOCallback) fetchSession().then(applySession)
+  }, [isSSOCallback, applySession])
 
   const finishSSO = useCallback((returnTo: string) => {
     window.history.replaceState(null, '', returnTo)

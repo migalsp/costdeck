@@ -1,8 +1,11 @@
 import { useAuth } from '../lib/auth'
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { ArrowLeft, Search, Activity, AlertCircle, Play, Square, Settings2, Clock, Plus } from 'lucide-react'
 import ScalingConfigModal from '../components/ScalingConfigModal'
 import InfoTooltip from '../components/InfoTooltip'
+import { errorMessage, fetchNamespaceCost } from '../lib/api'
+import type { CostEstimate, OptimizationStatus, ScalingConfig, ScalingSpec } from '../lib/types'
+import { usePolling } from '../lib/usePolling'
 
 interface PodDetail {
   name: string;
@@ -24,12 +27,14 @@ interface PodDetail {
   };
 }
 
+type SortField = 'name' | 'status' | 'cost' | 'cpuUsage' | 'cpuReq' | 'cpuLim' | 'memUsage' | 'memReq' | 'memLim'
+
 interface NamespaceDetailsProps {
   namespace: string;
   onBack: () => void;
 }
 
-const formatCpu = (v: string): string => {
+const formatCpu = (v?: string): string => {
   if (!v || v === '0') return '0';
   if (v.endsWith('n')) return (parseInt(v.slice(0, -1), 10) / 1000000000).toFixed(3);
   if (v.endsWith('u')) return (parseInt(v.slice(0, -1), 10) / 1000000).toFixed(3);
@@ -37,7 +42,7 @@ const formatCpu = (v: string): string => {
   return parseFloat(v).toFixed(3);
 }
 
-const formatMem = (v: string): string => {
+const formatMem = (v?: string): string => {
   if (!v || v === '0') return '0';
   let bytes = 0;
   const val = v.toLowerCase();
@@ -49,19 +54,33 @@ const formatMem = (v: string): string => {
   return (bytes / (1024 * 1024)).toFixed(1) + ' MiB';
 }
 
+const sortValue = (pod: PodDetail, field: SortField): string | number => {
+  switch (field) {
+    case 'name': return pod.name
+    case 'status': return pod.status
+    case 'cost': return pod.cost?.monthlyCost ?? 0
+    case 'cpuUsage': return parseFloat(formatCpu(pod.cpu.usage))
+    case 'cpuReq': return parseFloat(formatCpu(pod.cpu.requests))
+    case 'cpuLim': return parseFloat(formatCpu(pod.cpu.limits))
+    case 'memUsage': return parseFloat(formatMem(pod.memory.usage))
+    case 'memReq': return parseFloat(formatMem(pod.memory.requests))
+    case 'memLim': return parseFloat(formatMem(pod.memory.limits))
+  }
+}
+
 export default function NamespaceDetails({ namespace, onBack }: NamespaceDetailsProps) {
   const { can } = useAuth();
   const [pods, setPods] = useState<PodDetail[]>([])
-  const [optimization, setOptimization] = useState<any>(null)
+  const [optimization, setOptimization] = useState<OptimizationStatus | null>(null)
   const [loading, setLoading] = useState(true)
   const [filterQuery, setFilterQuery] = useState('')
   const [error, setError] = useState<string | null>(null)
-  const [config, setConfig] = useState<any>(null)
+  const [config, setConfig] = useState<ScalingConfig | undefined>(undefined)
   const [isEditingConfig, setIsEditingConfig] = useState(false)
-  const [sortField, setSortField] = useState<keyof PodDetail | 'cpuUsage' | 'memUsage' | 'cpuReq' | 'cpuLim' | 'memReq' | 'memLim'>('name')
+  const [sortField, setSortField] = useState<SortField>('name')
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc')
   const [isScaling, setIsScaling] = useState(false)
-  const [namespaceCost, setNamespaceCost] = useState<any>(null)
+  const [namespaceCost, setNamespaceCost] = useState<CostEstimate | null>(null)
 
   const fetchPods = (silent = false) => {
     if (!silent) setLoading(true);
@@ -75,16 +94,14 @@ export default function NamespaceDetails({ namespace, onBack }: NamespaceDetails
         console.error(err);
         if (!silent) setError("Failed to load pod details.");
       })
-      .finally(() => {
-        if (!silent) setLoading(false);
-      });
+      .finally(() => setLoading(false));
   }
 
   const fetchConfig = () => {
     fetch('/api/scaling/configs')
       .then(res => res.json())
       .then(data => {
-        const p = (data || []).find((p: any) => p.spec.targetNamespace === namespace);
+        const p = ((data || []) as ScalingConfig[]).find(p => p.spec.targetNamespace === namespace);
         setConfig(p);
       })
       .catch(console.error);
@@ -97,38 +114,19 @@ export default function NamespaceDetails({ namespace, onBack }: NamespaceDetails
       .catch(console.error);
   }
 
-  const fetchNamespaceCost = async () => {
-    try {
-      const res = await fetch('/api/costing', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          targetType: 'namespace',
-          targetName: namespace
-        })
-      })
-      if (res.ok) {
-        const cost = await res.json()
-        if (cost) setNamespaceCost(cost)
-      }
-    } catch (e) {
-      console.error('Failed to fetch cost', e)
-    }
+  const fetchCost = () => {
+    fetchNamespaceCost(namespace)
+      .then(cost => { if (cost) setNamespaceCost(cost) })
+      .catch(e => console.error('Failed to fetch cost', e))
   }
 
-  useEffect(() => {
-    fetchPods()
+  // Pods refresh silently: the loading state starts true and the first fetch clears it.
+  usePolling(() => {
+    fetchPods(true)
     fetchConfig()
     fetchOptimization()
-    fetchNamespaceCost()
-    const interval = setInterval(() => {
-      fetchPods(true)
-      fetchConfig()
-      fetchOptimization()
-      fetchNamespaceCost()
-    }, 10000)
-    return () => clearInterval(interval)
-  }, [namespace])
+    fetchCost()
+  }, 10000, namespace)
 
   const handleManualScale = async (active: boolean) => {
     if (!config || isScaling) return;
@@ -139,6 +137,7 @@ export default function NamespaceDetails({ namespace, onBack }: NamespaceDetails
     setConfig({
       ...config,
       status: {
+        lastAction: '',
         ...config.status,
         phase: 'Scaling...'
       }
@@ -177,7 +176,7 @@ export default function NamespaceDetails({ namespace, onBack }: NamespaceDetails
       // Revert optimistic update on failure
       setConfig({
         ...config,
-        status: { ...config.status, phase: previousPhase }
+        status: { lastAction: '', ...config.status, phase: previousPhase ?? '' }
       });
       setIsScaling(false);
     }
@@ -199,7 +198,7 @@ export default function NamespaceDetails({ namespace, onBack }: NamespaceDetails
     }
   };
 
-  const handleUpdateConfig = async (updatedSpec: any) => {
+  const handleUpdateConfig = async (updatedSpec: ScalingSpec) => {
     if (!config) return;
     try {
       const res = await fetch(`/api/scaling/configs/${config.metadata.name}`, {
@@ -219,9 +218,9 @@ export default function NamespaceDetails({ namespace, onBack }: NamespaceDetails
       setIsEditingConfig(false);
       setError(null);
       fetchConfig();
-    } catch (err: any) {
+    } catch (err) {
       console.error(err);
-      setError(`Failed to update configuration: ${err.message}`);
+      setError(`Failed to update configuration: ${errorMessage(err)}`);
     }
   };
 
@@ -235,36 +234,12 @@ export default function NamespaceDetails({ namespace, onBack }: NamespaceDetails
   }
 
   const getSortedPods = () => {
+    const dir = sortDirection === 'asc' ? 1 : -1;
     return [...pods].sort((a, b) => {
-      let valA: any = a[sortField as keyof PodDetail] || '';
-      let valB: any = b[sortField as keyof PodDetail] || '';
-      
-      // Handle nested metrics for sorting
-      if (sortField === 'cpuUsage') {
-        valA = parseFloat(formatCpu(a.cpu.usage));
-        valB = parseFloat(formatCpu(b.cpu.usage));
-      } else if (sortField === 'memUsage') {
-        valA = parseFloat(formatMem(a.memory.usage));
-        valB = parseFloat(formatMem(b.memory.usage));
-      } else if (sortField === 'cpuReq') {
-        valA = parseFloat(formatCpu(a.cpu.requests));
-        valB = parseFloat(formatCpu(b.cpu.requests));
-      } else if (sortField === 'cpuLim') {
-        valA = parseFloat(formatCpu(a.cpu.limits));
-        valB = parseFloat(formatCpu(b.cpu.limits));
-      } else if (sortField === 'memReq') {
-        valA = parseFloat(formatMem(a.memory.requests));
-        valB = parseFloat(formatMem(b.memory.requests));
-      } else if (sortField === 'memLim') {
-        valA = parseFloat(formatMem(a.memory.limits));
-        valB = parseFloat(formatMem(b.memory.limits));
-      } else if (sortField === 'cost') {
-        valA = a.cost ? a.cost.monthlyCost : 0;
-        valB = b.cost ? b.cost.monthlyCost : 0;
-      }
-
-      if (valA < valB) return sortDirection === 'asc' ? -1 : 1;
-      if (valA > valB) return sortDirection === 'asc' ? 1 : -1;
+      const valA = sortValue(a, sortField);
+      const valB = sortValue(b, sortField);
+      if (valA < valB) return -dir;
+      if (valA > valB) return dir;
       return 0;
     })
   }
@@ -275,7 +250,7 @@ export default function NamespaceDetails({ namespace, onBack }: NamespaceDetails
 
   const getOptimizationForPod = (podName: string) => {
     if (!optimization?.active || !optimization.workloads) return null;
-    return optimization.workloads.find((w: any) => podName.startsWith(w.name));
+    return optimization.workloads.find(w => podName.startsWith(w.name));
   }
 
   return (

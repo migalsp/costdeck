@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Server, Cpu, Database, Activity, DollarSign, Globe } from 'lucide-react'
 import InfoTooltip from '../components/InfoTooltip'
+import type { CostEstimate } from '../lib/types'
 
 interface NodeData {
   name: string;
@@ -43,13 +44,13 @@ interface ClusterResponse {
 export default function ClusterDashboard() {
   const [data, setData] = useState<ClusterResponse | null>(null)
   const [loading, setLoading] = useState(true)
-  const [clusterCost, setClusterCost] = useState<any>(null)
-  const [nodeCosts, setNodeCosts] = useState<Record<string, any>>({})
+  const [clusterCost, setClusterCost] = useState<CostEstimate | null>(null)
+  const [nodeCosts, setNodeCosts] = useState<Record<string, CostEstimate>>({})
 
   useEffect(() => {
     fetch('/api/cluster/nodes')
       .then(res => res.json())
-      .then(d => {
+      .then((d: ClusterResponse) => {
         setData(d)
         setLoading(false)
         

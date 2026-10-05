@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { usePolling } from '../lib/usePolling'
 import { Activity, AlertTriangle, Shield, Cpu, Database, Download, RefreshCw, Terminal, Box, Zap, Recycle } from 'lucide-react'
 import {
   AreaChart,
@@ -28,9 +29,27 @@ const HealthCard = ({ icon, title, value, subtitle, variant = 'default' }: { ico
   </div>
 );
 
+// HealthSample is one reading from GET /api/operator/health.
+interface HealthSample {
+  status: string
+  managedNamespaces: number
+  memoryUsage: number
+  cpuUsage: number
+  memoryRequests: number
+  memoryLimits: number
+  cpuRequests: number
+  cpuLimits: number
+  goroutines: number
+  cpuCores: number
+  heapAllocMiB: number
+  sysMemoryMiB: number
+  gcCycles: number
+  timestamp: string
+}
+
 export default function OperatorHealth() {
-  const [health, setHealth] = useState<any | null>(null)
-  const [history, setHistory] = useState<any[]>([])
+  const [health, setHealth] = useState<HealthSample | null>(null)
+  const [history, setHistory] = useState<(HealthSample & { time: string })[]>([])
   const [logs, setLogs] = useState<string>('')
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
@@ -42,7 +61,7 @@ export default function OperatorHealth() {
       const res = await fetch('/api/operator/health')
       const data = await res.json()
       setHealth(data.current)
-      setHistory((data.history || []).map((h: any) => ({
+      setHistory(((data.history || []) as HealthSample[]).map(h => ({
         ...h,
         time: new Date(h.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
       })))
@@ -61,21 +80,16 @@ export default function OperatorHealth() {
     }
   }
 
+  const refresh = () => Promise.all([fetchHealth(), fetchLogs()])
+
+  // Background refreshes stay quiet; only the button spins.
   const handleRefresh = async () => {
     setRefreshing(true)
-    await Promise.all([fetchHealth(), fetchLogs()])
+    await refresh()
     setRefreshing(false)
   }
 
-  useEffect(() => {
-    const init = async () => {
-      await handleRefresh()
-      setLoading(false)
-    }
-    init()
-    const interval = setInterval(handleRefresh, 5000)
-    return () => clearInterval(interval)
-  }, [])
+  usePolling(() => { refresh().then(() => setLoading(false)) }, 5000)
 
   useEffect(() => {
     if (autoScroll) {
@@ -174,12 +188,12 @@ export default function OperatorHealth() {
                   tick={{ fill: '#94a3b8' }}
                   tickLine={false}
                   axisLine={{ stroke: '#e2e8f0' }}
-                  domain={[0, (dataMax: any) => Math.max(dataMax, cpuLim || 0.1) * 1.3]}
+                  domain={[0, (dataMax: number) => Math.max(dataMax, cpuLim || 0.1) * 1.3]}
                   label={{ value: 'Cores', angle: -90, position: 'insideLeft', offset: 5, fontSize: 10, fill: '#94a3b8' }}
                 />
                 <Tooltip
                   contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', fontSize: '12px' }}
-                  formatter={(value: any) => [`${Number(value).toFixed(4)} cores`, 'CPU Usage']}
+                  formatter={(value) => [`${Number(value).toFixed(4)} cores`, 'CPU Usage']}
                 />
                 <Legend iconType="circle" wrapperStyle={{ fontSize: '10px', paddingTop: '8px' }} />
                 <Area type="monotone" dataKey="cpuUsage" name="Usage" stroke="#6366f1" strokeWidth={2} fillOpacity={1} fill="url(#colorCpu)" dot={false} />
@@ -232,12 +246,12 @@ export default function OperatorHealth() {
                   tick={{ fill: '#94a3b8' }}
                   tickLine={false}
                   axisLine={{ stroke: '#e2e8f0' }}
-                  domain={[0, (dataMax: any) => Math.max(dataMax, memLim || 128) * 1.3]}
+                  domain={[0, (dataMax: number) => Math.max(dataMax, memLim || 128) * 1.3]}
                   label={{ value: 'MiB', angle: -90, position: 'insideLeft', offset: 5, fontSize: 10, fill: '#94a3b8' }}
                 />
                 <Tooltip
                   contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', fontSize: '12px' }}
-                  formatter={(value: any) => [`${Number(value).toFixed(1)} MiB`, 'Memory Usage']}
+                  formatter={(value) => [`${Number(value).toFixed(1)} MiB`, 'Memory Usage']}
                 />
                 <Legend iconType="circle" wrapperStyle={{ fontSize: '10px', paddingTop: '8px' }} />
                 <Area type="monotone" dataKey="memoryUsage" name="Usage" stroke="#10b981" strokeWidth={2} fillOpacity={1} fill="url(#colorMem)" dot={false} />

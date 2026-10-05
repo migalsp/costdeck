@@ -1,6 +1,7 @@
 import { useAuth } from '../lib/auth'
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { ArrowLeft, Play, Square, RefreshCw } from 'lucide-react'
+import { usePolling } from '../lib/usePolling'
 
 interface Workload {
   name: string
@@ -29,7 +30,7 @@ export default function ScalingWorkloads({ namespace, onBack }: ScalingWorkloads
     finally { setLoading(false) }
   }
 
-  useEffect(() => { fetchWorkloads() }, [namespace])
+  usePolling(fetchWorkloads, null, namespace)
 
   // Scale individual workload via the scaling endpoint
   const handleScaleWorkload = async (name: string, kind: string, replicas: number) => {

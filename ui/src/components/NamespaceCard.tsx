@@ -1,5 +1,5 @@
 import { useAuth } from '../lib/auth'
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import type { MetricDataPoint } from '../pages/Dashboard'
 import {
   Area,
@@ -13,6 +13,19 @@ import {
 } from 'recharts'
 import { AlertTriangle, CheckCircle, Database, Cpu, Zap, RotateCcw } from 'lucide-react'
 import InfoTooltip from './InfoTooltip'
+import { fetchNamespaceCost } from '../lib/api'
+import type { CostEstimate, OptimizationStatus } from '../lib/types'
+import { usePolling } from '../lib/usePolling'
+
+interface UsagePoint {
+  time: string
+  cpuUsage: number
+  cpuReq: number
+  cpuLim: number
+  memUsage: number
+  memReq: number
+  memLim: number
+}
 
 interface NamespaceCardProps {
   namespace: string;
@@ -41,11 +54,11 @@ const parseMem = (v: string): number => {
 
 export default function NamespaceCard({ namespace, insights = [], onClick }: NamespaceCardProps) {
   const { can } = useAuth()
-  const [history, setHistory] = useState<any[]>([])
-  const [optimization, setOptimization] = useState<any>(null)
+  const [history, setHistory] = useState<UsagePoint[]>([])
+  const [optimization, setOptimization] = useState<OptimizationStatus | null>(null)
   const [loading, setLoading] = useState(true)
   const [actionLoading, setActionLoading] = useState<'optimize' | 'revert' | null>(null)
-  const [namespaceCost, setNamespaceCost] = useState<any>(null)
+  const [namespaceCost, setNamespaceCost] = useState<CostEstimate | null>(null)
 
   const fetchOptimization = () => {
     fetch(`/api/namespaces/${namespace}/optimization`)
@@ -54,30 +67,17 @@ export default function NamespaceCard({ namespace, insights = [], onClick }: Nam
       .catch(err => console.error("Failed to fetch optimization", err))
   }
 
-  const fetchCost = async () => {
-    try {
-      const res = await fetch('/api/costing', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          targetType: 'namespace',
-          targetName: namespace
-        })
-      })
-      if (res.ok) {
-        const cost = await res.json()
-        if (cost) setNamespaceCost(cost)
-      }
-    } catch (e) {
-      console.error('Failed to fetch cost', e)
-    }
+  const fetchCost = () => {
+    fetchNamespaceCost(namespace)
+      .then(cost => { if (cost) setNamespaceCost(cost) })
+      .catch(e => console.error('Failed to fetch cost', e))
   }
 
   const fetchData = () => {
     fetch(`/api/namespaces/${namespace}/history`)
       .then(res => res.json())
       .then(data => {
-        const formattedData = (data || []).map((point: MetricDataPoint) => {
+        const formattedData = (data || []).map((point: MetricDataPoint): UsagePoint => {
           const t = new Date(point.timestamp)
           return {
             time: `${t.getHours().toString().padStart(2, '0')}:${t.getMinutes().toString().padStart(2, '0')}`,
@@ -97,18 +97,11 @@ export default function NamespaceCard({ namespace, insights = [], onClick }: Nam
       .finally(() => setLoading(false))
   }
 
-  useEffect(() => {
+  usePolling(() => {
     fetchData()
     fetchOptimization()
     fetchCost()
-    // Auto-refresh every 30 seconds
-    const interval = setInterval(() => {
-      fetchData()
-      fetchOptimization()
-      fetchCost()
-    }, 30000)
-    return () => clearInterval(interval)
-  }, [namespace])
+  }, 30000, namespace)
 
   const handleOptimize = async (e: React.MouseEvent) => {
     e.stopPropagation()
@@ -257,7 +250,7 @@ export default function NamespaceCard({ namespace, insights = [], onClick }: Nam
                   <Tooltip 
                     contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
                     itemStyle={{ fontSize: '12px', fontWeight: 500 }}
-                    formatter={(value: any) => [`${(value || 0).toFixed(3)} Cores`, 'Usage']}
+                    formatter={(value) => [`${Number(value ?? 0).toFixed(3)} Cores`, 'Usage']}
                   />
                   {/* Real Usage (Blue) */}
                   <Area type="monotone" dataKey="cpuUsage" name="Usage" stroke="#3b82f6" fillOpacity={1} fill="url(#colorCpuUsage)" />
@@ -311,7 +304,7 @@ export default function NamespaceCard({ namespace, insights = [], onClick }: Nam
                   <Tooltip 
                     contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
                     itemStyle={{ fontSize: '12px', fontWeight: 500 }}
-                    formatter={(value: any) => [`${(value || 0).toFixed(1)} MiB`, 'Usage']}
+                    formatter={(value) => [`${Number(value ?? 0).toFixed(1)} MiB`, 'Usage']}
                   />
                   {/* Real Usage (Blue) */}
                   <Area type="monotone" dataKey="memUsage" name="Usage (MiB)" stroke="#6366f1" fillOpacity={1} fill="url(#colorMemUsage)" />
