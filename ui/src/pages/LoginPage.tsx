@@ -93,16 +93,9 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
       <div className="w-full max-w-md">
         {/* Logo Header */}
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 bg-emerald-500/10 rounded-xl mb-4">
-            <svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-emerald-400">
-              <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
-              <polyline points="7 14 10 11 13 14 17 9" />
-              <line x1="17" y1="9" x2="17" y2="13" />
-              <line x1="17" y1="9" x2="13" y2="9" />
-            </svg>
-          </div>
+          <img src="/brand/cost-deck-icon-64.png" srcSet="/brand/cost-deck-icon-128.png 2x" width={64} height={64} alt="" className="mx-auto mb-4" />
           <h1 className="text-3xl font-bold text-white tracking-tight">Cost Deck</h1>
-          <p className="text-slate-400 mt-2 text-sm">FinOps Platform UI</p>
+          <p className="text-slate-400 mt-2 text-sm">Kubernetes FinOps</p>
         </div>
 
         <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-8 shadow-2xl">

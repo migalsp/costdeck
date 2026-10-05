@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { X, Send, Loader2, User, Wrench, CheckCircle2, XCircle, ShieldCheck, Square } from 'lucide-react';
+import { X, Send, Loader2, User, Wrench, CheckCircle2, XCircle, ShieldCheck, Sparkles, Square } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useAuth } from '../lib/auth';
@@ -66,15 +66,6 @@ function describeAction(tool: string, args: Record<string, unknown>): string {
       return `${tool} ${JSON.stringify(args)}`;
   }
 }
-
-const CostDeckLogo = ({ size = 24, className = "" }: { size?: number, className?: string }) => (
-  <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
-    <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
-    <polyline points="7 14 10 11 13 14 17 9" />
-    <line x1="17" y1="9" x2="17" y2="13" />
-    <line x1="17" y1="9" x2="13" y2="9" />
-  </svg>
-);
 
 // readEvents parses a server-sent event stream into AgentEvents.
 async function readEvents(res: Response, onEvent: (e: AgentEvent) => void) {
@@ -224,7 +215,7 @@ export default function AIChatWidget() {
         className={`fixed bottom-8 right-8 w-14 h-14 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl shadow-lg flex items-center justify-center transition-all duration-300 hover:scale-105 z-50 ring-1 ring-white/20 ${isOpen ? 'scale-0 opacity-0 pointer-events-none' : 'scale-100 opacity-100'}`}
         aria-label="Open CostDeck AI"
       >
-        <CostDeckLogo size={24} />
+        <Sparkles size={24} />
       </button>
 
       <div
@@ -233,7 +224,7 @@ export default function AIChatWidget() {
         <div className="bg-emerald-500 p-4 flex items-center justify-between text-white shrink-0 shadow-sm z-10 border-b border-emerald-600">
           <div className="flex items-center gap-3">
             <div className="w-8 h-8 bg-white/20 rounded-lg flex items-center justify-center border border-white/20 shadow-sm">
-              <CostDeckLogo size={18} className="text-white" />
+              <Sparkles size={18} className="text-white" />
             </div>
             <div>
               <h3 className="font-semibold text-sm tracking-tight text-white">CostDeck AI</h3>
@@ -255,9 +246,7 @@ export default function AIChatWidget() {
         <div className="flex-1 overflow-y-auto bg-slate-50 min-h-0 flex flex-col">
           {items.length === 0 && (
             <div className="h-full flex flex-col items-center justify-center text-center space-y-4 p-8">
-              <div className="w-16 h-16 bg-emerald-100/50 rounded-full flex items-center justify-center border border-emerald-200/50">
-                <CostDeckLogo size={32} className="text-emerald-500" />
-              </div>
+              <img src="/brand/cost-deck-icon-64.png" srcSet="/brand/cost-deck-icon-128.png 2x" width={56} height={56} alt="" />
               <p className="text-sm font-medium text-slate-500 leading-relaxed max-w-[80%]">
                 Ask about costs, waste, or schedules.
               </p>
@@ -274,7 +263,7 @@ export default function AIChatWidget() {
           {items.map(item => (
             <div key={item.id} className={`flex flex-col w-full py-4 px-6 gap-2 border-b border-slate-100 ${item.role === 'user' ? 'bg-white' : 'bg-slate-50/80'}`}>
               <div className="flex items-center gap-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                {item.role === 'user' ? (<><User size={12} /> You</>) : (<><CostDeckLogo size={12} className="text-emerald-500" /> CostDeck AI</>)}
+                {item.role === 'user' ? (<><User size={12} /> You</>) : (<><Sparkles size={12} className="text-emerald-500" /> CostDeck AI</>)}
               </div>
 
               {item.activity.length > 0 && (

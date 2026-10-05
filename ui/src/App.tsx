@@ -108,14 +108,7 @@ function App() {
       <aside className="w-64 shrink-0 bg-slate-900 text-white flex flex-col z-10">
         <div className="p-6">
           <div className="flex items-center gap-4 mb-2">
-            <div className="w-10 h-10 bg-brand-500 rounded-xl flex items-center justify-center">
-              <svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-white">
-                <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
-                <polyline points="7 14 10 11 13 14 17 9" />
-                <line x1="17" y1="9" x2="17" y2="13" />
-                <line x1="17" y1="9" x2="13" y2="9" />
-              </svg>
-            </div>
+            <img src="/brand/cost-deck-icon-40.png" srcSet="/brand/cost-deck-icon-80.png 2x" width={40} height={40} alt="" className="shrink-0" />
           <div className="flex flex-col">
             <h1 className="text-xl font-bold tracking-tight text-white leading-none">Cost Deck</h1>
             <span className="text-[10px] uppercase tracking-[0.2em] text-brand-400 font-semibold mt-1">FinOps Platform</span>

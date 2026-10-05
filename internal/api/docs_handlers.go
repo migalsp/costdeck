@@ -59,21 +59,11 @@ const swaggerPage = `<!DOCTYPE html>
       text-transform: uppercase;
       letter-spacing: 2px;
     }
-    .costdeck-badge {
-      background: #10b981;
-      color: #fff;
-      width: 32px; height: 32px;
-      border-radius: 10px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font: 700 16px/1 sans-serif;
-    }
   </style>
 </head>
 <body>
   <div class="costdeck-header">
-    <div class="costdeck-badge">K</div>
+    <img src="/brand/cost-deck-icon-64.png" width="32" height="32" alt="">
     <div>
       <h1>Cost Deck</h1>
       <span>API Documentation</span>
