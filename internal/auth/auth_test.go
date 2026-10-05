@@ -77,6 +77,8 @@ func TestResolveRole(t *testing.T) {
 		DefaultRole:      "operator",
 		GroupRoleMapping: map[string]string{"g-admins": "admin", "g-ops": "owner", "g-readers": "reader"},
 	}
+	multi := cfg
+	multi.TenantID = "organizations"
 	tests := []struct {
 		name     string
 		cfg      finopsv1.EntraConfig
@@ -92,6 +94,11 @@ func TestResolveRole(t *testing.T) {
 		{"viewer when no default is set", finopsv1.EntraConfig{}, nil, nil, RoleViewer, true},
 		{"no auto-provisioning denies unmapped users", finopsv1.EntraConfig{AutoProvision: &no}, []string{"x"}, nil, "", false},
 		{"no auto-provisioning still admits mapped users", finopsv1.EntraConfig{AutoProvision: &no, GroupRoleMapping: cfg.GroupRoleMapping}, []string{"g-readers"}, nil, RoleViewer, true},
+		// Multi-tenant: a foreign tenant's admins control app-role assignments, and
+		// auto-provisioning would admit any work account.
+		{"multi-tenant ignores app roles", multi, nil, []string{"CostDeck.Admin"}, "", false},
+		{"multi-tenant never auto-provisions", multi, []string{"unknown"}, nil, "", false},
+		{"multi-tenant honours group mappings", multi, []string{"g-ops"}, []string{"CostDeck.Admin"}, RoleOperator, true},
 	}
 	for _, tt := range tests {
 		got, ok := ResolveRole(tt.cfg, tt.groups, tt.roles)

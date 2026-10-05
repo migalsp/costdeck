@@ -239,8 +239,10 @@ type EntraConfig struct {
 	// +optional
 	Enabled bool `json:"enabled,omitempty"`
 
-	// TenantID is the directory (tenant) ID or a verified domain. Use "organizations" to
-	// accept any work account (multi-tenant app registration).
+	// TenantID is the directory (tenant) ID or a verified domain. "organizations" accepts
+	// work accounts from any tenant (multi-tenant app registration); then only
+	// GroupRoleMapping grants access, because app roles and auto-provisioning could be
+	// abused from a foreign tenant.
 	// +kubebuilder:validation:MaxLength=128
 	// +optional
 	TenantID string `json:"tenantId,omitempty"`

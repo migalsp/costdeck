@@ -401,22 +401,30 @@ func (e *Entra) verify(ctx context.Context, p *oidc.Provider, cfg finopsv1.Entra
 
 // ResolveRole maps group and app-role claims to a CostDeck role. The most privileged match
 // wins; without a match, AutoProvision (default on) grants DefaultRole (default viewer).
+//
+// A multi-tenant registration only trusts group mappings. App-role assignments are made
+// by the admins of each user's own tenant, so anyone who controls some tenant could grant
+// themselves "admin", and auto-provisioning would admit every work account in the world.
+// Group object IDs are unique across tenants, so a mapped group cannot be forged.
 func ResolveRole(cfg finopsv1.EntraConfig, groups, appRoles []string) (Role, bool) {
+	mt := multiTenant(cfg.TenantID)
 	var role Role
 	for _, g := range groups {
 		if r, ok := ParseRole(cfg.GroupRoleMapping[g]); ok {
 			role = Higher(role, r)
 		}
 	}
-	for _, ar := range appRoles {
-		if r, ok := ParseRole(ar); ok {
-			role = Higher(role, r)
+	if !mt {
+		for _, ar := range appRoles {
+			if r, ok := ParseRole(ar); ok {
+				role = Higher(role, r)
+			}
 		}
 	}
 	if role != "" {
 		return role, true
 	}
-	if cfg.AutoProvision != nil && !*cfg.AutoProvision {
+	if mt || (cfg.AutoProvision != nil && !*cfg.AutoProvision) {
 		return "", false
 	}
 	if r, ok := ParseRole(cfg.DefaultRole); ok {

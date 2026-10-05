@@ -112,8 +112,10 @@ spec:
                         type: boolean
                       tenantId:
                         description: |-
-                          TenantID is the directory (tenant) ID or a verified domain. Use "organizations" to
-                          accept any work account (multi-tenant app registration).
+                          TenantID is the directory (tenant) ID or a verified domain. "organizations" accepts
+                          work accounts from any tenant (multi-tenant app registration); then only
+                          GroupRoleMapping grants access, because app roles and auto-provisioning could be
+                          abused from a foreign tenant.
                         maxLength: 128
                         type: string
                     type: object

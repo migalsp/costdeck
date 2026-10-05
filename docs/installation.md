@@ -111,7 +111,9 @@ Secrets in that namespace, never into the custom resource.
    assign groups to the application or use app roles named `admin`, `operator` and
    `viewer` instead.
 5. In Cost Deck, open **Settings → Access & SSO** and fill in:
-   - **Tenant ID**: a directory ID or domain. `organizations` accepts any work account.
+   - **Tenant ID**: a directory ID or domain. `organizations` accepts work accounts from
+     any tenant; then only the group mapping grants access. App roles and auto-provision
+     are ignored, because any tenant's admins could abuse them.
    - **Client ID** and **Client secret**.
    - **Redirect URL**: optional, derived from the request host when empty.
    - **Group → role mapping**: Entra group object IDs mapped to roles. The most privileged
