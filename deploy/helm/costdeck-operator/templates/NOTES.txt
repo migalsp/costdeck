@@ -1,0 +1,28 @@
+CostDeck {{ .Chart.AppVersion }} is installed in namespace {{ .Release.Namespace }}.
+
+Sign in as "costdeck-admin" with the generated password:
+
+  kubectl get secret {{ include "costdeck-operator.fullname" . }}-admin-credentials -n {{ .Release.Namespace }} \
+    -o jsonpath='{.data.password}' | base64 -d; echo
+
+{{- if .Values.ingress.enabled }}
+
+Dashboard:
+{{- range .Values.ingress.hosts }}
+  http{{ if $.Values.ingress.tls }}s{{ end }}://{{ .host }}
+{{- end }}
+{{- else }}
+
+Dashboard (no Ingress configured):
+
+  kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "costdeck-operator.fullname" . }}-api 8082:{{ .Values.service.port }}
+  open http://localhost:8082
+{{- end }}
+
+Single sign-on, AI, Webex, VictoriaMetrics and cloud pricing are configured in the
+dashboard under Settings (admin role) and stored in the CostDeckConfig "default".
+{{- if and (gt (int .Values.replicaCount) 1) (not .Values.leaderElection.enabled) }}
+
+WARNING: replicaCount > 1 without leader election: every replica will reconcile and scale
+the same workloads. Set leaderElection.enabled=true.
+{{- end }}

@@ -1,6 +1,17 @@
 apiVersion: v2
 name: costdeck-operator
-description: A Helm chart for Kubernetes
+description: >-
+  Kubernetes FinOps operator: namespace cost and usage insights, right-sizing, and
+  schedule-driven scale-down of non-production workloads and cloud resources.
+home: https://github.com/migalsp/costdeck
+sources:
+  - https://github.com/migalsp/costdeck
+keywords:
+  - finops
+  - cost
+  - scaling
+  - operator
+kubeVersion: ">=1.26.0-0"
 
 type: application
 

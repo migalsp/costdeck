@@ -1,12 +1,15 @@
 replicaCount: 1
 
+nameOverride: ""
 fullnameOverride: "costdeck-operator"
 
 image:
-  repository: 741448935696.dkr.ecr.us-east-1.amazonaws.com/migalsp/costdeck/costdeck-operator
+  repository: ghcr.io/migalsp/costdeck/costdeck-operator
   pullPolicy: IfNotPresent
   # Overrides the image tag whose default is the chart appVersion.
   tag: "1.3.0" # x-release-please-version
+
+imagePullSecrets: []
 
 serviceAccount:
   # Specifies whether a service account should be created
@@ -17,9 +20,49 @@ serviceAccount:
   # If not set and create is true, a name is generated using the fullname template
   name: ""
 
+# Only the elected leader reconciles and polls Webex; every replica serves the API and the
+# dashboard. Keep this on whenever replicaCount can exceed 1, or two controllers will scale
+# the same workloads and answer every chat message twice.
+leaderElection:
+  enabled: true
+
+# Prometheus metrics: controller-runtime internals plus costdeck_* scaling state and
+# estimated savings.
+metrics:
+  enabled: true
+  port: 8080
+  # Serve over HTTPS and require a bearer token authorised for GET /metrics (granted by the
+  # <fullname>-metrics-reader ClusterRole). Plain HTTP is fine inside the cluster network.
+  secure: false
+  service:
+    annotations: {}
+  serviceMonitor:
+    # Requires the Prometheus Operator CRDs.
+    enabled: false
+    interval: 30s
+    scrapeTimeout: 10s
+    # Extra labels, for example the release label your Prometheus selects on.
+    labels: {}
+
 service:
   type: ClusterIP
   port: 8082
+  annotations: {}
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+    # cert-manager.io/cluster-issuer: letsencrypt
+  hosts:
+    - host: costdeck.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+  #  - secretName: costdeck-tls
+  #    hosts:
+  #      - costdeck.example.com
 
 resources:
   limits:
@@ -29,21 +72,31 @@ resources:
     cpu: 100m
     memory: 128Mi
 
-ingress:
-  enabled: true
-  className: ""
-  annotations: {}
-    # kubernetes.io/ingress.class: nginx
-    # kubernetes.io/tls-acme: "true"
-  hosts:
-    - host: costdeck.backup01.charter.aws.netcracker.com
-      paths:
-        - path: /
-          pathType: Prefix
-  tls: []
-  #  - secretName: chart-example-tls
-  #    hosts:
-  #      - chart-example.local
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+# Only meaningful with replicaCount > 1: with a single replica a PDB would block node drains.
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
+
+priorityClassName: ""
+
+# Extra manager flags, for example --zap-log-level=debug.
+extraArgs: []
+extraEnv: []
 
 nodeSelector: {}
 
