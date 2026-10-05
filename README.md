@@ -1,8 +1,6 @@
 <p align="center">
-  <img src="docs/assets/logo.png" width="180" alt="Cost Deck Logo">
+  <img src="docs/assets/brand/cost-deck-wordmark-640.png" width="320" alt="Cost Deck">
 </p>
-
-<h1 align="center">Cost Deck</h1>
 
 <p align="center">
   <strong>Kubernetes FinOps operator: stop paying for idle infrastructure.</strong>
@@ -31,10 +29,11 @@ non-production environments to zero when nobody needs them, then brings them bac
   up, and environments wait until it is fully up.
 - **Overrides that end on their own.** "Start now" or "Scale down now" holds until the next
   scheduled change, or for a time you choose, then the schedule takes over again.
-- **Ordered start and stop.** Namespaces start stage by stage and stop in reverse. AWS
-  Aurora clusters and EC2 instances can be part of the sequence. CronJobs are suspended
-  and KEDA ScaledObjects paused while a namespace is down.
-- **Cost and right-sizing.** Per-namespace cost from AWS list prices or your own rates,
+- **Cloud resources too.** Namespaces start stage by stage and stop in reverse, and the
+  stages can include AWS Aurora and EC2, Azure VMs and PostgreSQL/MySQL flexible servers,
+  and Google Cloud Compute Engine and Cloud SQL. CronJobs are suspended and KEDA
+  ScaledObjects paused while a namespace is down.
+- **Cost and right-sizing.** Per-namespace cost from AWS or Azure list prices or your own rates,
   live savings, and read-only advice on which requests can shrink, based on p95 usage when
   VictoriaMetrics is connected. Cost Deck never edits your requests.
 - **Built for teams.** Microsoft Entra ID single sign-on with group-to-role mapping
@@ -60,6 +59,15 @@ Open http://localhost:8082 and sign in as `costdeck-admin`. Pick the latest vers
 the [releases](https://github.com/migalsp/costdeck/releases). The
 [installation guide](docs/installation.md) covers Ingress, SSO, cloud accounts, monitoring
 and every chart value.
+
+## Documentation
+
+- **In the dashboard**: the **Documentation** page has step-by-step guides (schedules,
+  cloud resources, cost and right-sizing, access, AI, Webex, troubleshooting) and a REST API
+  reference generated from the live OpenAPI document.
+- **[Installation guide](docs/installation.md)**: chart values, Ingress, single sign-on,
+  cloud permissions, monitoring, upgrades.
+- **API**: Swagger UI at `/api/docs`, the specification at `/api/openapi.yaml`.
 
 ## How it fits together
 
@@ -87,7 +95,7 @@ graph TD
 
     subgraph External
         VM[VictoriaMetrics]
-        AWS[AWS: Aurora, EC2, Price List]
+        AWS[AWS, Azure, Google Cloud]
         LLM[AI provider]
         ENTRA[Microsoft Entra ID]
     end

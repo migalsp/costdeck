@@ -1,9 +1,10 @@
 apiVersion: v2
 name: costdeck-operator
 description: >-
-  Kubernetes FinOps operator: namespace cost and usage insights, right-sizing, and
-  schedule-driven scale-down of non-production workloads and cloud resources.
+  Kubernetes FinOps operator: namespace cost and usage insights, right-sizing advice,
+  and schedule-driven scale-down of non-production workloads and cloud resources.
 home: https://github.com/migalsp/costdeck
+icon: https://raw.githubusercontent.com/migalsp/costdeck/main/docs/assets/brand/cost-deck-icon-256.png
 sources:
   - https://github.com/migalsp/costdeck
 keywords:

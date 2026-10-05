@@ -91,7 +91,7 @@ Secrets in that namespace, never into the custom resource.
 | Role | Can |
 | :--- | :--- |
 | viewer | See everything; use the read-only assistant and MCP tools |
-| operator | Also start and stop schedules, hand them back to the schedule, revert an earlier optimization |
+| operator | Also start and stop schedules, hand them back to the schedule, generate AI reports, read logs |
 | admin | Also create, edit and delete schedules, change settings, manage API tokens |
 
 ## Single sign-on with Microsoft Entra ID
@@ -156,16 +156,17 @@ right-sizing advice based on a single reading.
 **Settings → Features**:
 
 - **Custom rates** (CPU core-hour, memory GiB-hour, currency) always win: use them for
-  negotiated prices or non-AWS clusters.
-- **AWS on-demand pricing** derives per-core and per-GiB rates from the AWS Price List
-  for the instance types your nodes actually run. Spot nodes are counted. It needs
-  `pricing:GetProducts`.
+  negotiated prices, on-premises clusters or Google Cloud.
+- **Cloud list prices** derive per-core and per-GiB rates from the list prices of the
+  instance types your nodes actually run: the AWS Price List (needs
+  `pricing:GetProducts`) or the public Azure Retail Prices API (no credentials). Spot
+  nodes are counted at the regular rate. Google Cloud clusters keep the estimate.
 - Otherwise a list-price heuristic is used, and every cost figure says which basis it came
   from.
 
 ## AWS: Aurora, EC2 and pricing
 
-**Settings → Cloud Providers → AWS**. Prefer IRSA (or EKS Pod Identity) over static keys:
+**Settings → Cloud providers → AWS**. Prefer IRSA (or EKS Pod Identity) over static keys:
 
 ```yaml
 serviceAccount:
@@ -187,8 +188,52 @@ Minimal IAM policy:
 ```
 
 Narrow the start/stop resources with tags (`aws:ResourceTag/…`) to match the discovery
-tags you configure. Discovered resources are added to a schedule under **⋯ → Start order
-& cloud resources**.
+tags you configure. Discovered resources of every cloud are added to a schedule under
+**Edit → Start order → Cloud resources**.
+
+## Azure: virtual machines and flexible servers
+
+**Settings → Cloud providers → Microsoft Azure**: the subscription ID and either a
+service principal (tenant ID, client ID, client secret) or nothing, to use the pod
+identity: AKS workload identity or a managed identity.
+
+The identity needs to read and start/stop the resources. The built-in **Virtual Machine
+Contributor** role covers VMs; a narrower custom role:
+
+```json
+{
+  "Name": "CostDeck scheduler",
+  "Actions": [
+    "Microsoft.Resources/subscriptions/read",
+    "Microsoft.Compute/virtualMachines/read",
+    "Microsoft.Compute/virtualMachines/instanceView/read",
+    "Microsoft.Compute/virtualMachines/start/action",
+    "Microsoft.Compute/virtualMachines/deallocate/action",
+    "Microsoft.DBforPostgreSQL/flexibleServers/read",
+    "Microsoft.DBforPostgreSQL/flexibleServers/start/action",
+    "Microsoft.DBforPostgreSQL/flexibleServers/stop/action",
+    "Microsoft.DBforMySQL/flexibleServers/read",
+    "Microsoft.DBforMySQL/flexibleServers/start/action",
+    "Microsoft.DBforMySQL/flexibleServers/stop/action"
+  ],
+  "AssignableScopes": ["/subscriptions/<subscription-id>"]
+}
+```
+
+VMs are **deallocated**, not just powered off, so their compute stops billing. Azure
+starts a stopped flexible server again automatically after seven days; the schedule
+stops it again at its next down window.
+
+## Google Cloud: Compute Engine and Cloud SQL
+
+**Settings → Cloud providers → Google Cloud**: a project ID and a service account key
+(JSON), or nothing to use GKE workload identity. Only `service_account` keys are
+accepted. The account needs `roles/compute.instanceAdmin.v1` and `roles/cloudsql.editor`,
+or custom roles with `compute.instances.list|get|start|stop`, `compute.projects.get`,
+`cloudsql.instances.list|get|update`.
+
+Cloud SQL has no start/stop call: CostDeck sets the instance's activation policy to
+`NEVER` to stop it and `ALWAYS` to start it.
 
 ## Webex
 
@@ -223,12 +268,12 @@ and start commands with that name.
 
 ## AI assistant and MCP
 
-**Settings → AI Models**: Anthropic (Claude), any OpenAI-compatible endpoint (OpenAI,
+**Settings → AI models**: Anthropic (Claude), any OpenAI-compatible endpoint (OpenAI,
 Azure OpenAI, vLLM, Ollama) or Gemini. The assistant reads live data through tools. Actions
 (scaling, resuming, reverting) appear as confirmation cards and run only after a user with
 the operator role confirms.
 
-**Settings → MCP Server** serves the same tools over MCP (Streamable HTTP) at
+**Settings → MCP server** serves the same tools over MCP (Streamable HTTP) at
 `https://costdeck.example.com/mcp`, authenticated with an API token:
 
 ```bash
@@ -352,8 +397,10 @@ Upgrading from 1.3 or earlier:
 - Leader election and the metrics endpoint are on by default.
 - If a release was changed with `kubectl set image`, Helm 4's server-side apply reports a
   field conflict on the image. Add `--force-conflicts` once.
-- The Optimize button is gone. Namespaces optimized by an earlier version show **Revert
-  optimization** until reverted.
+- Cost Deck no longer changes requests: the Optimize button and
+  `POST /api/namespaces/{ns}/optimize` are gone. Use the advice on the namespace page or
+  `GET /api/namespaces/{ns}/recommendations`. Namespaces optimized by an earlier version
+  show **Revert optimization** until reverted.
 
 ## Uninstalling
 
