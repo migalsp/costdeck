@@ -56,3 +56,7 @@ export const WebexLogo = ({ className = "" }: { className?: string }) => (
     </svg>
   </LogoWrapper>
 );
+
+// ProviderLogo picks the logo of a cloud provider name ("aws", "azure", "gcp").
+export const ProviderLogo = ({ provider, className = "" }: { provider?: string; className?: string }) =>
+  provider === 'azure' ? <AzureLogo className={className} /> : provider === 'gcp' ? <GCPLogo className={className} /> : <AWSLogo className={className} />

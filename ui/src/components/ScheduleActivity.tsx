@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from 'react'
 import { AlertTriangle, ArrowLeft, ArrowRight, Check, Clock, Cloud, Link2, Loader2, Moon } from 'lucide-react'
+import { targetLabel } from '../lib/cloud'
 import type { ScalingGroup } from '../lib/types'
 import { usePolling } from '../lib/usePolling'
 
@@ -187,7 +188,8 @@ export default function ScheduleActivity({ group: initial }: { group: ScalingGro
                       : st === 'running' ? (down ? 'stopping' : 'starting')
                         : st === 'waiting' ? 'waiting' : st === 'done' ? (down ? 'down' : 'ready') : down ? 'down' : 'up'
                     return (
-                      <Node key={item} state={st} label={ext ? item.slice(EXT.length) : item} sub={ext ? `cloud · ${sub}` : sub}
+                      <Node key={item} state={st} label={ext ? targetLabel(item.slice(EXT.length), group.spec.externalTargets) : item}
+                        sub={ext ? `${group.spec.externalTargets?.find(t => t.identifier === item.slice(EXT.length))?.type || 'cloud'} · ${sub}` : sub}
                         icon={ext ? <Cloud size={12} className="text-amber-500" /> : undefined}
                         selected={selected === item}
                         onClick={ext ? undefined : () => setSelected(selected === item ? null : item)} />

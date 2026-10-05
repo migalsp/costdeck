@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Plus, Cloud, Database, Layers, ChevronUp, ChevronDown, CalendarClock, MoonStar, Link2, Hand } from 'lucide-react'
+import { Plus, Cloud, Database, ChevronUp, ChevronDown, CalendarClock, MoonStar, Link2, Hand } from 'lucide-react'
 import { errorMessage } from '../lib/api'
 import { formatMoney } from '../lib/format'
 import type { ExternalTarget, ScalingConfig, ScalingGroup, ScalingSpec } from '../lib/types'
@@ -9,7 +9,8 @@ import WorkloadRulesDialog from '../components/WorkloadRulesDialog'
 import ScheduleCard from '../components/ScheduleCard'
 import ScheduleDetails, { type DetailsTab } from '../components/ScheduleDetails'
 import ScheduleWizard, { type WizardTab } from '../components/ScheduleWizard'
-import { AWSLogo } from '../components/ProviderLogos'
+import { ProviderLogo } from '../components/ProviderLogos'
+import { cloudLabel } from '../lib/cloud'
 import { useAuth } from '../lib/auth'
 import OverrideDialog, { type OverrideUntil } from '../components/OverrideDialog'
 import { Button, SectionTitle } from '../components/ui'
@@ -48,15 +49,11 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
   useEffect(() => {
     const fetchDiscovery = async () => {
       try {
-        const [auroraRes, ec2Res] = await Promise.all([
-          fetch('/api/discovery/aws/aurora'),
-          fetch('/api/discovery/aws/ec2')
-        ]);
-        const aurora = await auroraRes.json() || [];
-        const ec2 = await ec2Res.json() || [];
+        const res = await fetch('/api/discovery');
+        const data: { resources: ExternalTarget[] } = res.ok ? await res.json() : { resources: [] };
+        // One tab per cloud, in a stable order.
         const resources: Record<string, ExternalTarget[]> = {};
-        if (aurora.length > 0) resources['Databases'] = aurora;
-        if (ec2.length > 0) resources['Compute'] = ec2;
+        for (const t of data.resources || []) (resources[cloudLabel(t.provider)] ||= []).push(t);
         setDiscoveredResources(resources);
       } catch (err) {
         console.error("Failed to fetch discovered resources", err);
@@ -188,7 +185,7 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
   const ResourceCard = ({ item }: { item: ExternalTarget }) => (
     <div className="bg-white border border-slate-200 rounded-xl p-4 flex flex-col group hover:border-brand-300 hover:shadow-md transition-all cursor-default relative overflow-hidden">
       <div className="flex items-center gap-3 min-w-0 mb-3 mt-1">
-        <AWSLogo className="grayscale group-hover:grayscale-0 transition-all" />
+        <ProviderLogo provider={item.provider} className="grayscale group-hover:grayscale-0 transition-all" />
         <div className="flex flex-col min-w-0">
           <span className="font-bold text-slate-700 text-sm whitespace-nowrap overflow-hidden text-ellipsis">{item.name || item.identifier}</span>
           <div className="flex items-center gap-2">
@@ -332,7 +329,7 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
                     {Object.keys(discoveredResources).map(tab => (
                       <button key={tab} onClick={() => setActiveDiscoveryTab(tab)}
                         className={`flex items-center gap-2 px-5 py-1.5 rounded-xl text-sm font-bold transition-all ${discoveryTab === tab ? 'bg-white text-brand-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
-                        {tab === 'Databases' ? <Database size={16} /> : <Layers size={16} />}
+                        <ProviderLogo provider={discoveredResources[tab][0]?.provider} className="w-4 h-4" />
                         {tab} <span className="text-[10px] text-slate-400">{discoveredResources[tab].length}</span>
                       </button>
                     ))}

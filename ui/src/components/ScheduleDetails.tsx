@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Activity, ArrowRight, LayoutList, ListOrdered, Link2, Pencil, Play, RotateCcw, Square, Trash2 } from 'lucide-react'
 import { formatMoney } from '../lib/format'
 import { describeSpec, statusLine } from '../lib/schedule'
+import { targetLabel } from '../lib/cloud'
 import type { ScalingConfig, ScalingGroup, ScalingSpec } from '../lib/types'
 import ScheduleActivity from './ScheduleActivity'
 import ScheduleStatusLine from './ScheduleStatus'
@@ -128,7 +129,7 @@ export default function ScheduleDetails(p: Props) {
                     <span key={i} className="inline-flex items-center gap-1.5">
                       {i > 0 && <ArrowRight size={13} className="text-slate-300" />}
                       <span className="px-2 py-0.5 rounded-md bg-slate-50 border border-slate-200 text-slate-700">
-                        {stage.split(/\s+/).map(item => item.replace(/^ext:/, '☁ ')).join(', ')}
+                        {stage.split(/\s+/).map(item => item.startsWith('ext:') ? `☁ ${targetLabel(item.slice(4), spec.externalTargets)}` : item).join(', ')}
                       </span>
                     </span>
                   ))}

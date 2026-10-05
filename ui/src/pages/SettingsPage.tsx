@@ -32,6 +32,8 @@ interface AzureSettings {
   enabled: boolean
   subscriptionId?: string
   tenantId?: string
+  discoveryTags?: Record<string, string>
+  resourceTypes?: string[]
   hasCredentials: boolean
   status?: ProviderStatus
 }
@@ -39,6 +41,8 @@ interface AzureSettings {
 interface GCPSettings {
   enabled: boolean
   projectId?: string
+  discoveryLabels?: Record<string, string>
+  resourceTypes?: string[]
   hasCredentials: boolean
   status?: ProviderStatus
 }
@@ -236,6 +240,57 @@ const SectionHeader = ({ icon, title, subtitle }: { icon: React.ReactNode; title
   </div>
 )
 
+// ResourceTypePicker chooses which resource types of a cloud are discovered and scaled.
+const ResourceTypePicker = ({ options, value, onChange }: {
+  options: { id: string; label: string; desc: string }[]
+  value: string[]
+  onChange: (v: string[]) => void
+}) => (
+  <div className="grid gap-2 sm:grid-cols-3">
+    {options.map(rt => {
+      const on = value.includes(rt.id)
+      return (
+        <label key={rt.id} className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${on ? 'border-brand-300 bg-brand-50/60' : 'border-slate-200 hover:border-slate-300'}`}>
+          <input type="checkbox" checked={on} onChange={() => onChange(on ? value.filter(v => v !== rt.id) : [...value, rt.id])} className="mt-0.5 accent-brand-600" />
+          <span>
+            <span className="block text-sm font-semibold text-slate-700">{rt.label}</span>
+            <span className="block text-xs text-slate-500">{rt.desc}</span>
+          </span>
+        </label>
+      )
+    })}
+  </div>
+)
+
+const FieldLabel = ({ children, done }: { children: React.ReactNode; done?: boolean }) => (
+  <label className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5 block">
+    {children}
+    {done && <span className="ml-2 text-emerald-600 normal-case font-medium">✓ Configured</span>}
+  </label>
+)
+
+const textInput = 'w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-400'
+
+const ConnectionTestRow = ({ provider, testing, result, onTest }: {
+  provider: string
+  testing: string | null
+  result: { provider: string; connected: boolean; error?: string; message?: string } | null
+  onTest: (provider: string) => void
+}) => (
+  <div className="flex flex-wrap items-center gap-3">
+    <Button size="sm" onClick={() => onTest(provider)} disabled={testing === provider}
+      icon={testing === provider ? <RefreshCw size={14} className="animate-spin" /> : <ExternalLink size={14} />}>
+      Test connection
+    </Button>
+    {result?.provider === provider && (
+      <span className={`text-xs font-medium flex items-center gap-1 ${result.connected ? 'text-emerald-700' : 'text-rose-600'}`}>
+        {result.connected ? <CheckCircle2 size={14} /> : <XCircle size={14} />}
+        {result.connected ? result.message || 'Connection successful' : result.error || 'Connection failed'}
+      </span>
+    )}
+  </div>
+)
+
 const ProviderCard = ({
   name, logo, children, enabled, onToggle, comingSoon, expanded, onExpand, status
 }: {
@@ -331,11 +386,21 @@ export default function SettingsPage() {
   const [awsTags, setAwsTags] = useState<Record<string, string>>({})
   const [awsResourceTypes, setAwsResourceTypes] = useState<string[]>(['aurora'])
 
-  // Azure form state (stub)
+  // Azure form state
   const [azureEnabled, setAzureEnabled] = useState(false)
+  const [azureSubscription, setAzureSubscription] = useState('')
+  const [azureTenant, setAzureTenant] = useState('')
+  const [azureClientId, setAzureClientId] = useState('')
+  const [azureClientSecret, setAzureClientSecret] = useState('')
+  const [azureTags, setAzureTags] = useState<Record<string, string>>({})
+  const [azureTypes, setAzureTypes] = useState<string[]>(['vm', 'postgres', 'mysql'])
 
-  // GCP form state (stub)
+  // GCP form state
   const [gcpEnabled, setGcpEnabled] = useState(false)
+  const [gcpProject, setGcpProject] = useState('')
+  const [gcpKey, setGcpKey] = useState('')
+  const [gcpLabels, setGcpLabels] = useState<Record<string, string>>({})
+  const [gcpTypes, setGcpTypes] = useState<string[]>(['gce', 'cloudsql'])
 
   // AI form state
   const [aiEnabled, setAiEnabled] = useState(false)
@@ -402,8 +467,19 @@ export default function SettingsPage() {
           setAwsTags(data.providers.aws.discoveryTags || {})
           setAwsResourceTypes(data.providers.aws.resourceTypes || ['aurora'])
         }
-        if (data.providers.azure) setAzureEnabled(data.providers.azure.enabled)
-        if (data.providers.gcp) setGcpEnabled(data.providers.gcp.enabled)
+        if (data.providers.azure) {
+          setAzureEnabled(data.providers.azure.enabled)
+          setAzureSubscription(data.providers.azure.subscriptionId || '')
+          setAzureTenant(data.providers.azure.tenantId || '')
+          setAzureTags(data.providers.azure.discoveryTags || {})
+          if (data.providers.azure.resourceTypes?.length) setAzureTypes(data.providers.azure.resourceTypes)
+        }
+        if (data.providers.gcp) {
+          setGcpEnabled(data.providers.gcp.enabled)
+          setGcpProject(data.providers.gcp.projectId || '')
+          setGcpLabels(data.providers.gcp.discoveryLabels || {})
+          if (data.providers.gcp.resourceTypes?.length) setGcpTypes(data.providers.gcp.resourceTypes)
+        }
         if (data.integrations.ai) {
           setAiEnabled(data.integrations.ai.enabled)
           setAiProvider(data.integrations.ai.provider || 'openai')
@@ -472,6 +548,21 @@ export default function SettingsPage() {
             resourceTypes: awsResourceTypes,
             ...(awsAccessKey && awsSecretKey ? { accessKeyId: awsAccessKey, secretAccessKey: awsSecretKey } : {}),
           },
+          azure: {
+            enabled: azureEnabled,
+            subscriptionId: azureSubscription,
+            tenantId: azureTenant,
+            discoveryTags: azureTags,
+            resourceTypes: azureTypes,
+            ...(azureClientId && azureClientSecret ? { clientId: azureClientId, clientSecret: azureClientSecret } : {}),
+          },
+          gcp: {
+            enabled: gcpEnabled,
+            projectId: gcpProject,
+            discoveryLabels: gcpLabels,
+            resourceTypes: gcpTypes,
+            ...(gcpKey ? { serviceAccountJson: gcpKey } : {}),
+          },
         },
         integrations: {
           ai: {
@@ -539,6 +630,8 @@ export default function SettingsPage() {
         setSettings(data)
         setAwsAccessKey('')
         setAwsSecretKey('')
+        setAzureClientSecret('')
+        setGcpKey('')
         setAiApiKey('')
         setWebexBotToken('')
         setWebexWebhookSecret('')
@@ -576,6 +669,14 @@ export default function SettingsPage() {
         body.accessKeyId = awsAccessKey
         body.secretAccessKey = awsSecretKey
         body.region = awsRegion
+      } else if (provider === 'azure') {
+        Object.assign(body, {
+          subscriptionId: azureSubscription,
+          tenantId: azureTenant,
+          ...(azureClientId && azureClientSecret ? { clientId: azureClientId, clientSecret: azureClientSecret } : {}),
+        })
+      } else if (provider === 'gcp') {
+        Object.assign(body, { projectId: gcpProject, ...(gcpKey ? { serviceAccountJson: gcpKey } : {}) })
       } else if (provider === 'ai') {
         body.provider = aiProvider
         body.model = aiModel
@@ -769,7 +870,7 @@ export default function SettingsPage() {
                 {testResult?.provider === 'aws' && (
                   <span className={`text-xs font-bold flex items-center gap-1 ${testResult.connected ? 'text-emerald-600' : 'text-rose-500'}`}>
                     {testResult.connected ? <CheckCircle2 size={14} /> : <XCircle size={14} />}
-                    {testResult.connected ? 'Connection successful' : testResult.error || 'Connection failed'}
+                    {testResult.connected ? testResult.message || 'Connection successful' : testResult.error || 'Connection failed'}
                   </span>
                 )}
               </div>
@@ -825,26 +926,88 @@ export default function SettingsPage() {
             logo={<AzureLogo />}
             enabled={azureEnabled}
             onToggle={setAzureEnabled}
-            comingSoon
             expanded={expandedProvider === 'azure'}
             onExpand={() => setExpandedProvider(expandedProvider === 'azure' ? null : 'azure')}
             status={settings?.providers.azure?.status}
           >
-            <div />
+            <div className="space-y-5">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <FieldLabel>Subscription ID</FieldLabel>
+                  <input value={azureSubscription} onChange={e => setAzureSubscription(e.target.value.trim())} placeholder="00000000-0000-0000-0000-000000000000" className={`${textInput} font-mono`} />
+                </div>
+                <div>
+                  <FieldLabel>Tenant ID</FieldLabel>
+                  <input value={azureTenant} onChange={e => setAzureTenant(e.target.value.trim())} placeholder="Directory (tenant) ID" className={`${textInput} font-mono`} />
+                </div>
+              </div>
+              <div>
+                <FieldLabel done={settings?.providers.azure?.hasCredentials}>Service principal</FieldLabel>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <input value={azureClientId} onChange={e => setAzureClientId(e.target.value.trim())} placeholder="Application (client) ID" className={`${textInput} font-mono`} />
+                  <SecretInput value={azureClientSecret} onChange={setAzureClientSecret}
+                    placeholder={settings?.providers.azure?.hasCredentials ? '••••••••••••••••' : 'Client secret'} />
+                </div>
+                <p className="text-xs text-slate-400 mt-1.5">
+                  Leave empty to keep the stored secret, or to use the pod identity (AKS workload identity or a managed identity).
+                  The identity needs <code>Microsoft.Compute/virtualMachines/start|deallocate</code> and the flexible servers' <code>start|stop</code> actions; Virtual Machine Contributor covers VMs.
+                </p>
+              </div>
+              <ConnectionTestRow provider="azure" testing={testing} result={testResult} onTest={handleTestConnection} />
+              <div>
+                <FieldLabel>Discovery tags</FieldLabel>
+                <p className="text-xs text-slate-400 mb-2">Only resources carrying all of these tags are offered for scheduling.</p>
+                <TagEditor tags={azureTags} onChange={setAzureTags} />
+              </div>
+              <div>
+                <FieldLabel>Resource types</FieldLabel>
+                <ResourceTypePicker value={azureTypes} onChange={setAzureTypes} options={[
+                  { id: 'vm', label: 'Virtual machines', desc: 'Start, or deallocate so compute stops billing' },
+                  { id: 'postgres', label: 'PostgreSQL', desc: 'Flexible servers: start and stop' },
+                  { id: 'mysql', label: 'MySQL', desc: 'Flexible servers: start and stop' },
+                ]} />
+              </div>
+            </div>
           </ProviderCard>
 
           {/* GCP */}
           <ProviderCard
-            name="Google Cloud Platform"
+            name="Google Cloud"
             logo={<GCPLogo />}
             enabled={gcpEnabled}
             onToggle={setGcpEnabled}
-            comingSoon
             expanded={expandedProvider === 'gcp'}
             onExpand={() => setExpandedProvider(expandedProvider === 'gcp' ? null : 'gcp')}
             status={settings?.providers.gcp?.status}
           >
-            <div />
+            <div className="space-y-5">
+              <div>
+                <FieldLabel>Project ID</FieldLabel>
+                <input value={gcpProject} onChange={e => setGcpProject(e.target.value.trim())} placeholder="Defaults to the service account's project" className={`${textInput} font-mono sm:w-96`} />
+              </div>
+              <div>
+                <FieldLabel done={settings?.providers.gcp?.hasCredentials}>Service account key</FieldLabel>
+                <textarea value={gcpKey} onChange={e => setGcpKey(e.target.value)} rows={4} spellCheck={false}
+                  placeholder={settings?.providers.gcp?.hasCredentials ? 'Stored. Paste a new key to replace it.' : 'Paste the JSON key of a service account'}
+                  className={`${textInput} font-mono text-xs`} />
+                <p className="text-xs text-slate-400 mt-1.5">
+                  Leave empty to keep the stored key, or to use GKE workload identity. The account needs <code>roles/compute.instanceAdmin.v1</code> and <code>roles/cloudsql.editor</code> (or narrower custom roles).
+                </p>
+              </div>
+              <ConnectionTestRow provider="gcp" testing={testing} result={testResult} onTest={handleTestConnection} />
+              <div>
+                <FieldLabel>Discovery labels</FieldLabel>
+                <p className="text-xs text-slate-400 mb-2">Only resources carrying all of these labels are offered for scheduling.</p>
+                <TagEditor tags={gcpLabels} onChange={setGcpLabels} />
+              </div>
+              <div>
+                <FieldLabel>Resource types</FieldLabel>
+                <ResourceTypePicker value={gcpTypes} onChange={setGcpTypes} options={[
+                  { id: 'gce', label: 'Compute Engine', desc: 'Start and stop VM instances' },
+                  { id: 'cloudsql', label: 'Cloud SQL', desc: 'Stop and start through the activation policy' },
+                ]} />
+              </div>
+            </div>
           </ProviderCard>
         </div>
       )}
@@ -1485,9 +1648,11 @@ export default function SettingsPage() {
 
             <div className="flex items-center justify-between">
               <div>
-                <h4 className="font-bold text-slate-800">AWS on-demand pricing</h4>
+                <h4 className="font-bold text-slate-800">Cloud list prices</h4>
                 <p className="text-sm text-slate-500 mt-1">
-                  Price each node at its AWS on-demand list price (AWS Price List API, Linux, by instance type and region) and derive the per-core and per-GiB rates from the real hourly bill. Needs the <code>pricing:GetProducts</code> permission; spot and Savings Plans discounts are not applied.
+                  Price each node at its list price (Linux, by instance type and region) and derive the per-core and per-GiB rates from the real hourly bill.
+                  On AWS this uses the Price List API and needs the <code>pricing:GetProducts</code> permission; on Azure the public Retail Prices API, with no credentials.
+                  Spot, reservations and savings plans are not applied. Google Cloud clusters keep the estimate.
                 </p>
               </div>
               <label className="relative inline-flex items-center cursor-pointer ml-4">

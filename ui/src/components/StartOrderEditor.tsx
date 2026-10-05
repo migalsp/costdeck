@@ -1,5 +1,6 @@
 import { useState, type DragEvent } from 'react'
 import { ArrowDown, ArrowUp, Cloud, GripVertical } from 'lucide-react'
+import { cloudLabel, targetLabel } from '../lib/cloud'
 import type { ExternalTarget } from '../lib/types'
 
 const EXT = 'ext:'
@@ -18,7 +19,8 @@ interface Props {
   discovered?: ExternalTarget[]
 }
 
-const label = (item: string) => (item.startsWith(EXT) ? item.slice(EXT.length) : item)
+// idOf strips the ext: prefix of a cloud resource entry.
+const idOf = (item: string) => (item.startsWith(EXT) ? item.slice(EXT.length) : item)
 
 // stagesOf parses spec.sequence into stages, keeping only items that still belong to the
 // schedule (a namespace deselected elsewhere simply drops out).
@@ -85,6 +87,8 @@ export default function StartOrderEditor({ namespaces, value, onChange, discover
     },
   })
 
+  const display = (item: string) => (item.startsWith(EXT) ? targetLabel(idOf(item), targets) : item)
+
   const renderItem = (item: string, stage: number) => {
     const ext = item.startsWith(EXT)
     return (
@@ -98,17 +102,17 @@ export default function StartOrderEditor({ namespaces, value, onChange, discover
       >
         <GripVertical size={12} className="text-slate-300" />
         {ext && <Cloud size={12} className="text-amber-500" />}
-        <span className="max-w-[14rem] truncate" title={label(item)}>{label(item)}</span>
+        <span className="max-w-[14rem] truncate" title={idOf(item)}>{display(item)}</span>
         <span className="relative ml-0.5">
           <span className="px-1 text-slate-400 group-hover:text-slate-600">⋯</span>
           {/* A native select keeps moving keyboard-accessible without a custom menu. */}
           <select
-            aria-label={`Move ${label(item)}`}
+            aria-label={`Move ${display(item)}`}
             className="absolute inset-0 opacity-0 cursor-pointer"
             value=""
             onChange={e => {
               const v = e.target.value
-              if (v === 'remove') removeTarget(label(item))
+              if (v === 'remove') removeTarget(idOf(item))
               else move(item, v === 'new' ? 'new' : Number(v))
             }}
           >
@@ -169,11 +173,11 @@ export default function StartOrderEditor({ namespaces, value, onChange, discover
             <select value="" onChange={e => addTarget(e.target.value)}
               className="ml-auto bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-sm text-slate-700 outline-none focus:border-brand-500">
               <option value="" disabled>Add a database or instance…</option>
-              {addable.map(d => <option key={d.identifier} value={d.identifier}>{d.name || d.identifier} · {d.type} · {d.region}</option>)}
+              {addable.map(d => <option key={d.identifier} value={d.identifier}>{d.name || d.identifier} · {cloudLabel(d.provider)} {d.type} · {d.region}</option>)}
             </select>
           ) : (
             <span className="ml-auto text-xs text-slate-400">
-              {discovered.length ? 'All discovered resources are added.' : 'Connect AWS under Settings to add Aurora clusters or EC2 instances.'}
+              {discovered.length ? 'All discovered resources are added.' : 'Connect AWS, Azure or Google Cloud under Settings to add databases and instances.'}
             </span>
           )}
         </div>
