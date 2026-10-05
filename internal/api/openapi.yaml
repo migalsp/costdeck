@@ -1436,7 +1436,7 @@ components:
     bearerAuth:
       type: http
       scheme: bearer
-      description: API token (cdk_...) from Settings → Access & SSO.
+      description: API token (cdk_...) from Settings → API tokens.
   parameters:
     Namespace:
       name: ns

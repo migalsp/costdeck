@@ -110,7 +110,7 @@ Secrets in that namespace, never into the custom resource.
    assigned to the application"). Users in more than ~200 groups get no groups claim;
    assign groups to the application or use app roles named `admin`, `operator` and
    `viewer` instead.
-5. In Cost Deck, open **Settings → Access & SSO** and fill in:
+5. In Cost Deck, open **Settings → Single sign-on** and fill in:
    - **Tenant ID**: a directory ID or domain. `organizations` accepts work accounts from
      any tenant; then only the group mapping grants access. App roles and auto-provision
      are ignored, because any tenant's admins could abuse them.
@@ -128,13 +128,13 @@ Secrets in that namespace, never into the custom resource.
 
 ## API tokens
 
-**Settings → Access & SSO → API tokens** issues tokens (`cdk_…`) bound to a role, for
+**Settings → API tokens** issues tokens (`cdk_…`) bound to a role, for
 scripts and MCP clients. Send them as `Authorization: Bearer cdk_…`. Only a hash is
 stored; the token is shown once.
 
 ## Usage data and monitoring
 
-**Settings → Monitoring**:
+**Settings → Usage metrics**:
 
 - **VictoriaMetrics endpoint**: the base URL of a Prometheus-compatible query API, for
   example `http://vmselect:8481/select/0/prometheus` or `http://victoria-metrics:8428`.
@@ -153,7 +153,7 @@ right-sizing advice based on a single reading.
 
 ## Cost rates
 
-**Settings → Features**:
+**Settings → Prices**:
 
 - **Custom rates** (CPU core-hour, memory GiB-hour, currency) always win: use them for
   negotiated prices, on-premises clusters or Google Cloud.
@@ -171,7 +171,7 @@ right-sizing advice based on a single reading.
 
 ## Reconciling with the cloud bill
 
-**Settings → Features → Reconcile with the cloud bill** reads what the cloud charged for
+**Settings → Cloud bill** reads what the cloud charged for
 the cluster's nodes over the week ending two days ago, compares it with list prices for
 the same days, and scales every compute cost by the ratio. It uses the credentials of the
 matching cloud provider, or the pod identity, and needs read access to the bill:
@@ -188,7 +188,7 @@ below 10% or above 300% of list price is never applied.
 
 ## AWS: Aurora, EC2 and pricing
 
-**Settings → Cloud providers → AWS**. Prefer IRSA (or EKS Pod Identity) over static keys:
+**Settings → Cloud accounts → AWS**. Prefer IRSA (or EKS Pod Identity) over static keys:
 
 ```yaml
 serviceAccount:
@@ -215,7 +215,7 @@ tags you configure. Discovered resources of every cloud are added to a schedule 
 
 ## Azure: virtual machines and flexible servers
 
-**Settings → Cloud providers → Microsoft Azure**: the subscription ID and either a
+**Settings → Cloud accounts → Microsoft Azure**: the subscription ID and either a
 service principal (tenant ID, client ID, client secret) or nothing, to use the pod
 identity: AKS workload identity or a managed identity.
 
@@ -248,7 +248,7 @@ stops it again at its next down window.
 
 ## Google Cloud: Compute Engine and Cloud SQL
 
-**Settings → Cloud providers → Google Cloud**: a project ID and a service account key
+**Settings → Cloud accounts → Google Cloud**: a project ID and a service account key
 (JSON), or nothing to use GKE workload identity. Only `service_account` keys are
 accepted. The account needs `roles/compute.instanceAdmin.v1` and `roles/cloudsql.editor`,
 or custom roles with `compute.instances.list|get|start|stop`, `compute.projects.get`,
@@ -259,7 +259,7 @@ Cloud SQL has no start/stop call: CostDeck sets the instance's activation policy
 
 ## Webex
 
-**Settings → Messengers → Webex**: a bot token from
+**Settings → Notifications → Webex**: a bot token from
 [developer.webex.com](https://developer.webex.com/my-apps) and the ID of the space your team
 uses for CostDeck. Scaling commands are accepted only in that space, so its members are who
 may scale. Without a space the bot only answers `list` and `status`, because anyone on
@@ -297,7 +297,7 @@ and start commands with that name.
 
 ## AI assistant and MCP
 
-**Settings → AI models**: Anthropic (Claude), any OpenAI-compatible endpoint (OpenAI,
+**Settings → AI assistant**: Anthropic (Claude), any OpenAI-compatible endpoint (OpenAI,
 Azure OpenAI, vLLM, Ollama) or Gemini. The assistant reads live data through tools. Actions
 (scaling, resuming, reverting) appear as confirmation cards and run only after a user with
 the operator role confirms.

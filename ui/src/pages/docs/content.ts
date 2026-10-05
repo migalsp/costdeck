@@ -46,7 +46,7 @@ export interface Guide {
 // Shared by every API example, so readers set them once.
 export const apiSetup = `# Your Cost Deck URL, or http://localhost:8082 with a port-forward
 export COSTDECK=https://costdeck.example.com
-# An API token from Settings → Access & SSO → API tokens
+# An API token from Settings → API tokens
 export TOKEN=cdk_...`
 
 export const guides: Guide[] = [
@@ -450,7 +450,7 @@ spec:
         blocks: [
           {
             steps: [
-              'Open **Settings** → **Cloud providers** and switch the cloud on.',
+              'Open **Settings** → **Cloud accounts** and switch the cloud on.',
               'Enter credentials, or leave them empty to use the pod\'s identity: IRSA or EKS Pod Identity on AWS, workload identity on AKS and GKE.',
               'Optionally limit discovery to resources with certain tags (AWS, Azure) or labels (Google Cloud), and choose the resource types.',
               'Click **Test connection**. It reports how many resources Cost Deck can see.',
@@ -569,7 +569,7 @@ curl -H "Authorization: Bearer $TOKEN" "$COSTDECK/api/discovery/azure/vm"`,
           { p: 'Cost Deck turns CPU and memory requests into money with a price per core-hour and per GiB-hour. It uses the first of these that is available:' },
           {
             steps: [
-              '**Custom rates** that you enter under Settings → Features. Use them for negotiated prices or on-premises clusters.',
+              '**Custom rates** that you enter under Settings → Prices. Use them for negotiated prices or on-premises clusters.',
               '**Cloud list prices**, when switched on: every node is priced at its list price by instance type and region (AWS Price List, Azure Retail Prices), and the total is split into the two rates.',
               '**An estimate** per cloud when nothing better is available.',
             ],
@@ -580,7 +580,7 @@ curl -H "Authorization: Bearer $TOKEN" "$COSTDECK/api/discovery/azure/vm"`,
               rows: [['AWS', '$0.040', '$0.004'], ['Azure', '$0.042', '$0.005'], ['Google Cloud', '$0.038', '$0.004'], ['Other', '$0.035', '$0.003']],
             },
           },
-          { p: 'Every cost figure says which basis it uses, and Settings → Features shows the rates in effect. Spot, reservations and savings plans are not applied, so treat the numbers as list prices.' },
+          { p: 'Every cost figure says which basis it uses, and Settings → Prices shows the rates in effect. Spot, reservations and savings plans are not applied, so treat the numbers as list prices.' },
           {
             ways: {
               api: `curl -X POST "$COSTDECK/api/costing" \\
@@ -613,7 +613,7 @@ spec:
           },
           {
             steps: [
-              'Open **Settings** → **Features** → **Reconcile with the cloud bill** and switch it on.',
+              'Open **Settings** → **Cloud bill** and switch it on.',
               'Choose the cloud and fill in the tag, the resource group or the export table.',
               'Click **Reconcile now**. The result reads, for example, "Billed 72% of list price".',
             ],
@@ -655,7 +655,7 @@ spec:
           { p: 'Without history Cost Deck sees only the current minute. VictoriaMetrics, or any Prometheus-compatible API that scrapes cAdvisor, gives it weeks.' },
           {
             steps: [
-              'Open **Settings** → **Monitoring** and switch VictoriaMetrics on.',
+              'Open **Settings** → **Usage metrics** and switch VictoriaMetrics on.',
               'Enter the query URL, for example `http://vmselect.monitoring:8481/select/0/prometheus` or `http://victoria-metrics:8428`.',
               'If several clusters share it, add a label selector such as `cluster="prod-eu"`.',
               'Click **Test connection**.',
@@ -790,7 +790,7 @@ spec:
               ],
             },
           },
-          { p: 'Both are charged to their namespace, so Namespace Insights, budgets and the digest include them. Set your own prices under Settings → Features, which you must do when costs are not in USD.' },
+          { p: 'Both are charged to their namespace, so Namespace Insights, budgets and the digest include them. Set your own prices under Settings → Prices, which you must do when costs are not in USD.' },
           { warn: 'Traffic and data transfer are not counted: they need flow data that Kubernetes does not keep.' },
         ],
       },
@@ -888,7 +888,7 @@ costdeck_budget_forecast_ratio > 1`, label: 'Alert from your own monitoring' },
         blocks: [
           {
             steps: [
-              'Connect Webex with a space ID (Settings → Messengers → Webex).',
+              'Connect Webex with a space ID (Settings → Notifications → Webex).',
               'In **Reports** → **Scheduled digest**, switch it on and choose weekly (Mondays) or monthly (the 1st), the time and the time zone.',
               'Save. The digest is posted at that time and kept in the history.',
             ],
@@ -959,7 +959,7 @@ spec:
             steps: [
               'In the Entra admin center, create an app registration with a **Web** redirect URI `https://<your-host>/api/auth/entra/callback`, and a client secret.',
               'Add a groups claim to the token (Token configuration → Add groups claim).',
-              'In Cost Deck open **Settings** → **Access & SSO**, enter the tenant ID, client ID and secret, and map Entra groups to roles.',
+              'In Cost Deck open **Settings** → **Single sign-on**, enter the tenant ID, client ID and secret, and map Entra groups to roles.',
               'Click **Test connection**, then sign in with Microsoft in a private window.',
             ],
           },
@@ -974,7 +974,7 @@ spec:
           { p: 'Scripts, CI pipelines and MCP clients use API tokens instead of a password.' },
           {
             steps: [
-              'Open **Settings** → **Access & SSO** → **API tokens**.',
+              'Open **Settings** → **API tokens**.',
               'Give the token a name, a role and an expiry, and create it.',
               'Copy it now: it is shown once and only a hash is stored.',
             ],
@@ -1007,7 +1007,7 @@ curl -H "Authorization: Bearer $TOKEN" "$COSTDECK/api/scaling/groups"`, label: '
         blocks: [
           {
             steps: [
-              'Open **Settings** → **AI models** and switch AI on.',
+              'Open **Settings** → **AI assistant** and switch AI on.',
               'Choose Anthropic (Claude), OpenAI, Google Gemini, or any OpenAI-compatible endpoint such as Ollama, vLLM or a company gateway.',
               'Enter the API key (and the base URL for OpenAI-compatible endpoints), click **Load available models** and pick one.',
               'Save.',
@@ -1054,7 +1054,7 @@ curl -H "Authorization: Bearer $TOKEN" "$COSTDECK/api/scaling/groups"`, label: '
           {
             steps: [
               'Open **Settings** → **MCP server** and switch it on.',
-              'Create an API token (Settings → Access & SSO → API tokens). A viewer token gets the read-only tools; operator and admin tokens also get the scaling actions.',
+              'Create an API token (Settings → API tokens). A viewer token gets the read-only tools; operator and admin tokens also get the scaling actions.',
               'Add the server to your client:',
             ],
           },
@@ -1115,7 +1115,7 @@ claude mcp add --transport http costdeck https://costdeck.example.com/mcp \\
             steps: [
               'Create a bot at developer.webex.com and copy its token.',
               'Add the bot to the space your team uses for Cost Deck and copy the space ID.',
-              'Open **Settings** → **Messengers** → **Webex**, enter both and save. Switch on **Announce scaling transitions** to hear when a schedule has finished scaling.',
+              'Open **Settings** → **Notifications** → **Webex**, enter both and save. Switch on **Announce scaling transitions** to hear when a schedule has finished scaling.',
             ],
           },
           { p: 'Scaling commands are accepted only in that space, so its members are who may scale. Without a space the bot only answers `list` and `status`, because anyone on Webex can message a bot.' },
@@ -1257,7 +1257,7 @@ metrics:
         id: 'estimate',
         title: 'Costs say "estimate"',
         blocks: [
-          { p: 'No better price source is available. Switch on **Cloud list prices** under Settings → Features (AWS needs the `pricing:GetProducts` permission; Azure needs nothing), or enter custom rates.' },
+          { p: 'No better price source is available. Switch on **Cloud list prices** under Settings → Prices (AWS needs the `pricing:GetProducts` permission; Azure needs nothing), or enter custom rates.' },
         ],
       },
       {

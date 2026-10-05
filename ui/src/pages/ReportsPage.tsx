@@ -125,7 +125,7 @@ function ScheduleCard({ index, onSaved }: { index: ReportsIndex; onSaved: () => 
       </div>
       {!index.webexReady && (
         <p className="mt-3 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-          The digest is posted to Webex. Enable Webex with a space ID under Settings → Messengers first.
+          The digest is posted to Webex. Enable Webex with a space ID under Settings → Notifications first.
         </p>
       )}
       {can('admin') && (
@@ -232,7 +232,7 @@ export default function ReportsPage() {
         }
       }
       if (streamError) throw new Error(streamError)
-      if (!text.trim()) throw new Error('The AI provider returned an empty report. Check Settings → AI models and the operator logs.')
+      if (!text.trim()) throw new Error('The AI provider returned an empty report. Check Settings → AI assistant and the operator logs.')
       await loadIndex()
       if (savedId) setSelected(savedId)
     } catch (e) {
@@ -280,7 +280,7 @@ export default function ReportsPage() {
             <Button size="sm" onClick={copy} disabled={!digest} icon={copied ? <Check size={14} /> : <Copy size={14} />}>{copied ? 'Copied' : 'Copy as Markdown'}</Button>
             <Button size="sm" onClick={() => digest && downloadText(`cost-digest-${digest.digest.to}.md`, digest.markdown)} disabled={!digest} icon={<Download size={14} />}>Download</Button>
             {can('operator') && (
-              <span title={index?.webexReady ? undefined : 'Enable Webex with a space ID under Settings → Messengers'}>
+              <span title={index?.webexReady ? undefined : 'Enable Webex with a space ID under Settings → Notifications'}>
                 <Button size="sm" variant="primary" onClick={sendDigest} disabled={!digest || sending || !index?.webexReady} icon={sending ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}>Send to Webex now</Button>
               </span>
             )}
@@ -356,7 +356,7 @@ export default function ReportsPage() {
             <div className="h-full min-h-[28rem] flex flex-col items-center justify-center text-center p-8">
               <FileText size={44} className="text-slate-200 mb-3" />
               <p className="text-sm font-medium text-slate-600">Pick a report from the history, or generate a new one.</p>
-              <p className="text-xs text-slate-400 mt-1">AI reports need a model under Settings → AI models; the digest above works without one.</p>
+              <p className="text-xs text-slate-400 mt-1">AI reports need a model under Settings → AI assistant; the digest above works without one.</p>
             </div>
           )}
         </Card>

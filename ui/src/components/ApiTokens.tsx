@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { KeyRound, Trash2, Copy, Check, Plus } from 'lucide-react'
+import { Trash2, Copy, Check, Plus } from 'lucide-react'
 import { apiError } from '../lib/api'
 
 interface TokenInfo {
@@ -56,13 +56,10 @@ export default function ApiTokens() {
 
   return (
     <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 space-y-4">
-      <div className="flex items-center gap-3">
-        <div className="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center"><KeyRound size={18} className="text-slate-600" /></div>
-        <div>
-          <span className="font-bold text-slate-800">API tokens</span>
-          <p className="text-[10px] text-slate-400">For MCP clients, CI and scripts: <code>Authorization: Bearer cdk_…</code>. Only a SHA-256 of each token is stored.</p>
-        </div>
-      </div>
+      <p className="text-sm text-slate-500">
+        Send a token as <code className="text-xs bg-slate-100 px-1 py-0.5 rounded">Authorization: Bearer cdk_…</code>. It acts with the role you give it,
+        is shown once, and only its SHA-256 is stored.
+      </p>
 
       {created && (
         <div className="p-4 rounded-xl border border-emerald-200 bg-emerald-50">
@@ -70,7 +67,7 @@ export default function ApiTokens() {
           <div className="flex gap-2">
             <code className="flex-1 px-3 py-2 bg-white rounded-lg text-xs font-mono break-all border border-emerald-100">{created}</code>
             <button onClick={() => { navigator.clipboard.writeText(created); setCopied(true) }}
-              className="px-3 py-2 bg-emerald-500 text-white rounded-lg text-xs font-bold flex items-center gap-1">
+              className="px-3 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg text-xs font-bold flex items-center gap-1">
               {copied ? <Check size={14} /> : <Copy size={14} />} {copied ? 'Copied' : 'Copy'}
             </button>
           </div>

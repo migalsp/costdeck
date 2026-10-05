@@ -228,7 +228,7 @@ export default function ApiExplorer() {
         </div>
       </div>
       <p className="text-[15px] text-slate-600 leading-relaxed mt-4">
-        Everything the dashboard does goes through this API. Authenticate with an API token from Settings → Access &amp; SSO; each endpoint shows the
+        Everything the dashboard does goes through this API. Authenticate with an API token from Settings → API tokens; each endpoint shows the
         role it needs. Set these once and every example below runs as printed:
       </p>
       <CodeBlock code={apiSetup} />

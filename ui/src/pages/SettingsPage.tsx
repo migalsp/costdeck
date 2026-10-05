@@ -1,14 +1,14 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, type ReactNode } from 'react'
 import {
   Cloud, Bot, MessageSquare, Plus, Trash2, RefreshCw,
   CheckCircle2, XCircle, AlertTriangle, Eye, EyeOff, ChevronDown,
-  ChevronUp, Sparkles, ExternalLink, Activity, Plug, Shield, Info
+  ChevronUp, Sparkles, ExternalLink, Activity, Plug, Shield, Info, KeyRound, Coins, Receipt
 } from 'lucide-react'
 import { AWSLogo, AzureLogo, GCPLogo, WebexLogo } from '../components/ProviderLogos'
 import ApiTokens from '../components/ApiTokens'
 import { usePolling } from '../lib/usePolling'
 import { apiError, errorMessage } from '../lib/api'
-import { Button, Tabs } from '../components/ui'
+import { Button, PageHeader } from '../components/ui'
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -122,6 +122,98 @@ interface SettingsData {
     currency?: string
     effective: { cpuCoreHour: number; memoryGiBHour: number; currency: string; basis: string }
   }
+  billing?: { enabled?: boolean }
+}
+
+// ─── Navigation ─────────────────────────────────────────────────────────────
+
+type Section = 'sso' | 'tokens' | 'pricing' | 'billing' | 'metrics' | 'clouds' | 'notifications' | 'ai' | 'mcp'
+// Sections whose form is saved with their Save button; the others act at once.
+type SavedSection = 'sso' | 'pricing' | 'metrics' | 'clouds' | 'notifications' | 'ai' | 'mcp'
+const savedSections: Section[] = ['sso', 'pricing', 'metrics', 'clouds', 'notifications', 'ai', 'mcp']
+const isSaved = (s: Section): s is SavedSection => savedSections.includes(s)
+
+const navGroups: { title: string; items: { id: Section; label: string; icon: ReactNode }[] }[] = [
+  { title: 'People & access', items: [
+    { id: 'sso', label: 'Single sign-on', icon: <Shield size={16} /> },
+    { id: 'tokens', label: 'API tokens', icon: <KeyRound size={16} /> },
+  ] },
+  { title: 'Cost data', items: [
+    { id: 'pricing', label: 'Prices', icon: <Coins size={16} /> },
+    { id: 'billing', label: 'Cloud bill', icon: <Receipt size={16} /> },
+    { id: 'metrics', label: 'Usage metrics', icon: <Activity size={16} /> },
+  ] },
+  { title: 'Integrations', items: [
+    { id: 'clouds', label: 'Cloud accounts', icon: <Cloud size={16} /> },
+    { id: 'notifications', label: 'Notifications', icon: <MessageSquare size={16} /> },
+    { id: 'ai', label: 'AI assistant', icon: <Bot size={16} /> },
+    { id: 'mcp', label: 'MCP server', icon: <Plug size={16} /> },
+  ] },
+]
+const allSections = navGroups.flatMap(g => g.items.map(i => i.id))
+const sectionKey = 'costdeck.settings.section'
+
+function initialSection(): Section {
+  try {
+    const v = localStorage.getItem(sectionKey) as Section | null
+    if (v && allSections.includes(v)) return v
+  } catch {
+    // Storage may be unavailable; start at the top.
+  }
+  return 'sso'
+}
+
+interface NavStatus { text: string; on?: boolean }
+
+// navStatus summarises each section from the saved settings, so the menu shows what is
+// connected without opening every page.
+function navStatus(st: SettingsData | null): Partial<Record<Section, NavStatus>> {
+  if (!st) return {}
+  const onOff = (on?: boolean): NavStatus => ({ text: on ? 'On' : 'Off', on: !!on })
+  const clouds = [st.providers.aws?.enabled && 'AWS', st.providers.azure?.enabled && 'Azure', st.providers.gcp?.enabled && 'GCP'].filter(Boolean)
+  const basis = st.pricing?.effective?.basis?.toLowerCase() || ''
+  return {
+    sso: onOff(st.auth?.entra?.enabled),
+    pricing: { text: basis.startsWith('custom') ? 'Custom' : basis.includes('aws') || basis.includes('azure') ? 'List' : 'Estimate' },
+    billing: onOff(st.billing?.enabled),
+    metrics: { text: st.integrations.victoriaMetrics?.enabled ? 'VictoriaMetrics' : 'metrics-server' },
+    clouds: { text: clouds.length ? clouds.join(', ') : 'None', on: clouds.length > 0 },
+    notifications: onOff(st.integrations.messenger?.webex?.enabled),
+    ai: onOff(st.integrations.ai?.enabled),
+    mcp: onOff(st.integrations.mcp?.enabled),
+  }
+}
+
+function SettingsNav({ value, onChange, status, dirty }: {
+  value: Section; onChange: (s: Section) => void; status: Partial<Record<Section, NavStatus>>; dirty: Partial<Record<Section, boolean>>
+}) {
+  return (
+    <nav className="lg:w-60 shrink-0" aria-label="Settings sections">
+      <div className="lg:sticky lg:top-6 flex lg:flex-col gap-5 overflow-x-auto pb-2 lg:pb-0">
+        {navGroups.map(g => (
+          <div key={g.title} className="shrink-0">
+            <div className="px-3 mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-slate-400">{g.title}</div>
+            <div className="flex lg:flex-col gap-0.5">
+              {g.items.map(it => {
+                const active = value === it.id
+                const st = status[it.id]
+                return (
+                  <button key={it.id} type="button" onClick={() => onChange(it.id)} aria-current={active ? 'page' : undefined}
+                    className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-left whitespace-nowrap border transition-colors ${active ? 'bg-white border-slate-200 shadow-sm font-semibold text-slate-900' : 'border-transparent text-slate-600 hover:bg-white/70'}`}>
+                    <span className={active ? 'text-brand-600' : 'text-slate-400'}>{it.icon}</span>
+                    <span className="flex-1">{it.label}</span>
+                    {dirty[it.id]
+                      ? <span className="w-2 h-2 rounded-full bg-amber-500" title="Unsaved changes" />
+                      : st && <span className={`text-[11px] ${st.on ? 'text-brand-700 font-medium' : 'text-slate-400'}`}>{st.text}</span>}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+    </nav>
+  )
 }
 
 // ─── Sub-Components ─────────────────────────────────────────────────────────
@@ -146,7 +238,7 @@ const billingHelp: Record<BillingCloud, string> = {
 }
 
 // BillingSection sets up reconciliation with the cloud bill and shows its last result.
-function BillingSection() {
+function BillingSection({ onSaved }: { onSaved: (enabled: boolean) => void }) {
   const [b, setB] = useState<BillingSettings | null>(null)
   const [cloud, setCloud] = useState<BillingCloud>('aws')
   const [busy, setBusy] = useState(false)
@@ -177,6 +269,7 @@ function BillingSection() {
       const res = await fetch('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ billing: body }) })
       if (!res.ok) throw new Error(await apiError(res))
       setMessage('Saved.')
+      onSaved(!!b.enabled)
       await load()
     } catch (e) {
       setMessage(errorMessage(e))
@@ -199,7 +292,7 @@ function BillingSection() {
   }
 
   return (
-    <div className="pt-6 border-t border-slate-100">
+    <div>
       <div className="flex items-center justify-between">
         <div>
           <h4 className="font-bold text-slate-800">Reconcile with the cloud bill</h4>
@@ -363,15 +456,18 @@ const TagEditor = ({ tags, onChange }: { tags: Record<string, string>; onChange:
 
 // ─── Section Components ─────────────────────────────────────────────────────
 
-const SectionHeader = ({ icon, title, subtitle }: { icon: React.ReactNode; title: React.ReactNode; subtitle: string }) => (
-  <div className="flex items-center gap-3 mb-6">
-    <div className="w-10 h-10 rounded-xl bg-brand-50 flex items-center justify-center">
+// SectionHeader titles a settings section; `action` (its Save button) stays in view while
+// the section scrolls.
+const SectionHeader = ({ icon, title, subtitle, action }: { icon: React.ReactNode; title: React.ReactNode; subtitle: string; action?: ReactNode }) => (
+  <div className="sticky top-0 z-20 -mx-2 px-2 py-3 mb-2 bg-slate-50/95 backdrop-blur flex flex-wrap items-center gap-3">
+    <div className="w-10 h-10 rounded-xl bg-brand-50 flex items-center justify-center shrink-0">
       {icon}
     </div>
-    <div>
+    <div className="min-w-0 flex-1">
       <h3 className="text-lg font-bold text-slate-800">{title}</h3>
-      <p className="text-xs text-slate-500">{subtitle}</p>
+      <p className="text-sm text-slate-500">{subtitle}</p>
     </div>
+    {action}
   </div>
 )
 
@@ -509,9 +605,14 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState<string | null>(null)
   const [testResult, setTestResult] = useState<{ provider: string; connected: boolean; error?: string; message?: string } | null>(null)
-  const [saveMessage, setSaveMessage] = useState<string | null>(null)
+  const [saveMessage, setSaveMessage] = useState<{ section: Section; text: string; ok: boolean } | null>(null)
   const [expandedProvider, setExpandedProvider] = useState<string | null>('aws')
-  const [expandedSection, setExpandedSection] = useState<string>('providers')
+  const [section, setSection] = useState<Section>(initialSection)
+  const [dirty, setDirty] = useState<Partial<Record<Section, boolean>>>({})
+  const go = (s: Section) => {
+    setSection(s)
+    try { localStorage.setItem(sectionKey, s) } catch { /* not remembered */ }
+  }
 
   // AWS form state
   const [awsAccessKey, setAwsAccessKey] = useState('')
@@ -674,11 +775,11 @@ export default function SettingsPage() {
 
   usePolling(fetchSettings, null)
 
-  const handleSave = async () => {
+  const handleSave = async (sec: SavedSection) => {
     setSaving(true)
     setSaveMessage(null)
     try {
-      const body = {
+      const full = {
         providers: {
           aws: {
             enabled: awsEnabled,
@@ -760,10 +861,20 @@ export default function SettingsPage() {
         },
       }
 
+      // Only the section's own part is sent; the server leaves every other section alone.
+      const parts: Record<SavedSection, object> = {
+        clouds: { providers: full.providers },
+        ai: { integrations: { ai: full.integrations.ai } },
+        notifications: { integrations: { messenger: full.integrations.messenger } },
+        metrics: { integrations: { victoriaMetrics: full.integrations.victoriaMetrics } },
+        mcp: { integrations: { mcp: full.integrations.mcp } },
+        pricing: { features: full.features, pricing: full.pricing },
+        sso: { auth: full.auth },
+      }
       const res = await fetch('/api/settings', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        body: JSON.stringify(parts[sec]),
       })
 
       if (res.ok) {
@@ -781,14 +892,14 @@ export default function SettingsPage() {
         setVmPassword('')
         setVmCaCert('')
         setEntraSecret('')
-        setSaveMessage('Settings saved successfully')
-        setTimeout(() => setSaveMessage(null), 3000)
+        setDirty(d => ({ ...d, [sec]: false }))
+        setSaveMessage({ section: sec, text: 'Saved', ok: true })
+        setTimeout(() => setSaveMessage(m => (m?.section === sec && m.ok ? null : m)), 3000)
       } else {
-        const err = await res.text()
-        setSaveMessage(`Failed to save: ${err}`)
+        setSaveMessage({ section: sec, text: `Not saved: ${await apiError(res)}`, ok: false })
       }
     } catch (err) {
-      setSaveMessage(`Error: ${err}`)
+      setSaveMessage({ section: sec, text: `Not saved: ${errorMessage(err)}`, ok: false })
     } finally {
       setSaving(false)
     }
@@ -900,54 +1011,37 @@ export default function SettingsPage() {
     'sa-east-1', 'ca-central-1',
   ]
 
-  return (
-    <div className="p-8 max-w-[960px] mx-auto animate-in fade-in duration-500">
-      {/* Header */}
-      <div className="flex justify-between items-center mb-8">
-        <div>
-          <h2 className="text-2xl font-bold tracking-tight text-slate-900 flex items-center gap-2">
-            Settings
-          </h2>
-          <p className="mt-1 text-sm text-slate-500">Configure providers, integrations, and credentials</p>
-        </div>
-        <div className="flex items-center gap-3">
-          {saveMessage && (
-            <span className={`text-xs font-bold px-3 py-1.5 rounded-lg animate-in fade-in duration-300 ${saveMessage.includes('success') ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'
-              }`}>
-              {saveMessage}
-            </span>
-          )}
-          <Button variant="primary" onClick={handleSave} disabled={saving}
-            icon={saving ? <RefreshCw size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}>
-            Save changes
-          </Button>
-        </div>
-      </div>
+  const saveAction = (sec: SavedSection) => (
+    <div className="flex items-center gap-3 shrink-0">
+      {saveMessage?.section === sec
+        ? <span className={`text-xs font-semibold ${saveMessage.ok ? 'text-brand-700' : 'text-rose-600'}`}>{saveMessage.text}</span>
+        : dirty[sec] && <span className="text-xs font-semibold text-amber-700">Unsaved changes</span>}
+      <Button variant={dirty[sec] ? 'primary' : 'secondary'} onClick={() => handleSave(sec)} disabled={saving}
+        icon={saving ? <RefreshCw size={15} className="animate-spin" /> : <CheckCircle2 size={15} />}>
+        Save
+      </Button>
+    </div>
+  )
+  // Any edit inside a saved section marks it unsaved until its Save succeeds.
+  const markDirty = () => {
+    if (isSaved(section) && !dirty[section]) setDirty(d => ({ ...d, [section]: true }))
+  }
 
-      {/* Section Tabs */}
-      <div className="mb-6 overflow-x-auto">
-        <Tabs
-          value={expandedSection}
-          onChange={setExpandedSection}
-          tabs={[
-            { id: 'providers', icon: <Cloud size={14} />, label: 'Cloud providers' },
-            { id: 'monitoring', icon: <Activity size={14} />, label: 'Monitoring' },
-            { id: 'ai', icon: <Bot size={14} />, label: 'AI models' },
-            { id: 'messengers', icon: <MessageSquare size={14} />, label: 'Messengers' },
-            { id: 'mcp', icon: <Plug size={14} />, label: 'MCP server' },
-            { id: 'access', icon: <Shield size={14} />, label: 'Access & SSO' },
-            { id: 'features', icon: <Sparkles size={14} />, label: 'Features' },
-          ].map(t => ({ id: t.id, label: <span className="inline-flex items-center gap-1.5 whitespace-nowrap">{t.icon}{t.label}</span> }))}
-        />
-      </div>
+  return (
+    <div className="p-8 max-w-[1240px] mx-auto">
+      <PageHeader title="Settings" subtitle="Who can sign in, where cost figures come from, and what Cost Deck connects to" />
+      <div className="flex flex-col lg:flex-row gap-8 items-start">
+        <SettingsNav value={section} onChange={go} status={navStatus(settings)} dirty={dirty} />
+        <div className="flex-1 min-w-0 w-full" onChangeCapture={markDirty}>
 
       {/* ─── Cloud Providers Section ─────────────────────────────────────── */}
-      {expandedSection === 'providers' && (
+      {section === 'clouds' && (
         <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
           <SectionHeader
             icon={<Cloud className="text-brand-600" size={20} />}
-            title="Cloud Providers"
-            subtitle="Connect your cloud accounts for resource discovery and scaling"
+            title="Cloud accounts"
+            subtitle="Databases and VMs that schedules start and stop, and the credentials for list prices and the bill"
+            action={saveAction('clouds')}
           />
 
           {/* AWS */}
@@ -1154,12 +1248,13 @@ export default function SettingsPage() {
       )}
 
       {/* ─── Monitoring Section (VictoriaMetrics) ──────────────────────────── */}
-      {expandedSection === 'monitoring' && (
+      {section === 'metrics' && (
         <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
           <SectionHeader
             icon={<Activity className="text-brand-600" size={20} />}
-            title="Monitoring"
+            title="Usage metrics"
             subtitle="Where namespace usage and right-sizing advice come from"
+            action={saveAction('metrics')}
           />
 
           <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
@@ -1332,12 +1427,13 @@ export default function SettingsPage() {
       )}
 
       {/* ─── AI Models Section ───────────────────────────────────────────── */}
-      {expandedSection === 'ai' && (
+      {section === 'ai' && (
         <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
           <SectionHeader
             icon={<Bot className="text-brand-500" size={20} />}
-            title="AI Models"
+            title="AI assistant"
             subtitle="The model behind the assistant and the cost reports"
+            action={saveAction('ai')}
           />
 
           <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
@@ -1454,12 +1550,13 @@ export default function SettingsPage() {
       )}
 
       {/* ─── Messengers Section ──────────────────────────────────────────── */}
-      {expandedSection === 'messengers' && (
+      {section === 'notifications' && (
         <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
           <SectionHeader
             icon={<MessageSquare className="text-brand-500" size={20} />}
-            title="Messengers"
-            subtitle="Connect messaging platforms to control Cost Deck remotely"
+            title="Notifications"
+            subtitle="Where alerts, digests and scaling changes are posted, and the chat bot that answers there"
+            action={saveAction('notifications')}
           />
 
           <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
@@ -1566,12 +1663,13 @@ export default function SettingsPage() {
       )}
 
       {/* ─── MCP Server Section ────────────────────────────────────────────── */}
-      {expandedSection === 'mcp' && (
+      {section === 'mcp' && (
         <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
           <SectionHeader
             icon={<Plug className="text-brand-600" size={20} />}
-            title="MCP Server"
-            subtitle="Expose CostDeck's data and actions as tools to external AI assistants such as Claude or Cursor."
+            title="MCP server"
+            subtitle="Expose Cost Deck's data and actions as tools to AI assistants such as Claude or Cursor"
+            action={saveAction('mcp')}
           />
 
           <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
@@ -1622,13 +1720,14 @@ export default function SettingsPage() {
         </div>
       )}
 
-      {/* ─── Access & SSO Section ─────────────────────────────────────────── */}
-      {expandedSection === 'access' && (
+      {/* ─── Single sign-on ──────────────────────────────────────────────── */}
+      {section === 'sso' && (
         <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
           <SectionHeader
             icon={<Shield className="text-brand-600" size={20} />}
-            title="Access & Single Sign-On"
-            subtitle="Let people sign in with Microsoft Entra ID and map their groups to CostDeck roles"
+            title="Single sign-on"
+            subtitle="Let people sign in with Microsoft Entra ID; their groups decide their role"
+            action={saveAction('sso')}
           />
 
           <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 space-y-5">
@@ -1754,14 +1853,12 @@ export default function SettingsPage() {
             </div>
           </div>
 
-          <ApiTokens />
-
           <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
             <label className="flex items-start gap-3 cursor-pointer">
               <input type="checkbox" checked={disableLocalLogin} onChange={e => setDisableLocalLogin(e.target.checked)} className="mt-1 accent-brand-600" />
               <span>
-                <span className="block text-sm font-bold text-slate-700">Hide the username/password form</span>
-                <span className="block text-[11px] text-slate-400">Only takes effect while Microsoft sign-in is enabled, so you cannot lock yourself out. The built-in admin keeps working for the API as break-glass access.</span>
+                <span className="block text-sm font-bold text-slate-700">Sign in with Microsoft only</span>
+                <span className="block text-xs text-slate-500">Hides the password form, and local users can no longer sign in. Only takes effect while Microsoft sign-in is enabled, so nobody is locked out; the built-in admin keeps working through the API as break-glass access.</span>
               </span>
             </label>
           </div>
@@ -1769,12 +1866,13 @@ export default function SettingsPage() {
       )}
 
       {/* ─── Features Section ────────────────────────────────────────────── */}
-      {expandedSection === 'features' && (
+      {section === 'pricing' && (
         <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
           <SectionHeader
-            icon={<Sparkles className="text-brand-600" size={20} />}
-            title="Features"
-            subtitle="Enable or disable core CostDeck capabilities"
+            icon={<Coins className="text-brand-600" size={20} />}
+            title="Prices"
+            subtitle="What a core, a GiB of memory, a volume and a load balancer cost"
+            action={saveAction('pricing')}
           />
 
           <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 space-y-6">
@@ -1833,10 +1931,35 @@ export default function SettingsPage() {
                 </div>
               </div>
             </div>
-            <BillingSection />
           </div>
         </div>
       )}
+
+      {section === 'billing' && (
+        <div className="space-y-4 animate-in fade-in duration-300">
+          <SectionHeader
+            icon={<Receipt className="text-brand-600" size={20} />}
+            title="Cloud bill"
+            subtitle="Bring discounts, reservations and spot prices into every figure"
+          />
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+            <BillingSection onSaved={enabled => setSettings(st => (st ? { ...st, billing: { ...st.billing, enabled } } : st))} />
+          </div>
+        </div>
+      )}
+
+      {section === 'tokens' && (
+        <div className="space-y-4 animate-in fade-in duration-300">
+          <SectionHeader
+            icon={<KeyRound className="text-brand-600" size={20} />}
+            title="API tokens"
+            subtitle="For MCP clients, CI pipelines and scripts that call the API without a browser"
+          />
+          <ApiTokens />
+        </div>
+      )}
+        </div>
+      </div>
     </div>
   )
 }
