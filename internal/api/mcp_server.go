@@ -16,7 +16,7 @@ import (
 )
 
 // mcpInstructions tells MCP clients what the server is for.
-const mcpInstructions = `CostDeck exposes the FinOps view of one Kubernetes cluster: scaling groups and their schedules, namespace cost and waste estimates, and actions to scale namespaces or right-size them. Read tools are safe to call freely. Action tools change the cluster and require a token with the operator role.`
+const mcpInstructions = `CostDeck exposes the FinOps view of one Kubernetes cluster: scaling groups and their schedules, namespace cost and waste estimates, right-sizing advice, and actions to scale groups and namespaces. Read tools are safe to call freely. Action tools change the cluster and require a token with the operator role.`
 
 // mcpHandler serves the Model Context Protocol over Streamable HTTP at /mcp on the API
 // port. It runs stateless, so any replica can answer any request, and it sits behind the

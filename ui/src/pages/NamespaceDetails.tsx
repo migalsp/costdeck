@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { ArrowLeft, Search, Activity, AlertCircle, Play, Square, Settings2, Clock, Plus } from 'lucide-react'
 import ScalingConfigModal from '../components/ScalingConfigModal'
 import InfoTooltip from '../components/InfoTooltip'
+import RecommendationsPanel from '../components/RecommendationsPanel'
 import { errorMessage, fetchNamespaceCost } from '../lib/api'
 import type { CostEstimate, OptimizationStatus, ScalingConfig, ScalingSpec } from '../lib/types'
 import { usePolling } from '../lib/usePolling'
@@ -345,6 +346,8 @@ export default function NamespaceDetails({ namespace, onBack }: NamespaceDetails
           )}
         </div>
       </div>
+
+      <RecommendationsPanel namespace={namespace} />
 
       {/* Controls */}
       <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 mb-6 flex justify-between items-center">

@@ -268,3 +268,39 @@ func setVM(t *testing.T, c client.Client, vm *finopsv1.VictoriaMetricsConfig) {
 func resourceMilli(m int64) *resource.Quantity {
 	return resource.NewMilliQuantity(m, resource.DecimalSI)
 }
+
+func TestContainerDemandQueriesP95AndPeak(t *testing.T) {
+	prom := &fakePromQL{answer: func(q string) []map[string]any {
+		api := map[string]string{"pod": "api-7d9f8-abcde", "container": "api"}
+		switch {
+		case strings.HasPrefix(q, "quantile_over_time(0.95,"):
+			return []map[string]any{sample(api, "0.035")}
+		case strings.HasPrefix(q, "max_over_time("):
+			return []map[string]any{sample(api, "125829120"), sample(map[string]string{"pod": "api-7d9f8-abcde", "container": "sidecar"}, "1048576")}
+		}
+		return nil
+	}}
+	srv := httptest.NewServer(prom)
+	defer srv.Close()
+	c, err := NewVMClient(VMOptions{Endpoint: srv.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := c.ContainerDemand(context.Background(), "shop", 7*24*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	api := got[ContainerKey{Pod: "api-7d9f8-abcde", Container: "api"}]
+	if api.CPU.MilliValue() != 35 || api.Memory.Value() != 125829120 {
+		t.Errorf("api demand = %s CPU, %s memory", api.CPU.String(), api.Memory.String())
+	}
+	if side := got[ContainerKey{Pod: "api-7d9f8-abcde", Container: "sidecar"}]; side.Memory.Value() != 1048576 {
+		t.Errorf("a container with memory but no CPU sample must still be reported, got %+v", side)
+	}
+	for _, q := range prom.queries {
+		if !strings.Contains(q, `namespace="shop"`) || !strings.Contains(q, "[7d:5m]") {
+			t.Errorf("query %q must be scoped to the namespace and the window", q)
+		}
+	}
+}

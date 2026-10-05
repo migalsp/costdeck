@@ -19,6 +19,7 @@ import (
 	"github.com/migalsp/costdeck-operator/internal/ai"
 	"github.com/migalsp/costdeck-operator/internal/config"
 	"github.com/migalsp/costdeck-operator/internal/pricing"
+	"github.com/migalsp/costdeck-operator/internal/rightsizing"
 	"github.com/migalsp/costdeck-operator/internal/scaling"
 )
 
@@ -30,7 +31,7 @@ CostDeck scales non-production namespaces up and down on schedules (ScalingGroup
 
 Look up live data with the tools instead of guessing, and never invent numbers. Cost figures are estimates; say so when you quote them. A group's mode tells who is in control: Schedule, ManualUp/ManualDown (a manual override that ignores the schedule), AlwaysOn (no schedule), Dependency or OnDemand (driven by groups that depend on it).
 
-When the user asks to change something (scale a group or namespace, hand control back to the schedule, right-size or revert a namespace), call the matching tool. CostDeck then asks the user to confirm before anything changes.
+When the user asks to change something (scale a group or namespace, hand control back to the schedule, revert an earlier right-sizing), call the matching tool. CostDeck then asks the user to confirm before anything changes. CostDeck does not change resource requests itself: for right-sizing, present the recommendations and the YAML values the user should apply.
 
 Answer in concise Markdown. Prefer short tables for lists.`
 
@@ -89,6 +90,14 @@ func (s *Server) toolRegistry() []ai.Tool {
 			},
 		},
 		{
+			Name:        "get_rightsizing_recommendations",
+			Description: "Per-workload CPU and memory request recommendations for a namespace, from observed demand (p95 CPU and peak memory when history is available), with the estimated monthly saving. Advice only: nothing is changed.",
+			Parameters:  obj(map[string]any{"namespace": str("Kubernetes namespace")}, "namespace"),
+			Run: func(ctx context.Context, args map[string]any) (string, error) {
+				return s.toolRecommendations(ctx, args["namespace"].(string))
+			},
+		},
+		{
 			Name:        "scale_group",
 			Description: "Force a ScalingGroup up or down, or resume its schedule. Requires the user's confirmation.",
 			Mutating:    true,
@@ -99,12 +108,6 @@ func (s *Server) toolRegistry() []ai.Tool {
 			Description: "Force a namespace with a ScalingConfig up or down, or resume its schedule. Requires the user's confirmation.",
 			Mutating:    true,
 			Parameters:  obj(map[string]any{"namespace": str("Kubernetes namespace"), "action": action, "duration": duration}, "namespace", "action"),
-		},
-		{
-			Name:        "optimize_namespace",
-			Description: "Right-size the requests and limits of a namespace's workloads from observed usage. Reversible. Requires the user's confirmation.",
-			Mutating:    true,
-			Parameters:  obj(map[string]any{"namespace": str("Kubernetes namespace")}, "namespace"),
 		},
 		{
 			Name:        "revert_optimization",
@@ -155,8 +158,6 @@ func (s *Server) executeMutatingTool(ctx context.Context, name string, args map[
 			return "", err
 		}
 		return s.applyOverride(ctx, client.ObjectKeyFromObject(cfg), cfg, arg("action"), arg("duration"))
-	case "optimize_namespace":
-		return s.optimizeNamespace(ctx, arg("namespace"))
 	case "revert_optimization":
 		if err := s.revertNamespace(ctx, arg("namespace")); err != nil {
 			return "", err
@@ -445,6 +446,32 @@ func (s *Server) toolNamespaceStatus(ctx context.Context, ns string) (string, er
 		result["scalingConfig"] = map[string]any{"name": cfg.Name, "mode": cfg.Status.Mode, "phase": cfg.Status.Phase}
 	}
 	return toJSON(result)
+}
+
+// toolRecommendations returns the right-sizing report without the containers that need
+// no change, so the model reads only what matters.
+func (s *Server) toolRecommendations(ctx context.Context, ns string) (string, error) {
+	report, err := s.recommendations(ctx, ns)
+	if err != nil {
+		return "", err
+	}
+	var workloads []rightsizing.WorkloadAdvice
+	for _, w := range report.Workloads {
+		var containers []rightsizing.ContainerAdvice
+		for _, c := range w.Containers {
+			if c.CPU.Action != rightsizing.ActionKeep || c.Memory.Action != rightsizing.ActionKeep {
+				containers = append(containers, c)
+			}
+		}
+		if len(containers) > 0 {
+			w.Containers = containers
+			w.MonthlySavings = round2(w.MonthlySavings)
+			workloads = append(workloads, w)
+		}
+	}
+	report.Workloads = workloads
+	report.MonthlySavings = round2(report.MonthlySavings)
+	return toJSON(report)
 }
 
 func parseQ(s string) resource.Quantity {

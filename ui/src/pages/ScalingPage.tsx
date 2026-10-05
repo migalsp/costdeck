@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { errorMessage } from '../lib/api'
+import { formatMoney } from '../lib/format'
 import type { ExternalTarget, ScalingConfig, ScalingGroup, ScalingSchedule, ScalingSpec, ScheduleStatus } from '../lib/types'
 import { usePolling } from '../lib/usePolling'
 import type { NamespaceFinOps } from './Dashboard'
@@ -28,14 +29,6 @@ import { relativeTime } from '../lib/time'
 
 type Mode = NonNullable<ScheduleStatus['mode']>;
 
-// formatMoney renders an amount in the status currency.
-const formatMoney = (amount: number, currency = 'USD') => {
-  try {
-    return new Intl.NumberFormat(undefined, { style: 'currency', currency, maximumFractionDigits: amount < 10 ? 2 : 0 }).format(amount);
-  } catch {
-    return `${amount.toFixed(2)} ${currency}`;
-  }
-};
 
 const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ onSelectNamespace }) => {
   const { can } = useAuth();

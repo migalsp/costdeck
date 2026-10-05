@@ -117,3 +117,39 @@ export interface ScalingConfig {
 // ScalingSpec is what the schedule and sequence editor works on: a group spec (it has
 // namespaces) or a config spec (it has targetNamespace).
 export type ScalingSpec = Partial<ScalingGroupSpec> & Partial<ScalingConfigSpec>
+
+export type AdviceAction = 'reduce' | 'increase' | 'keep' | 'set' | 'unknown'
+
+export interface ResourceAdvice {
+  request?: string
+  observed?: string
+  recommended?: string
+  action: AdviceAction
+}
+
+export interface ContainerAdvice {
+  name: string
+  cpu: ResourceAdvice
+  memory: ResourceAdvice
+}
+
+export interface WorkloadAdvice {
+  kind: 'Deployment' | 'StatefulSet'
+  name: string
+  replicas: number
+  monthlySavings: number
+  containers: ContainerAdvice[]
+}
+
+// Recommendations is GET /api/namespaces/{ns}/recommendations: read-only right-sizing advice.
+export interface Recommendations {
+  namespace: string
+  source: string
+  historical: boolean
+  window?: string
+  basis: string
+  warning?: string
+  currency: string
+  monthlySavings: number
+  workloads: WorkloadAdvice[]
+}

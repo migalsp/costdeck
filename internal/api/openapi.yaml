@@ -387,8 +387,13 @@ paths:
   /api/namespaces/{ns}/optimize:
     post:
       tags: [Optimization]
-      summary: Optimize namespace
-      description: Right-size all workload resources based on actual usage. Stores original values for revert.
+      summary: Optimize namespace (deprecated)
+      deprecated: true
+      description: >-
+        Rewrites the requests and limits of every workload from observed usage and stores the
+        original values for revert. Deprecated: the dashboard and the assistant no longer
+        change requests. Use GET /api/namespaces/{ns}/recommendations and apply the advice
+        through your own deployment pipeline. Will be removed in a future major release.
       parameters:
         - $ref: "#/components/parameters/Namespace"
       responses:
@@ -409,6 +414,28 @@ paths:
           description: Reverted successfully
         "401":
           $ref: "#/components/responses/Unauthorized"
+
+  /api/namespaces/{ns}/recommendations:
+    get:
+      tags: [Optimization]
+      summary: Right-sizing recommendations
+      description: >-
+        Compares each container's requests with observed demand: p95 CPU and peak memory over
+        up to 14 days when VictoriaMetrics is connected, otherwise a single metrics-server
+        reading with a larger margin. Read-only; results are cached for five minutes.
+      parameters:
+        - $ref: "#/components/parameters/Namespace"
+      responses:
+        "200":
+          description: Recommendations
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Recommendations"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          description: No usage data is available for the namespace.
 
   /api/namespaces/{ns}/optimization:
     get:
@@ -766,6 +793,41 @@ components:
               items:
                 type: string
 
+    Recommendations:
+      type: object
+      properties:
+        namespace: { type: string }
+        source: { type: string, enum: [victoriametrics, metrics-server] }
+        historical: { type: boolean, description: "true for p95/peak over a window, false for a single reading" }
+        window: { type: string, example: 14d }
+        basis: { type: string }
+        warning: { type: string }
+        currency: { type: string, example: USD }
+        monthlySavings: { type: number }
+        workloads:
+          type: array
+          items:
+            type: object
+            properties:
+              kind: { type: string, enum: [Deployment, StatefulSet] }
+              name: { type: string }
+              replicas: { type: integer }
+              monthlySavings: { type: number }
+              containers:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    name: { type: string }
+                    cpu: { $ref: "#/components/schemas/ResourceAdvice" }
+                    memory: { $ref: "#/components/schemas/ResourceAdvice" }
+    ResourceAdvice:
+      type: object
+      properties:
+        request: { type: string, example: "1" }
+        observed: { type: string, example: 100m }
+        recommended: { type: string, example: 120m }
+        action: { type: string, enum: [reduce, increase, keep, set, unknown] }
     OptimizationStatus:
       type: object
       properties:

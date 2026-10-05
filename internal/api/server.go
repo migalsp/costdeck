@@ -53,6 +53,8 @@ type Server struct {
 	healthMu      sync.Mutex
 	healthHistory []map[string]any
 
+	recommendationCache recommendationCache
+
 	// rootCtx lives as long as the server; background work started by a request uses it.
 	rootCtx context.Context
 }
@@ -184,6 +186,7 @@ func (s *Server) routes() *http.ServeMux {
 	operator("POST /api/namespaces/{ns}/optimize", s.handleNamespaceOptimize)
 	operator("POST /api/namespaces/{ns}/revert", s.handleNamespaceRevert)
 	viewer("GET /api/namespaces/{ns}/optimization", s.handleNamespaceOptimizationInfo)
+	viewer("GET /api/namespaces/{ns}/recommendations", s.handleRecommendations)
 	viewer("POST /api/costing", s.handleCosting)
 
 	// Scaling

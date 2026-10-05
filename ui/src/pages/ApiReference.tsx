@@ -690,50 +690,50 @@ curl -b cookies.txt -X POST http://localhost:8082/api/logout`
     sections: [
       {
         heading: 'What is MCP?',
-        body: 'CostDeck functions as a Model Context Protocol (MCP) Server. This allows external AI clients (like Claude Desktop or Cursor) to securely connect to CostDeck and natively invoke cluster operations such as checking resource usage, scaling up workloads, or applying AI-driven cost optimizations without you having to run CLI commands or API calls manually.',
+        body: 'CostDeck is a Model Context Protocol (MCP) server. AI clients such as Claude Code, Claude Desktop or Cursor can connect to it and use the same tools as the built-in assistant: read scaling groups, namespace cost and right-sizing advice, and, with an operator token, scale groups and namespaces.',
       },
       {
-        heading: 'Via UI',
-        body: 'Navigate to Settings and select the MCP tab. You can enable or disable the MCP server, configure its port (default 8083), and copy the pre-formatted JSON snippet to paste directly into your Claude Desktop or Cursor configuration files.',
-        code: `{
+        heading: 'Connect a client',
+        body: 'Enable MCP under Settings → MCP and create an API token under Settings → Access. MCP is served over Streamable HTTP at /mcp on the dashboard URL, behind the same authentication as the REST API. A viewer token sees read-only tools; operator and admin tokens also get the scaling actions.',
+        code: `# Claude Code
+claude mcp add --transport http costdeck https://costdeck.example.com/mcp \\
+  --header "Authorization: Bearer cdk_..."
+
+# Claude Desktop / Cursor (mcpServers)
+{
   "mcpServers": {
     "costdeck": {
-      "command": "curl",
-      "args": ["-N", "http://127.0.0.1:8083/sse"]
+      "url": "https://costdeck.example.com/mcp",
+      "headers": { "Authorization": "Bearer cdk_..." }
     }
   }
 }`
       },
       {
-        heading: 'Via API',
-        body: 'The MCP Server exposes a Server-Sent Events (SSE) endpoint directly on the configured port. This is a standard MCP HTTP transport endpoint. By default, clients connect to http://127.0.0.1:8083/sse to receive updates and execute tools.',
-        code: `# Connect to the SSE stream
-curl -N http://127.0.0.1:8083/sse
-
-# The server will send a message with the /messages endpoint URL
-# You can then POST to the /messages endpoint to execute tools`
-      },
-      {
         heading: 'Via CRs',
-        body: 'The MCP Server port and enabled state are controlled by the CostDeckConfig Custom Resource. You can edit the `mcpConfig` block to set the `enabled` flag and `port` parameter.',
+        body: 'MCP is switched on in the CostDeckConfig custom resource. There is no separate port: it shares the API port and Ingress.',
         code: `apiVersion: finops.costdeck.io/v1
 kind: CostDeckConfig
 metadata:
   name: default
 spec:
-  mcpConfig:
-    enabled: true
-    port: 8083`
+  integrations:
+    mcp:
+      enabled: true`
       },
       {
-        heading: 'Available Tools',
-        body: 'The CostDeck MCP Server exposes tools like `get_namespace_status`, `scale_group`, `scale_config`, and `optimize_namespace` to automatically read data and perform scaling operations.',
-        code: `[
-  { "name": "get_namespace_status" },
-  { "name": "scale_group" },
-  { "name": "scale_config" },
-  { "name": "optimize_namespace" }
-]`
+        heading: 'Available tools',
+        body: 'Read-only tools are offered to every token. Action tools are offered to operator and admin tokens only, and change the cluster immediately.',
+        code: `get_cluster_overview              read
+list_scaling_groups               read
+get_scaling_group                 read
+list_namespace_configs            read
+list_namespaces                   read
+get_namespace_status              read
+get_rightsizing_recommendations   read
+scale_group                       action (up | down | resume)
+scale_namespace                   action (up | down | resume)
+revert_optimization               action (undo an earlier automatic right-sizing)`
       },
     ]
   },

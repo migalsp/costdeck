@@ -238,6 +238,10 @@ func (s *Server) serveWorkloadAction(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+// handleNamespaceOptimize rewrites requests and limits from observed usage.
+//
+// Deprecated: neither the dashboard nor the assistant calls it any more; CostDeck advises
+// through GET /api/namespaces/{ns}/recommendations instead. Kept for API compatibility.
 func (s *Server) handleNamespaceOptimize(w http.ResponseWriter, r *http.Request) {
 	basis, workloads, err := s.optimize(r.Context(), r.PathValue("ns"))
 	if err != nil {
@@ -250,15 +254,6 @@ func (s *Server) handleNamespaceOptimize(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"basis": basis, "workloads": workloads})
-}
-
-// optimizeNamespace right-sizes a namespace and describes the result for the assistant.
-func (s *Server) optimizeNamespace(ctx context.Context, nsName string) (string, error) {
-	basis, workloads, err := s.optimize(ctx, nsName)
-	if err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("Right-sized %d workload(s) in %s based on %s. Use revert to restore the previous values.", len(workloads), nsName, basis), nil
 }
 
 // optimize sets requests and limits from observed usage and records the previous values.

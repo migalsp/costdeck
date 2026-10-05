@@ -11,10 +11,11 @@ import {
   YAxis,
   ReferenceLine
 } from 'recharts'
-import { AlertTriangle, CheckCircle, Database, Cpu, Zap, RotateCcw } from 'lucide-react'
+import { AlertTriangle, CheckCircle, Database, Cpu, Lightbulb, RotateCcw } from 'lucide-react'
 import InfoTooltip from './InfoTooltip'
-import { fetchNamespaceCost } from '../lib/api'
-import type { CostEstimate, OptimizationStatus } from '../lib/types'
+import { fetchNamespaceCost, fetchRecommendations } from '../lib/api'
+import { formatMoney } from '../lib/format'
+import type { CostEstimate, OptimizationStatus, Recommendations } from '../lib/types'
 import { usePolling } from '../lib/usePolling'
 
 interface UsagePoint {
@@ -57,7 +58,8 @@ export default function NamespaceCard({ namespace, insights = [], onClick }: Nam
   const [history, setHistory] = useState<UsagePoint[]>([])
   const [optimization, setOptimization] = useState<OptimizationStatus | null>(null)
   const [loading, setLoading] = useState(true)
-  const [actionLoading, setActionLoading] = useState<'optimize' | 'revert' | null>(null)
+  const [reverting, setReverting] = useState(false)
+  const [advice, setAdvice] = useState<Recommendations | null>(null)
   const [namespaceCost, setNamespaceCost] = useState<CostEstimate | null>(null)
 
   const fetchOptimization = () => {
@@ -101,66 +103,23 @@ export default function NamespaceCard({ namespace, insights = [], onClick }: Nam
     fetchData()
     fetchOptimization()
     fetchCost()
+    fetchRecommendations(namespace).then(setAdvice).catch(() => setAdvice(null))
   }, 30000, namespace)
-
-  const handleOptimize = async (e: React.MouseEvent) => {
-    e.stopPropagation()
-    if (!window.confirm(`Optimize ${namespace}? This will adjust requests/limits based on 1h average usage (+30%/50% margin).`)) return
-    
-    setActionLoading('optimize')
-    // Optimistically add an "Optimizing" tag to insights if we want, but the spinner is usually enough
-    try {
-      const res = await fetch(`/api/namespaces/${namespace}/optimize`, { method: 'POST' })
-      if (!res.ok) throw new Error('Optimization failed')
-      
-      fetchOptimization()
-      fetchData()
-      
-      let attempts = 0;
-      const fastPoll = setInterval(() => {
-        fetchOptimization()
-        fetchData()
-        attempts++;
-        if (attempts > 5) {
-          clearInterval(fastPoll);
-          setActionLoading(null)
-        }
-      }, 2000);
-      setTimeout(() => setActionLoading(null), 12000);
-
-    } catch (err) {
-      alert("Failed to optimize: " + err)
-      setActionLoading(null)
-    }
-  }
 
   const handleRevert = async (e: React.MouseEvent) => {
     e.stopPropagation()
     if (!window.confirm(`Revert optimization for ${namespace}? This will restore the original resource values.`)) return
 
-    setActionLoading('revert')
+    setReverting(true)
     try {
       const res = await fetch(`/api/namespaces/${namespace}/revert`, { method: 'POST' })
       if (!res.ok) throw new Error('Revert failed')
-      
       fetchOptimization()
       fetchData()
-      
-      let attempts = 0;
-      const fastPoll = setInterval(() => {
-        fetchOptimization()
-        fetchData()
-        attempts++;
-        if (attempts > 5) {
-          clearInterval(fastPoll);
-          setActionLoading(null)
-        }
-      }, 2000);
-      setTimeout(() => setActionLoading(null), 12000);
-
     } catch (err) {
       alert("Failed to revert: " + err)
-      setActionLoading(null)
+    } finally {
+      setReverting(false)
     }
   }
 
@@ -347,34 +306,30 @@ export default function NamespaceCard({ namespace, insights = [], onClick }: Nam
         </div>
 
         <div className="flex gap-2">
-          {!can('operator') ? null : (optimization?.active && actionLoading !== 'optimize') || actionLoading === 'revert' ? (
-            <button 
-              onClick={handleRevert}
-              disabled={actionLoading !== null}
-              className={`flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 text-amber-600 border border-amber-200 rounded-lg hover:bg-amber-100 transition-colors font-bold uppercase tracking-tight ${actionLoading !== null ? 'opacity-60 cursor-not-allowed' : ''}`}
+          {advice && advice.monthlySavings >= 0.5 && (
+            <span
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-lg font-bold"
+              title={`Requests above observed demand. ${advice.basis} Open the namespace for per-workload advice.`}
             >
-              {actionLoading === 'revert' ? (
-                 <div className="w-3.5 h-3.5 border-2 border-amber-200 border-t-amber-500 rounded-full animate-spin"></div>
+              <Lightbulb size={14} />
+              Could save ~{formatMoney(advice.monthlySavings, advice.currency)}/mo
+            </span>
+          )}
+          {/* Optimizations applied by earlier versions can still be undone. */}
+          {can('operator') && optimization?.active && (
+            <button
+              onClick={handleRevert}
+              disabled={reverting}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 text-amber-600 border border-amber-200 rounded-lg hover:bg-amber-100 transition-colors font-bold uppercase tracking-tight disabled:opacity-60"
+              title="Restore the requests and limits from before the earlier automatic optimization"
+            >
+              {reverting ? (
+                <div className="w-3.5 h-3.5 border-2 border-amber-200 border-t-amber-500 rounded-full animate-spin"></div>
               ) : (
                 <RotateCcw size={14} />
               )}
-              {actionLoading === 'revert' ? 'Reverting...' : 'Revert'}
+              {reverting ? 'Reverting...' : 'Revert optimization'}
             </button>
-          ) : (
-            (insights.some(i => i.includes('Overprovisioned')) || actionLoading === 'optimize') && (
-              <button 
-                onClick={handleOptimize}
-                disabled={actionLoading !== null}
-                className={`flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 text-emerald-600 border border-emerald-200 rounded-lg hover:bg-emerald-100 transition-colors font-bold uppercase tracking-tight ${actionLoading !== null ? 'opacity-60 cursor-not-allowed' : ''}`}
-              >
-                {actionLoading === 'optimize' ? (
-                   <div className="w-3.5 h-3.5 border-2 border-emerald-200 border-t-emerald-500 rounded-full animate-spin"></div>
-                ) : (
-                  <Zap size={14} fill="currentColor" />
-                )}
-                {actionLoading === 'optimize' ? 'Optimizing...' : 'Optimize'}
-              </button>
-            )
           )}
         </div>
       </div>

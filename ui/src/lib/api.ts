@@ -1,4 +1,4 @@
-import type { CostEstimate } from './types'
+import type { CostEstimate, Recommendations } from './types'
 
 // apiError extracts the server's {"error": "..."} message from a failed response.
 export async function apiError(res: Response): Promise<string> {
@@ -25,3 +25,10 @@ export async function fetchNamespaceCost(namespace: string): Promise<CostEstimat
 
 // errorMessage turns a caught value into display text.
 export const errorMessage = (err: unknown): string => (err instanceof Error ? err.message : String(err))
+
+// fetchRecommendations loads read-only right-sizing advice; it resolves to null when the
+// namespace has no usage data yet.
+export async function fetchRecommendations(namespace: string): Promise<Recommendations | null> {
+  const res = await fetch(`/api/namespaces/${namespace}/recommendations`)
+  return res.ok ? res.json() : null
+}

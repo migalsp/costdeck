@@ -40,9 +40,9 @@ const TOOL_LABELS: Record<string, string> = {
   list_namespace_configs: 'Listing namespace configs',
   list_namespaces: 'Ranking namespaces by cost',
   get_namespace_status: 'Inspecting a namespace',
+  get_rightsizing_recommendations: 'Checking what can be reduced',
   scale_group: 'Scale group',
   scale_namespace: 'Scale namespace',
-  optimize_namespace: 'Right-size namespace',
   revert_optimization: 'Revert right-sizing',
 };
 
@@ -60,8 +60,6 @@ function describeAction(tool: string, args: Record<string, unknown>): string {
       return action === 'resume'
         ? `Hand ${target} back to its schedule`
         : `Force ${target} ${action}${hold}`;
-    case 'optimize_namespace':
-      return `Right-size requests and limits in ${target}`;
     case 'revert_optimization':
       return `Restore the original requests and limits in ${target}`;
     default:
