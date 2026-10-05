@@ -37,6 +37,7 @@ type Service struct {
 	Client   client.Client
 	Sessions *Sessions
 	Entra    *Entra
+	Tokens   *Tokens
 
 	localUser     string
 	localPassword string
@@ -58,6 +59,7 @@ func NewService(ctx context.Context, c client.Client) (*Service, error) {
 		Client:        c,
 		Sessions:      sessions,
 		Entra:         &Entra{Client: c, Sessions: sessions},
+		Tokens:        &Tokens{Client: c},
 		localUser:     os.Getenv("COSTDECK_AUTH_USER"),
 		localPassword: os.Getenv("COSTDECK_AUTH_PASSWORD"),
 	}, nil
@@ -85,16 +87,33 @@ func publicPath(path string) bool {
 	return strings.HasPrefix(path, "/api/auth/entra/")
 }
 
-// Middleware authenticates /api/ requests. The dashboard's static files are public; the
-// SPA asks /api/auth/me and shows the login page when that answers 401.
+// protectedPath reports whether a path needs authentication: the REST API and the MCP
+// endpoint. The dashboard's static files are public; the SPA asks /api/auth/me and shows
+// the login page when that answers 401.
+func protectedPath(path string) bool {
+	return (strings.HasPrefix(path, "/api/") && !publicPath(path)) || path == "/mcp" || strings.HasPrefix(path, "/mcp/")
+}
+
+// Middleware authenticates requests with a session cookie or an API token
+// (Authorization: Bearer cdk_...).
 func (s *Service) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasPrefix(r.URL.Path, "/api/") || publicPath(r.URL.Path) {
+		if !protectedPath(r.URL.Path) {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if s.Disabled(r.Context()) {
-			next.ServeHTTP(w, r.WithContext(WithIdentity(r.Context(), anonymousAdmin)))
+		ctx := r.Context()
+		if s.Disabled(ctx) {
+			next.ServeHTTP(w, r.WithContext(WithIdentity(ctx, anonymousAdmin)))
+			return
+		}
+		if bearer, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer "); ok && s.Tokens != nil {
+			if id, ok := s.Tokens.Authenticate(ctx, strings.TrimSpace(bearer)); ok {
+				next.ServeHTTP(w, r.WithContext(WithIdentity(ctx, id)))
+				return
+			}
+			w.Header().Set("WWW-Authenticate", `Bearer realm="costdeck"`)
+			writeAuthJSON(w, http.StatusUnauthorized, map[string]string{"error": "Invalid or expired API token"})
 			return
 		}
 		id, err := s.Sessions.Read(r)
@@ -102,7 +121,7 @@ func (s *Service) Middleware(next http.Handler) http.Handler {
 			writeAuthJSON(w, http.StatusUnauthorized, map[string]string{"error": "Authentication required"})
 			return
 		}
-		next.ServeHTTP(w, r.WithContext(WithIdentity(r.Context(), id)))
+		next.ServeHTTP(w, r.WithContext(WithIdentity(ctx, id)))
 	})
 }
 

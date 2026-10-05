@@ -3,112 +3,119 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
-	"time"
+	"sync"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/migalsp/costdeck-operator/internal/ai"
+	"github.com/migalsp/costdeck-operator/internal/auth"
+	"github.com/migalsp/costdeck-operator/internal/config"
 )
 
-var (
-	mcpServer  *server.MCPServer
-	sseServer  *server.SSEServer
-	mcpHttpSrv *http.Server
-)
+// mcpInstructions tells MCP clients what the server is for.
+const mcpInstructions = `CostDeck exposes the FinOps view of one Kubernetes cluster: scaling groups and their schedules, namespace cost and waste estimates, and actions to scale namespaces or right-size them. Read tools are safe to call freely. Action tools change the cluster and require a token with the operator role.`
 
-func (s *Server) initMCPServer() {
-	if mcpServer != nil {
-		return
+// mcpHandler serves the Model Context Protocol over Streamable HTTP at /mcp on the API
+// port. It runs stateless, so any replica can answer any request, and it sits behind the
+// same authentication as the REST API: a browser session or an API token. Read-only tools
+// are offered to every caller; action tools only to operators and admins.
+func (s *Server) mcpHandler() http.Handler {
+	var once sync.Once
+	var streamable *server.StreamableHTTPServer
+	build := func() {
+		srv := server.NewMCPServer("costdeck", Version,
+			server.WithToolCapabilities(false),
+			server.WithInstructions(mcpInstructions),
+			server.WithToolFilter(func(ctx context.Context, tools []mcp.Tool) []mcp.Tool {
+				if mcpCanMutate(ctx) {
+					return tools
+				}
+				var out []mcp.Tool
+				for _, t := range tools {
+					if t.Annotations.ReadOnlyHint != nil && *t.Annotations.ReadOnlyHint {
+						out = append(out, t)
+					}
+				}
+				return out
+			}),
+		)
+		for _, t := range s.toolRegistry() {
+			s.registerMCPTool(srv, t)
+		}
+		streamable = server.NewStreamableHTTPServer(srv,
+			server.WithStateLess(true),
+			server.WithEndpointPath("/mcp"),
+			server.WithHTTPContextFunc(func(ctx context.Context, r *http.Request) context.Context {
+				return auth.WithIdentity(ctx, auth.FromContext(r.Context()))
+			}),
+		)
 	}
 
-	mcpServer = server.NewMCPServer("costdeck-mcp", "1.0.0")
-	// The standalone MCP listener is unauthenticated, so it only exposes read-only tools.
-	for _, t := range s.toolsFor(false) {
-		tool := t
-		schema, _ := json.Marshal(tool.Parameters)
-		mcpServer.AddTool(mcp.NewToolWithRawSchema(tool.Name, tool.Description, schema),
-			func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-				args, _ := req.Params.Arguments.(map[string]any)
-				if args == nil {
-					args = map[string]any{}
-				}
-				if err := ai.ValidateArgs(tool.Parameters, args); err != nil {
-					return mcp.NewToolResultError(err.Error()), nil
-				}
-				out, err := tool.Run(ctx, args)
-				if err != nil {
-					return mcp.NewToolResultError(err.Error()), nil
-				}
-				return mcp.NewToolResultText(out), nil
-			})
-	}
-
-	sseServer = server.NewSSEServer(mcpServer)
-	logf.Log.Info("MCP Server initialized internally")
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cfg, err := config.Get(r.Context(), s.Client)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if m := cfg.Spec.Integrations.MCP; m == nil || !m.Enabled {
+			writeError(w, http.StatusNotFound, "the MCP server is disabled; enable it under Settings → MCP Server")
+			return
+		}
+		once.Do(build)
+		streamable.ServeHTTP(w, r)
+	})
 }
 
-// StartMCPServerLoop watches the config and starts/stops the MCP HTTP server
-func (s *Server) StartMCPServerLoop(ctx context.Context) {
-	s.initMCPServer()
+// mcpCanMutate reports whether the caller may run action tools.
+func mcpCanMutate(ctx context.Context) bool {
+	id := auth.FromContext(ctx)
+	return id == nil || id.Role.Allows(auth.RoleOperator)
+}
 
-	log := logf.Log.WithName("mcp-server")
-	var currentPort int
-	var currentEnabled bool
-
-	ticker := time.NewTicker(10 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			if mcpHttpSrv != nil {
-				mcpHttpSrv.Shutdown(context.Background())
-			}
-			return
-		case <-ticker.C:
-			config := s.currentConfig(ctx)
-			enabled := false
-			port := 8083
-
-			if config.Spec.Integrations.MCP != nil {
-				enabled = config.Spec.Integrations.MCP.Enabled
-				if config.Spec.Integrations.MCP.Port > 0 {
-					port = config.Spec.Integrations.MCP.Port
-				}
-			}
-
-			if enabled != currentEnabled || port != currentPort {
-				if mcpHttpSrv != nil {
-					log.Info("Shutting down existing MCP server due to config change")
-					mcpHttpSrv.Shutdown(context.Background())
-					mcpHttpSrv = nil
-				}
-
-				if enabled {
-					log.Info("Starting MCP Server", "port", port)
-					mux := http.NewServeMux()
-					mux.Handle("/sse", sseServer.SSEHandler())
-					mux.Handle("/messages", sseServer.MessageHandler())
-
-					mcpHttpSrv = &http.Server{
-						Addr:    fmt.Sprintf(":%d", port),
-						Handler: mux,
-					}
-
-					go func() {
-						if err := mcpHttpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-							log.Error(err, "MCP Server failed")
-						}
-					}()
-				}
-
-				currentEnabled = enabled
-				currentPort = port
-			}
-		}
+func (s *Server) registerMCPTool(srv *server.MCPServer, t ai.Tool) {
+	schema, err := json.Marshal(t.Parameters)
+	if err != nil {
+		return
 	}
+	tool := mcp.NewToolWithRawSchema(t.Name, t.Description, schema)
+	tool.Annotations = mcp.ToolAnnotation{
+		ReadOnlyHint:    new(!t.Mutating),
+		DestructiveHint: new(t.Mutating),
+		OpenWorldHint:   new(false),
+	}
+
+	srv.AddTool(tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := req.GetArguments()
+		if args == nil {
+			args = map[string]any{}
+		}
+		if t.Mutating {
+			// MCP clients ask their user before calling a destructive tool; CostDeck
+			// additionally requires the operator role.
+			if !mcpCanMutate(ctx) {
+				return mcp.NewToolResultError("this action needs a token with the operator role"), nil
+			}
+			out, err := s.executeMutatingTool(ctx, t.Name, args)
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			who := "anonymous"
+			if id := auth.FromContext(ctx); id != nil {
+				who = id.Subject
+			}
+			logf.FromContext(ctx).Info("Executed MCP action", "action", t.Name, "args", args, "user", who)
+			return mcp.NewToolResultText(out), nil
+		}
+		if err := ai.ValidateArgs(t.Parameters, args); err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		out, err := t.Run(ctx, args)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		return mcp.NewToolResultText(out), nil
+	})
 }

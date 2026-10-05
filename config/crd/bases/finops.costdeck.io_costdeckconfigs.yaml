@@ -179,12 +179,13 @@ spec:
                     description: MCP Server configuration
                     properties:
                       enabled:
-                        description: Enabled toggles the MCP server on/off
+                        description: |-
+                          Enabled serves MCP (Streamable HTTP) at /mcp on the dashboard's host and port,
+                          behind the same authentication as the API: a session or an API token.
                         type: boolean
                       port:
-                        default: 8083
-                        description: Port is the HTTP port the MCP server will listen
-                          on for SSE connections
+                        description: 'Deprecated: MCP is served on the API port at
+                          /mcp; this field is ignored.'
                         type: integer
                     type: object
                   messenger:

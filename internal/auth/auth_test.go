@@ -402,3 +402,86 @@ func TestSafeReturnPath(t *testing.T) {
 		}
 	}
 }
+
+func TestTokensLifecycle(t *testing.T) {
+	svc := newTestService(t)
+	svc.Tokens = &Tokens{Client: svc.Client}
+	ctx := context.Background()
+
+	token, info, err := svc.Tokens.Create(ctx, "claude-desktop", RoleOperator, 0, "local:admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(token, TokenPrefix) || info.Hash != "" {
+		t.Fatalf("token = %q, info = %+v", token, info)
+	}
+	if _, _, err := svc.Tokens.Create(ctx, "claude-desktop", RoleViewer, 0, ""); err == nil {
+		t.Error("duplicate token names must be rejected")
+	}
+	if _, _, err := svc.Tokens.Create(ctx, "Bad Name", RoleViewer, 0, ""); err == nil {
+		t.Error("invalid token names must be rejected")
+	}
+
+	id, ok := svc.Tokens.Authenticate(ctx, token)
+	if !ok || id.Role != RoleOperator || id.Subject != "token:claude-desktop" {
+		t.Fatalf("Authenticate() = %+v, %v", id, ok)
+	}
+	if _, ok := svc.Tokens.Authenticate(ctx, token+"x"); ok {
+		t.Error("a wrong token was accepted")
+	}
+
+	list, err := svc.Tokens.List(ctx)
+	if err != nil || len(list) != 1 || list[0].Hash != "" {
+		t.Errorf("List() = %+v, %v (hashes must never be listed)", list, err)
+	}
+
+	if err := svc.Tokens.Delete(ctx, "claude-desktop"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := svc.Tokens.Authenticate(ctx, token); ok {
+		t.Error("a revoked token was still accepted")
+	}
+}
+
+func TestExpiredTokenIsRejected(t *testing.T) {
+	svc := newTestService(t)
+	svc.Tokens = &Tokens{Client: svc.Client}
+	token, _, err := svc.Tokens.Create(context.Background(), "ci", RoleViewer, time.Nanosecond, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(time.Millisecond)
+	if _, ok := svc.Tokens.Authenticate(context.Background(), token); ok {
+		t.Error("an expired token was accepted")
+	}
+}
+
+func TestMiddlewareAcceptsBearerTokens(t *testing.T) {
+	svc := newTestService(t)
+	svc.Tokens = &Tokens{Client: svc.Client}
+	token, _, err := svc.Tokens.Create(context.Background(), "mcp", RoleViewer, 0, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := svc.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(FromContext(r.Context()))
+	}))
+	do := func(path, auth string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, path, nil)
+		if auth != "" {
+			req.Header.Set("Authorization", auth)
+		}
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		return rr
+	}
+	if rr := do("/mcp", "Bearer "+token); rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), `"role":"viewer"`) {
+		t.Errorf("valid token on /mcp = %d %s", rr.Code, rr.Body.String())
+	}
+	if rr := do("/mcp", ""); rr.Code != http.StatusUnauthorized {
+		t.Errorf("/mcp without credentials = %d, want 401", rr.Code)
+	}
+	if rr := do("/api/scaling/groups", "Bearer cdk_forged"); rr.Code != http.StatusUnauthorized {
+		t.Errorf("forged token = %d, want 401", rr.Code)
+	}
+}

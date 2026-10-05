@@ -5,6 +5,7 @@ import {
   ChevronUp, Sparkles, ExternalLink, Activity, Plug, Shield
 } from 'lucide-react'
 import { AWSLogo, AzureLogo, GCPLogo, WebexLogo } from '../components/ProviderLogos'
+import ApiTokens from '../components/ApiTokens'
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -68,7 +69,7 @@ interface VictoriaMetricsSettings {
 
 interface MCPSettings {
   enabled: boolean
-  port: number
+  path: string
 }
 
 interface EntraSettings {
@@ -374,7 +375,6 @@ export default function SettingsPage() {
 
   // MCP form state
   const [mcpEnabled, setMcpEnabled] = useState(false)
-  const [mcpPort, setMcpPort] = useState(8083)
 
   const fetchSettings = useCallback(async () => {
     try {
@@ -411,7 +411,6 @@ export default function SettingsPage() {
         }
         if (data.integrations.mcp) {
           setMcpEnabled(data.integrations.mcp.enabled)
-          setMcpPort(data.integrations.mcp.port || 8083)
         }
         if (data.features) {
           setCloudPricingApi(data.features.cloudPricingApi || false)
@@ -482,7 +481,6 @@ export default function SettingsPage() {
           },
           mcp: {
             enabled: mcpEnabled,
-            port: mcpPort
           }
         },
         features: {
@@ -1244,8 +1242,8 @@ export default function SettingsPage() {
         <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
           <SectionHeader
             icon={<Plug className="text-pink-500" size={20} />}
-            title="MCP (Experimental)"
-            subtitle="Expose CostDeck's capabilities as tools to external AI assistants like Cursor or Claude Desktop."
+            title="MCP Server"
+            subtitle="Expose CostDeck's data and actions as tools to external AI assistants such as Claude or Cursor."
           />
 
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
@@ -1268,23 +1266,27 @@ export default function SettingsPage() {
 
             <div className={`space-y-4 ${!mcpEnabled ? 'opacity-50 pointer-events-none' : ''}`}>
               <div>
-                <label className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5 block">Port</label>
-                <input
-                  type="number"
-                  value={mcpPort}
-                  onChange={e => setMcpPort(Number(e.target.value))}
-                  placeholder="8083"
-                  className="w-full max-w-[200px] px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm"
-                />
+                <label className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5 block">Endpoint</label>
+                <code className="block px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-mono">{window.location.origin}/mcp</code>
+                <p className="text-[10px] text-slate-400 mt-1.5">Streamable HTTP on the dashboard's own host — no extra port or ingress. Clients authenticate with an API token (Access &amp; SSO → API tokens). Viewer tokens see read-only tools; operator tokens can also scale and right-size.</p>
               </div>
 
-              <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 mt-6">
-                <h4 className="text-sm font-bold text-blue-800 mb-2">How to connect Cursor/Claude Desktop:</h4>
-                <p className="text-xs text-blue-600 mb-3">Add CostDeck as an MCP SSE Server. Use your cluster's LoadBalancer or port-forwarded IP.</p>
-                <div className="bg-slate-900 rounded-lg p-3 overflow-x-auto">
-                  <code className="text-xs text-emerald-400">
-                    URL: http://&lt;costdeck-address&gt;:{mcpPort}/sse
-                  </code>
+              <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 space-y-3">
+                <div>
+                  <h4 className="text-sm font-bold text-blue-800 mb-1">Cursor / any client with remote MCP support</h4>
+                  <pre className="bg-slate-900 rounded-lg p-3 overflow-x-auto text-xs text-emerald-400">{`{
+  "mcpServers": {
+    "costdeck": {
+      "url": "${window.location.origin}/mcp",
+      "headers": { "Authorization": "Bearer cdk_..." }
+    }
+  }
+}`}</pre>
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-blue-800 mb-1">Claude Code</h4>
+                  <pre className="bg-slate-900 rounded-lg p-3 overflow-x-auto text-xs text-emerald-400">{`claude mcp add --transport http costdeck ${window.location.origin}/mcp \
+  --header "Authorization: Bearer cdk_..."`}</pre>
                 </div>
               </div>
             </div>
@@ -1423,6 +1425,8 @@ export default function SettingsPage() {
               )}
             </div>
           </div>
+
+          <ApiTokens />
 
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
             <label className="flex items-start gap-3 cursor-pointer">

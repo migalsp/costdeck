@@ -77,8 +77,6 @@ func (s *Server) Start(ctx context.Context) error {
 		log.Info("Authentication is disabled: set COSTDECK_AUTH_USER/COSTDECK_AUTH_PASSWORD or enable Entra SSO")
 	}
 
-	go s.StartMCPServerLoop(ctx)
-
 	handler, err := s.Handler()
 	if err != nil {
 		return err
@@ -125,6 +123,7 @@ func (s *Server) Handler() (http.Handler, error) {
 	// wrong method 405) instead of falling through to the dashboard.
 	root := http.NewServeMux()
 	root.Handle("/api/", s.routes())
+	root.Handle("/mcp", s.mcpHandler())
 	root.Handle("/", spaHandler(ui))
 	var h http.Handler = root
 	if s.Auth != nil {
@@ -194,6 +193,9 @@ func (s *Server) routes() *http.ServeMux {
 	admin("POST /api/settings/providers/{provider}/test", s.handleTestProvider)
 	viewer("GET /api/settings/providers/{provider}/status", s.handleProviderStatus)
 	admin("POST /api/settings/ai/models", s.handleAIModels)
+	admin("GET /api/tokens", s.listTokens)
+	admin("POST /api/tokens", s.createToken)
+	admin("DELETE /api/tokens/{name}", s.deleteToken)
 
 	// Integrations
 	mux.HandleFunc("POST /api/webex/webhook", s.handleWebexWebhook) // HMAC-authenticated

@@ -93,6 +93,14 @@ type IntegrationsSettingsResponse struct {
 	AI              *AISettingsResponse              `json:"ai,omitempty"`
 	Messenger       *MessengerSettingsResponse       `json:"messenger,omitempty"`
 	VictoriaMetrics *VictoriaMetricsSettingsResponse `json:"victoriaMetrics,omitempty"`
+	MCP             MCPSettingsResponse              `json:"mcp"`
+}
+
+// MCPSettingsResponse describes the MCP endpoint.
+type MCPSettingsResponse struct {
+	Enabled bool `json:"enabled"`
+	// Path is where MCP clients connect, on the dashboard's own host and port.
+	Path string `json:"path"`
 }
 
 type AISettingsResponse struct {
@@ -192,6 +200,12 @@ type IntegrationsUpdateRequest struct {
 	AI              *AIUpdateRequest              `json:"ai,omitempty"`
 	Messenger       *MessengerUpdateRequest       `json:"messenger,omitempty"`
 	VictoriaMetrics *VictoriaMetricsUpdateRequest `json:"victoriaMetrics,omitempty"`
+	MCP             *MCPUpdateRequest             `json:"mcp,omitempty"`
+}
+
+// MCPUpdateRequest toggles the MCP endpoint.
+type MCPUpdateRequest struct {
+	Enabled *bool `json:"enabled,omitempty"`
 }
 
 type AIUpdateRequest struct {
@@ -340,6 +354,12 @@ func (s *Server) buildSettingsResponse(ctx context.Context, cfg *finopsv1.CostDe
 		}
 	}
 
+	// MCP
+	resp.Integrations.MCP = MCPSettingsResponse{Path: "/mcp"}
+	if m := cfg.Spec.Integrations.MCP; m != nil {
+		resp.Integrations.MCP.Enabled = m.Enabled
+	}
+
 	// Features
 	resp.Features = &FeaturesSettingsResponse{
 		CloudPricingAPI: cfg.Spec.Features.CloudPricingAPI,
@@ -378,7 +398,7 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 
 	appliers := []func(context.Context, *finopsv1.CostDeckConfig, *SettingsUpdateRequest) error{
 		s.applyAWSSettings, s.applyAzureSettings, s.applyGCPSettings, s.applyAISettings,
-		s.applyWebexSettings, s.applyVictoriaMetricsSettings, applyFeatureSettings, s.applyAuthSettings,
+		s.applyWebexSettings, s.applyVictoriaMetricsSettings, applyMCPSettings, applyFeatureSettings, s.applyAuthSettings,
 	}
 
 	var cfg *finopsv1.CostDeckConfig
@@ -597,6 +617,17 @@ func (s *Server) applyVictoriaMetricsSettings(ctx context.Context, cfg *finopsv1
 		return nil
 	}
 	return s.storeCredentials(ctx, "costdeck-vm-credentials", data, &vm.SecretRef)
+}
+
+func applyMCPSettings(_ context.Context, cfg *finopsv1.CostDeckConfig, req *SettingsUpdateRequest) error {
+	if req.Integrations == nil || req.Integrations.MCP == nil || req.Integrations.MCP.Enabled == nil {
+		return nil
+	}
+	if cfg.Spec.Integrations.MCP == nil {
+		cfg.Spec.Integrations.MCP = &finopsv1.MCPConfig{}
+	}
+	cfg.Spec.Integrations.MCP.Enabled = *req.Integrations.MCP.Enabled
+	return nil
 }
 
 func applyFeatureSettings(_ context.Context, cfg *finopsv1.CostDeckConfig, req *SettingsUpdateRequest) error {

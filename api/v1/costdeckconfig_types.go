@@ -192,14 +192,14 @@ type VictoriaMetricsConfig struct {
 	RetentionDays int `json:"retentionDays,omitempty"`
 }
 
-// MCPConfig holds configuration for the built-in MCP server.
+// MCPConfig configures the built-in Model Context Protocol endpoint.
 type MCPConfig struct {
-	// Enabled toggles the MCP server on/off
+	// Enabled serves MCP (Streamable HTTP) at /mcp on the dashboard's host and port,
+	// behind the same authentication as the API: a session or an API token.
 	// +optional
 	Enabled bool `json:"enabled,omitempty"`
 
-	// Port is the HTTP port the MCP server will listen on for SSE connections
-	// +kubebuilder:default=8083
+	// Deprecated: MCP is served on the API port at /mcp; this field is ignored.
 	// +optional
 	Port int `json:"port,omitempty"`
 }
