@@ -41,7 +41,7 @@ func (s *Server) listScalingGroups(w http.ResponseWriter, r *http.Request) {
 		writeK8sError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, list.Items)
+	writeObjects(w, http.StatusOK, list.Items)
 }
 
 func (s *Server) createScalingGroup(w http.ResponseWriter, r *http.Request) {
@@ -61,7 +61,7 @@ func (s *Server) createScalingGroup(w http.ResponseWriter, r *http.Request) {
 		writeK8sError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, group)
+	writeObject(w, http.StatusCreated, &group)
 }
 
 func (s *Server) getScalingGroup(w http.ResponseWriter, r *http.Request) {
@@ -70,7 +70,7 @@ func (s *Server) getScalingGroup(w http.ResponseWriter, r *http.Request) {
 		writeK8sError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, group)
+	writeObject(w, http.StatusOK, group)
 }
 
 // updateScalingGroup replaces the whole spec. Fields the client omits are dropped, which
@@ -94,7 +94,7 @@ func (s *Server) updateScalingGroup(w http.ResponseWriter, r *http.Request) {
 		writeK8sError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, current)
+	writeObject(w, http.StatusOK, current)
 }
 
 func (s *Server) deleteScalingGroup(w http.ResponseWriter, r *http.Request) {
@@ -196,7 +196,7 @@ func (s *Server) handleScalingGroupManual(w http.ResponseWriter, r *http.Request
 	writeOverrideResult(w, err, updated)
 }
 
-func writeOverrideResult(w http.ResponseWriter, err error, obj any) {
+func writeOverrideResult(w http.ResponseWriter, err error, obj metav1.Object) {
 	var bad errBadOverride
 	switch {
 	case errors.As(err, &bad):
@@ -204,7 +204,7 @@ func writeOverrideResult(w http.ResponseWriter, err error, obj any) {
 	case err != nil:
 		writeK8sError(w, err)
 	default:
-		writeJSON(w, http.StatusOK, obj)
+		writeObject(w, http.StatusOK, obj)
 	}
 }
 
@@ -234,7 +234,7 @@ func (s *Server) listScalingConfigs(w http.ResponseWriter, r *http.Request) {
 		writeK8sError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, list.Items)
+	writeObjects(w, http.StatusOK, list.Items)
 }
 
 func (s *Server) createScalingConfig(w http.ResponseWriter, r *http.Request) {
@@ -252,7 +252,7 @@ func (s *Server) createScalingConfig(w http.ResponseWriter, r *http.Request) {
 		writeK8sError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, cfg)
+	writeObject(w, http.StatusCreated, &cfg)
 }
 
 func (s *Server) getScalingConfig(w http.ResponseWriter, r *http.Request) {
@@ -261,7 +261,7 @@ func (s *Server) getScalingConfig(w http.ResponseWriter, r *http.Request) {
 		writeK8sError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, cfg)
+	writeObject(w, http.StatusOK, cfg)
 }
 
 func (s *Server) updateScalingConfig(w http.ResponseWriter, r *http.Request) {
@@ -283,7 +283,7 @@ func (s *Server) updateScalingConfig(w http.ResponseWriter, r *http.Request) {
 		writeK8sError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, current)
+	writeObject(w, http.StatusOK, current)
 }
 
 func (s *Server) deleteScalingConfig(w http.ResponseWriter, r *http.Request) {

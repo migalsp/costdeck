@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
@@ -24,6 +25,24 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	if err := json.NewEncoder(w).Encode(v); err != nil {
 		logf.Log.Error(err, "Could not encode JSON response")
 	}
+}
+
+// writeObject writes a Kubernetes object without metadata.managedFields: server-side
+// bookkeeping that often outweighs the rest of the object and that no client reads.
+func writeObject(w http.ResponseWriter, status int, obj metav1.Object) {
+	obj.SetManagedFields(nil)
+	writeJSON(w, status, obj)
+}
+
+// writeObjects is writeObject for a list's items.
+func writeObjects[T any, PT interface {
+	*T
+	metav1.Object
+}](w http.ResponseWriter, status int, items []T) {
+	for i := range items {
+		PT(&items[i]).SetManagedFields(nil)
+	}
+	writeJSON(w, status, items)
 }
 
 // writeError writes a JSON error body: {"error": "<message>"}.

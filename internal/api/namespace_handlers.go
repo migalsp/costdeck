@@ -33,7 +33,7 @@ func (s *Server) handleNamespaces(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, list.Items)
+	writeObjects(w, http.StatusOK, list.Items)
 }
 
 // findNamespaceFinOps resolves the NamespaceFinOps tracking a namespace. Auto-discovered
