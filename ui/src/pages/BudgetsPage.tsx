@@ -318,7 +318,7 @@ export default function BudgetsPage() {
       {!data.webexReady && (
         <div className="mb-4 flex gap-2 p-3 rounded-xl border border-slate-200 bg-slate-50 text-sm text-slate-600">
           <AlertTriangle size={16} className="mt-0.5 shrink-0 text-slate-400" />
-          <span>Alerts are listed below and exported as Prometheus metrics. To receive them in Webex, connect it with a space ID under Settings → Messengers.</span>
+          <span>Alerts are listed below and exported as Prometheus metrics. To receive them in Webex, connect it with a space ID under Settings → Notifications.</span>
         </div>
       )}
 

@@ -151,7 +151,7 @@ export default function StoragePage() {
         </div>
       )}
       <p className="mt-3 text-xs text-slate-400">
-        Volumes are priced per storage class at the cloud's list price for their disk type, or at your storage rate under Settings → Features.
+        Volumes are priced per storage class at the cloud's list price for their disk type; without a cloud price list, network volumes are estimated like a general-purpose cloud SSD. Your own storage rate under Settings → Prices replaces both.
         Load balancers: {inf.networkBasis}. Traffic and data transfer are not included.
       </p>
     </div>

@@ -325,7 +325,7 @@ func (s *Server) handleBillingReconcile(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if st == nil {
-		writeError(w, http.StatusBadRequest, "billing reconciliation is off; enable it under Settings → Features")
+		writeError(w, http.StatusBadRequest, "billing reconciliation is off; enable it under Settings → Cloud bill")
 		return
 	}
 	writeJSON(w, http.StatusOK, st)

@@ -243,7 +243,7 @@ func (b *Bot) execute(ctx context.Context, msg *Message, cmd command) (string, e
 func (b *Bot) refuseChange(msg *Message) string {
 	switch {
 	case b.SpaceID == "":
-		return "Scaling from chat is turned off until a CostDeck space is configured (Settings → Messengers → Webex → Space ID). " +
+		return "Scaling from chat is turned off until a CostDeck space is configured (Settings → Notifications → Webex → Space ID). " +
 			"Only members of that space can scale; `list` and `status` work here."
 	case msg.RoomID != b.SpaceID:
 		return "Scaling commands are only accepted in the CostDeck space. `list` and `status` work here."

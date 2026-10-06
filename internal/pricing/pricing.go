@@ -76,13 +76,17 @@ func (r Rates) Hourly(cpu, mem resource.Quantity) float64 {
 // Monthly is the cost of the given CPU and memory for an average month.
 func (r Rates) Monthly(cpu, mem resource.Quantity) float64 { return r.Hourly(cpu, mem) * HoursPerMonth }
 
-// heuristics are list-price ballparks for general-purpose instances, per core-hour and
-// GiB-hour. They only apply when nothing better is available.
+// heuristics are list prices per core-hour and GiB-hour of general-purpose on-demand
+// Linux instances. They apply when nothing better is available, and their ratio splits a
+// node's real price into CPU and memory. AWS (m6i and r6i in us-east-1) and Azure (Dsv5
+// and Esv5 in East US) both work out at $0.033 a core-hour and $0.00375 a GiB-hour.
+// Google Cloud and clusters without a cloud use the reference rates of OpenCost and
+// Kubecost, so their figures compare with those tools.
 var heuristics = map[string][2]float64{
-	"aws":   {0.040, 0.004},
-	"azure": {0.042, 0.005},
-	"gcp":   {0.038, 0.004},
-	"local": {0.035, 0.003},
+	"aws":   {0.033, 0.00375},
+	"azure": {0.033, 0.00375},
+	"gcp":   {0.031611, 0.004237},
+	"local": {0.031611, 0.004237},
 }
 
 // NodePricer returns the on-demand hourly price of an instance type in a region.
