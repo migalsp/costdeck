@@ -80,7 +80,7 @@ func (s *Server) recommendations(ctx context.Context, ns string) (rightsizing.Re
 		report.Basis = fmt.Sprintf("p95 CPU and peak memory over the last %s from VictoriaMetrics, plus 20%% headroom.", report.Window)
 	} else {
 		report.Basis = "A single current reading from metrics-server, plus 50% headroom. Connect VictoriaMetrics under " +
-			"Settings → Monitoring for advice based on two weeks of history, which also catches peaks this reading may miss."
+			"Settings → Usage metrics for advice based on two weeks of history, which also catches peaks this reading may miss."
 	}
 	if d.Degraded != nil {
 		report.Warning = "VictoriaMetrics is unavailable, so this falls back to metrics-server: " + d.Degraded.Error()

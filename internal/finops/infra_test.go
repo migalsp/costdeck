@@ -121,6 +121,11 @@ func TestPriceVolume(t *testing.T) {
 		{"aws", pricing.StorageClassInfo{Provisioner: "ebs.csi.aws.com"}, pricing.InfraRates{StorageGiBMonth: "0.05"}, 0.05, false},
 		// No list price in another currency without a custom rate.
 		{"aws", pricing.StorageClassInfo{Provisioner: "ebs.csi.aws.com"}, pricing.InfraRates{Currency: "EUR"}, 0, false},
+		// Without a cloud price list a network volume (OpenStack Cinder on Ceph) is
+		// estimated like a general-purpose cloud SSD, unless a rate says otherwise.
+		{"local", pricing.StorageClassInfo{Provisioner: "cinder.csi.openstack.org", Parameters: map[string]string{"type": "ceph"}}, pricing.InfraRates{}, 0.08, false},
+		{"local", pricing.StorageClassInfo{Provisioner: "cinder.csi.openstack.org"}, pricing.InfraRates{StorageGiBMonth: "0.03"}, 0.03, false},
+		{"local", pricing.StorageClassInfo{Provisioner: "rbd.csi.ceph.com"}, pricing.InfraRates{Currency: "EUR"}, 0, false},
 	}
 	for _, c := range cases {
 		got := pricing.PriceVolume(c.cloud, c.class, c.rates)

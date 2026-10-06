@@ -26,6 +26,11 @@ var diskPrices = map[string]map[string]float64{
 	},
 }
 
+// estimatedGiBMonth prices a network-attached volume on a cluster without a cloud price
+// list (OpenStack Cinder, Ceph, vSphere, …) like a general-purpose cloud SSD: AWS gp3 costs
+// $0.08 a GiB-month, Azure Standard SSD $0.075 and Google Cloud pd-balanced $0.10.
+const estimatedGiBMonth = 0.08
+
 // defaultDisk is each cloud's default disk type when a class names none.
 var defaultDisk = map[string]string{"aws": "gp3", "azure": "standardssd_lrs", "gcp": "pd-balanced"}
 
@@ -88,7 +93,7 @@ func PriceVolume(cloud string, class StorageClassInfo, custom InfraRates) Volume
 		return VolumePrice{PerGiBMonth: rate, Type: diskType, Basis: "custom storage rate"}
 	}
 	if custom.Currency != "" && !strings.EqualFold(custom.Currency, "USD") {
-		return VolumePrice{Type: diskType, Basis: fmt.Sprintf("no storage rate in %s; set one under Settings → Features", custom.Currency)}
+		return VolumePrice{Type: diskType, Basis: fmt.Sprintf("no storage rate in %s; set one under Settings → Prices", custom.Currency)}
 	}
 	if price, ok := diskPrices[cloud][diskType]; ok {
 		return VolumePrice{PerGiBMonth: price, Type: diskType, Basis: fmt.Sprintf("%s %s list price", cloudNames[cloud], diskType)}
@@ -96,7 +101,11 @@ func PriceVolume(cloud string, class StorageClassInfo, custom InfraRates) Volume
 	if def, ok := diskPrices[cloud][defaultDisk[cloud]]; ok {
 		return VolumePrice{PerGiBMonth: def, Type: diskType, Basis: fmt.Sprintf("unknown disk type %q, priced as %s", diskType, defaultDisk[cloud])}
 	}
-	return VolumePrice{Type: diskType, Basis: "no list price for this cluster's storage; set a storage rate under Settings → Features"}
+	if _, known := diskPrices[cloud]; !known {
+		return VolumePrice{PerGiBMonth: estimatedGiBMonth, Type: diskType,
+			Basis: "estimate: priced like a general-purpose cloud SSD; set your own rate under Settings → Prices"}
+	}
+	return VolumePrice{Type: diskType, Basis: "no list price for this storage; set a storage rate under Settings → Prices"}
 }
 
 // PriceLoadBalancer returns the monthly base price of one load balancer.
@@ -110,7 +119,7 @@ func PriceLoadBalancer(cloud string, custom InfraRates) (float64, string) {
 	if p, ok := loadBalancerMonth[cloud]; ok {
 		return p, fmt.Sprintf("%s load balancer list price, before traffic", cloudNames[cloud])
 	}
-	return 0, "in-cluster load balancer (such as MetalLB or k3s servicelb), no cloud charge"
+	return 0, "no cloud load balancer price: in-cluster ones such as MetalLB cost nothing extra; set a rate under Settings → Prices if yours do"
 }
 
 func firstNonEmpty(m map[string]string, keys ...string) string {

@@ -1932,7 +1932,7 @@ export default function SettingsPage() {
                   <input value={priceCurrency} onChange={e => setPriceCurrency(e.target.value)} placeholder="USD" maxLength={3} className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm font-mono uppercase" />
                 </div>
               </div>
-              <p className="text-sm text-slate-500 mt-4 mb-3">Volumes and load balancers are priced at the cloud's list price; set your own here, or set them when the currency is not USD.</p>
+              <p className="text-sm text-slate-500 mt-4 mb-3">Volumes and load balancers are priced at the cloud's list price. Without a cloud price list, network volumes are estimated at 0.08 USD a GiB-month and load balancers at nothing. Set your own here, and always when the currency is not USD.</p>
               <div className="grid grid-cols-3 gap-3">
                 <div>
                   <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1 block">Per GiB-month of volume</label>

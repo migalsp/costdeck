@@ -577,9 +577,10 @@ curl -H "Authorization: Bearer $TOKEN" "$COSTDECK/api/discovery/azure/vm"`,
           {
             table: {
               head: ['Estimate for', 'Per core-hour', 'Per GiB-hour'],
-              rows: [['AWS', '$0.040', '$0.004'], ['Azure', '$0.042', '$0.005'], ['Google Cloud', '$0.038', '$0.004'], ['Other', '$0.035', '$0.003']],
+              rows: [['AWS', '$0.033', '$0.00375'], ['Azure', '$0.033', '$0.00375'], ['Google Cloud', '$0.0316', '$0.0042'], ['Other (on-premises, OpenStack, vSphere…)', '$0.0316', '$0.0042']],
             },
           },
+          { p: 'The AWS and Azure estimates are the per-core and per-GiB prices that their general-purpose instances work out at (m6i and r6i, Dsv5 and Esv5); the others are the reference rates OpenCost and Kubecost use. Without a cloud price list, network volumes are estimated at $0.08 a GiB-month, like a general-purpose cloud SSD.' },
           { p: 'Every cost figure says which basis it uses, and Settings → Prices shows the rates in effect. Spot, reservations and savings plans are not applied, so treat the numbers as list prices.' },
           {
             ways: {

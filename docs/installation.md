@@ -184,8 +184,12 @@ right-sizing advice based on a single reading.
   instance types your nodes actually run: the AWS Price List (needs
   `pricing:GetProducts`) or the public Azure Retail Prices API (no credentials). Spot
   nodes are counted at the regular rate. Google Cloud clusters keep the estimate.
-- Otherwise a list-price heuristic is used, and every cost figure says which basis it came
-  from.
+- Otherwise an estimate is used, and every cost figure says which basis it came from: per
+  core-hour and GiB-hour $0.033 and $0.00375 on AWS and Azure (what their general-purpose
+  instances work out at), and the OpenCost and Kubecost reference rates of $0.031611 and
+  $0.004237 on Google Cloud and clusters without a cloud. Without a cloud price list,
+  network volumes are estimated at $0.08 a GiB-month, like a general-purpose cloud SSD, and
+  load balancers at nothing.
 
 ## Reconciling with the cloud bill
 
