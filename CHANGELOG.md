@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.5.3](https://github.com/migalsp/costdeck/compare/v1.5.2...v1.5.3) (2026-10-06)
+
+
+### Bug Fixes
+
+* **scaling:** keep a dependent that is scaling down from starting a stopped dependency ([235bb01](https://github.com/migalsp/costdeck/commit/235bb015cbad20174bd40c4f00a6fbb323d7be3f))
+* **ui:** allow deleting single-namespace schedules ([6fde69e](https://github.com/migalsp/costdeck/commit/6fde69e67bece404ed15dea952e94f83db41dcd9))
+
 ## [1.5.2](https://github.com/migalsp/costdeck/compare/v1.5.1...v1.5.2) (2026-10-06)
 
 
