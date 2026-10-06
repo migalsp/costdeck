@@ -39,8 +39,14 @@ Answer in concise Markdown. Prefer short tables for lists.`
 // admins only, and even then they produce a confirmation card instead of running.
 func (s *Server) toolRegistry() []ai.Tool {
 	str := func(desc string) map[string]any { return map[string]any{"type": "string", "description": desc} }
+	// required is left out when nothing is required: a nil slice would be sent as
+	// "required": null, which strict validators such as vLLM's reject, failing every chat.
 	obj := func(props map[string]any, required ...string) map[string]any {
-		return map[string]any{"type": "object", "properties": props, "required": required}
+		schema := map[string]any{"type": "object", "properties": props}
+		if len(required) > 0 {
+			schema["required"] = required
+		}
+		return schema
 	}
 	action := map[string]any{
 		"type": "string", "enum": []string{"up", "down", "resume"},

@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -138,5 +139,39 @@ func TestAIChatRequiresEnabledIntegration(t *testing.T) {
 		bytes.NewBufferString(`{"messages":[{"role":"user","content":"hi"}]}`)))
 	if rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), "disabled") {
 		t.Errorf("chat with AI disabled = %d %s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestToolSchemasAreStrictJSONSchema keeps every tool's parameters acceptable to strict
+// validators (vLLM, some MCP clients): "required" is absent or a non-empty list of declared
+// properties, never null.
+func TestToolSchemasAreStrictJSONSchema(t *testing.T) {
+	server := buildMockServerWithK8s()
+	for _, tool := range server.toolRegistry() {
+		raw, err := json.Marshal(tool.Parameters)
+		if err != nil {
+			t.Fatalf("%s: %v", tool.Name, err)
+		}
+		var schema map[string]any
+		_ = json.Unmarshal(raw, &schema)
+		props, ok := schema["properties"].(map[string]any)
+		if schema["type"] != "object" || !ok {
+			t.Errorf("%s: parameters must be an object schema with properties: %s", tool.Name, raw)
+			continue
+		}
+		req, present := schema["required"]
+		if !present {
+			continue
+		}
+		list, ok := req.([]any)
+		if !ok || len(list) == 0 {
+			t.Errorf("%s: required must be omitted or a non-empty array, got %s", tool.Name, raw)
+			continue
+		}
+		for _, name := range list {
+			if _, declared := props[name.(string)]; !declared {
+				t.Errorf("%s: required %q is not a declared property", tool.Name, name)
+			}
+		}
 	}
 }
