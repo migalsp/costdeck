@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <strong>Kubernetes FinOps operator: stop paying for idle infrastructure.</strong>
+  <strong>Kubernetes FinOps operator: see what every namespace costs, and stop paying for idle infrastructure.</strong>
 </p>
 
 <p align="center">
@@ -14,12 +14,38 @@
 
 <br />
 
-Cost Deck runs in your cluster, shows what each namespace costs and wastes, and scales
-non-production environments to zero when nobody needs them, then brings them back on time.
+Cost Deck runs in your cluster. It shows what the cluster and each namespace cost and
+waste, sets budgets that warn you before the month runs over, advises on requests and node
+shapes, and scales non-production environments to zero when nobody needs them, then brings
+them back on time. There is no external service: one operator in your cluster does it all.
 
-![Cost Deck Dashboard](docs/assets/dashboard.png)
+![Cost overview: the node bill split into used, idle and unrequested capacity, the month to date, savings and the daily cost by namespace](docs/assets/screenshots/overview.png)
+
+<table>
+  <tr>
+    <td width="33%" valign="top"><img src="docs/assets/screenshots/insights.png" alt="Namespace Insights"><br><sub><b>Namespace Insights</b>: cost, usage, trend and what could be saved, per namespace</sub></td>
+    <td width="33%" valign="top"><img src="docs/assets/screenshots/budgets.png" alt="Budgets and alerts"><br><sub><b>Budgets &amp; Alerts</b>: monthly limits per team, environment or set of namespaces</sub></td>
+    <td width="33%" valign="top"><img src="docs/assets/screenshots/scaling.png" alt="Scaling schedules"><br><sub><b>Scaling Schedules</b>: environments on working hours, platforms on demand</sub></td>
+  </tr>
+</table>
 
 ## Features
+
+### See the cost
+
+- **Cost overview.** The node bill split into what pods use, what they request but leave
+  idle, and what nobody requests; the month to date with a forecast; week-over-week
+  changes; cost by team and environment; and the savings opportunities, ranked.
+- **Namespace Insights.** Every namespace with its cost, usage, efficiency, trend and
+  findings, filtered by environment, team, schedule or finding, and exported as CSV.
+- **Storage, network and the real bill.** Persistent volumes and load balancers are priced
+  and charged to their namespace, and unused volumes and idle load balancers are found.
+  Costs can be reconciled with the AWS, Azure or Google Cloud bill, so discounts,
+  reservations, savings plans and spot prices show in every figure.
+- **Prices you can check.** AWS and Azure list prices per instance type, your own rates,
+  or an estimate in line with cloud list prices. Every figure says which basis it uses.
+
+### Act on it
 
 - **Scaling schedules.** Pick namespaces and when they should run: working hours, the work
   week non-stop, or any custom windows, in any time zone. Outside those hours workloads go
@@ -33,15 +59,22 @@ non-production environments to zero when nobody needs them, then brings them bac
   stages can include AWS Aurora and EC2, Azure VMs and PostgreSQL/MySQL flexible servers,
   and Google Cloud Compute Engine and Cloud SQL. CronJobs are suspended and KEDA
   ScaledObjects paused while a namespace is down.
-- **Cost and right-sizing.** Per-namespace cost from AWS or Azure list prices or your own rates,
-  live savings, and read-only advice on which requests can shrink, based on p95 usage when
-  VictoriaMetrics is connected. Cost Deck never edits your requests.
-- **Built for teams.** Microsoft Entra ID single sign-on with group-to-role mapping
-  (viewer / operator / admin), API tokens, and least-privilege RBAC: Secrets are only read
-  in the operator's own namespace.
-- **Where you already work.** A Webex bot that answers commands and announces finished
-  scaling, an AI assistant (Claude, OpenAI-compatible or Gemini), an MCP server for AI
-  clients, and Prometheus metrics.
+- **Right-sizing and node advice.** Read-only advice on which requests can shrink (p95
+  usage when VictoriaMetrics is connected), and per node pool the instance type and count
+  that fit the requests, arm64 alternatives and spot capacity for non-production
+  workloads. Cost Deck never edits your requests or nodes.
+- **Budgets and alerts.** Monthly budgets per cluster, team, environment or any set of
+  namespaces, alerting at thresholds and when the month is heading over; daily cost
+  anomaly alerts; and a weekly or monthly cost digest, all posted to Webex.
+
+### Fits your team
+
+- **Access.** Local users with viewer, operator and admin roles, Microsoft Entra ID single
+  sign-on with group-to-role mapping, API tokens, and least-privilege RBAC: Secrets are
+  only read in the operator's own namespace.
+- **Where you already work.** A Webex bot, an AI assistant (Claude, OpenAI-compatible or
+  Gemini) that proposes actions for you to confirm, an MCP server for AI clients, and
+  Prometheus metrics.
 
 ## Quick start
 
@@ -67,7 +100,8 @@ and every chart value.
   reference generated from the live OpenAPI document.
 - **[Installation guide](docs/installation.md)**: chart values, Ingress, single sign-on,
   cloud permissions, monitoring, upgrades.
-- **API**: Swagger UI at `/api/docs`, the specification at `/api/openapi.yaml`.
+- **API**: Swagger UI at `/api/docs`, the specification at `/api/openapi.yaml` and
+  `/api/openapi.json`. Every operation names the role it needs.
 
 ## How it fits together
 
@@ -81,8 +115,9 @@ graph TD
     end
 
     subgraph Operator["Cost Deck operator (one binary)"]
-        API[REST API, SSO, MCP]
-        CTRL[Controllers: schedules, dependencies, discovery]
+        API[REST API, sign-in, MCP]
+        CTRL[Controllers: schedules, dependencies, discovery, usage]
+        FIN[FinOps: cost ledger, budgets, digests, bill reconciliation]
         BOT[Webex bot]
         MET[metrics endpoint]
     end
@@ -90,12 +125,13 @@ graph TD
     subgraph Cluster["Kubernetes"]
         CRD[CRDs: ScalingGroup, ScalingConfig, NamespaceFinOps, CostDeckConfig]
         WL[Deployments, StatefulSets, CronJobs, KEDA]
+        INF[Nodes, volumes, load balancers]
         MS[metrics-server]
     end
 
     subgraph External
         VM[VictoriaMetrics]
-        AWS[AWS, Azure, Google Cloud]
+        CLOUD[AWS, Azure, Google Cloud: resources, prices, bill]
         LLM[AI provider]
         ENTRA[Microsoft Entra ID]
     end
@@ -103,13 +139,16 @@ graph TD
     UI --> API
     AI --> API
     WX <--> BOT
+    FIN --> WX
     PR --> MET
     API --> CRD
     CTRL --> CRD
     CTRL --> WL
-    CTRL --> AWS
     CTRL --> MS
     CTRL --> VM
+    CTRL --> CLOUD
+    FIN --> INF
+    FIN --> CLOUD
     API --> LLM
     API --> ENTRA
 ```
