@@ -338,7 +338,9 @@ claude mcp add --transport http costdeck https://costdeck.example.com/mcp \
   zero outside their hours and restore the recorded replica counts afterwards. A workload
   scaled up with no recorded count gets one replica.
 - **Start order**: stages start top to bottom and stop bottom to top. Namespaces not in
-  any stage start last and stop first.
+  any stage start last and stop first. With **Don't wait forever** (Advanced), a stage
+  that is not there after the set minutes stops holding back the next one; its
+  namespaces are shown as skipped and keep being scaled.
 - **Dependencies**: a schedule that starts after another waits until it is fully up, and
   keeps it up while running. An **on-demand** schedule has no hours of its own.
 - **Overrides**: Start now and Scale down now ignore the schedule until the next scheduled

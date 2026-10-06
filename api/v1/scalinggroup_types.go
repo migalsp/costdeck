@@ -93,14 +93,14 @@ const (
 
 // ScalingGroupFeatureFlags defines optional behavior toggles for a scaling group.
 type ScalingGroupFeatureFlags struct {
-	// SkipOnTimeout if true, namespaces that don't reach target state within TimeoutMinutes
-	// will be skipped instead of blocking the entire pipeline.
-	// Default: false (wait indefinitely for all services to reach target state)
+	// SkipOnTimeout if true, a stage that does not reach the target state within
+	// TimeoutMinutes stops holding back the next stage. Its namespaces keep being
+	// reconciled and are listed in status.skippedNamespaces until they get there.
+	// Default: false (each stage waits until all of its namespaces are at the target state)
 	// +optional
 	SkipOnTimeout bool `json:"skipOnTimeout,omitempty"`
 
-	// TimeoutMinutes is used when SkipOnTimeout is true.
-	// Namespaces not ready within this duration are skipped.
+	// TimeoutMinutes is how long each stage may take when SkipOnTimeout is true.
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=30
 	// +kubebuilder:default=5
@@ -169,6 +169,18 @@ type ScalingGroupStatus struct {
 	// ReadyNamespaces is the list of namespaces that are currently at their target state
 	// +optional
 	ReadyNamespaces []string `json:"readyNamespaces,omitempty"`
+
+	// CurrentStage is the index, in execution order, of the stage the running transition
+	// is on. Every earlier stage is at the target state or was given up on after the
+	// stage timeout.
+	// +optional
+	CurrentStage int `json:"currentStage,omitempty"`
+
+	// SkippedNamespaces lists namespaces the running transition moved on without because
+	// they did not reach the target state within the stage timeout. A namespace leaves the
+	// list once it gets there.
+	// +optional
+	SkippedNamespaces []string `json:"skippedNamespaces,omitempty"`
 
 	// RequiredBy lists the dependent groups that currently keep this group up.
 	// +optional

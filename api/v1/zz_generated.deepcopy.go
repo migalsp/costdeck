@@ -1178,6 +1178,11 @@ func (in *ScalingGroupStatus) DeepCopyInto(out *ScalingGroupStatus) {
 		*out = make([]string, len(*in))
 		copy(*out, *in)
 	}
+	if in.SkippedNamespaces != nil {
+		in, out := &in.SkippedNamespaces, &out.SkippedNamespaces
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
 	if in.RequiredBy != nil {
 		in, out := &in.RequiredBy, &out.RequiredBy
 		*out = make([]string, len(*in))

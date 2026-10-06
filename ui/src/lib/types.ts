@@ -99,6 +99,8 @@ export interface ScalingGroup {
     namespacesReady?: number
     namespacesTotal?: number
     readyNamespaces?: string[]
+    currentStage?: number
+    skippedNamespaces?: string[]
     requiredBy?: string[]
     conflictingNamespaces?: string[]
     conditions?: Condition[]
