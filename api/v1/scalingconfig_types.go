@@ -69,16 +69,58 @@ type ScalingSchedule struct {
 	Timezone string `json:"timezone,omitempty"`
 }
 
+// ScheduleStatus explains what drives the desired state of a ScalingGroup or ScalingConfig,
+// so that `kubectl get` answers "why is this up right now, and until when?".
+type ScheduleStatus struct {
+	// Mode is what currently decides the desired state:
+	// Schedule (spec.schedules), ManualUp / ManualDown (spec.active is set and the
+	// schedule is ignored), AlwaysOn (no usable schedule, kept up as a fail-safe) or
+	// Dependency (a ScalingGroup kept up for a group that depends on it).
+	// +optional
+	Mode string `json:"mode,omitempty"`
+
+	// DesiredState is Up or Down.
+	// +optional
+	DesiredState string `json:"desiredState,omitempty"`
+
+	// OverrideExpiresAt is when the manual override hands control back to the schedule.
+	// Unset while an override without spec.activeUntil is in force.
+	// +optional
+	OverrideExpiresAt *metav1.Time `json:"overrideExpiresAt,omitempty"`
+
+	// NextTransition is when the desired state next changes on its own, either at a
+	// schedule boundary or when the override expires. Unset when it never does.
+	// +optional
+	NextTransition *ScheduledTransition `json:"nextTransition,omitempty"`
+
+	// EstimatedHourlySavings is what the workloads CostDeck keeps scaled down would cost
+	// per hour at the current rates (requests x missing replicas), e.g. "1.2400".
+	// +optional
+	EstimatedHourlySavings string `json:"estimatedHourlySavings,omitempty"`
+
+	// Currency of EstimatedHourlySavings.
+	// +optional
+	Currency string `json:"currency,omitempty"`
+}
+
+// ScheduledTransition is a future change of the desired state.
+type ScheduledTransition struct {
+	// Time of the change.
+	Time metav1.Time `json:"time"`
+	// DesiredState after the change: Up or Down.
+	DesiredState string `json:"desiredState"`
+}
+
 // ScalingConfigSpec defines the desired state of ScalingConfig
 type ScalingConfigSpec struct {
 	// TargetNamespace is the namespace this config applies to
 	// +kubebuilder:validation:Required
 	TargetNamespace string `json:"targetNamespace"`
 
-	// Active is the manual override for scaling.
-	// If null, the schedule is followed.
-	// If true, the namespace is forced to Scale Up.
-	// If false, the namespace is forced to Scale Down.
+	// Active is a manual override. While it is set the schedule is ignored completely:
+	// true forces the namespace up, false forces it down. Remove the field (null) to
+	// return to the schedule, or set ActiveUntil so that happens automatically.
+	// status.mode shows which of the two is in control.
 	// +optional
 	Active *bool `json:"active,omitempty"`
 
@@ -93,13 +135,17 @@ type ScalingConfigSpec struct {
 	// +listType=atomic
 	Schedules []ScalingSchedule `json:"schedules,omitempty"`
 
-	// Sequence defines the order of scaling resources.
+	// Sequence defines the order of scaling resources. Each entry is a stage: a space
+	// separated list of workload name globs ("db", "api-*"), optionally qualified as
+	// "Kind/name" or "group/version:Kind/name". "*" matches every workload.
 	// Format: "Group/Version:Kind/Name" (e.g. "apps/v1:Deployment/my-app" or "apps/v1:Deployment/*")
 	// +optional
 	// +listType=atomic
 	Sequence []string `json:"sequence,omitempty"`
 
-	// Exclusions lists resources that should never be scaled down
+	// Exclusions lists workloads that are never scaled down, by name or prefix glob
+	// ("redis-*"). They also apply to the CronJobs CostDeck suspends and the KEDA
+	// ScaledObjects it pauses while the namespace is down.
 	// +optional
 	// +listType=atomic
 	Exclusions []string `json:"exclusions,omitempty"`
@@ -120,12 +166,24 @@ type ScalingConfigStatus struct {
 	// +optional
 	OriginalReplicas map[string]int32 `json:"originalReplicas,omitempty"`
 
+	ScheduleStatus `json:",inline"`
+
 	// Conditions represent the current state of the ScalingConfig resource.
+	// +listType=map
+	// +listMapKey=type
+	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:printcolumn:name="Namespace",type=string,JSONPath=".spec.targetNamespace"
+// +kubebuilder:printcolumn:name="Mode",type=string,JSONPath=".status.mode"
+// +kubebuilder:printcolumn:name="Desired",type=string,JSONPath=".status.desiredState"
+// +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=".status.phase"
+// +kubebuilder:printcolumn:name="Next change",type=string,JSONPath=".status.nextTransition.time"
+// +kubebuilder:printcolumn:name="Saving/h",type=string,JSONPath=".status.estimatedHourlySavings",priority=1
+// +kubebuilder:printcolumn:name="Age",type=date,JSONPath=".metadata.creationTimestamp"
 
 // ScalingConfig is the Schema for the scalingconfigs API
 type ScalingConfig struct {

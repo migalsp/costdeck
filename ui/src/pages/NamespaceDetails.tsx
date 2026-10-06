@@ -1,7 +1,11 @@
-import { useState, useEffect } from 'react'
-import { ArrowLeft, Search, Activity, AlertCircle, Play, Square, Settings2, Clock, Plus } from 'lucide-react'
-import ScalingConfigModal from '../components/ScalingConfigModal'
+import { useState } from 'react'
+import { ArrowLeft, Search, Activity, AlertCircle } from 'lucide-react'
+import NamespaceScalingPanel from '../components/NamespaceScalingPanel'
 import InfoTooltip from '../components/InfoTooltip'
+import RecommendationsPanel from '../components/RecommendationsPanel'
+import { fetchNamespaceCost } from '../lib/api'
+import type { CostEstimate, OptimizationStatus } from '../lib/types'
+import { usePolling } from '../lib/usePolling'
 
 interface PodDetail {
   name: string;
@@ -23,12 +27,14 @@ interface PodDetail {
   };
 }
 
+type SortField = 'name' | 'status' | 'cost' | 'cpuUsage' | 'cpuReq' | 'cpuLim' | 'memUsage' | 'memReq' | 'memLim'
+
 interface NamespaceDetailsProps {
   namespace: string;
   onBack: () => void;
 }
 
-const formatCpu = (v: string): string => {
+const formatCpu = (v?: string): string => {
   if (!v || v === '0') return '0';
   if (v.endsWith('n')) return (parseInt(v.slice(0, -1), 10) / 1000000000).toFixed(3);
   if (v.endsWith('u')) return (parseInt(v.slice(0, -1), 10) / 1000000).toFixed(3);
@@ -36,7 +42,7 @@ const formatCpu = (v: string): string => {
   return parseFloat(v).toFixed(3);
 }
 
-const formatMem = (v: string): string => {
+const formatMem = (v?: string): string => {
   if (!v || v === '0') return '0';
   let bytes = 0;
   const val = v.toLowerCase();
@@ -48,18 +54,29 @@ const formatMem = (v: string): string => {
   return (bytes / (1024 * 1024)).toFixed(1) + ' MiB';
 }
 
+const sortValue = (pod: PodDetail, field: SortField): string | number => {
+  switch (field) {
+    case 'name': return pod.name
+    case 'status': return pod.status
+    case 'cost': return pod.cost?.monthlyCost ?? 0
+    case 'cpuUsage': return parseFloat(formatCpu(pod.cpu.usage))
+    case 'cpuReq': return parseFloat(formatCpu(pod.cpu.requests))
+    case 'cpuLim': return parseFloat(formatCpu(pod.cpu.limits))
+    case 'memUsage': return parseFloat(formatMem(pod.memory.usage))
+    case 'memReq': return parseFloat(formatMem(pod.memory.requests))
+    case 'memLim': return parseFloat(formatMem(pod.memory.limits))
+  }
+}
+
 export default function NamespaceDetails({ namespace, onBack }: NamespaceDetailsProps) {
   const [pods, setPods] = useState<PodDetail[]>([])
-  const [optimization, setOptimization] = useState<any>(null)
+  const [optimization, setOptimization] = useState<OptimizationStatus | null>(null)
   const [loading, setLoading] = useState(true)
   const [filterQuery, setFilterQuery] = useState('')
   const [error, setError] = useState<string | null>(null)
-  const [config, setConfig] = useState<any>(null)
-  const [isEditingConfig, setIsEditingConfig] = useState(false)
-  const [sortField, setSortField] = useState<keyof PodDetail | 'cpuUsage' | 'memUsage' | 'cpuReq' | 'cpuLim' | 'memReq' | 'memLim'>('name')
+  const [sortField, setSortField] = useState<SortField>('name')
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc')
-  const [isScaling, setIsScaling] = useState(false)
-  const [namespaceCost, setNamespaceCost] = useState<any>(null)
+  const [namespaceCost, setNamespaceCost] = useState<CostEstimate | null>(null)
 
   const fetchPods = (silent = false) => {
     if (!silent) setLoading(true);
@@ -73,20 +90,10 @@ export default function NamespaceDetails({ namespace, onBack }: NamespaceDetails
         console.error(err);
         if (!silent) setError("Failed to load pod details.");
       })
-      .finally(() => {
-        if (!silent) setLoading(false);
-      });
+      .finally(() => setLoading(false));
   }
 
-  const fetchConfig = () => {
-    fetch('/api/scaling/configs')
-      .then(res => res.json())
-      .then(data => {
-        const p = (data || []).find((p: any) => p.spec.targetNamespace === namespace);
-        setConfig(p);
-      })
-      .catch(console.error);
-  }
+
 
   const fetchOptimization = () => {
     fetch(`/api/namespaces/${namespace}/optimization`)
@@ -95,131 +102,24 @@ export default function NamespaceDetails({ namespace, onBack }: NamespaceDetails
       .catch(console.error);
   }
 
-  const fetchNamespaceCost = async () => {
-    try {
-      const res = await fetch('/api/costing', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          targetType: 'namespace',
-          targetName: namespace
-        })
-      })
-      if (res.ok) {
-        const cost = await res.json()
-        if (cost) setNamespaceCost(cost)
-      }
-    } catch (e) {
-      console.error('Failed to fetch cost', e)
-    }
+  const fetchCost = () => {
+    fetchNamespaceCost(namespace)
+      .then(cost => { if (cost) setNamespaceCost(cost) })
+      .catch(e => console.error('Failed to fetch cost', e))
   }
 
-  useEffect(() => {
-    fetchPods()
-    fetchConfig()
+  // Pods refresh silently: the loading state starts true and the first fetch clears it.
+  usePolling(() => {
+    fetchPods(true)
     fetchOptimization()
-    fetchNamespaceCost()
-    const interval = setInterval(() => {
-      fetchPods(true)
-      fetchConfig()
-      fetchOptimization()
-      fetchNamespaceCost()
-    }, 10000)
-    return () => clearInterval(interval)
-  }, [namespace])
+    fetchCost()
+  }, 10000, namespace)
 
-  const handleManualScale = async (active: boolean) => {
-    if (!config || isScaling) return;
-    setIsScaling(true);
-    
-    // Optimistic UI Update
-    const previousPhase = config.status?.phase;
-    setConfig({
-      ...config,
-      status: {
-        ...config.status,
-        phase: 'Scaling...'
-      }
-    });
 
-    try {
-      await fetch(`/api/scaling/configs/${config.metadata.name}/manual`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ active })
-      });
-      fetchConfig();
-      setError(null);
-      
-      // Fast polling setup to catch the result quickly
-      let attempts = 0;
-      const fastPoll = setInterval(() => {
-        fetchPods(true);
-        fetchConfig();
-        attempts++;
-        if (attempts > 10) { // Keep fast polling for ~20 seconds maximum
-          clearInterval(fastPoll);
-          setIsScaling(false);
-        }
-      }, 2000);
 
-      // We clear the isScaling explicitly when the phase actually changes from 'Scaling...' inside fetchConfig,
-      // but we need a fallback timeout here just in case.
-      setTimeout(() => setIsScaling(false), 22000);
 
-    } catch (err) {
-      console.error("Error during manual scale:", err);
-      setError("Failed to apply manual scaling. Please check the console for details.");
-      // Revert optimistic update on failure
-      setConfig({
-        ...config,
-        status: { ...config.status, phase: previousPhase }
-      });
-      setIsScaling(false);
-    }
-  };
 
-  const handleCreateConfig = async () => {
-    try {
-      await fetch('/api/scaling/configs', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          metadata: { name: `config-${namespace}` },
-          spec: { targetNamespace: namespace, active: true }
-        })
-      });
-      fetchConfig();
-    } catch (err) {
-      console.error(err);
-    }
-  };
 
-  const handleUpdateConfig = async (updatedSpec: any) => {
-    if (!config) return;
-    try {
-      const res = await fetch(`/api/scaling/configs/${config.metadata.name}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          metadata: { name: config.metadata.name },
-          spec: updatedSpec 
-        })
-      });
-
-      if (!res.ok) {
-        const text = await res.text();
-        throw new Error(text || res.statusText);
-      }
-
-      setIsEditingConfig(false);
-      setError(null);
-      fetchConfig();
-    } catch (err: any) {
-      console.error(err);
-      setError(`Failed to update configuration: ${err.message}`);
-    }
-  };
 
   const handleSort = (field: typeof sortField) => {
     if (sortField === field) {
@@ -231,36 +131,12 @@ export default function NamespaceDetails({ namespace, onBack }: NamespaceDetails
   }
 
   const getSortedPods = () => {
+    const dir = sortDirection === 'asc' ? 1 : -1;
     return [...pods].sort((a, b) => {
-      let valA: any = a[sortField as keyof PodDetail] || '';
-      let valB: any = b[sortField as keyof PodDetail] || '';
-      
-      // Handle nested metrics for sorting
-      if (sortField === 'cpuUsage') {
-        valA = parseFloat(formatCpu(a.cpu.usage));
-        valB = parseFloat(formatCpu(b.cpu.usage));
-      } else if (sortField === 'memUsage') {
-        valA = parseFloat(formatMem(a.memory.usage));
-        valB = parseFloat(formatMem(b.memory.usage));
-      } else if (sortField === 'cpuReq') {
-        valA = parseFloat(formatCpu(a.cpu.requests));
-        valB = parseFloat(formatCpu(b.cpu.requests));
-      } else if (sortField === 'cpuLim') {
-        valA = parseFloat(formatCpu(a.cpu.limits));
-        valB = parseFloat(formatCpu(b.cpu.limits));
-      } else if (sortField === 'memReq') {
-        valA = parseFloat(formatMem(a.memory.requests));
-        valB = parseFloat(formatMem(b.memory.requests));
-      } else if (sortField === 'memLim') {
-        valA = parseFloat(formatMem(a.memory.limits));
-        valB = parseFloat(formatMem(b.memory.limits));
-      } else if (sortField === 'cost') {
-        valA = a.cost ? a.cost.monthlyCost : 0;
-        valB = b.cost ? b.cost.monthlyCost : 0;
-      }
-
-      if (valA < valB) return sortDirection === 'asc' ? -1 : 1;
-      if (valA > valB) return sortDirection === 'asc' ? 1 : -1;
+      const valA = sortValue(a, sortField);
+      const valB = sortValue(b, sortField);
+      if (valA < valB) return -dir;
+      if (valA > valB) return dir;
       return 0;
     })
   }
@@ -271,7 +147,7 @@ export default function NamespaceDetails({ namespace, onBack }: NamespaceDetails
 
   const getOptimizationForPod = (podName: string) => {
     if (!optimization?.active || !optimization.workloads) return null;
-    return optimization.workloads.find((w: any) => podName.startsWith(w.name));
+    return optimization.workloads.find(w => podName.startsWith(w.name));
   }
 
   return (
@@ -286,84 +162,16 @@ export default function NamespaceDetails({ namespace, onBack }: NamespaceDetails
         </button>
         <div className="flex items-center gap-2">
           <div>
-            <h2 className="text-3xl font-black tracking-tight text-slate-900 uppercase">Namespace Insight: {namespace}</h2>
-            <p className="text-slate-500 mt-1 font-medium italic">Detailed resource analytics and scaling management</p>
+            <h2 className="text-2xl font-bold tracking-tight text-slate-900 flex items-center gap-2">{namespace}</h2>
+            <p className="mt-1 text-sm text-slate-500">Usage, cost, scaling and right-sizing for this namespace</p>
           </div>
-          <InfoTooltip content="This view shows real-time metrics for each pod. Strike-through values indicate optimized resources. Green values are currently active." position="bottom" />
+          <InfoTooltip content="This view shows real-time metrics for each pod. Struck-through values were changed by an automatic right-sizing in an earlier version; green values are the ones in effect." position="bottom" />
         </div>
       </div>
 
-      {/* Scaling Controls Section */}
-      <div className="bg-slate-900 rounded-2xl p-6 mb-8 text-white shadow-xl flex items-center justify-between border border-white/10 overflow-hidden relative">
-        <div className="absolute top-0 right-0 p-8 opacity-10 pointer-events-none">
-          <Activity size={120} />
-        </div>
-        <div className="relative z-10 flex items-center gap-6">
-          <div className={`p-4 rounded-2xl ${config ? 'bg-indigo-500/20 text-indigo-400' : 'bg-slate-800 text-slate-500'}`}>
-            <Clock size={32} />
-          </div>
-          <div>
-            <h3 className="text-xl font-bold flex items-center gap-2">
-              Scaling Status
-              {config && (
-                <span className={`px-2 py-0.5 rounded text-[10px] uppercase tracking-widest ${
-                  config.status?.phase === 'ScaledUp' ? 'bg-emerald-500/20 text-emerald-400' : 
-                  config.status?.phase === 'Scaling...' ? 'bg-blue-500/20 text-blue-400 animate-pulse' :
-                  'bg-amber-500/20 text-amber-400'
-                }`}>
-                  {config.status?.phase || 'Idle'}
-                </span>
-              )}
-            </h3>
-            <p className="text-slate-400 text-sm mt-1">
-              {config 
-                ? `Scale config "${config.metadata.name}" is active. Availability managed by schedule.` 
-                : "No individual scaling config configured for this namespace."}
-            </p>
-          </div>
-        </div>
-        <div className="relative z-10 flex items-center gap-3">
-          {config ? (
-            <>
-              <button 
-                onClick={() => handleManualScale(true)}
-                disabled={isScaling}
-                className={`p-3 rounded-xl transition-all ${config.status?.phase === 'ScaledUp' ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/30' : 'bg-slate-800 text-slate-400 hover:text-white'} ${isScaling ? 'opacity-50 cursor-not-allowed' : ''}`}
-              >
-                {isScaling && config.status?.phase === 'Scaling...' ? (
-                   <div className="w-5 h-5 border-2 border-slate-300 border-t-emerald-500 rounded-full animate-spin"></div>
-                ) : (
-                  <Play size={20} fill={config.status?.phase === 'ScaledUp' ? "currentColor" : "none"} />
-                )}
-              </button>
-              <button 
-                onClick={() => handleManualScale(false)}
-                disabled={isScaling}
-                className={`p-3 rounded-xl transition-all ${config.status?.phase === 'ScaledDown' ? 'bg-rose-500 text-white shadow-lg shadow-rose-500/30' : 'bg-slate-800 text-slate-400 hover:text-white'} ${isScaling ? 'opacity-50 cursor-not-allowed' : ''}`}
-              >
-                {isScaling && config.status?.phase === 'Scaling...' ? (
-                   <div className="w-5 h-5 border-2 border-slate-300 border-t-rose-500 rounded-full animate-spin"></div>
-                ) : (
-                  <Square size={20} fill={config.status?.phase === 'ScaledDown' ? "currentColor" : "none"} />
-                )}
-              </button>
-              <button 
-                onClick={() => setIsEditingConfig(true)}
-                className="bg-white/10 hover:bg-white/20 p-3 rounded-xl transition-all"
-              >
-                <Settings2 size={20} />
-              </button>
-            </>
-          ) : (
-            <button 
-              onClick={handleCreateConfig}
-              className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-3 rounded-xl font-bold flex items-center gap-2 shadow-lg shadow-indigo-600/20 transition-all"
-            >
-              <Plus size={18} /> Enable Scaling
-            </button>
-          )}
-        </div>
-      </div>
+      <NamespaceScalingPanel namespace={namespace} />
+
+      <RecommendationsPanel namespace={namespace} />
 
       {/* Controls */}
       <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 mb-6 flex justify-between items-center">
@@ -378,13 +186,13 @@ export default function NamespaceDetails({ namespace, onBack }: NamespaceDetails
           />
         </div>
         <div className="flex gap-4">
-          <div className="px-3 py-1 bg-blue-50 text-blue-700 rounded-lg text-sm font-medium border border-blue-100 flex items-center gap-2">
+          <div className="px-3 py-1 bg-brand-50 text-brand-700 rounded-lg text-sm font-medium border border-brand-100 flex items-center gap-2">
             <Activity size={14} />
             {pods.length} Total Pods
           </div>
           {namespaceCost && (
             <div className="flex flex-col items-end">
-              <span className="text-xl font-black text-slate-900 flex items-center gap-1.5">
+              <span className="text-xl font-bold text-slate-900 flex items-center gap-1.5">
                 ${namespaceCost.hourlyCost.toFixed(4)}/hr • ${namespaceCost.monthlyCost.toFixed(2)}/mo
               </span>
             </div>
@@ -393,7 +201,7 @@ export default function NamespaceDetails({ namespace, onBack }: NamespaceDetails
       </div>
 
       {error && (
-        <div className="bg-red-50 text-red-700 p-4 rounded-lg mb-6 flex items-center gap-2">
+        <div className="bg-rose-50 text-rose-700 p-4 rounded-lg mb-6 flex items-center gap-2">
           <AlertCircle size={18} />
           {error}
         </div>
@@ -418,37 +226,37 @@ export default function NamespaceDetails({ namespace, onBack }: NamespaceDetails
                   Status {sortField === 'status' && (sortDirection === 'asc' ? '↑' : '↓')}
                 </th>
                 <th 
-                  className="px-6 py-4 text-xs font-semibold text-slate-600 uppercase tracking-wider bg-blue-50/30 cursor-pointer hover:bg-blue-100/30 transition-colors"
+                  className="px-6 py-4 text-xs font-semibold text-slate-600 uppercase tracking-wider bg-brand-50/30 cursor-pointer hover:bg-brand-100/30 transition-colors"
                   onClick={() => handleSort('cpuUsage')}
                 >
                   CPU Usage {sortField === 'cpuUsage' && (sortDirection === 'asc' ? '↑' : '↓')}
                 </th>
                 <th 
-                  className="px-6 py-4 text-xs font-semibold text-slate-600 uppercase tracking-wider bg-blue-50/30 cursor-pointer hover:bg-blue-100/30 transition-colors"
+                  className="px-6 py-4 text-xs font-semibold text-slate-600 uppercase tracking-wider bg-brand-50/30 cursor-pointer hover:bg-brand-100/30 transition-colors"
                   onClick={() => handleSort('cpuReq')}
                 >
                   CPU Req {sortField === 'cpuReq' && (sortDirection === 'asc' ? '↑' : '↓')}
                 </th>
                 <th 
-                  className="px-6 py-4 text-xs font-semibold text-slate-600 uppercase tracking-wider bg-blue-50/30 border-r border-slate-100 cursor-pointer hover:bg-blue-100/30 transition-colors"
+                  className="px-6 py-4 text-xs font-semibold text-slate-600 uppercase tracking-wider bg-brand-50/30 border-r border-slate-100 cursor-pointer hover:bg-brand-100/30 transition-colors"
                   onClick={() => handleSort('cpuLim')}
                 >
                   CPU Lim {sortField === 'cpuLim' && (sortDirection === 'asc' ? '↑' : '↓')}
                 </th>
                 <th 
-                  className="px-6 py-4 text-xs font-semibold text-slate-600 uppercase tracking-wider bg-indigo-50/30 cursor-pointer hover:bg-indigo-100/30 transition-colors"
+                  className="px-6 py-4 text-xs font-semibold text-slate-600 uppercase tracking-wider bg-brand-50/30 cursor-pointer hover:bg-brand-100/30 transition-colors"
                   onClick={() => handleSort('memUsage')}
                 >
                   RAM Usage {sortField === 'memUsage' && (sortDirection === 'asc' ? '↑' : '↓')}
                 </th>
                 <th 
-                  className="px-6 py-4 text-xs font-semibold text-slate-600 uppercase tracking-wider bg-indigo-50/30 cursor-pointer hover:bg-indigo-100/30 transition-colors"
+                  className="px-6 py-4 text-xs font-semibold text-slate-600 uppercase tracking-wider bg-brand-50/30 cursor-pointer hover:bg-brand-100/30 transition-colors"
                   onClick={() => handleSort('memReq')}
                 >
                   RAM Req {sortField === 'memReq' && (sortDirection === 'asc' ? '↑' : '↓')}
                 </th>
                 <th 
-                  className="px-6 py-4 text-xs font-semibold text-slate-600 uppercase tracking-wider bg-indigo-50/30 cursor-pointer hover:bg-indigo-100/30 transition-colors border-r border-slate-100"
+                  className="px-6 py-4 text-xs font-semibold text-slate-600 uppercase tracking-wider bg-brand-50/30 cursor-pointer hover:bg-brand-100/30 transition-colors border-r border-slate-100"
                   onClick={() => handleSort('memLim')}
                 >
                   RAM Lim {sortField === 'memLim' && (sortDirection === 'asc' ? '↑' : '↓')}
@@ -487,19 +295,19 @@ export default function NamespaceDetails({ namespace, onBack }: NamespaceDetails
                         </span>
                       </td>
                       {/* CPU Group */}
-                      <td className="px-6 py-4 bg-blue-50/10 font-mono text-xs">{formatCpu(pod.cpu.usage)}</td>
-                      <td className="px-6 py-4 bg-blue-50/10 font-mono text-xs text-slate-500">
+                      <td className="px-6 py-4 bg-brand-50/10 font-mono text-xs">{formatCpu(pod.cpu.usage)}</td>
+                      <td className="px-6 py-4 bg-brand-50/10 font-mono text-xs text-slate-500">
                         {opt ? (
                           <div className="flex flex-col animate-in fade-in slide-in-from-left duration-500">
                             <span className="line-through opacity-40 text-[10px]">{formatCpu(opt.original.cpuRequest)}</span>
-                            <span className="text-emerald-600 font-black flex items-center gap-1">
+                            <span className="text-emerald-600 font-bold flex items-center gap-1">
                               {formatCpu(pod.cpu.requests)}
                               <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse shadow-[0_0_5px_rgba(16,185,129,0.5)]" />
                             </span>
                           </div>
                         ) : formatCpu(pod.cpu.requests)}
                       </td>
-                      <td className="px-6 py-4 bg-blue-50/10 font-mono text-xs text-slate-500 border-r border-slate-50">
+                      <td className="px-6 py-4 bg-brand-50/10 font-mono text-xs text-slate-500 border-r border-slate-50">
                         {opt ? (
                           <div className="flex flex-col">
                             <span className="line-through opacity-50">{formatCpu(opt.original.cpuLimit)}</span>
@@ -508,8 +316,8 @@ export default function NamespaceDetails({ namespace, onBack }: NamespaceDetails
                         ) : formatCpu(pod.cpu.limits)}
                       </td>
                       {/* RAM Group */}
-                      <td className="px-6 py-4 bg-indigo-50/10 font-mono text-xs">{formatMem(pod.memory.usage)}</td>
-                      <td className="px-6 py-4 bg-indigo-50/10 font-mono text-xs text-slate-500">
+                      <td className="px-6 py-4 bg-brand-50/10 font-mono text-xs">{formatMem(pod.memory.usage)}</td>
+                      <td className="px-6 py-4 bg-brand-50/10 font-mono text-xs text-slate-500">
                         {opt ? (
                           <div className="flex flex-col">
                             <span className="line-through opacity-50">{formatMem(opt.original.memoryRequest)}</span>
@@ -517,7 +325,7 @@ export default function NamespaceDetails({ namespace, onBack }: NamespaceDetails
                           </div>
                         ) : formatMem(pod.memory.requests)}
                       </td>
-                      <td className="px-6 py-4 bg-indigo-50/10 font-mono text-xs text-slate-500 border-r border-slate-50">
+                      <td className="px-6 py-4 bg-brand-50/10 font-mono text-xs text-slate-500 border-r border-slate-50">
                         {opt ? (
                           <div className="flex flex-col">
                             <span className="line-through opacity-50">{formatMem(opt.original.memoryLimit)}</span>
@@ -549,16 +357,6 @@ export default function NamespaceDetails({ namespace, onBack }: NamespaceDetails
           </table>
         </div>
       </div>
-
-      {isEditingConfig && config && (
-        <ScalingConfigModal 
-          name={config.metadata.name}
-          mode="schedule"
-          spec={config.spec}
-          onClose={() => setIsEditingConfig(false)}
-          onSave={handleUpdateConfig}
-        />
-      )}
     </div>
   )
 }

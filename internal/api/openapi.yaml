@@ -2,15 +2,18 @@ openapi: "3.0.3"
 info:
   title: Cost Deck Operator API
   description: |
-    REST API for the Cost Deck Kubernetes FinOps operator.
-    Provides namespace resource insights, workload scaling, optimization, and cluster monitoring.
+    REST API for the Cost Deck Kubernetes FinOps operator: namespace cost and usage,
+    right-sizing advice, scaling schedules, settings and the AI assistant.
 
-    **Authentication:** All endpoints (except `/api/login`) require a valid `costdeck-session` cookie.
-    Obtain one via `POST /api/login`.
+    **Authentication:** every endpoint except sign-in, the auth configuration and the Webex
+    webhook needs either the `costdeck-session` cookie (from `POST /api/login` or Entra ID
+    sign-in) or an API token sent as `Authorization: Bearer cdk_...`. Each endpoint requires
+    at least the viewer, operator or admin role. MCP is served at `/mcp` with the same
+    authentication.
   version: "1.3.0" # x-release-please-version
   contact:
     name: Cost Deck
-    url: https://github.com/migalsp/costdeck-operator
+    url: https://github.com/migalsp/costdeck
   license:
     name: Apache 2.0
     url: https://www.apache.org/licenses/LICENSE-2.0
@@ -20,23 +23,42 @@ servers:
     description: Current instance
 
 tags:
-  - name: Auth
-    description: Authentication endpoints
+  - name: Scaling
+    description: Schedules (ScalingGroups), single-namespace configs and manual overrides
+  - name: Namespaces
+    description: Usage, pods and workloads per namespace
+  - name: Right-sizing
+    description: Advice on which requests can shrink
+  - name: Costing
+    description: Cost estimates and cloud resource discovery
   - name: System
     description: Operator version and cluster info
   - name: Health
-    description: Operator self-monitoring
-  - name: Namespaces
-    description: Namespace resource insights
-  - name: Optimization
-    description: Resource right-sizing
-  - name: Scaling
-    description: Workload scaling management
+    description: Operator self-monitoring and logs
+  - name: Reports
+    description: The cost digest, its schedule and the report history
+  - name: AI
+    description: Assistant chat and cost reports (Server-Sent Events)
+  - name: Settings
+    description: CostDeckConfig settings, connection tests and API tokens
+  - name: Auth
+    description: Sign-in, sign-out and single sign-on
+  - name: Users
+    description: Local accounts, their roles and who signed in
+  - name: Webex
+    description: Inbound Webex webhook
+  - name: Docs
+    description: This specification and Swagger UI
+
+security:
+  - cookieAuth: []
+  - bearerAuth: []
 
 paths:
   /api/login:
     post:
       tags: [Auth]
+      security: []
       summary: Sign in
       description: Authenticate with username/password. Returns a session cookie.
       requestBody:
@@ -49,7 +71,7 @@ paths:
               properties:
                 username:
                   type: string
-                  example: costdeck-admin
+                  example: costdeck
                 password:
                   type: string
                   example: "<from-secret>"
@@ -60,7 +82,7 @@ paths:
             Set-Cookie:
               schema:
                 type: string
-                example: costdeck-session=abc123; Path=/; Max-Age=86400; HttpOnly
+                example: costdeck-session=eyJ...; Path=/; Max-Age=43200; HttpOnly; SameSite=Lax
           content:
             application/json:
               schema:
@@ -79,14 +101,132 @@ paths:
   /api/logout:
     post:
       tags: [Auth]
+      security: []
       summary: Sign out
       description: Clears the session cookie.
       responses:
         "200":
           description: Logout successful
+        "429":
+          description: Too many failed sign-in attempts from this address
+
+  /api/auth/config:
+    get:
+      tags: [Auth]
+      security: []
+      summary: Available sign-in methods
+      description: Public. Tells the login page whether to show the password form and the Microsoft button.
+      responses:
+        "200":
+          description: Sign-in methods
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  disabled: { type: boolean, description: No sign-in method is configured (development mode) }
+                  localLogin: { type: boolean }
+                  entra:
+                    type: object
+                    properties:
+                      enabled: { type: boolean }
+
+  /api/auth/password:
+    post:
+      x-role: viewer
+      tags: [Auth]
+      summary: Change my password
+      description: For local users. Ends the user's other sessions and re-issues this one. The built-in admin's password lives in the Helm release's admin-credentials Secret.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [currentPassword, newPassword]
+              properties:
+                currentPassword: { type: string }
+                newPassword: { type: string, minLength: 12 }
+      responses:
+        "200": { description: Changed; a new session cookie is set }
+        "400": { description: Not a local user, or the new password is too short }
+        "403": { description: The current password is wrong }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/auth/me:
+    get:
+      x-role: viewer
+      tags: [Auth]
+      summary: Current user
+      description: Any signed-in user. The dashboard shows the sign-in page when this answers 401.
+      responses:
+        "200":
+          description: The signed-in identity
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sub: { type: string, example: "entra:7f3c..." }
+                  name: { type: string }
+                  email: { type: string }
+                  role: { type: string, enum: [viewer, operator, admin] }
+                  provider: { type: string, enum: [local, entra, token, anonymous] }
+                  mustChangePassword: { type: boolean, description: "A local user whose password an administrator chose; every other call answers 403 until they change it." }
+        "401":
+          description: Not signed in
+
+  /api/auth/entra/login:
+    get:
+      tags: [Auth]
+      security: []
+      summary: Start Microsoft Entra ID sign-in
+      description: Redirects the browser to Entra ID (authorization code flow with PKCE).
+      parameters:
+        - name: return
+          in: query
+          description: Path to return to after signing in.
+          schema: { type: string, example: /scaling }
+      responses:
+        "302":
+          description: Redirect to login.microsoftonline.com
+
+  /api/auth/entra/callback:
+    get:
+      tags: [Auth]
+      security: []
+      summary: Entra ID redirect URI (server-side mode)
+      description: >
+        Register https://<host>/api/auth/entra/callback as a Web redirect URI. Verifies state,
+        PKCE, the ID token signature, audience, issuer and nonce, sets the session cookie and
+        redirects back. Failures redirect with ?sso_error=<code>&sso_detail=<text>.
+      responses:
+        "302":
+          description: Redirect back into the dashboard
+
+  /api/auth/entra/callback-spa:
+    post:
+      tags: [Auth]
+      security: []
+      summary: Complete Entra ID sign-in (single-page-app mode)
+      description: Used by the /auth/callback dashboard route when the app registration uses the SPA redirect URI.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                code: { type: string }
+                state: { type: string }
+      responses:
+        "200":
+          description: Signed in; the session cookie is set
+        "401":
+          description: Sign-in rejected
 
   /api/version:
     get:
+      x-role: viewer
       tags: [System]
       summary: Operator version
       responses:
@@ -105,6 +245,7 @@ paths:
 
   /api/cluster-info:
     get:
+      x-role: viewer
       tags: [System]
       summary: Cluster summary
       description: Returns node count and total cluster resources.
@@ -127,6 +268,7 @@ paths:
 
   /api/cluster/nodes:
     get:
+      x-role: viewer
       tags: [System]
       summary: Node metrics
       description: Per-node resource metrics for the cluster heatmap.
@@ -144,6 +286,7 @@ paths:
 
   /api/operator/health:
     get:
+      x-role: viewer
       tags: [Health]
       summary: Runtime health metrics
       description: Go runtime stats, CPU/memory usage, and historical data.
@@ -166,6 +309,7 @@ paths:
 
   /api/operator/logs:
     get:
+      x-role: operator
       tags: [Health]
       summary: Operator logs
       description: Returns the trailing 100 lines of operator logs.
@@ -181,6 +325,7 @@ paths:
 
   /api/operator/logs/download:
     get:
+      x-role: admin
       tags: [Health]
       summary: Download full logs
       description: Downloads the complete operator log file.
@@ -195,6 +340,7 @@ paths:
 
   /api/namespaces:
     get:
+      x-role: viewer
       tags: [Namespaces]
       summary: List namespaces
       description: Lists all monitored NamespaceFinOps CRDs.
@@ -212,6 +358,7 @@ paths:
 
   /api/namespaces/{ns}/history:
     get:
+      x-role: viewer
       tags: [Namespaces]
       summary: Usage history
       description: Resource usage history for the last 60 minutes.
@@ -231,6 +378,7 @@ paths:
 
   /api/namespaces/{ns}/pods:
     get:
+      x-role: viewer
       tags: [Namespaces]
       summary: Pod metrics
       description: Pod-level resource metrics for the namespace.
@@ -250,6 +398,7 @@ paths:
 
   /api/namespaces/{ns}/workloads:
     get:
+      x-role: viewer
       tags: [Namespaces]
       summary: List workloads
       description: Lists Deployments and StatefulSets in the namespace.
@@ -269,6 +418,7 @@ paths:
 
   /api/namespaces/{ns}/workloads/{name}:
     put:
+      x-role: operator
       tags: [Namespaces]
       summary: Scale workload
       description: Set replica count for a specific Deployment or StatefulSet.
@@ -297,24 +447,16 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
-  /api/namespaces/{ns}/optimize:
-    post:
-      tags: [Optimization]
-      summary: Optimize namespace
-      description: Right-size all workload resources based on actual usage. Stores original values for revert.
-      parameters:
-        - $ref: "#/components/parameters/Namespace"
-      responses:
-        "200":
-          description: Optimization applied
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-
   /api/namespaces/{ns}/revert:
     post:
-      tags: [Optimization]
-      summary: Revert optimization
-      description: Restore original resource requests/limits from before optimization.
+      x-role: operator
+      tags: [Right-sizing]
+      summary: Undo an earlier automatic right-sizing
+      deprecated: true
+      description: >-
+        Versions up to 1.3 could rewrite requests and limits automatically. This restores the
+        values from before that change. Cost Deck no longer changes requests itself, so this
+        only matters for namespaces changed by an earlier version.
       parameters:
         - $ref: "#/components/parameters/Namespace"
       responses:
@@ -323,11 +465,38 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /api/namespaces/{ns}/recommendations:
+    get:
+      x-role: viewer
+      tags: [Right-sizing]
+      summary: Right-sizing recommendations
+      description: >-
+        Compares each container's requests with observed demand: p95 CPU and peak memory over
+        up to 14 days when VictoriaMetrics is connected, otherwise a single metrics-server
+        reading with a larger margin. Read-only; results are cached for five minutes.
+      parameters:
+        - $ref: "#/components/parameters/Namespace"
+      responses:
+        "200":
+          description: Recommendations
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Recommendations"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          description: No usage data is available for the namespace.
+
   /api/namespaces/{ns}/optimization:
     get:
-      tags: [Optimization]
-      summary: Optimization status
-      description: Returns whether an optimization is active and the before/after values.
+      x-role: viewer
+      tags: [Right-sizing]
+      summary: Earlier automatic right-sizing
+      deprecated: true
+      description: >-
+        Whether an automatic right-sizing made by version 1.3 or earlier is still in effect,
+        with the values before and after. Undo it with POST /api/namespaces/{ns}/revert.
       parameters:
         - $ref: "#/components/parameters/Namespace"
       responses:
@@ -342,6 +511,7 @@ paths:
 
   /api/scaling/groups:
     get:
+      x-role: viewer
       tags: [Scaling]
       summary: List scaling groups
       responses:
@@ -356,6 +526,7 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
     post:
+      x-role: admin
       tags: [Scaling]
       summary: Create scaling group
       requestBody:
@@ -378,6 +549,7 @@ paths:
         schema:
           type: string
     get:
+      x-role: viewer
       tags: [Scaling]
       summary: Get scaling group
       responses:
@@ -388,6 +560,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ScalingGroup"
     put:
+      x-role: admin
       tags: [Scaling]
       summary: Update scaling group
       requestBody:
@@ -399,6 +572,7 @@ paths:
         "200":
           description: Group updated
     delete:
+      x-role: admin
       tags: [Scaling]
       summary: Delete scaling group
       responses:
@@ -407,9 +581,12 @@ paths:
 
   /api/scaling/groups/{name}/manual:
     post:
+      x-role: operator
       tags: [Scaling]
-      summary: Manual override for group
-      description: Activate or deactivate a scaling group manually.
+      summary: Start now, scale down now, or follow the schedule
+      description: >-
+        The "Start now", "Scale down now" and "Follow schedule" buttons. An override without
+        activeUntil or until holds until it is cleared with {"active": null}.
       parameters:
         - name: name
           in: path
@@ -434,12 +611,33 @@ paths:
                   description: >
                     Optional deadline. The override is honoured until this timestamp, after
                     which the schedule takes over again. Must be in the future.
+                until:
+                  type: string
+                  example: nextTransition
+                  description: >
+                    Relative alternative to activeUntil: "nextTransition" holds the override
+                    until the schedule would change state on its own, or a Go duration such
+                    as "4h". Clearing the override (active null) also removes the legacy
+                    costdeck.io/manual-override annotation.
+            examples:
+              startUntilNextChange:
+                summary: Start now, until the next scheduled change
+                value: { active: true, until: nextTransition }
+              downForFourHours:
+                summary: Scale down for four hours
+                value: { active: false, until: 4h }
+              followSchedule:
+                summary: Follow the schedule again
+                value: { active: null }
       responses:
         "200":
           description: Override applied
+        "400":
+          description: Invalid deadline or duration
 
   /api/scaling/configs:
     get:
+      x-role: viewer
       tags: [Scaling]
       summary: List scaling configs
       responses:
@@ -452,6 +650,7 @@ paths:
                 items:
                   $ref: "#/components/schemas/ScalingConfig"
     post:
+      x-role: admin
       tags: [Scaling]
       summary: Create scaling config
       requestBody:
@@ -471,18 +670,28 @@ paths:
         schema:
           type: string
     get:
+      x-role: viewer
       tags: [Scaling]
       summary: Get scaling config
       responses:
         "200":
           description: Config details
     put:
+      x-role: admin
       tags: [Scaling]
       summary: Update scaling config
+      description: Replaces the whole spec. Fields left out are removed, so send the complete object.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScalingConfig"
       responses:
         "200":
           description: Config updated
     delete:
+      x-role: admin
       tags: [Scaling]
       summary: Delete scaling config
       responses:
@@ -491,8 +700,10 @@ paths:
 
   /api/scaling/configs/{name}/manual:
     post:
+      x-role: operator
       tags: [Scaling]
-      summary: Manual override for config
+      summary: Start now, scale down now, or follow the schedule
+      description: Same as the group endpoint, for a single-namespace config.
       parameters:
         - name: name
           in: path
@@ -517,11 +728,864 @@ paths:
                   description: >
                     Optional deadline. The override is honoured until this timestamp, after
                     which the schedule takes over again. Must be in the future.
+                until:
+                  type: string
+                  example: nextTransition
+                  description: >
+                    Relative alternative to activeUntil: "nextTransition" holds the override
+                    until the schedule would change state on its own, or a Go duration such
+                    as "4h". Clearing the override (active null) also removes the legacy
+                    costdeck.io/manual-override annotation.
       responses:
         "200":
           description: Override applied
+        "400":
+          description: Invalid deadline or duration
+
+  /api/scaling/groups/{name}/events:
+    get:
+      x-role: viewer
+      tags: [Scaling]
+      summary: Kubernetes events of a group
+      description: Events recorded for the ScalingGroup, oldest first; the activity view uses them.
+      parameters:
+        - { name: name, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Events
+          content:
+            application/json:
+              schema: { type: array, items: { type: object } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/costing:
+    post:
+      x-role: viewer
+      tags: [Costing]
+      summary: Estimate cost
+      description: Prices a namespace, node or the whole cluster at the rates in effect (custom rates, cloud list prices or the estimate).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [targetType]
+              properties:
+                targetType: { type: string, enum: [namespace, node, cluster] }
+                targetName: { type: string }
+                totalCpu: { type: number, description: "cores, for node and cluster targets" }
+                totalMemoryGb: { type: number, description: "GiB, for node and cluster targets" }
+      responses:
+        "200":
+          description: Estimate
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  hourlyCost: { type: number }
+                  monthlyCost: { type: number }
+                  currency: { type: string }
+                  determinedBy: { type: string, description: "where the rates came from" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/finops/overview:
+    get:
+      x-role: viewer
+      tags: [Costing]
+      summary: Cost overview
+      description: >-
+        The cluster's cost picture: what the nodes cost at the current run rate, how much of
+        it pods request and use, month to date with a forecast, the daily history of the last
+        30 days, every namespace with its cost, efficiency and schedule, and the savings
+        opportunities ranked by what they save. Right-sizing advice is calculated in the
+        background; savings.rightsizingPending counts namespaces still being analysed.
+      responses:
+        "200":
+          description: Overview
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FinOpsOverview"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/finops/nodes:
+    get:
+      x-role: viewer
+      tags: [Costing]
+      summary: Node view
+      description: >-
+        Every node with its pool, instance type, zone, capacity type (spot or on-demand), pods,
+        CPU and memory capacity, allocatable, requested and used, and its monthly cost; node
+        pool totals; and findings such as nodes that could be emptied, a CPU-to-memory shape
+        that wastes nodes, pods that cannot be scheduled, and nodes that are not ready.
+      responses:
+        "200":
+          description: Node view
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  k8sVersion: { type: string }
+                  report:
+                    type: object
+                    properties:
+                      currency: { type: string }
+                      summary: { type: object }
+                      pools: { type: array, items: { type: object } }
+                      nodes: { type: array, items: { type: object } }
+                      findings: { type: array, items: { type: object } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/finops/nodes/{name}/pods:
+    get:
+      x-role: viewer
+      tags: [Costing]
+      summary: Pods on a node
+      description: The pods running on one node with their requests, usage and monthly cost, most expensive first.
+      parameters:
+        - { name: name, in: path, required: true, schema: { type: string }, description: Node name }
+      responses:
+        "200":
+          description: Pods
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    namespace: { type: string }
+                    name: { type: string }
+                    phase: { type: string }
+                    daemonSet: { type: boolean }
+                    cpuRequest: { type: number }
+                    cpuUsed: { type: number }
+                    memoryRequestGiB: { type: number }
+                    memoryUsedGiB: { type: number }
+                    monthlyCost: { type: number }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/finops/infra:
+    get:
+      x-role: viewer
+      tags: [Costing]
+      summary: Volumes and load balancers
+      description: >-
+        Every persistent volume with its size, disk type, monthly cost, the pods that mount
+        it and its state (in-use, unused, scaled-down or orphaned), and every LoadBalancer
+        Service with its ready endpoints, monthly cost and state (serving, idle or
+        scaled-down). Volumes are priced per storage class at cloud list prices or the
+        custom storage rate; local volumes are part of the node.
+      responses:
+        "200":
+          description: Storage and network
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  currency: { type: string }
+                  cloud: { type: string, enum: [aws, azure, gcp, local] }
+                  error: { type: string, description: Why volumes or load balancers could not be read. }
+                  infra:
+                    type: object
+                    properties:
+                      storageMonthly: { type: number }
+                      networkMonthly: { type: number }
+                      unusedStorageMonthly: { type: number }
+                      idleNetworkMonthly: { type: number }
+                      volumes: { type: array, items: { type: object } }
+                      loadBalancers: { type: array, items: { type: object } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/budgets:
+    get:
+      x-role: viewer
+      tags: [Costing]
+      summary: Budgets and alerts
+      description: >-
+        Every budget against the current month (spent, forecast at the current hourly cost,
+        state ok, at-risk or over), the anomaly alert settings and the recent alerts.
+        Budgets are edited through PUT /api/settings (budgets, alerts).
+      responses:
+        "200":
+          description: Budgets
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  currency: { type: string }
+                  budgets:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        budget: { $ref: "#/components/schemas/Budget" }
+                        limit: { type: number }
+                        spent: { type: number }
+                        forecast: { type: number }
+                        hourlyNow: { type: number }
+                        state: { type: string, enum: [ok, at-risk, over] }
+                        namespaces: { type: array, items: { type: string } }
+                        partial: { type: boolean }
+                  anomalies: { type: object }
+                  events:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        at: { type: string, format: date-time }
+                        kind: { type: string, enum: [budget, forecast, anomaly] }
+                        title: { type: string }
+                        detail: { type: string }
+                        delivered: { type: string }
+                  webexReady: { type: boolean }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/billing/reconcile:
+    post:
+      x-role: admin
+      tags: [Costing]
+      summary: Reconcile with the cloud bill now
+      description: >-
+        Reads the cloud bill for the cluster's nodes over the week ending two days ago and
+        compares it with the list-price node cost of the same days. The ratio scales every
+        compute cost. Runs by itself every six hours when reconciliation is on.
+      responses:
+        "200":
+          description: Result, also stored in the CostDeckConfig status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  source: { type: string, example: AWS Cost Explorer }
+                  factor: { type: string, example: "0.7214" }
+                  from: { type: string }
+                  to: { type: string }
+                  billed: { type: string }
+                  list: { type: string }
+                  currency: { type: string }
+                  error: { type: string }
+        "400": { description: Reconciliation is off }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/discovery:
+    get:
+      x-role: viewer
+      tags: [Costing]
+      summary: Discover every cloud resource
+      description: Lists the configured resource types of every enabled cloud provider. A provider that fails is reported under errors without hiding the others.
+      responses:
+        "200":
+          description: Resources and per-provider errors
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  resources: { type: array, items: { type: object } }
+                  errors: { type: object, additionalProperties: { type: string } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/discovery/{provider}/{type}:
+    get:
+      x-role: viewer
+      tags: [Costing]
+      summary: Discover cloud resources of one type
+      description: Lists resources that can join a schedule's start order. Types are aurora and ec2 (aws), vm, postgres and mysql (azure), gce and cloudsql (gcp).
+      parameters:
+        - { name: provider, in: path, required: true, schema: { type: string, enum: [aws, azure, gcp] } }
+        - { name: type, in: path, required: true, schema: { type: string, enum: [aurora, ec2, vm, postgres, mysql, gce, cloudsql] } }
+      responses:
+        "200":
+          description: Discovered resources
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    provider: { type: string }
+                    type: { type: string }
+                    identifier: { type: string }
+                    name: { type: string }
+                    region: { type: string }
+                    status: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "501": { description: Provider not supported }
+
+  /api/reports:
+    get:
+      x-role: viewer
+      tags: [Reports]
+      summary: Report history and digest schedule
+      description: Stored reports (AI reports and sent digests), newest first, with the digest schedule, when it was last sent and when it is due next.
+      responses:
+        "200":
+          description: Reports
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  reports: { type: array, items: { $ref: "#/components/schemas/ReportEntry" } }
+                  schedule: { $ref: "#/components/schemas/DigestSchedule" }
+                  webexReady: { type: boolean, description: Webex is enabled with a space to post to. }
+                  lastSent: { type: string, format: date-time }
+                  nextDue: { type: string, format: date-time }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/reports/digest:
+    get:
+      x-role: viewer
+      tags: [Reports]
+      summary: Cost digest
+      description: >-
+        The seven days up to yesterday, or the last calendar month, against the period
+        before: node cost, requested and used,
+        schedule savings, the most expensive namespaces and teams, and the top opportunities.
+        Computed from the cost history, with the same text that is posted to Webex.
+      parameters:
+        - { name: period, in: query, schema: { type: string, enum: [week, month], default: week } }
+      responses:
+        "200":
+          description: Digest and its Markdown
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  digest: { type: object }
+                  markdown: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/reports/digest/send:
+    post:
+      x-role: operator
+      tags: [Reports]
+      summary: Post the digest to Webex now
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                period: { type: string, enum: [week, month] }
+            example: { period: week }
+      responses:
+        "200":
+          description: Posted and stored
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReportEntry" }
+        "400": { description: Webex is not enabled or has no space }
+        "502": { description: Webex rejected the message }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/reports/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      x-role: viewer
+      tags: [Reports]
+      summary: One stored report
+      responses:
+        "200":
+          description: The report and its Markdown
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  report: { $ref: "#/components/schemas/ReportEntry" }
+                  markdown: { type: string }
+        "404": { description: No such report }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    delete:
+      x-role: admin
+      tags: [Reports]
+      summary: Delete a stored report
+      responses:
+        "204": { description: Deleted }
+        "404": { description: No such report }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/ai/chat:
+    post:
+      x-role: viewer
+      tags: [AI]
+      summary: Chat with the assistant
+      description: >-
+        Streams the answer as Server-Sent Events. Each `data:` line is a JSON event of type
+        text, reset, tool_call, tool_result, confirm, error or done. A `confirm` event names a
+        mutating tool the model wants to run; nothing happens until the client calls
+        POST /api/ai/tools/{name}.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                messages:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      role: { type: string, enum: [user, assistant] }
+                      content: { type: string }
+      responses:
+        "200":
+          description: Event stream
+          content:
+            text/event-stream:
+              schema:
+                type: object
+                properties:
+                  type: { type: string }
+                  text: { type: string }
+                  tool: { type: string }
+                  args: { type: object }
+                  isError: { type: boolean }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/ai/tools/{name}:
+    post:
+      x-role: operator
+      tags: [AI]
+      summary: Run a confirmed assistant action
+      description: Runs a mutating tool (scale_group, scale_namespace, revert_optimization) the user confirmed. Requires the operator role.
+      parameters:
+        - { name: name, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                args: { type: object }
+      responses:
+        "200":
+          description: Result text
+          content:
+            application/json:
+              schema: { type: object, properties: { result: { type: string } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { description: Requires the operator role }
+
+  /api/ai/report:
+    get:
+      x-role: viewer
+      tags: [AI]
+      summary: Saved cost report
+      responses:
+        "200":
+          description: The last saved report (empty when none)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  report: { type: string, description: Markdown }
+                  generatedAt: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/ai/report/generate:
+    post:
+      x-role: operator
+      tags: [AI]
+      summary: Generate a cost report
+      description: >-
+        Streams a new Markdown report as Server-Sent Events (same event format as chat),
+        written by the AI model from the same overview, digest and node data the dashboard
+        shows, for the chosen audience. When done it is stored in the report history and a
+        "saved" event carries its ID.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                audience: { type: string, enum: [executive, engineering, showback], default: executive }
+            example: { audience: engineering }
+      responses:
+        "200": { description: Event stream, content: { text/event-stream: {} } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/ai/report/save:
+    post:
+      x-role: operator
+      tags: [AI]
+      summary: Save an edited report
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, properties: { report: { type: string } } }
+      responses:
+        "200": { description: Saved }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/settings:
+    get:
+      x-role: viewer
+      tags: [Settings]
+      summary: Read settings
+      description: The CostDeckConfig settings with connection status. Credentials are never returned, only whether they are set.
+      responses:
+        "200": { description: Settings, content: { application/json: { schema: { type: object } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    put:
+      x-role: admin
+      tags: [Settings]
+      summary: Update settings
+      description: >-
+        Updates the sections present in the body (providers, integrations, features, pricing,
+        auth). Omitted credential fields keep the stored Secret. Requires the admin role.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+            examples:
+              victoriaMetrics:
+                summary: Connect VictoriaMetrics
+                value:
+                  integrations:
+                    victoriaMetrics: { enabled: true, endpoint: "http://vmselect.monitoring:8481/select/0/prometheus", retentionDays: 14 }
+              customRates:
+                summary: Use your own prices
+                value:
+                  pricing: { cpuCoreHour: "0.031", memoryGiBHour: "0.0042", currency: EUR }
+              budget:
+                summary: A team budget with alerts at 80% and 100%
+                value:
+                  budgets:
+                    - { name: payments, scope: team, value: payments, monthlyLimit: "1200", thresholds: [80, 100], forecast: true }
+                  alerts:
+                    anomalies: { enabled: true, percent: 30, minimumDaily: "5" }
+              billing:
+                summary: Reconcile with AWS Cost Explorer
+                value:
+                  billing: { enabled: true, aws: { tagKey: "aws:eks:cluster-name", tagValue: prod-eu } }
+              weeklyDigest:
+                summary: Post the cost digest every Monday
+                value:
+                  reports:
+                    digest: { enabled: true, frequency: weekly, time: "09:00", timezone: Europe/Berlin }
+              azure:
+                summary: Enable Azure with workload identity
+                value:
+                  providers:
+                    azure: { enabled: true, subscriptionId: "00000000-0000-0000-0000-000000000000", resourceTypes: [vm, postgres] }
+      responses:
+        "200": { description: Updated settings, content: { application/json: { schema: { type: object } } } }
+        "400": { description: Invalid settings }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/settings/providers/{provider}/test:
+    post:
+      x-role: admin
+      tags: [Settings]
+      summary: Test a connection
+      description: Tests unsaved credentials or settings. For cloud providers it also reports how many resources discovery finds.
+      parameters:
+        - { name: provider, in: path, required: true, schema: { type: string, enum: [aws, azure, gcp, ai, entra, webex, victoriametrics] } }
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "200":
+          description: Result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  connected: { type: boolean }
+                  message: { type: string }
+                  error: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/settings/providers/{provider}/status:
+    get:
+      x-role: viewer
+      tags: [Settings]
+      summary: Connection status of a configured provider
+      parameters:
+        - { name: provider, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: Status, content: { application/json: { schema: { type: object } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/settings/ai/models:
+    post:
+      x-role: admin
+      tags: [Settings]
+      summary: List AI models
+      description: Asks the AI provider (with the given or stored credentials) which models it offers.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                provider: { type: string, enum: [anthropic, openai, gemini, local] }
+                baseUrl: { type: string }
+                apiKey: { type: string }
+      responses:
+        "200":
+          description: Models
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  models: { type: array, items: { type: string } }
+                  default: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/tokens:
+    get:
+      x-role: admin
+      tags: [Settings]
+      summary: List API tokens
+      responses:
+        "200":
+          description: Tokens (never the token values)
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/TokenInfo" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      x-role: admin
+      tags: [Settings]
+      summary: Create an API token
+      description: The token value is returned once and only its hash is stored.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, role]
+              properties:
+                name: { type: string }
+                role: { type: string, enum: [viewer, operator, admin] }
+                expiresInDays: { type: integer, minimum: 0, maximum: 3650, description: "0 = never" }
+            example: { name: ci-pipeline, role: operator, expiresInDays: 90 }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token: { type: string, example: cdk_... }
+                  info: { $ref: "#/components/schemas/TokenInfo" }
+        "400": { description: Invalid request }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/tokens/{name}:
+    delete:
+      x-role: admin
+      tags: [Settings]
+      summary: Revoke an API token
+      parameters:
+        - { name: name, in: path, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Revoked }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/users:
+    get:
+      x-role: admin
+      tags: [Users]
+      summary: List users
+      description: Local users, the built-in admin account and the last sign-in of everyone, single sign-on users included.
+      responses:
+        "200":
+          description: Users and sign-ins
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  builtin:
+                    type: object
+                    nullable: true
+                    properties:
+                      username: { type: string, example: costdeck }
+                      secret: { type: string, example: costdeck/costdeck-operator-admin-credentials }
+                  users: { type: array, items: { $ref: "#/components/schemas/User" } }
+                  signIns: { type: array, items: { $ref: "#/components/schemas/SignIn" } }
+                  sso: { type: boolean, description: Single sign-on is enabled }
+                  minPasswordLength: { type: integer, example: 12 }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      x-role: admin
+      tags: [Users]
+      summary: Create a local user
+      description: Without a password one is generated and returned once. By default the user chooses a new password at the first sign-in.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, role]
+              properties:
+                username: { type: string, pattern: "^[a-z0-9]([a-z0-9._-]{0,61}[a-z0-9])?$" }
+                name: { type: string }
+                email: { type: string }
+                role: { type: string, enum: [viewer, operator, admin] }
+                password: { type: string, minLength: 12 }
+                mustChangePassword: { type: boolean, default: true }
+            example: { username: anna, name: Anna Petrova, role: operator }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user: { $ref: "#/components/schemas/User" }
+                  password: { type: string, description: Only when it was generated }
+        "400": { description: Invalid name, role or password, or the name is taken }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/users/{username}:
+    patch:
+      x-role: admin
+      tags: [Users]
+      summary: Update a local user
+      description: Changes the name, email, role or disabled flag. Disabling ends the user's sessions; a new role applies within 30 seconds. Administrators cannot disable or demote themselves.
+      parameters:
+        - { name: username, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                email: { type: string }
+                role: { type: string, enum: [viewer, operator, admin] }
+                disabled: { type: boolean }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "404": { description: No such user }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    delete:
+      x-role: admin
+      tags: [Users]
+      summary: Delete a local user
+      parameters:
+        - { name: username, in: path, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Deleted; the user's sessions end }
+        "404": { description: No such user }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/users/{username}/password:
+    post:
+      x-role: admin
+      tags: [Users]
+      summary: Reset a local user's password
+      description: Without a password one is generated and returned once. The user's sessions end.
+      parameters:
+        - { name: username, in: path, required: true, schema: { type: string } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                password: { type: string, minLength: 12 }
+                mustChangePassword: { type: boolean, default: true }
+      responses:
+        "200":
+          description: Reset
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  password: { type: string, description: Only when it was generated }
+        "404": { description: No such user }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/webex/webhook:
+    post:
+      tags: [Webex]
+      summary: Webex webhook
+      description: Receives Webex message events when a webhook secret is configured. The body must carry a valid HMAC-SHA1 X-Spark-Signature; no session or token is needed.
+      security: []
+      parameters:
+        - { name: X-Spark-Signature, in: header, required: true, schema: { type: string } }
+      responses:
+        "200": { description: Accepted }
+        "401": { description: Missing or invalid signature }
+
+  /api/openapi.yaml:
+    get:
+      tags: [Docs]
+      security: []
+      summary: OpenAPI specification (YAML)
+      responses:
+        "200":
+          description: This document
+          content:
+            application/x-yaml: {}
+
+  /api/openapi.json:
+    get:
+      tags: [Docs]
+      security: []
+      summary: OpenAPI specification (JSON)
+      responses:
+        "200":
+          description: This document as JSON
+          content:
+            application/json: {}
+
+  /api/docs:
+    get:
+      tags: [Docs]
+      security: []
+      summary: Swagger UI
+      description: Interactive documentation where requests can be tried out.
+      responses:
+        "200":
+          description: HTML page
+          content:
+            text/html: {}
 
 components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: costdeck-session
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: API token (cdk_...) from Settings → API tokens.
   parameters:
     Namespace:
       name: ns
@@ -659,6 +1723,71 @@ components:
               items:
                 type: string
 
+    Recommendations:
+      type: object
+      properties:
+        namespace: { type: string }
+        source: { type: string, enum: [victoriametrics, metrics-server] }
+        historical: { type: boolean, description: "true for p95/peak over a window, false for a single reading" }
+        window: { type: string, example: 14d }
+        basis: { type: string }
+        warning: { type: string }
+        currency: { type: string, example: USD }
+        monthlySavings: { type: number }
+        workloads:
+          type: array
+          items:
+            type: object
+            properties:
+              kind: { type: string, enum: [Deployment, StatefulSet] }
+              name: { type: string }
+              replicas: { type: integer }
+              monthlySavings: { type: number }
+              containers:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    name: { type: string }
+                    cpu: { $ref: "#/components/schemas/ResourceAdvice" }
+                    memory: { $ref: "#/components/schemas/ResourceAdvice" }
+    User:
+      type: object
+      properties:
+        username: { type: string }
+        name: { type: string }
+        email: { type: string }
+        role: { type: string, enum: [viewer, operator, admin] }
+        disabled: { type: boolean }
+        mustChangePassword: { type: boolean }
+        createdAt: { type: string, format: date-time }
+        createdBy: { type: string }
+        passwordChangedAt: { type: string, format: date-time }
+    SignIn:
+      type: object
+      properties:
+        subject: { type: string, example: "entra:7f3c..." }
+        name: { type: string }
+        email: { type: string }
+        provider: { type: string, enum: [local, entra] }
+        role: { type: string, enum: [viewer, operator, admin] }
+        at: { type: string, format: date-time }
+        count: { type: integer }
+    TokenInfo:
+      type: object
+      properties:
+        name: { type: string }
+        role: { type: string, enum: [viewer, operator, admin] }
+        createdAt: { type: string, format: date-time }
+        createdBy: { type: string }
+        expiresAt: { type: string, format: date-time }
+    ResourceAdvice:
+      type: object
+      properties:
+        request: { type: string, example: "1" }
+        observed: { type: string, example: 100m }
+        recommended: { type: string, example: 120m }
+        action: { type: string, enum: [reduce, increase, keep, set, unknown] }
     OptimizationStatus:
       type: object
       properties:
@@ -695,63 +1824,239 @@ components:
 
     ScalingGroup:
       type: object
+      description: A schedule for a set of namespaces and cloud resources (kind ScalingGroup).
+      example:
+        metadata: { name: dev }
+        spec:
+          category: Environments
+          namespaces: [dev-frontend, dev-backend]
+          schedules:
+            - { days: [1, 2, 3, 4, 5], startTime: "08:00", endTime: "19:00", timezone: Europe/Berlin }
+          dependsOn: [platform]
+          sequence: [dev-backend, dev-frontend]
       properties:
         metadata:
           type: object
           properties:
-            name:
-              type: string
+            name: { type: string, description: "Lowercase letters, digits and dashes." }
         spec:
           type: object
+          required: [category, namespaces]
           properties:
             category:
               type: string
+              description: Section the schedule is listed under, for example Platform or Environments.
             namespaces:
               type: array
-              items:
-                type: string
+              items: { type: string }
+            schedules:
+              type: array
+              description: When the namespaces run. Windows are OR-ed; outside all of them everything is scaled down.
+              items: { $ref: "#/components/schemas/ScalingSchedule" }
+            activation:
+              type: string
+              enum: [Schedule, OnDemand]
+              description: OnDemand has no hours of its own and runs only while a schedule that depends on it needs it.
+            dependsOn:
+              type: array
+              items: { type: string }
+              description: Schedules this one starts after. They are kept up while this one runs.
+            sequence:
+              type: array
+              items: { type: string }
+              description: >-
+                Start order. Each entry is a stage of space-separated namespaces or ext:<identifier>
+                cloud resources. Stages start top to bottom and stop bottom to top; namespaces in no
+                stage start last.
+            externalTargets:
+              type: array
+              items: { $ref: "#/components/schemas/ExternalTarget" }
+            featureFlags:
+              type: object
+              properties:
+                skipOnTimeout: { type: boolean, description: "Move on when a namespace is not ready in time." }
+                timeoutMinutes: { type: integer, minimum: 1, maximum: 30, default: 5 }
             active:
               type: boolean
               nullable: true
-              description: Manual override. Null (absent) means the schedule is followed.
+              description: >-
+                Manual override, normally set through the /manual endpoint. Absent (null) means
+                the schedule is followed; false does not mean "follow the schedule", it keeps the
+                namespaces down.
             activeUntil:
               type: string
               format: date-time
-              description: Optional expiry for the manual override.
-            schedules:
-              type: array
-              items:
-                $ref: "#/components/schemas/ScalingSchedule"
-            sequence:
-              type: array
-              items:
-                type: string
+              description: When the manual override ends by itself.
+        status:
+          type: object
+          description: Written by the operator. phase is ScaledUp, ScalingUp, ScalingDown, ScaledDown or WaitingForDependencies; mode says what decides the state (Schedule, ManualUp, ManualDown, AlwaysOn, Dependency, OnDemand).
 
     ScalingConfig:
       type: object
+      description: >-
+        A schedule for a single namespace (kind ScalingConfig). The dashboard uses it for
+        workload rules on a namespace. A namespace that belongs to a ScalingGroup follows the
+        group; its config then only contributes exclusions and workload order.
+      example:
+        metadata: { name: dev-backend }
+        spec:
+          targetNamespace: dev-backend
+          exclusions: [redis-*]
+          sequence: [postgres, "api-* worker"]
       properties:
         metadata:
           type: object
           properties:
-            name:
-              type: string
+            name: { type: string }
         spec:
           type: object
+          required: [targetNamespace]
           properties:
-            targetNamespace:
-              type: string
+            targetNamespace: { type: string }
+            schedules:
+              type: array
+              items: { $ref: "#/components/schemas/ScalingSchedule" }
+            exclusions:
+              type: array
+              items: { type: string }
+              description: Workloads that never scale down, by name or prefix glob ("redis-*").
+            sequence:
+              type: array
+              items: { type: string }
+              description: Workload start order. Each entry is a stage of space-separated name globs.
             active:
               type: boolean
               nullable: true
-              description: Manual override. Null (absent) means the schedule is followed.
+              description: Manual override; absent (null) means the schedule is followed.
             activeUntil:
               type: string
               format: date-time
-              description: Optional expiry for the manual override.
-            schedules:
+
+    FinOpsOverview:
+      type: object
+      properties:
+        generatedAt: { type: string, format: date-time }
+        currency: { type: string, example: USD }
+        monthly:
+          type: object
+          description: Monthly amounts at the current run rate.
+          properties:
+            provisioned: { type: number, description: What the nodes cost. }
+            requested: { type: number, description: The part reserved by pod requests. }
+            used: { type: number, description: What pods actually use. }
+            unallocated: { type: number, description: Node capacity no pod requests. }
+            overprovisioned: { type: number, description: Requested but unused. }
+        savings:
+          type: object
+          properties:
+            schedulesMonthly: { type: number, description: What the schedules keep down now, per month. }
+            rightsizingMonthly: { type: number }
+            rightsizingPending: { type: integer }
+            scheduleCandidatesMonthly: { type: number, description: What working hours on unscheduled non-production namespaces would save. }
+        monthToDate:
+          type: object
+          properties:
+            month: { type: string, example: "2026-10" }
+            cost: { type: number }
+            saved: { type: number }
+            forecast: { type: number }
+            partial: { type: boolean, description: The history does not cover the whole month so far. }
+        history:
+          type: object
+          properties:
+            since: { type: string, format: date-time }
+            top: { type: array, items: { type: string } }
+            days:
               type: array
               items:
-                $ref: "#/components/schemas/ScalingSchedule"
+                type: object
+                properties:
+                  date: { type: string, example: "2026-10-05" }
+                  hours: { type: number }
+                  provisioned: { type: number }
+                  requested: { type: number }
+                  used: { type: number }
+                  saved: { type: number }
+                  namespaces: { type: object, additionalProperties: { type: number } }
+        namespaces:
+          type: array
+          items:
+            type: object
+            properties:
+              name: { type: string }
+              environment: { type: string, enum: [production, non-production, system, unclassified] }
+              team: { type: string }
+              pods: { type: integer }
+              monthlyCost: { type: number }
+              monthlyUsedCost: { type: number }
+              monthlyIdle: { type: number }
+              efficiency: { type: number, description: Used cost over requested cost. }
+              insights: { type: array, items: { type: string } }
+              schedule:
+                type: object
+                properties:
+                  kind: { type: string, enum: [group, config] }
+                  name: { type: string }
+                  desiredState: { type: string }
+                  savedMonthly: { type: number }
+              rightsizingMonthly: { type: number }
+              scheduleSavingMonthly: { type: number }
+              cost7d: { type: number }
+              costPrev7d: { type: number }
+        opportunities:
+          type: array
+          items:
+            type: object
+            properties:
+              kind: { type: string, enum: [rightsizing, schedule, idle-capacity, cost-increase, missing-requests] }
+              namespace: { type: string }
+              title: { type: string }
+              detail: { type: string }
+              monthlySavings: { type: number }
+
+    ReportEntry:
+      type: object
+      properties:
+        id: { type: string }
+        kind: { type: string, enum: [ai, digest] }
+        title: { type: string }
+        audience: { type: string, enum: [executive, engineering, showback] }
+        period: { type: string, enum: [week, month] }
+        generatedAt: { type: string, format: date-time }
+        by: { type: string }
+        delivered: { type: string, example: webex }
+
+    DigestSchedule:
+      type: object
+      properties:
+        enabled: { type: boolean }
+        frequency: { type: string, enum: [weekly, monthly], description: "Weekly on Mondays, monthly on the 1st." }
+        time: { type: string, example: "09:00" }
+        timezone: { type: string, example: Europe/Berlin }
+
+    Budget:
+      type: object
+      required: [name, scope, monthlyLimit]
+      properties:
+        name: { type: string, example: payments }
+        scope: { type: string, enum: [cluster, namespace, team, environment] }
+        value: { type: string, description: "Namespace, team label value or environment; empty for cluster.", example: payments }
+        monthlyLimit: { type: string, example: "1200" }
+        thresholds: { type: array, items: { type: integer }, example: [80, 100] }
+        forecast: { type: boolean, description: Also alert when the month is forecast to exceed the limit. }
+
+    ExternalTarget:
+      type: object
+      description: A cloud resource started and stopped with the schedule.
+      required: [provider, type, identifier]
+      properties:
+        provider: { type: string, enum: [aws, azure, gcp] }
+        type: { type: string, enum: [aurora, ec2, vm, postgres, mysql, gce, cloudsql] }
+        identifier:
+          type: string
+          description: "AWS: cluster identifier or instance ID. Azure: full resource ID. Google Cloud: <zone>/<name> for Compute Engine, the instance name for Cloud SQL."
+        region: { type: string }
+        name: { type: string, description: Display name. }
 
     ScalingSchedule:
       type: object

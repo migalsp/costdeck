@@ -6,12 +6,15 @@ import (
 	"time"
 
 	"k8s.io/apimachinery/pkg/runtime"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -402,10 +405,16 @@ func TestResolveDesiredStateExpiredOverrideFollowsSchedule(t *testing.T) {
 
 func buildMockEngine() *Engine {
 	scheme := runtime.NewScheme()
-	clientgoscheme.AddToScheme(scheme)
-	finopsv1.AddToScheme(scheme)
-	client := fake.NewClientBuilder().WithScheme(scheme).Build()
-	return &Engine{Client: client}
+	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+	utilruntime.Must(finopsv1.AddToScheme(scheme))
+	return &Engine{Client: fake.NewClientBuilder().WithScheme(scheme).Build()}
+}
+
+func must(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestComputePhase(t *testing.T) {
@@ -425,7 +434,7 @@ func TestComputePhase(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "d1", Namespace: "test-ns"},
 		Spec:       appsv1.DeploymentSpec{Replicas: &zero},
 	}
-	e.Client.Create(ctx, d1)
+	must(t, e.Client.Create(ctx, d1))
 
 	if p := e.ComputePhase(ctx, "test-ns", false); p != "ScaledDown" {
 		t.Errorf("Expected ScaledDown, got %v", p)
@@ -437,7 +446,7 @@ func TestComputePhase(t *testing.T) {
 		Spec:       appsv1.StatefulSetSpec{Replicas: &one},
 		Status:     appsv1.StatefulSetStatus{ReadyReplicas: 1},
 	}
-	e.Client.Create(ctx, s1)
+	must(t, e.Client.Create(ctx, s1))
 
 	// Mixed state
 	if p := e.ComputePhase(ctx, "test-ns", false); p != "ScalingDown" && p != "PartlyScaled" {
@@ -455,7 +464,7 @@ func TestScaleTarget(t *testing.T) {
 		Spec:       appsv1.DeploymentSpec{Replicas: &one},
 		Status:     appsv1.DeploymentStatus{ReadyReplicas: 1},
 	}
-	e.Client.Create(ctx, d1)
+	must(t, e.Client.Create(ctx, d1))
 
 	orig := make(map[string]int32)
 
@@ -472,7 +481,7 @@ func TestScaleTarget(t *testing.T) {
 
 	// Verify target scaled to 0
 	scaledD := &appsv1.Deployment{}
-	e.Client.Get(ctx, client.ObjectKey{Name: "app1", Namespace: "test-ns"}, scaledD)
+	must(t, e.Client.Get(ctx, client.ObjectKey{Name: "app1", Namespace: "test-ns"}, scaledD))
 	if *scaledD.Spec.Replicas != 0 {
 		t.Errorf("Expected replicas to be 0, got %d", *scaledD.Spec.Replicas)
 	}
@@ -488,7 +497,7 @@ func TestIsGroupReady(t *testing.T) {
 		Spec:       appsv1.DeploymentSpec{Replicas: &one},
 		Status:     appsv1.DeploymentStatus{ReadyReplicas: 0}, // Not ready yet
 	}
-	e.Client.Create(ctx, d1)
+	must(t, e.Client.Create(ctx, d1))
 
 	objs := []client.Object{d1}
 
@@ -499,8 +508,209 @@ func TestIsGroupReady(t *testing.T) {
 
 	// Update to ready
 	d1.Status.ReadyReplicas = 1
-	e.Client.Status().Update(ctx, d1)
+	must(t, e.Client.Status().Update(ctx, d1))
 	if ready := e.isGroupReady(ctx, objs, true); !ready {
 		t.Errorf("Expected group to be ready")
+	}
+}
+
+// A workload name must match a whole sequence pattern. Substring matching used to put
+// "api" into the stage of "apps/v1:Deployment/api-gateway", and "d" into "db redis".
+func TestGetSequenceIndexMatchesWholePatterns(t *testing.T) {
+	sequence := []string{
+		"apps/v1:Deployment/api-gateway",
+		"db redis",
+		"StatefulSet/cache-*",
+		"worker-?",
+	}
+	deploy := func(name string) client.Object {
+		return &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: name}}
+	}
+	sts := func(name string) client.Object {
+		return &appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Name: name}}
+	}
+
+	tests := []struct {
+		obj  client.Object
+		want int
+	}{
+		{deploy("api-gateway"), 0},
+		{deploy("api"), unsequenced},
+		{sts("api-gateway"), unsequenced}, // Kind-qualified pattern must not match a StatefulSet.
+		{deploy("db"), 1},
+		{deploy("redis"), 1},
+		{deploy("d"), unsequenced},
+		{sts("cache-0"), 2},
+		{deploy("cache-0"), unsequenced},
+		{deploy("worker-1"), 3},
+		{deploy("worker-10"), unsequenced},
+	}
+	for _, tt := range tests {
+		if got := getSequenceIndex(tt.obj, sequence); got != tt.want {
+			t.Errorf("getSequenceIndex(%T %s) = %d, want %d", tt.obj, tt.obj.GetName(), got, tt.want)
+		}
+	}
+}
+
+func TestTargetReplicas(t *testing.T) {
+	tests := []struct {
+		name     string
+		active   bool
+		current  int32
+		original int32
+		want     int32
+	}{
+		{"scale down always means zero", false, 3, 3, 0},
+		{"restore the recorded count", true, 0, 3, 3},
+		{"restore over a partial manual scale-up", true, 1, 3, 3},
+		{"keep a larger manual scale-up", true, 5, 3, 5},
+		{"no record keeps running replicas", true, 2, 0, 2},
+		{"no record starts one replica", true, 0, 0, 1},
+	}
+	for _, tt := range tests {
+		if got := targetReplicas(tt.active, tt.current, tt.original); got != tt.want {
+			t.Errorf("%s: targetReplicas() = %d, want %d", tt.name, got, tt.want)
+		}
+	}
+}
+
+// The original replica count must survive losing status.originalReplicas, for example when
+// the status update after a scale-down hits a conflict.
+func TestOriginalReplicasSurviveLostStatus(t *testing.T) {
+	e := buildMockEngine()
+	replicas := int32(5)
+	d := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "shop"},
+		Spec:       appsv1.DeploymentSpec{Replicas: &replicas},
+	}
+	ctx := context.Background()
+	if err := e.Client.Create(ctx, d); err != nil {
+		t.Fatal(err)
+	}
+	get := func() *appsv1.Deployment {
+		var out appsv1.Deployment
+		if err := e.Client.Get(ctx, client.ObjectKeyFromObject(d), &out); err != nil {
+			t.Fatal(err)
+		}
+		return &out
+	}
+
+	if err := e.scaleResource(ctx, get(), false, map[string]int32{}); err != nil {
+		t.Fatal(err)
+	}
+	down := get()
+	if *down.Spec.Replicas != 0 || down.Annotations[OriginalReplicasAnnotation] != "5" {
+		t.Fatalf("after scale-down: replicas %d, annotation %q", *down.Spec.Replicas, down.Annotations[OriginalReplicasAnnotation])
+	}
+
+	// A fresh, empty map stands in for the status update that never landed.
+	if err := e.scaleResource(ctx, down, true, map[string]int32{}); err != nil {
+		t.Fatal(err)
+	}
+	up := get()
+	if *up.Spec.Replicas != 5 {
+		t.Errorf("after scale-up: %d replicas, want the original 5", *up.Spec.Replicas)
+	}
+	if _, ok := up.Annotations[OriginalReplicasAnnotation]; ok {
+		t.Error("the annotation must be removed once the workload is restored")
+	}
+}
+
+func TestGetReplicasDefaultsToOne(t *testing.T) {
+	if got := getReplicas(&appsv1.Deployment{}); got != 1 {
+		t.Errorf("getReplicas(nil replicas) = %d, want the API default of 1", got)
+	}
+}
+
+// An evicted (Failed) pod lingers until garbage collection; it must not keep a workload
+// in ScalingDown forever.
+func TestScaleDownIgnoresEvictedPods(t *testing.T) {
+	e := buildMockEngine()
+	ctx := context.Background()
+
+	zero := int32(0)
+	selector := &metav1.LabelSelector{MatchLabels: map[string]string{"app": "api"}}
+	d := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "test-ns"},
+		Spec:       appsv1.DeploymentSpec{Replicas: &zero, Selector: selector},
+	}
+	evicted := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "api-x", Namespace: "test-ns", Labels: map[string]string{"app": "api"}},
+		Status:     corev1.PodStatus{Phase: corev1.PodFailed, Reason: "Evicted"},
+	}
+	for _, obj := range []client.Object{d, evicted} {
+		if err := e.Client.Create(ctx, obj); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if !e.isResourceReady(ctx, d, false) {
+		t.Fatal("a scaled-down Deployment with only an evicted pod left must count as scaled down")
+	}
+	if phase := e.ComputePhase(ctx, "test-ns", false); phase != PhaseScaledDown {
+		t.Errorf("ComputePhase() = %s, want %s", phase, PhaseScaledDown)
+	}
+
+	running := evicted.DeepCopy()
+	running.Name, running.ResourceVersion = "api-y", ""
+	running.Status.Phase = corev1.PodRunning
+	if err := e.Client.Create(ctx, running); err != nil {
+		t.Fatal(err)
+	}
+	if e.isResourceReady(ctx, d, false) {
+		t.Error("a running pod must keep the Deployment in ScalingDown")
+	}
+}
+
+type staticResolver struct{ p ExternalProvider }
+
+func (r staticResolver) Resolve(context.Context, string) (ExternalProvider, error) { return r.p, nil }
+
+func TestEngineProviderFallsBackToResolver(t *testing.T) {
+	registered := &AWSProvider{}
+	resolved := &AWSProvider{}
+	e := &Engine{Providers: map[string]ExternalProvider{"aws": registered}, Resolver: staticResolver{resolved}}
+
+	if p, _ := e.Provider(context.Background(), "aws"); p != registered {
+		t.Error("a registered provider must win over the resolver")
+	}
+	e.Providers = nil
+	if p, _ := e.Provider(context.Background(), "aws"); p != resolved {
+		t.Error("an unregistered provider must come from the resolver")
+	}
+	e.Resolver = nil
+	if _, err := e.Provider(context.Background(), "aws"); err == nil {
+		t.Error("expected an error with neither a registration nor a resolver")
+	}
+}
+
+func TestKeptDownCountsMissingReplicas(t *testing.T) {
+	e := buildMockEngine()
+	ctx := context.Background()
+	zero, one := int32(0), int32(1)
+	podSpec := corev1.PodSpec{
+		InitContainers: []corev1.Container{{Name: "migrate", Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{
+			corev1.ResourceMemory: resource.MustParse("2Gi"),
+		}}}},
+		Containers: []corev1.Container{{Name: "app", Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{
+			corev1.ResourceCPU: resource.MustParse("500m"), corev1.ResourceMemory: resource.MustParse("1Gi"),
+		}}}},
+	}
+	must(t, e.Client.Create(ctx, &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "test-ns"},
+		Spec:       appsv1.DeploymentSpec{Replicas: &zero, Template: corev1.PodTemplateSpec{Spec: podSpec}},
+	}))
+	must(t, e.Client.Create(ctx, &appsv1.StatefulSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "db", Namespace: "test-ns"},
+		Spec:       appsv1.StatefulSetSpec{Replicas: &one, Template: corev1.PodTemplateSpec{Spec: podSpec}},
+	}))
+
+	cpu, mem, err := e.KeptDown(ctx, "test-ns", map[string]int32{"*v1.Deployment/api": 3, "*v1.StatefulSet/db": 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// api: 3 missing replicas x (500m, max(1Gi, 2Gi init)); db is at its original count.
+	if cpu.MilliValue() != 1500 || mem.Value() != 6<<30 {
+		t.Errorf("KeptDown() = %s CPU, %s memory; want 1500m and 6Gi", cpu.String(), mem.String())
 	}
 }

@@ -1,232 +1,190 @@
-import { useState, useEffect } from 'react'
-import { Scaling, Server, LineChart, Activity, BookOpen, LogOut, Settings } from 'lucide-react'
-import Dashboard from './pages/Dashboard'
+import { useState, useEffect, useCallback } from 'react'
+import { Scaling, Server, LineChart, Activity, BookOpen, FileText, LogOut, Settings, UserCircle2, LayoutDashboard, HardDrive, Target, KeyRound } from 'lucide-react'
+import type { ReactNode } from 'react'
+import NamespaceInsights from './pages/NamespaceInsights'
+import Overview from './pages/Overview'
+import StoragePage from './pages/StoragePage'
+import BudgetsPage from './pages/BudgetsPage'
 import NamespaceDetails from './pages/NamespaceDetails'
 import OperatorHealth from './pages/OperatorHealth'
 import ScalingPage from './pages/ScalingPage'
-import ScalingWorkloads from './pages/ScalingWorkloads'
 import ClusterDashboard from './pages/ClusterDashboard'
 import LoginPage from './pages/LoginPage'
-import ApiReference from './pages/ApiReference'
+import Documentation from './pages/Documentation'
 import SettingsPage from './pages/SettingsPage'
 import ReportsPage from './pages/ReportsPage'
 import AIChatWidget from './components/AIChatModal'
+import AuthCallback from './pages/AuthCallback'
+import ChangePasswordDialog from './components/ChangePasswordDialog'
+import { AuthContext, isManagedUser, type User } from './lib/auth'
+
+interface Session {
+  authenticated: boolean
+  user: User | null
+  version?: string
+}
+
+async function fetchSession(): Promise<Session> {
+  try {
+    const res = await fetch('/api/auth/me')
+    if (res.status === 401) return { authenticated: false, user: null }
+    const user: User | null = res.ok ? await res.json() : null
+    const v = await fetch('/api/version').then(r => r.json()).catch(() => null)
+    return { authenticated: true, user, version: v ? v.version || 'dev' : undefined }
+  } catch {
+    return { authenticated: false, user: null }
+  }
+}
+
+function NavGroup({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div>
+      <h3 className="px-3 mb-2 text-[10px] font-semibold uppercase tracking-widest text-slate-500">{title}</h3>
+      <div className="space-y-1">{children}</div>
+    </div>
+  )
+}
+
+function NavItem({ icon, label, active, onClick }: { icon: ReactNode; label: string; active: boolean; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+        active ? 'bg-brand-600 text-white' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}
+    >
+      <span className={active ? 'text-white' : 'text-slate-500'}>{icon}</span>
+      {label}
+    </button>
+  )
+}
 
 function App() {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'scale' | 'cluster' | 'operator' | 'api-docs' | 'settings' | 'reports'>('dashboard')
+  const [activeTab, setActiveTab] = useState<'overview' | 'dashboard' | 'scale' | 'cluster' | 'storage' | 'budgets' | 'operator' | 'api-docs' | 'settings' | 'reports'>('overview')
   const [selectedNamespace, setSelectedNamespace] = useState<string | null>(null)
   const [selectedScalingNS, setSelectedScalingNS] = useState<string | null>(null)
   const [appVersion, setAppVersion] = useState('...')
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null)
+  const [user, setUser] = useState<User | null>(null)
+  const [changingPassword, setChangingPassword] = useState(false)
+  const isSSOCallback = window.location.pathname === '/auth/callback'
+
+  // applySession runs after the fetch resolves, never synchronously inside an effect.
+  const applySession = useCallback((session: Session) => {
+    setUser(session.user)
+    setIsAuthenticated(session.authenticated)
+    if (session.version) setAppVersion(session.version)
+  }, [])
+
+  const loadSession = useCallback(() => fetchSession().then(applySession), [applySession])
 
   useEffect(() => {
-    // Check auth status by calling any authenticated endpoint
-    fetch('/api/version')
-      .then(r => {
-        if (r.status === 401) {
-          setIsAuthenticated(false)
-          return null
-        }
-        setIsAuthenticated(true)
-        return r.json()
-      })
-      .then(d => { if (d) setAppVersion(d.version || 'dev') })
-      .catch(() => setIsAuthenticated(true)) // If no auth configured, allow through
-  }, [])
+    if (!isSSOCallback) fetchSession().then(applySession)
+  }, [isSSOCallback, applySession])
+
+  const finishSSO = useCallback((returnTo: string) => {
+    window.history.replaceState(null, '', returnTo)
+    loadSession()
+  }, [loadSession])
+
+  if (isSSOCallback && isAuthenticated === null) {
+    return <AuthCallback onSignedIn={finishSSO} />
+  }
 
   // Loading state
   if (isAuthenticated === null) {
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-emerald-500"></div>
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-brand-500"></div>
       </div>
     )
   }
 
   // Login gate
   if (isAuthenticated === false) {
-    return <LoginPage onLogin={() => {
-      setIsAuthenticated(true)
-      fetch('/api/version').then(r => r.json()).then(d => setAppVersion(d.version || 'dev')).catch(() => {})
-    }} />
+    return <LoginPage onLogin={loadSession} />
+  }
+
+  const isAdmin = user?.role === 'admin'
+  const signOut = async () => {
+    await fetch('/api/logout', { method: 'POST' })
+    setUser(null)
+    setIsAuthenticated(false)
+  }
+
+  // A password an administrator chose has to be replaced before anything else; the API
+  // refuses every other call until then.
+  if (user?.mustChangePassword) {
+    return (
+      <div className="min-h-screen bg-slate-900">
+        <ChangePasswordDialog required onDone={loadSession} onClose={signOut} onSignOut={signOut} />
+      </div>
+    )
   }
 
   return (
+    <AuthContext.Provider value={user}>
     <div className="flex h-screen w-full bg-slate-50 font-sans">
       {/* Sidebar */}
-      <aside className="w-66 bg-slate-900 text-white flex flex-col shadow-2xl z-10 border-r border-white/5 backdrop-blur-xl">
-        <div className="p-7">
+      <aside className="w-64 shrink-0 bg-slate-900 text-white flex flex-col z-10">
+        <div className="p-6">
           <div className="flex items-center gap-4 mb-2">
-            <div className="w-11 h-11 bg-emerald-500 rounded-2xl flex items-center justify-center shadow-lg shadow-emerald-500/30 ring-1 ring-white/20 animate-in zoom-in duration-500">
-              <svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-white">
-                <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
-                <polyline points="7 14 10 11 13 14 17 9" />
-                <line x1="17" y1="9" x2="17" y2="13" />
-                <line x1="17" y1="9" x2="13" y2="9" />
-              </svg>
-            </div>
+            <img src="/brand/cost-deck-icon-40.png" srcSet="/brand/cost-deck-icon-80.png 2x" width={40} height={40} alt="" className="shrink-0" />
           <div className="flex flex-col">
-            <h1 className="text-2xl font-black tracking-tighter text-white leading-none">Cost Deck</h1>
-            <span className="text-[10px] uppercase tracking-[0.2em] text-emerald-500 font-extrabold mt-1">FinOps Platform</span>
+            <h1 className="text-xl font-bold tracking-tight text-white leading-none">Cost Deck</h1>
+            <span className="text-[10px] uppercase tracking-[0.2em] text-brand-400 font-semibold mt-1">FinOps Platform</span>
           </div>
           </div>
         </div>
 
-        <nav className="flex-1 px-4 mt-4 space-y-8">
-          {/* Analytics Block */}
-          <div>
-            <div className="flex items-center gap-2 px-4 mb-4">
-              <div className="h-px flex-1 bg-slate-800" />
-              <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-500 whitespace-nowrap">Analytics</h3>
-              <div className="h-px flex-1 bg-slate-800" />
-            </div>
-            
-            <div className="space-y-1.5">
-              <button
-                onClick={() => { setActiveTab('dashboard'); setSelectedNamespace(null); }}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-300 relative group overflow-hidden ${
-                  activeTab === 'dashboard'
-                    ? 'bg-emerald-500 shadow-lg shadow-emerald-500/20 text-white'
-                    : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
-                }`}
-              >
-                {activeTab === 'dashboard' && <div className="absolute left-0 top-0 bottom-0 w-1 bg-white rounded-r-full shadow-[0_0_10px_white]" />}
-                <LineChart size={20} className={activeTab === 'dashboard' ? 'text-white' : 'text-slate-500 group-hover:text-emerald-400 transition-colors'} />
-                <span className="font-bold text-[13px] tracking-tight">Namespace Insights</span>
-              </button>
-
-              <button
-                onClick={() => setActiveTab('cluster')}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-300 relative group overflow-hidden ${
-                  activeTab === 'cluster'
-                    ? 'bg-emerald-500 shadow-lg shadow-emerald-500/20 text-white'
-                    : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
-                }`}
-              >
-                {activeTab === 'cluster' && <div className="absolute left-0 top-0 bottom-0 w-1 bg-white rounded-r-full shadow-[0_0_10px_white]" />}
-                <Server size={20} className={activeTab === 'cluster' ? 'text-white' : 'text-slate-500 group-hover:text-emerald-400 transition-colors'} />
-                <span className="font-bold text-[13px] tracking-tight">Cluster Node Map</span>
-              </button>
-
-              <button
-                onClick={() => setActiveTab('operator')}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-300 relative group overflow-hidden ${
-                  activeTab === 'operator'
-                    ? 'bg-emerald-500 shadow-lg shadow-emerald-500/20 text-white'
-                    : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
-                }`}
-              >
-                {activeTab === 'operator' && <div className="absolute left-0 top-0 bottom-0 w-1 bg-white rounded-r-full shadow-[0_0_10px_white]" />}
-                <Activity size={20} className={activeTab === 'operator' ? 'text-white' : 'text-slate-500 group-hover:text-emerald-400 transition-colors'} />
-                <span className="font-bold text-[13px] tracking-tight">Cost Deck Health</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Management Block */}
-          <div>
-            <div className="flex items-center gap-2 px-4 mb-4">
-              <div className="h-px flex-1 bg-slate-800" />
-              <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-500 whitespace-nowrap">Management</h3>
-              <div className="h-px flex-1 bg-slate-800" />
-            </div>
-
-            <div className="space-y-1.5">
-              <button
-                onClick={() => setActiveTab('scale')}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-300 relative group overflow-hidden ${
-                  activeTab === 'scale'
-                    ? 'bg-emerald-500 shadow-lg shadow-emerald-500/20 text-white'
-                    : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
-                }`}
-              >
-                {activeTab === 'scale' && <div className="absolute left-0 top-0 bottom-0 w-1 bg-white rounded-r-full shadow-[0_0_10px_white]" />}
-                <Scaling size={20} className={activeTab === 'scale' ? 'text-white' : 'text-slate-500 group-hover:text-emerald-400 transition-colors'} />
-                <span className="font-bold text-[13px] tracking-tight">Workload Scaling</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Reporting Block */}
-          <div>
-            <div className="flex items-center gap-2 px-4 mb-4">
-              <div className="h-px flex-1 bg-slate-800" />
-              <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-500 whitespace-nowrap">Reporting</h3>
-              <div className="h-px flex-1 bg-slate-800" />
-            </div>
-
-            <div className="space-y-1.5">
-              <button
-                onClick={() => setActiveTab('reports')}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-300 relative group overflow-hidden ${
-                  activeTab === 'reports'
-                    ? 'bg-emerald-500 shadow-lg shadow-emerald-500/20 text-white'
-                    : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
-                }`}
-              >
-                {activeTab === 'reports' && <div className="absolute left-0 top-0 bottom-0 w-1 bg-white rounded-r-full shadow-[0_0_10px_white]" />}
-                <BookOpen size={20} className={activeTab === 'reports' ? 'text-white' : 'text-slate-500 group-hover:text-emerald-400 transition-colors'} />
-                <span className="font-bold text-[13px] tracking-tight">AI Reports</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Documentation Block */}
-          <div>
-            <div className="flex items-center gap-2 px-4 mb-4">
-              <div className="h-px flex-1 bg-slate-800" />
-              <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-500 whitespace-nowrap">Documentation</h3>
-              <div className="h-px flex-1 bg-slate-800" />
-            </div>
-
-            <div className="space-y-1.5">
-              <button
-                onClick={() => setActiveTab('api-docs')}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-300 relative group overflow-hidden ${
-                  activeTab === 'api-docs'
-                    ? 'bg-emerald-500 shadow-lg shadow-emerald-500/20 text-white'
-                    : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
-                }`}
-              >
-                {activeTab === 'api-docs' && <div className="absolute left-0 top-0 bottom-0 w-1 bg-white rounded-r-full shadow-[0_0_10px_white]" />}
-                <BookOpen size={20} className={activeTab === 'api-docs' ? 'text-white' : 'text-slate-500 group-hover:text-emerald-400 transition-colors'} />
-                <span className="font-bold text-[13px] tracking-tight">Documentation</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Configuration Block */}
-          <div>
-            <div className="flex items-center gap-2 px-4 mb-4">
-              <div className="h-px flex-1 bg-slate-800" />
-              <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-500 whitespace-nowrap">Configuration</h3>
-              <div className="h-px flex-1 bg-slate-800" />
-            </div>
-
-            <div className="space-y-1.5">
-              <button
-                onClick={() => setActiveTab('settings')}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-300 relative group overflow-hidden ${
-                  activeTab === 'settings'
-                    ? 'bg-emerald-500 shadow-lg shadow-emerald-500/20 text-white'
-                    : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
-                }`}
-              >
-                {activeTab === 'settings' && <div className="absolute left-0 top-0 bottom-0 w-1 bg-white rounded-r-full shadow-[0_0_10px_white]" />}
-                <Settings size={20} className={activeTab === 'settings' ? 'text-white' : 'text-slate-500 group-hover:text-emerald-400 transition-colors'} />
-                <span className="font-bold text-[13px] tracking-tight">Settings</span>
-              </button>
-            </div>
-          </div>
+        <nav className="flex-1 px-4 mt-2 space-y-6 overflow-y-auto">
+          <NavGroup title="Analytics">
+            <NavItem icon={<LayoutDashboard size={18} />} label="Cost Overview" active={activeTab === 'overview'} onClick={() => setActiveTab('overview')} />
+            <NavItem icon={<LineChart size={18} />} label="Namespace Insights" active={activeTab === 'dashboard'} onClick={() => { setActiveTab('dashboard'); setSelectedNamespace(null) }} />
+            <NavItem icon={<Server size={18} />} label="Cluster Node Map" active={activeTab === 'cluster'} onClick={() => setActiveTab('cluster')} />
+            <NavItem icon={<HardDrive size={18} />} label="Storage & Network" active={activeTab === 'storage'} onClick={() => setActiveTab('storage')} />
+            <NavItem icon={<Activity size={18} />} label="Cost Deck Health" active={activeTab === 'operator'} onClick={() => setActiveTab('operator')} />
+          </NavGroup>
+          <NavGroup title="Management">
+            <NavItem icon={<Target size={18} />} label="Budgets & Alerts" active={activeTab === 'budgets'} onClick={() => setActiveTab('budgets')} />
+            <NavItem icon={<Scaling size={18} />} label="Scaling Schedules" active={activeTab === 'scale'} onClick={() => { setActiveTab('scale'); setSelectedScalingNS(null) }} />
+          </NavGroup>
+          <NavGroup title="Reporting">
+            <NavItem icon={<FileText size={18} />} label="Reports" active={activeTab === 'reports'} onClick={() => setActiveTab('reports')} />
+          </NavGroup>
+          <NavGroup title="Help">
+            <NavItem icon={<BookOpen size={18} />} label="Documentation" active={activeTab === 'api-docs'} onClick={() => setActiveTab('api-docs')} />
+          </NavGroup>
+          {isAdmin && (
+            <NavGroup title="Configuration">
+              <NavItem icon={<Settings size={18} />} label="Settings" active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} />
+            </NavGroup>
+          )}
         </nav>
         
         <div className="p-6 border-t border-slate-800">
+          {user && user.provider !== 'anonymous' && (
+            <div className="flex items-center gap-3 mb-4 px-1" title={user.email || user.name}>
+              <UserCircle2 size={28} className="text-slate-500 shrink-0" />
+              <div className="min-w-0">
+                <div className="text-xs font-bold text-slate-200 truncate">{user.name}</div>
+                <div className="text-[10px] uppercase tracking-widest text-brand-400 font-semibold">
+                  {user.role}{user.provider === 'entra' ? ' · Microsoft' : ''}
+                </div>
+              </div>
+            </div>
+          )}
+          {isManagedUser(user) && (
+            <button
+              onClick={() => setChangingPassword(true)}
+              className="w-full flex items-center justify-center gap-2 px-4 py-2 mb-1 rounded-xl text-slate-500 hover:text-white hover:bg-white/5 transition-all text-xs font-bold"
+            >
+              <KeyRound size={14} />
+              Change password
+            </button>
+          )}
           <button
-            onClick={async () => {
-              await fetch('/api/logout', { method: 'POST' })
-              setIsAuthenticated(false)
-            }}
-            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-slate-500 hover:text-red-400 hover:bg-red-500/10 transition-all text-xs font-bold"
+            onClick={signOut}
+            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition-all text-xs font-bold"
           >
             <LogOut size={14} />
             Sign Out
@@ -246,19 +204,27 @@ function App() {
               onBack={() => setSelectedNamespace(null)} 
             />
           ) : (
-            <Dashboard onSelectNamespace={setSelectedNamespace} />
+            <NamespaceInsights onSelectNamespace={setSelectedNamespace} />
           )
         )}
+        {activeTab === 'overview' && (
+          <Overview
+            onSelectNamespace={name => { setSelectedNamespace(name); setActiveTab('dashboard') }}
+            onNavigate={tab => { setSelectedNamespace(null); setSelectedScalingNS(null); setActiveTab(tab) }}
+          />
+        )}
         {activeTab === 'cluster' && <ClusterDashboard />}
+        {activeTab === 'storage' && <StoragePage />}
+        {activeTab === 'budgets' && <BudgetsPage />}
         {activeTab === 'operator' && <OperatorHealth />}
-        {activeTab === 'api-docs' && <ApiReference />}
-        {activeTab === 'settings' && <SettingsPage />}
+        {activeTab === 'api-docs' && <Documentation />}
+        {activeTab === 'settings' && isAdmin && <SettingsPage />}
         {activeTab === 'reports' && <ReportsPage />}
         {activeTab === 'scale' && (
           selectedScalingNS ? (
-            <ScalingWorkloads 
-              namespace={selectedScalingNS} 
-              onBack={() => setSelectedScalingNS(null)} 
+            <NamespaceDetails
+              namespace={selectedScalingNS}
+              onBack={() => setSelectedScalingNS(null)}
             />
           ) : (
             <ScalingPage onSelectNamespace={setSelectedScalingNS} />
@@ -268,7 +234,11 @@ function App() {
       
       {/* AI Chat Widget */}
       <AIChatWidget />
+      {changingPassword && (
+        <ChangePasswordDialog onDone={() => { setChangingPassword(false); loadSession() }} onClose={() => setChangingPassword(false)} onSignOut={signOut} />
+      )}
     </div>
+    </AuthContext.Provider>
   )
 }
 

@@ -7,21 +7,12 @@ rules:
 - apiGroups:
   - ""
   resources:
-  - configmaps
-  - secrets
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - ""
-  resources:
   - namespaces
+  - nodes
+  - persistentvolumeclaims
+  - persistentvolumes
   - pods
+  - services
   verbs:
   - get
   - list
@@ -38,10 +29,114 @@ rules:
   - update
   - watch
 - apiGroups:
+  - batch
+  resources:
+  - cronjobs
+  verbs:
+  - get
+  - list
+  - patch
+  - watch
+- apiGroups:
+  - discovery.k8s.io
+  resources:
+  - endpointslices
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - keda.sh
+  resources:
+  - scaledobjects
+  verbs:
+  - get
+  - list
+  - patch
+- apiGroups:
+  - metrics.k8s.io
+  resources:
+  - nodes
+  - pods
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - storage.k8s.io
+  resources:
+  - storageclasses
+  verbs:
+  - get
+  - list
+  - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: manager-role
+  namespace: costdeck
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - configmaps
+  verbs:
+  - create
+  - get
+  - patch
+  - update
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - get
+  - list
+  - patch
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - pods/log
+  verbs:
+  - get
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - create
+  - delete
+  - get
+  - patch
+  - update
+- apiGroups:
+  - coordination.k8s.io
+  resources:
+  - leases
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - events.k8s.io
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+- apiGroups:
   - finops.costdeck.io
   resources:
   - costdeckconfigs
   - namespacefinops
+  - namespaceoptimizations
   - scalingconfigs
   - scalinggroups
   verbs:
@@ -66,17 +161,10 @@ rules:
   resources:
   - costdeckconfigs/status
   - namespacefinops/status
+  - namespaceoptimizations/status
   - scalingconfigs/status
   - scalinggroups/status
   verbs:
   - get
   - patch
   - update
-- apiGroups:
-  - finops.costdeck.io
-  resources:
-  - scalingpolicies
-  verbs:
-  - get
-  - list
-  - watch

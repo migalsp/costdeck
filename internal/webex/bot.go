@@ -1,419 +1,644 @@
 package webex
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
-	"net/http"
+	"sort"
 	"strings"
 	"time"
 
-	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/types"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
+	"github.com/migalsp/costdeck-operator/internal/scaling"
 )
 
-// WebhookPayload represents the incoming JSON from Webex.
-type WebhookPayload struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Resource string `json:"resource"`
-	Event    string `json:"event"`
-	Data     struct {
-		ID          string `json:"id"`
-		RoomID      string `json:"roomId"`
-		PersonID    string `json:"personId"`
-		PersonEmail string `json:"personEmail"`
-		Created     string `json:"created"`
-	} `json:"data"`
-}
-
-// Message represents a Webex message.
-type Message struct {
-	ID          string `json:"id"`
-	RoomID      string `json:"roomId"`
-	Text        string `json:"text"`
-	PersonEmail string `json:"personEmail"`
-}
-
-// Bot handles interactions with the Webex API and processing commands.
+// Bot turns Webex messages into CostDeck actions.
 type Bot struct {
-	Token       string
-	K8sClient   client.Client
+	API         *Client
+	K8s         client.Client
+	Namespace   string
 	ClusterName string
+	// SpaceID is the configured CostDeck space. Scaling commands are only accepted there,
+	// so membership of that space is what authorizes changes; without one the bot is
+	// read-only. Anyone on Webex can open a direct message with a bot.
+	SpaceID string
+	// Me is the bot's own identity, used to ignore its own messages and to strip the
+	// mention Webex prepends in group spaces.
+	Me *Person
+	// Background is the context progress monitors run in; it outlives the request.
+	Background context.Context
+	// MonitorInterval and MonitorTimeout tune progress reporting after a scale command.
+	MonitorInterval time.Duration
+	MonitorTimeout  time.Duration
 }
 
-// NewBot creates a new Webex bot instance.
-func NewBot(token string, k8sClient client.Client, clusterName string) *Bot {
-	return &Bot{
-		Token:       token,
-		K8sClient:   k8sClient,
-		ClusterName: clusterName,
-	}
+// Command verbs, target types and hold durations understood by the bot.
+const (
+	verbHelp    = "help"
+	verbList    = "list"
+	verbStatus  = "status"
+	verbScale   = "scale"
+	verbResume  = "resume"
+	verbUnknown = "unknown"
+
+	targetGroup      = "group"
+	targetConfig     = "config"
+	targetNamespaces = "namespaces"
+
+	holdForever        = "forever"
+	holdNextTransition = "nextTransition"
+)
+
+// command is a parsed chat command.
+type command struct {
+	verb       string // help, list, status, scale, resume
+	targetType string // group, config, namespaces
+	target     string
+	action     string // up, down
+	until      string // scaling: holdNextTransition, a duration, or holdForever
+	// addressed is true when the message named this cluster explicitly, or no cluster
+	// name is configured, or it arrived in a 1:1 space.
+	addressed bool
 }
 
-// ProcessWebhook parses the webhook payload, fetches the message text, and executes the command.
-func (b *Bot) ProcessWebhook(ctx context.Context, payload WebhookPayload, operatorNamespace string) error {
+// ProcessMessage handles one message. Every message that is addressed to this bot gets a
+// reply — an unknown command answers with the help text — and every failure to reply is
+// returned instead of being dropped.
+func (b *Bot) ProcessMessage(ctx context.Context, msg *Message) error {
 	log := logf.FromContext(ctx).WithName("webex-bot")
-
-	// We only care about new messages.
-	if payload.Resource != "messages" || payload.Event != "created" {
-		log.V(1).Info("Ignoring non-message/created webhook", "resource", payload.Resource, "event", payload.Event)
+	if b.isOwnMessage(msg) {
 		return nil
 	}
+	log.Info("Received Webex message", "room", msg.RoomID, "roomType", msg.RoomType, "from", msg.PersonEmail)
 
-	// Fetch message details
-	msg, err := b.getMessage(ctx, payload.Data.ID)
+	cmd, ok := b.parse(msg)
+	if !ok {
+		log.Info("Ignoring Webex message addressed to another cluster", "cluster", b.ClusterName)
+		return nil
+	}
+	reply, err := b.execute(ctx, msg, cmd)
+	if errors.Is(err, errNotHere) {
+		log.Info("Ignoring Webex command for an object that does not exist in this cluster", "target", cmd.target)
+		return nil
+	}
 	if err != nil {
-		return fmt.Errorf("failed to get message: %w", err)
+		reply = "⚠️ " + err.Error()
 	}
-
-	return b.ProcessMessage(ctx, msg, operatorNamespace)
-}
-
-// ProcessMessage processes a Webex message.
-func (b *Bot) ProcessMessage(ctx context.Context, msg *Message, operatorNamespace string) error {
-	log := logf.FromContext(ctx).WithName("webex-bot")
-
-	// Ignore messages from the bot itself (typically ends with @webex.bot)
-	if strings.HasSuffix(msg.PersonEmail, "webex.bot") {
+	if reply == "" {
 		return nil
 	}
-
-	text := strings.TrimSpace(msg.Text)
-	log.Info("Received Webex message", "room", msg.RoomID, "text", text)
-
-	// Basic matching logic: e.g., "/scale group frontend up"
-	parts := strings.Fields(text)
-
-	// Strip out bot's name if it appears first (Webex mentions inject the bot's display name)
-	if len(parts) > 0 && strings.ToLower(parts[0]) == "costdeck" {
-		parts = parts[1:]
+	if sendErr := b.API.Send(ctx, msg.RoomID, threadRoot(msg), b.prefix()+reply); sendErr != nil {
+		log.Error(sendErr, "Could not send Webex reply", "room", msg.RoomID)
+		return sendErr
 	}
-
-	isGlobalHelp := len(parts) > 0 && strings.ToLower(parts[0]) == "help"
-
-	if b.ClusterName != "" && !isGlobalHelp {
-		if len(parts) == 0 || !strings.EqualFold(parts[0], b.ClusterName) {
-			// This message is not intended for this cluster. Silently ignore.
-			return nil
-		}
-		// Strip the cluster name
-		parts = parts[1:]
-	}
-
-	cleanText := strings.Join(parts, " ")
-
-	if len(parts) >= 3 && (parts[0] == "/status" || parts[0] == "status") {
-		targetType := parts[1]
-		targetName := parts[2]
-
-		switch targetType {
-		case "group":
-			var group finopsv1.ScalingGroup
-			if err := b.K8sClient.Get(ctx, types.NamespacedName{Name: targetName, Namespace: operatorNamespace}, &group); err == nil {
-				var outMsg strings.Builder
-				outMsg.WriteString(fmt.Sprintf("**Group `%s`**\nStatus: `%s`\nNamespaces: %d/%d ready\nManaged Namespaces:\n", targetName, group.Status.Phase, group.Status.NamespacesReady, group.Status.NamespacesTotal))
-				for _, ns := range group.Spec.Namespaces {
-					outMsg.WriteString(fmt.Sprintf("- `%s`\n", ns))
-				}
-				b.SendMessage(ctx, msg.RoomID, outMsg.String())
-				return nil
-			} else {
-				b.SendMessage(ctx, msg.RoomID, fmt.Sprintf("Group `%s` not found.", targetName))
-				return nil
-			}
-		case "config":
-			var conf finopsv1.ScalingConfig
-			if err := b.K8sClient.Get(ctx, types.NamespacedName{Name: targetName, Namespace: operatorNamespace}, &conf); err == nil {
-				b.SendMessage(ctx, msg.RoomID, fmt.Sprintf("**Config `%s`**\nStatus: `%s`", targetName, conf.Status.Phase))
-				return nil
-			} else {
-				b.SendMessage(ctx, msg.RoomID, fmt.Sprintf("Config `%s` not found.", targetName))
-				return nil
-			}
-		}
-	}
-
-	if len(parts) >= 2 && (parts[0] == "/status" || parts[0] == "status") && parts[1] == "namespaces" {
-		var nsList finopsv1.ScalingConfigList
-		if err := b.K8sClient.List(ctx, &nsList); err == nil {
-			var activeNS, inactiveNS []string
-			for _, ns := range nsList.Items {
-				if ns.Spec.Active != nil && !*ns.Spec.Active {
-					inactiveNS = append(inactiveNS, ns.Name)
-				} else {
-					activeNS = append(activeNS, ns.Name)
-				}
-			}
-			var outMsg strings.Builder
-			outMsg.WriteString("**Namespaces Status**\n\n**Active:**\n")
-			for _, ns := range activeNS {
-				outMsg.WriteString(fmt.Sprintf("- `%s`\n", ns))
-			}
-			outMsg.WriteString("\n**Inactive (Scaled Down):**\n")
-			for _, ns := range inactiveNS {
-				outMsg.WriteString(fmt.Sprintf("- `%s`\n", ns))
-			}
-			b.SendMessage(ctx, msg.RoomID, outMsg.String())
-			return nil
-		}
-	}
-
-	if len(parts) >= 4 && (parts[0] == "/scale" || parts[0] == "scale") {
-		targetType := parts[1] // "group" or "config"
-		targetName := parts[2]
-		action := parts[3] // "up" or "down"
-
-		var active bool
-		switch action {
-		case "up":
-			active = true
-		case "down":
-			active = false
-		default:
-			return b.SendMessage(ctx, msg.RoomID, "Invalid action. Use 'up' or 'down'.")
-		}
-
-		err := b.executeScale(ctx, targetType, targetName, active, operatorNamespace)
-		if err != nil {
-			log.Error(err, "Failed to execute scale command from Webex")
-			b.SendMessage(context.Background(), msg.RoomID, fmt.Sprintf("Failed to scale %s %s: %v", targetType, targetName, err))
-			return err
-		}
-
-		statusWords := "scale down"
-		targetPhase := "ScaledDown"
-		if active {
-			statusWords = "scale up"
-			targetPhase = "ScaledUp"
-		}
-
-		b.SendMessage(context.Background(), msg.RoomID, fmt.Sprintf("🚀 Initiated %s for **%s** `%s`...", statusWords, targetType, targetName))
-
-		// Background goroutine to monitor progress
-		go func(targetType, targetName, targetPhase string, active bool) {
-			monitorCtx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
-			defer cancel()
-
-			ticker := time.NewTicker(1 * time.Minute)
-			defer ticker.Stop()
-
-			for {
-				select {
-				case <-monitorCtx.Done():
-					b.SendMessage(context.Background(), msg.RoomID, fmt.Sprintf("⚠️ Timed out waiting for **%s** `%s` to finish scaling.", targetType, targetName))
-					return
-				case <-ticker.C:
-					var currentPhase string
-					var progress string
-					var overridden bool
-
-					switch targetType {
-					case "group":
-						var group finopsv1.ScalingGroup
-						if err := b.K8sClient.Get(context.Background(), types.NamespacedName{Name: targetName, Namespace: operatorNamespace}, &group); err == nil {
-							if group.Spec.Active != nil && *group.Spec.Active != active {
-								overridden = true
-							}
-							currentPhase = group.Status.Phase
-							if group.Status.NamespacesTotal > 0 {
-								progress = fmt.Sprintf(" - %d/%d namespaces ready", group.Status.NamespacesReady, group.Status.NamespacesTotal)
-							}
-						}
-					case "config":
-						var conf finopsv1.ScalingConfig
-						if err := b.K8sClient.Get(context.Background(), types.NamespacedName{Name: targetName, Namespace: operatorNamespace}, &conf); err == nil {
-							if conf.Spec.Active != nil && *conf.Spec.Active != active {
-								overridden = true
-							}
-							currentPhase = conf.Status.Phase
-						}
-					}
-
-					if overridden {
-						actionStr := "UP"
-						if !active {
-							actionStr = "DOWN"
-						}
-						// Silently abort, or notify it was interrupted. We'll just return silently to avoid spam.
-						log.Info(fmt.Sprintf("Scaling %s for %s %s was overridden by a newer command. Aborting monitor.", actionStr, targetType, targetName))
-						return
-					}
-
-					if currentPhase == targetPhase {
-						statusWordsDone := "scaled DOWN"
-						if active {
-							statusWordsDone = "scaled UP"
-						}
-						b.SendMessage(context.Background(), msg.RoomID, fmt.Sprintf("✅ **%s** `%s` has been successfully %s via CostDeck.", capitalize(targetType), targetName, statusWordsDone))
-						return
-					} else if currentPhase != "" {
-						b.SendMessage(context.Background(), msg.RoomID, fmt.Sprintf("⏳ Still scaling **%s** `%s` (Current Status: %s%s)...", targetType, targetName, currentPhase, progress))
-					}
-				}
-			}
-		}(targetType, targetName, targetPhase, active)
-
-		return nil
-	}
-
-	// For help or unknown commands, we can send a simple helper message if it mentions scaling.
-	if strings.Contains(strings.ToLower(cleanText), "help") || strings.HasPrefix(strings.ToLower(cleanText), "/help") || strings.HasPrefix(cleanText, "/scale") || strings.HasPrefix(cleanText, "scale") || strings.HasPrefix(cleanText, "/status") || strings.HasPrefix(cleanText, "status") || len(parts) == 0 {
-		prefix := ""
-		clusterDisplay := "Default/Global"
-		if b.ClusterName != "" {
-			prefix = b.ClusterName + " "
-			clusterDisplay = b.ClusterName
-		}
-		helpMsg := fmt.Sprintf("Hi there! I am the CostDeck Scaling Bot for cluster: **%s**.\n\n", clusterDisplay) +
-			"Available Commands:\n" +
-			fmt.Sprintf("- `%sscale group <group-name> up` : Scale up a scaling group.\n", prefix) +
-			fmt.Sprintf("- `%sscale group <group-name> down` : Scale down a scaling group.\n", prefix) +
-			fmt.Sprintf("- `%sscale config <namespace> up` : Scale up an individual namespace config.\n", prefix) +
-			fmt.Sprintf("- `%sscale config <namespace> down` : Scale down an individual namespace config.\n", prefix) +
-			fmt.Sprintf("- `%sstatus group <group-name>` : Show status of a scaling group.\n", prefix) +
-			fmt.Sprintf("- `%sstatus config <namespace>` : Show status of a namespace config.\n", prefix) +
-			fmt.Sprintf("- `%sstatus namespaces` : Show up/down status of all managed namespaces.\n", prefix) +
-			"- `help` : Show this help message (all clusters will respond).\n\n" +
-			"*(Tip: If there are multiple CostDeck clusters in this room, prefix your command with the cluster name to target a specific one, as shown in the examples above!)*"
-		b.SendMessage(context.Background(), msg.RoomID, helpMsg)
-	}
-
 	return nil
 }
 
-// executeScale updates the active state on ScalingGroup or ScalingConfig.
-func (b *Bot) executeScale(ctx context.Context, targetType, targetName string, active bool, namespace string) error {
-	switch targetType {
-	case "group":
-		var group finopsv1.ScalingGroup
-		err := b.K8sClient.Get(ctx, types.NamespacedName{Name: targetName, Namespace: namespace}, &group)
-		if err != nil {
-			if errors.IsNotFound(err) {
-				return fmt.Errorf("group '%s' not found", targetName)
+func (b *Bot) isOwnMessage(msg *Message) bool {
+	if b.Me != nil && msg.PersonID != "" && msg.PersonID == b.Me.ID {
+		return true
+	}
+	if b.Me != nil {
+		for _, e := range b.Me.Emails {
+			if strings.EqualFold(e, msg.PersonEmail) {
+				return true
 			}
-			return err
 		}
+	}
+	return false
+}
 
-		// Prevent overriding an in-progress scaling operation
-		if group.Status.Phase == "ScalingUp" || group.Status.Phase == "ScalingDown" {
-			return fmt.Errorf("Please wait for the current scaling operation to finish (Current Status: %s)", group.Status.Phase)
+// parse normalises the text and extracts a command. It returns false when the message is
+// clearly meant for another CostDeck cluster sharing the space.
+func (b *Bot) parse(msg *Message) (command, bool) {
+	tokens := strings.Fields(b.stripMention(msg.Text))
+	cmd := command{addressed: b.ClusterName == "" || msg.RoomType == "direct"}
+
+	if b.ClusterName != "" && len(tokens) > 0 && strings.EqualFold(tokens[0], b.ClusterName) {
+		tokens, cmd.addressed = tokens[1:], true
+	}
+	if len(tokens) > 0 {
+		tokens[0] = strings.TrimPrefix(strings.ToLower(tokens[0]), "/")
+	}
+
+	if len(tokens) == 0 {
+		cmd.verb = verbHelp
+		return cmd, cmd.addressed
+	}
+	lower := func(i int) string {
+		if i < len(tokens) {
+			return strings.ToLower(tokens[i])
 		}
-
-		// Prevent redundant commands
-		if active && group.Status.Phase == "ScaledUp" {
-			return fmt.Errorf("already scaled UP")
+		return ""
+	}
+	arg := func(i int) string {
+		if i < len(tokens) {
+			return tokens[i]
 		}
-		if !active && group.Status.Phase == "ScaledDown" {
-			return fmt.Errorf("already scaled DOWN")
+		return ""
+	}
+
+	switch tokens[0] {
+	case verbHelp, "?":
+		cmd.verb = verbHelp
+		return cmd, true // Every cluster answers help, prefixed with its name.
+	case verbList, "groups", "overview":
+		cmd.verb = verbList
+		return cmd, true
+	case verbStatus:
+		cmd.verb, cmd.targetType, cmd.target = verbStatus, lower(1), arg(2)
+		if cmd.targetType == "" {
+			cmd.verb = verbList
 		}
+		return cmd, true
+	case verbScale:
+		cmd.verb, cmd.targetType, cmd.target, cmd.action = verbScale, lower(1), arg(2), lower(3)
+		cmd.until = parseUntil(tokens[min(4, len(tokens)):])
+		return cmd, true
+	case verbResume, "schedule", "follow":
+		cmd.verb, cmd.targetType, cmd.target = verbResume, lower(1), arg(2)
+		return cmd, true
+	}
 
-		var finalActive = active
-		group.Spec.Active = &finalActive
-		return b.K8sClient.Update(ctx, &group)
+	// Not a command we know. In a space shared by several clusters it may be meant for
+	// another one, so only answer when the message is clearly ours.
+	cmd.verb = verbUnknown
+	return cmd, cmd.addressed
+}
 
-	case "config":
-		var conf finopsv1.ScalingConfig
-		err := b.K8sClient.Get(ctx, types.NamespacedName{Name: targetName, Namespace: namespace}, &conf)
-		if err != nil {
-			if errors.IsNotFound(err) {
-				// Trying to fallback to costdeck-system if we're in another ns, or vice-versa
-				return fmt.Errorf("namespace config '%s' not found", targetName)
+// stripMention removes the bot mention Webex prepends to group messages. Clients render it
+// as the full display name or just its first word, sometimes with a leading "@".
+func (b *Bot) stripMention(text string) string {
+	text = strings.TrimSpace(text)
+	candidates := []string{"costdeck"}
+	if b.Me != nil && b.Me.DisplayName != "" {
+		name := strings.TrimSpace(b.Me.DisplayName)
+		candidates = append([]string{name, strings.Fields(name)[0]}, candidates...)
+	}
+	text = strings.TrimPrefix(text, "@")
+	for _, c := range candidates {
+		if len(text) >= len(c) && strings.EqualFold(text[:len(c)], c) {
+			rest := text[len(c):]
+			if rest == "" || rest[0] == ' ' || rest[0] == ',' || rest[0] == ':' {
+				return strings.TrimLeft(rest, " ,:")
 			}
-			return err
 		}
+	}
+	return text
+}
 
-		// Prevent overriding an in-progress scaling operation
-		if conf.Status.Phase == "ScalingUp" || conf.Status.Phase == "ScalingDown" {
-			return fmt.Errorf("Please wait for the current scaling operation to finish (Current Status: %s)", conf.Status.Phase)
+// parseUntil reads the optional duration of a scale command:
+// "for 4h", "4h", "until next", holdForever.
+func parseUntil(tokens []string) string {
+	words := strings.ToLower(strings.Join(tokens, " "))
+	words = strings.TrimSpace(strings.TrimPrefix(words, "for "))
+	switch {
+	case words == "":
+		return ""
+	case words == holdForever || words == "always" || words == "until resumed":
+		return holdForever
+	case strings.HasPrefix(words, "until next"), words == "next":
+		return holdNextTransition
+	}
+	if d, err := time.ParseDuration(words); err == nil && d > 0 {
+		return d.String()
+	}
+	return "invalid:" + words
+}
+
+// errNotHere means the command targets an object this cluster does not have, in a space
+// where another cluster probably does; it is answered with silence.
+var errNotHere = errors.New("target not found in this cluster")
+
+func (b *Bot) execute(ctx context.Context, msg *Message, cmd command) (string, error) {
+	switch cmd.verb {
+	case verbHelp:
+		return b.helpText(), nil
+	case verbUnknown:
+		return "I did not understand that.\n\n" + b.helpText(), nil
+	case verbList:
+		return b.overview(ctx)
+	case verbStatus:
+		return b.status(ctx, cmd)
+	case verbScale, verbResume:
+		if refusal := b.refuseChange(msg); refusal != "" {
+			return refusal, nil
 		}
-
-		// Prevent redundant commands
-		if active && conf.Status.Phase == "ScaledUp" {
-			return fmt.Errorf("already scaled UP")
+		if cmd.verb == verbScale {
+			return b.scale(ctx, msg, cmd)
 		}
-		if !active && conf.Status.Phase == "ScaledDown" {
-			return fmt.Errorf("already scaled DOWN")
+		return b.resume(ctx, cmd)
+	}
+	return "", nil
+}
+
+// refuseChange explains why a scaling command cannot run from where it was sent, or
+// returns "" when it may.
+func (b *Bot) refuseChange(msg *Message) string {
+	switch {
+	case b.SpaceID == "":
+		return "Scaling from chat is turned off until a CostDeck space is configured (Settings → Messengers → Webex → Space ID). " +
+			"Only members of that space can scale; `list` and `status` work here."
+	case msg.RoomID != b.SpaceID:
+		return "Scaling commands are only accepted in the CostDeck space. `list` and `status` work here."
+	}
+	return ""
+}
+
+func (b *Bot) prefix() string {
+	if b.ClusterName == "" {
+		return ""
+	}
+	return fmt.Sprintf("**[%s]** ", b.ClusterName)
+}
+
+func (b *Bot) helpText() string {
+	p := ""
+	if b.ClusterName != "" {
+		p = b.ClusterName + " "
+	}
+	var sb strings.Builder
+	sb.WriteString("**CostDeck commands**\n\n")
+	fmt.Fprintf(&sb, "- `%slist` — all groups and namespace configs with their state\n", p)
+	fmt.Fprintf(&sb, "- `%sstatus group <name>` / `%sstatus config <name>` — details\n", p, p)
+	fmt.Fprintf(&sb, "- `%sscale group <name> up|down [for 4h | until next | forever]`\n", p)
+	fmt.Fprintf(&sb, "- `%sscale config <namespace> up|down [...]`\n", p)
+	fmt.Fprintf(&sb, "- `%sresume group|config <name>` — drop the override, follow the schedule again\n", p)
+	sb.WriteString("\nWithout a duration, a scale command holds until the next scheduled change.")
+	if b.ClusterName != "" {
+		sb.WriteString(" In a space shared by several clusters, start with the cluster name to target one.")
+	}
+	return sb.String()
+}
+
+func (b *Bot) overview(ctx context.Context) (string, error) {
+	var groups finopsv1.ScalingGroupList
+	if err := b.K8s.List(ctx, &groups, client.InNamespace(b.Namespace)); err != nil {
+		return "", err
+	}
+	var configs finopsv1.ScalingConfigList
+	if err := b.K8s.List(ctx, &configs, client.InNamespace(b.Namespace)); err != nil {
+		return "", err
+	}
+	if len(groups.Items) == 0 && len(configs.Items) == 0 {
+		return "No ScalingGroups or ScalingConfigs are defined yet.", nil
+	}
+
+	var sb strings.Builder
+	if len(groups.Items) > 0 {
+		sb.WriteString("**Groups**\n")
+		sort.Slice(groups.Items, func(i, j int) bool { return groups.Items[i].Name < groups.Items[j].Name })
+		for _, g := range groups.Items {
+			fmt.Fprintf(&sb, "- `%s` %s · %d/%d ready%s\n", g.Name, describeState(g.Status.Phase, g.Status.ScheduleStatus),
+				g.Status.NamespacesReady, g.Status.NamespacesTotal, describeNext(g.Status.ScheduleStatus))
 		}
+	}
+	if len(configs.Items) > 0 {
+		sb.WriteString("\n**Namespace configs**\n")
+		sort.Slice(configs.Items, func(i, j int) bool { return configs.Items[i].Name < configs.Items[j].Name })
+		for _, c := range configs.Items {
+			fmt.Fprintf(&sb, "- `%s` (%s) %s%s\n", c.Name, c.Spec.TargetNamespace,
+				describeState(c.Status.Phase, c.Status.ScheduleStatus), describeNext(c.Status.ScheduleStatus))
+		}
+	}
+	return sb.String(), nil
+}
 
-		var finalActive = active
-		conf.Spec.Active = &finalActive
-		return b.K8sClient.Update(ctx, &conf)
-
+func describeState(phase string, st finopsv1.ScheduleStatus) string {
+	if phase == "" {
+		phase = "Pending"
+	}
+	mode := st.Mode
+	switch mode {
+	case scaling.ModeManualUp, scaling.ModeManualDown:
+		mode = "manual"
+	case "":
+		mode = verbUnknown
 	default:
-		return fmt.Errorf("unknown target type: %s. Use 'group' or 'config'", targetType)
+		mode = strings.ToLower(mode)
 	}
+	return fmt.Sprintf("**%s** (%s)", phase, mode)
 }
 
-func (b *Bot) getMessage(ctx context.Context, messageID string) (*Message, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", "https://webexapis.com/v1/messages/"+messageID, nil)
+func describeNext(st finopsv1.ScheduleStatus) string {
+	if st.NextTransition == nil {
+		return ""
+	}
+	return fmt.Sprintf(" · %s at %s", strings.ToLower(st.NextTransition.DesiredState), st.NextTransition.Time.UTC().Format("Mon 15:04 MST"))
+}
+
+func (b *Bot) status(ctx context.Context, cmd command) (string, error) {
+	switch cmd.targetType {
+	case targetGroup:
+		g, err := b.findGroup(ctx, cmd)
+		if err != nil {
+			return "", err
+		}
+		var sb strings.Builder
+		fmt.Fprintf(&sb, "**Group `%s`** — %s%s\n", g.Name, describeState(g.Status.Phase, g.Status.ScheduleStatus), describeNext(g.Status.ScheduleStatus))
+		fmt.Fprintf(&sb, "Namespaces: %d/%d ready\n", g.Status.NamespacesReady, g.Status.NamespacesTotal)
+		if len(g.Spec.DependsOn) > 0 {
+			fmt.Fprintf(&sb, "Depends on: %s\n", strings.Join(g.Spec.DependsOn, ", "))
+		}
+		if len(g.Status.RequiredBy) > 0 {
+			fmt.Fprintf(&sb, "Kept up for: %s\n", strings.Join(g.Status.RequiredBy, ", "))
+		}
+		for _, ns := range g.Spec.Namespaces {
+			fmt.Fprintf(&sb, "- `%s`\n", ns)
+		}
+		return sb.String(), nil
+	case targetConfig:
+		c, err := b.findConfig(ctx, cmd)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("**Config `%s`** (%s) — %s%s", c.Name, c.Spec.TargetNamespace,
+			describeState(c.Status.Phase, c.Status.ScheduleStatus), describeNext(c.Status.ScheduleStatus)), nil
+	case targetNamespaces:
+		return b.overview(ctx)
+	}
+	return "", fmt.Errorf("usage: `status group <name>` or `status config <name>`")
+}
+
+// findGroup resolves a group by name. A missing group is errNotHere when the message did
+// not name this cluster, so that other clusters in the space can answer instead.
+func (b *Bot) findGroup(ctx context.Context, cmd command) (*finopsv1.ScalingGroup, error) {
+	if cmd.target == "" {
+		return nil, fmt.Errorf("which group? usage: `%s group <name>`", cmd.verb)
+	}
+	g := &finopsv1.ScalingGroup{}
+	err := b.K8s.Get(ctx, client.ObjectKey{Name: cmd.target, Namespace: b.Namespace}, g)
+	if apierrors.IsNotFound(err) {
+		if !cmd.addressed {
+			return nil, errNotHere
+		}
+		return nil, fmt.Errorf("group `%s` not found", cmd.target)
+	}
+	return g, err
+}
+
+// findConfig resolves a ScalingConfig by name or by the namespace it targets.
+func (b *Bot) findConfig(ctx context.Context, cmd command) (*finopsv1.ScalingConfig, error) {
+	if cmd.target == "" {
+		return nil, fmt.Errorf("which namespace? usage: `%s config <namespace>`", cmd.verb)
+	}
+	c := &finopsv1.ScalingConfig{}
+	err := b.K8s.Get(ctx, client.ObjectKey{Name: cmd.target, Namespace: b.Namespace}, c)
+	if err == nil {
+		return c, nil
+	}
+	if !apierrors.IsNotFound(err) {
+		return nil, err
+	}
+	var list finopsv1.ScalingConfigList
+	if err := b.K8s.List(ctx, &list, client.InNamespace(b.Namespace)); err != nil {
+		return nil, err
+	}
+	for i := range list.Items {
+		if list.Items[i].Spec.TargetNamespace == cmd.target {
+			return &list.Items[i], nil
+		}
+	}
+	if !cmd.addressed {
+		return nil, errNotHere
+	}
+	return nil, fmt.Errorf("no namespace config `%s`", cmd.target)
+}
+
+func (b *Bot) scale(ctx context.Context, msg *Message, cmd command) (string, error) {
+	var active bool
+	switch cmd.action {
+	case "up":
+		active = true
+	case "down":
+	default:
+		return "", fmt.Errorf("usage: `scale %s <name> up|down [for 4h | until next | forever]`", orDefault(cmd.targetType, targetGroup))
+	}
+	if bad, invalid := strings.CutPrefix(cmd.until, "invalid:"); invalid {
+		return "", fmt.Errorf("could not read %q as a duration; use e.g. `for 4h`, `until next` or `forever`", bad)
+	}
+
+	var (
+		obj       client.Object
+		schedules func() []finopsv1.ScalingSchedule
+		set       func(active *bool, until *metav1.Time)
+		name      string
+	)
+	switch cmd.targetType {
+	case targetGroup:
+		g, err := b.findGroup(ctx, cmd)
+		if err != nil {
+			return "", err
+		}
+		obj, name = g, g.Name
+		schedules = func() []finopsv1.ScalingSchedule { return g.Spec.Schedules }
+		set = func(a *bool, u *metav1.Time) { g.Spec.Active, g.Spec.ActiveUntil = a, u }
+	case targetConfig:
+		c, err := b.findConfig(ctx, cmd)
+		if err != nil {
+			return "", err
+		}
+		obj, name = c, c.Name
+		schedules = func() []finopsv1.ScalingSchedule { return c.Spec.Schedules }
+		set = func(a *bool, u *metav1.Time) { c.Spec.Active, c.Spec.ActiveUntil = a, u }
+	default:
+		return "", fmt.Errorf("usage: `scale group <name> up|down` or `scale config <namespace> up|down`")
+	}
+
+	until := cmd.until
+	if until == "" && len(schedules()) > 0 {
+		until = holdNextTransition
+	}
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		if err := b.K8s.Get(ctx, client.ObjectKeyFromObject(obj), obj); err != nil {
+			return err
+		}
+		deadline, err := resolveUntil(until, schedules(), time.Now())
+		if err != nil {
+			return err
+		}
+		set(&active, deadline)
+		return b.K8s.Update(ctx, obj)
+	})
+	if err != nil {
+		return "", err
+	}
+
+	b.monitor(msg, cmd.targetType, obj, active)
+	direction := "down"
+	if active {
+		direction = "up"
+	}
+	return fmt.Sprintf("🚀 Scaling %s `%s` %s — %s.", cmd.targetType, name, direction, describeHold(until, schedules())), nil
+}
+
+// resolveUntil turns the parsed duration into spec.activeUntil.
+func resolveUntil(until string, schedules []finopsv1.ScalingSchedule, now time.Time) (*metav1.Time, error) {
+	switch until {
+	case "", holdForever:
+		return nil, nil
+	case holdNextTransition:
+		next := (&scaling.Engine{}).NextScheduleChange(now, schedules)
+		if next == nil {
+			return nil, nil // The schedule never changes: hold until resumed.
+		}
+		t := metav1.NewTime(*next)
+		return &t, nil
+	}
+	d, err := time.ParseDuration(until)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+b.Token)
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("webex API returned status %d: %s", resp.StatusCode, string(body))
-	}
-
-	var msg Message
-	if err := json.NewDecoder(resp.Body).Decode(&msg); err != nil {
-		return nil, err
-	}
-	return &msg, nil
+	t := metav1.NewTime(now.Add(d).Truncate(time.Second))
+	return &t, nil
 }
 
-// SendMessage sends a markdown message to the specified Webex Room.
-func (b *Bot) SendMessage(ctx context.Context, roomID, markdown string) error {
-	payload := map[string]any{
-		"roomId":   roomID,
-		"markdown": markdown,
+func describeHold(until string, schedules []finopsv1.ScalingSchedule) string {
+	switch until {
+	case "", holdForever:
+		return "holding until you `resume` the schedule"
+	case holdNextTransition:
+		if next := (&scaling.Engine{}).NextScheduleChange(time.Now(), schedules); next != nil {
+			return "holding until the next scheduled change at " + next.UTC().Format("Mon 15:04 MST")
+		}
+		return "holding until you `resume` (the schedule never changes)"
 	}
-	bodyData, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-
-	req, err := http.NewRequestWithContext(ctx, "POST", "https://webexapis.com/v1/messages", bytes.NewReader(bodyData))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+b.Token)
-	req.Header.Set("Content-Type", "application/json")
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 300 {
-		out, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("webex API returned status %d: %s", resp.StatusCode, string(out))
-	}
-
-	return nil
+	return "holding for " + until
 }
 
-// capitalize returns the string with the first letter upper-cased.
+func (b *Bot) resume(ctx context.Context, cmd command) (string, error) {
+	var obj client.Object
+	switch cmd.targetType {
+	case targetGroup:
+		g, err := b.findGroup(ctx, cmd)
+		if err != nil {
+			return "", err
+		}
+		obj = g
+	case targetConfig:
+		c, err := b.findConfig(ctx, cmd)
+		if err != nil {
+			return "", err
+		}
+		obj = c
+	default:
+		return "", fmt.Errorf("usage: `resume group <name>` or `resume config <namespace>`")
+	}
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		if err := b.K8s.Get(ctx, client.ObjectKeyFromObject(obj), obj); err != nil {
+			return err
+		}
+		switch o := obj.(type) {
+		case *finopsv1.ScalingGroup:
+			o.Spec.Active, o.Spec.ActiveUntil = nil, nil
+		case *finopsv1.ScalingConfig:
+			o.Spec.Active, o.Spec.ActiveUntil = nil, nil
+		}
+		annotations := obj.GetAnnotations()
+		delete(annotations, scaling.LegacyOverrideAnnotation)
+		obj.SetAnnotations(annotations)
+		return b.K8s.Update(ctx, obj)
+	})
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("📅 %s `%s` follows its schedule again.", capitalize(cmd.targetType), obj.GetName()), nil
+}
+
+// monitor reports completion of a scale command in the command's thread.
+func (b *Bot) monitor(msg *Message, kind string, obj client.Object, active bool) {
+	base := b.Background
+	if base == nil {
+		return
+	}
+	interval, timeout := b.MonitorInterval, b.MonitorTimeout
+	if interval == 0 {
+		interval = 30 * time.Second
+	}
+	if timeout == 0 {
+		timeout = 30 * time.Minute
+	}
+	want := scaling.PhaseScaledDown
+	if active {
+		want = scaling.PhaseScaledUp
+	}
+	key := client.ObjectKeyFromObject(obj)
+	parent := threadRoot(msg)
+
+	go func() {
+		ctx, cancel := context.WithTimeout(base, timeout)
+		defer cancel()
+		log := logf.FromContext(ctx).WithName("webex-bot")
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		send := func(text string) {
+			if err := b.API.Send(context.WithoutCancel(ctx), msg.RoomID, parent, b.prefix()+text); err != nil {
+				log.Error(err, "Could not send Webex progress update", "room", msg.RoomID)
+			}
+		}
+		for {
+			select {
+			case <-ctx.Done():
+				if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+					send(fmt.Sprintf("⏳ %s `%s` has not reached %s after %s — check `status %s %s`.", capitalize(kind), key.Name, want, timeout, kind, key.Name))
+				}
+				return
+			case <-ticker.C:
+				phase, spec := b.observe(ctx, kind, key)
+				if spec == nil || *spec != active {
+					return // Overridden by a newer command; that one reports instead.
+				}
+				if phase == want {
+					send(fmt.Sprintf("✅ %s `%s` is %s.", capitalize(kind), key.Name, want))
+					return
+				}
+			}
+		}
+	}()
+}
+
+func (b *Bot) observe(ctx context.Context, kind string, key client.ObjectKey) (string, *bool) {
+	switch kind {
+	case targetGroup:
+		g := &finopsv1.ScalingGroup{}
+		if err := b.K8s.Get(ctx, key, g); err != nil {
+			return "", nil
+		}
+		return g.Status.Phase, g.Spec.Active
+	default:
+		c := &finopsv1.ScalingConfig{}
+		if err := b.K8s.Get(ctx, key, c); err != nil {
+			return "", nil
+		}
+		return c.Status.Phase, c.Spec.Active
+	}
+}
+
+// threadRoot returns the message a reply should be threaded under. Webex only allows
+// replies to top-level messages.
+func threadRoot(msg *Message) string {
+	if msg.ParentID != "" {
+		return msg.ParentID
+	}
+	return msg.ID
+}
+
 func capitalize(s string) string {
 	if s == "" {
 		return s
 	}
 	return strings.ToUpper(s[:1]) + s[1:]
+}
+
+func orDefault(s, def string) string {
+	if s == "" {
+		return def
+	}
+	return s
 }

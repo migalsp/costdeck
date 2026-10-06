@@ -1,375 +1,409 @@
-import { useState, useEffect } from 'react'
-import { Server, Cpu, Database, Activity, DollarSign, Globe } from 'lucide-react'
-import InfoTooltip from '../components/InfoTooltip'
+import { Fragment, useMemo, useState, type ReactNode } from 'react'
+import { AlertTriangle, ArrowRight, Boxes, Cpu, LayoutGrid, Loader2, Minimize2, Rows3, Search, Server, Shapes, Zap } from 'lucide-react'
+import { Badge, Card, Modal, PageHeader, SectionTitle, type Tone } from '../components/ui'
+import { BarList, KpiTile, SegmentBar, SegmentLegend } from '../components/finops/charts'
+import { fetchNodePods, fetchNodes, funnelColors, percent, type NodePod, type NodeView, type NodesReport, type Opportunity } from '../lib/finops'
+import { formatMoney } from '../lib/format'
+import { errorMessage } from '../lib/api'
+import { usePolling } from '../lib/usePolling'
 
-interface NodeData {
-  name: string;
-  status: string;
-  cpu: {
-    used: number;
-    requested: number;
-    capacity: number;
-  };
-  mem: {
-    used: number;
-    requested: number;
-    capacity: number;
-  };
-  info: {
-    os: string;
-    arch: string;
-    kernel: string;
-    kubelet: string;
-  };
+type GroupBy = 'pool' | 'instanceType' | 'zone' | 'capacityType' | 'none'
+type View = 'map' | 'table'
+
+const groupLabel: Record<GroupBy, string> = { pool: 'Node pool', instanceType: 'Instance type', zone: 'Zone', capacityType: 'Capacity type', none: 'No grouping' }
+
+const groupOf = (n: NodeView, g: GroupBy) => {
+  switch (g) {
+    case 'pool': return n.pool || 'No pool label'
+    case 'instanceType': return n.instanceType || 'Unknown type'
+    case 'zone': return n.zone || 'No zone'
+    case 'capacityType': return n.capacityType === 'spot' ? 'Spot' : 'On-demand'
+  }
+  return ''
 }
 
-interface ClusterResponse {
-  k8sVersion: string;
-  totalCapacity: {
-    cpu: number;
-    mem: number;
-  };
-  totalUsage: {
-    cpu: number;
-    mem: number;
-  };
-  totalRequested: {
-    cpu: number;
-    mem: number;
-  };
-  nodes: NodeData[];
+const findingIcon: Record<string, ReactNode> = {
+  consolidation: <Minimize2 size={16} />,
+  'node-shape': <Shapes size={16} />,
+  'pending-pods': <Boxes size={16} />,
+  'node-not-ready': <AlertTriangle size={16} />,
+  'node-pressure': <AlertTriangle size={16} />,
+  'no-spot': <Zap size={16} />,
+  'node-type': <Cpu size={16} />,
 }
 
-export default function ClusterDashboard() {
-  const [data, setData] = useState<ClusterResponse | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [clusterCost, setClusterCost] = useState<any>(null)
-  const [nodeCosts, setNodeCosts] = useState<Record<string, any>>({})
+// packingRating rates bin-packing by the fuller of the two resources: nodes are added for
+// whichever runs out first.
+function packingRating(cpu: number, mem: number): { label: string; tone: Tone; title: string } {
+  const v = Math.max(cpu, mem)
+  const title = 'How full the nodes are by requests, by the fuller of CPU and memory. 70% or more is well packed.'
+  if (v >= 0.7) return { label: 'Well packed', tone: 'success', title }
+  if (v >= 0.4) return { label: 'Fair', tone: 'neutral', title }
+  return { label: 'Loose', tone: 'warning', title }
+}
 
-  useEffect(() => {
-    fetch('/api/cluster/nodes')
-      .then(res => res.json())
-      .then(d => {
-        setData(d)
-        setLoading(false)
-        
-        const totalCpuCores = d.totalCapacity.cpu
-        const totalMemGb = d.totalCapacity.mem / 1024 / 1024 / 1024
+function age(iso: string): string {
+  const h = (Date.now() - new Date(iso).getTime()) / 3.6e6
+  if (h < 1) return `${Math.max(1, Math.round(h * 60))}m`
+  if (h < 48) return `${Math.round(h)}h`
+  return `${Math.round(h / 24)}d`
+}
 
-        const fetchCost = async () => {
-          try {
-            const res = await fetch('/api/costing', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ 
-                targetType: 'cluster', 
-                targetName: 'cluster', 
-                totalCpu: totalCpuCores, 
-                totalMemoryGb: totalMemGb 
-              })
-            })
-            if (res.ok) {
-              const cost = await res.json()
-              if (cost) setClusterCost(cost)
-            }
-          } catch (e) {
-            console.error('Failed to fetch cluster cost', e)
-          }
-        }
-        fetchCost()
+const fmt = (v: number) => (v >= 100 ? v.toFixed(0) : v >= 10 ? v.toFixed(1) : v.toFixed(2))
 
-        // Fetch AI Costing for each node (fire-and-forget style for UI snappiness)
-        d.nodes.forEach((node: NodeData) => {
-          fetch('/api/costing', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ 
-              targetType: 'node',
-              targetName: node.name,
-              totalCpu: node.cpu.capacity,
-              totalMemoryGb: node.mem.capacity / 1024 / 1024 / 1024
-            })
-          }).then(res => {
-            if (res.ok) return res.json();
-            return null;
-          }).then(cost => {
-            if (cost) {
-              setNodeCosts(prev => ({ ...prev, [node.name]: cost }))
-            }
-          }).catch(() => {})
-        })
-      })
-      .catch(err => {
-        console.error(err)
-        setLoading(false)
-      })
-  }, [])
+const resourceLegend = [
+  { label: 'Used', color: funnelColors.used },
+  { label: 'Requested, not used', color: funnelColors.idle },
+  { label: 'Not requested', color: funnelColors.unallocated },
+]
 
-  if (loading) {
-    return (
-      <div className="p-8 flex items-center justify-center h-full">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-emerald-500"></div>
-      </div>
-    )
-  }
-
-  if (!data) return <div className="p-8">No data available</div>
-
-  const getUsageColor = (percent: number) => {
-    if (percent > 90) return 'bg-red-500'
-    if (percent > 70) return 'bg-orange-500'
-    if (percent > 50) return 'bg-amber-400'
-    return 'bg-emerald-500'
-  }
-
-  const getUsageText = (percent: number) => {
-    if (percent > 90) return 'text-red-600'
-    if (percent > 70) return 'text-orange-600'
-    return 'text-emerald-600'
-  }
-
+// ResourceBar shows used, requested-but-idle and unrequested on a node's allocatable.
+function ResourceBar({ label, unit, r, metrics = true }: { label: string; unit: string; r: NodeView['cpu']; metrics?: boolean }) {
+  const used = metrics ? Math.min(r.used, r.requested) : 0
   return (
-    <div className="p-8 space-y-8 animate-in fade-in duration-500">
-      {/* Header Info */}
-      <div className="flex justify-between items-end">
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-3xl font-black text-slate-900 tracking-tight flex items-center gap-3 uppercase">
-              <Activity className="text-emerald-500" size={32} />
-              Cluster Node Map
-            </h1>
-            <InfoTooltip content="This view shows all nodes in your cluster. Usage bars use a heatmap color scheme: Green (<50%), Amber (50-70%), Orange (70-90%), and Red (>90%). It displays both 'Requested' (allocation) and 'Actual Usage' (live metrics)." position="bottom" />
-          </div>
-          <p className="text-slate-500 mt-1 font-medium italic">Real-time infrastructure capacity and heatmap utilization</p>
-        </div>
-        <div className="flex items-center gap-3 h-full">
-          {/* Total Cost Badge (Left) */}
-          <div className="bg-emerald-50 text-emerald-900 px-4 py-2 rounded-xl shadow-sm border border-emerald-200 flex items-center gap-3 h-full">
-            <div className="p-1.5 bg-emerald-100 rounded-lg text-emerald-600 shrink-0">
-              <DollarSign size={18} />
-            </div>
-            <div className="flex flex-col justify-center">
-              <span className="text-[10px] uppercase tracking-widest text-emerald-600 font-bold mb-0.5">Total Cluster Cost</span>
-              {clusterCost ? (
-                <InfoTooltip content={`Pricing Source: ${clusterCost.determinedBy}`} position="bottom">
-                  <div className="flex items-baseline gap-1.5 cursor-text">
-                    <span className="font-black text-sm leading-none">${clusterCost.monthlyCost.toFixed(2)}<span className="text-[10px] font-bold text-emerald-700/70">/mo</span></span>
-                    <span className="text-[10px] font-bold text-emerald-600/70 leading-none">${clusterCost.hourlyCost.toFixed(4)}/hr</span>
-                  </div>
-                </InfoTooltip>
-              ) : (
-                <span className="font-mono text-[10px] font-bold text-emerald-700/50 leading-none">Calculating...</span>
-              )}
-            </div>
-          </div>
-
-          {/* K8s Version Badge (Right) */}
-          <div className="bg-slate-900 text-white px-4 py-2 rounded-xl shadow-lg border border-slate-800 flex items-center gap-3 h-full">
-            <div className="p-1.5 bg-slate-800 rounded-lg text-emerald-400 shrink-0">
-              <Globe size={18} />
-            </div>
-            <div className="flex flex-col justify-center">
-              <span className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-0.5">K8s Version</span>
-              <span className="font-mono text-sm font-black leading-none">{data.k8sVersion}</span>
-            </div>
-          </div>
-        </div>
+    <div>
+      <div className="flex justify-between text-[11px] mb-1">
+        <span className="font-semibold text-slate-600">{label}</span>
+        <span className="text-slate-500 tabular-nums">{percent(r.allocatable ? r.requested / r.allocatable : undefined)} requested · {fmt(r.requested)}/{fmt(r.allocatable)} {unit}</span>
       </div>
-
-      {/* Cluster Overview Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 flex items-center gap-5">
-          <div className="w-14 h-14 bg-emerald-50 rounded-2xl flex items-center justify-center text-emerald-600">
-            <Server size={28} />
-          </div>
-          <div>
-            <p className="text-sm font-bold text-slate-400 uppercase tracking-wider">Nodes</p>
-            <p className="text-3xl font-black text-slate-900">{data.nodes.length}</p>
-          </div>
-        </div>
-
-        <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100">
-          <div className="flex justify-between items-start mb-4">
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-blue-50 text-blue-600 rounded-lg">
-                <Cpu size={20} />
-              </div>
-              <span className="text-sm font-bold text-slate-400 uppercase tracking-wider">Total CPU</span>
-            </div>
-            <div className="text-right">
-              <div className={`text-lg font-black ${getUsageText((data.totalRequested?.cpu / data.totalCapacity.cpu) * 100 || 0)}`}>
-                {((data.totalRequested?.cpu / data.totalCapacity.cpu) * 100 || 0).toFixed(1)}% Req
-              </div>
-              <div className={`text-xs font-bold ${getUsageText((data.totalUsage.cpu / data.totalCapacity.cpu) * 100)}`}>
-                {((data.totalUsage.cpu / data.totalCapacity.cpu) * 100).toFixed(1)}% Act
-              </div>
-            </div>
-          </div>
-          <div className="w-full bg-slate-100 h-3 rounded-full overflow-hidden relative mb-2">
-            <div 
-              className={`h-full opacity-30 absolute top-0 left-0 transition-all duration-1000 ${getUsageColor((data.totalRequested?.cpu / data.totalCapacity.cpu) * 100 || 0)}`}
-              style={{ width: `${(data.totalRequested?.cpu / data.totalCapacity.cpu) * 100 || 0}%` }}
-            />
-            <div 
-              className={`h-full absolute top-0 left-0 transition-all duration-1000 ${getUsageColor((data.totalUsage.cpu / data.totalCapacity.cpu) * 100)}`}
-              style={{ width: `${(data.totalUsage.cpu / data.totalCapacity.cpu) * 100}%` }}
-            />
-          </div>
-          <div className="flex justify-between text-[10px] font-bold text-slate-400 uppercase">
-            <span>{data.totalRequested?.cpu?.toFixed(2) || '0'} Req / {data.totalUsage.cpu.toFixed(2)} Act</span>
-            <span>{data.totalCapacity.cpu.toFixed(0)} Cores Total</span>
-          </div>
-        </div>
-
-
-
-        <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100">
-          <div className="flex justify-between items-start mb-4">
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-purple-50 text-purple-600 rounded-lg">
-                <Database size={20} />
-              </div>
-              <span className="text-sm font-bold text-slate-400 uppercase tracking-wider">Total RAM</span>
-            </div>
-            <div className="text-right">
-              <div className={`text-lg font-black ${getUsageText((data.totalRequested?.mem / data.totalCapacity.mem) * 100 || 0)}`}>
-                {((data.totalRequested?.mem / data.totalCapacity.mem) * 100 || 0).toFixed(1)}% Req
-              </div>
-              <div className={`text-xs font-bold ${getUsageText((data.totalUsage.mem / data.totalCapacity.mem) * 100)}`}>
-                {((data.totalUsage.mem / data.totalCapacity.mem) * 100).toFixed(1)}% Act
-              </div>
-            </div>
-          </div>
-          <div className="w-full bg-slate-100 h-3 rounded-full overflow-hidden relative mb-2">
-            <div 
-              className={`h-full opacity-30 absolute top-0 left-0 transition-all duration-1000 ${getUsageColor((data.totalRequested?.mem / data.totalCapacity.mem) * 100 || 0)}`}
-              style={{ width: `${(data.totalRequested?.mem / data.totalCapacity.mem) * 100 || 0}%` }}
-            />
-            <div 
-              className={`h-full absolute top-0 left-0 transition-all duration-1000 ${getUsageColor((data.totalUsage.mem / data.totalCapacity.mem) * 100)}`}
-              style={{ width: `${(data.totalUsage.mem / data.totalCapacity.mem) * 100}%` }}
-            />
-          </div>
-          <div className="flex justify-between text-[10px] font-bold text-slate-400 uppercase">
-            <span>{((data.totalRequested?.mem || 0) / 1024 / 1024 / 1024).toFixed(1)} Req / {(data.totalUsage.mem / 1024 / 1024 / 1024).toFixed(1)} Act</span>
-            <span>{(data.totalCapacity.mem / 1024 / 1024 / 1024).toFixed(1)} GiB Total</span>
-          </div>
-        </div>
-      </div>
-
-      {/* Nodes Table/Grid */}
-      <div className="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden">
-        <div className="px-8 py-6 border-b border-slate-50 flex items-center justify-between bg-slate-50/50">
-          <h2 className="font-bold text-slate-800 tracking-tight">Node breakdown</h2>
-          <span className="text-[10px] font-black bg-slate-200 text-slate-600 px-2 py-1 rounded-md uppercase tracking-tighter">
-            {data.nodes.length} Active
-          </span>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-left">
-            <thead>
-              <tr className="text-[10px] font-black text-slate-400 uppercase tracking-widest bg-slate-50/30">
-                <th className="px-8 py-4">Node Name</th>
-                <th className="px-4 py-4 text-center">Status</th>
-                <th className="px-4 py-4">Est. Cost / Hour</th>
-                <th className="px-4 py-4">CPU Allocation & Usage</th>
-                <th className="px-4 py-4">RAM Allocation & Usage</th>
-                <th className="px-8 py-4 text-right">Environment Info</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-50">
-              {data.nodes.map(node => {
-                const cpuUsePct = (node.cpu.used / node.cpu.capacity) * 100;
-                const memUsePct = (node.mem.used / node.mem.capacity) * 100;
-                const cpuReqPct = ((node.cpu.requested || 0) / node.cpu.capacity) * 100;
-                const memReqPct = ((node.mem.requested || 0) / node.mem.capacity) * 100;
-
-                return (
-                  <tr key={node.name} className="hover:bg-slate-50/80 transition-colors group">
-                    <td className="px-8 py-5">
-                      <div className="flex items-center gap-3">
-                        <div className="p-2 bg-slate-100 rounded-lg group-hover:bg-white border border-transparent group-hover:border-slate-100 transition-all">
-                          <Server size={16} className="text-slate-500" />
-                        </div>
-                        <span className="font-bold text-slate-700">{node.name}</span>
-                      </div>
-                    </td>
-                    <td className="px-4 py-5 text-center">
-                      <span className={`px-2 py-1 rounded-md text-[10px] font-black uppercase tracking-tight ${
-                        node.status === 'Ready' ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'
-                      }`}>
-                        {node.status}
-                      </span>
-                    </td>
-                    <td className="px-4 py-5">
-                      {nodeCosts[node.name] ? (
-                        <div className="flex flex-col animate-in fade-in zoom-in duration-300 bg-emerald-50/50 p-2 rounded-lg border border-emerald-100/50">
-                          <span className="text-emerald-600 font-bold text-xs">${nodeCosts[node.name].monthlyCost.toFixed(2)}<span className="text-[10px] font-medium opacity-70">/mo</span></span>
-                          <span className="text-emerald-400 font-medium text-[10px]">${nodeCosts[node.name].hourlyCost.toFixed(4)}/hr</span>
-                        </div>
-                      ) : (
-                        <span className="text-xs font-mono text-slate-300">...</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-5 w-[25%]">
-                      <div className="flex flex-col gap-3 pr-4">
-                        <div className="flex flex-col gap-1">
-                          <div className="flex justify-between text-[9px] font-black uppercase tracking-wider">
-                            <span className="text-slate-400">Requested</span>
-                            <span className={getUsageText(cpuReqPct)}>{cpuReqPct.toFixed(1)}% <span className="text-slate-400">({(node.cpu.requested || 0).toFixed(2)} / {node.cpu.capacity} cores)</span></span>
-                          </div>
-                          <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
-                            <div className={`h-full ${getUsageColor(cpuReqPct)} opacity-75`} style={{ width: `${Math.min(cpuReqPct, 100)}%` }} />
-                          </div>
-                        </div>
-                        <div className="flex flex-col gap-1">
-                          <div className="flex justify-between text-[9px] font-black uppercase tracking-wider">
-                            <span className="text-slate-400">Actual Usage</span>
-                            <span className={getUsageText(cpuUsePct)}>{cpuUsePct.toFixed(1)}% <span className="text-slate-400">({node.cpu.used.toFixed(2)} cores)</span></span>
-                          </div>
-                          <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
-                            <div className={`h-full ${getUsageColor(cpuUsePct)}`} style={{ width: `${Math.min(cpuUsePct, 100)}%` }} />
-                          </div>
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-4 py-5 w-[25%]">
-                      <div className="flex flex-col gap-3 pr-4">
-                        <div className="flex flex-col gap-1">
-                          <div className="flex justify-between text-[9px] font-black uppercase tracking-wider">
-                            <span className="text-slate-400">Requested</span>
-                            <span className={getUsageText(memReqPct)}>{memReqPct.toFixed(1)}% <span className="text-slate-400">{((node.mem.requested || 0) / 1024 / 1024 / 1024).toFixed(1)} / {(node.mem.capacity / 1024 / 1024 / 1024).toFixed(0)} GiB</span></span>
-                          </div>
-                          <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
-                            <div className={`h-full ${getUsageColor(memReqPct)} opacity-75`} style={{ width: `${Math.min(memReqPct, 100)}%` }} />
-                          </div>
-                        </div>
-                        <div className="flex flex-col gap-1">
-                          <div className="flex justify-between text-[9px] font-black uppercase tracking-wider">
-                            <span className="text-slate-400">Actual Usage</span>
-                            <span className={getUsageText(memUsePct)}>{memUsePct.toFixed(1)}% <span className="text-slate-400">{(node.mem.used / 1024 / 1024 / 1024).toFixed(1)} GiB</span></span>
-                          </div>
-                          <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
-                            <div className={`h-full ${getUsageColor(memUsePct)}`} style={{ width: `${Math.min(memUsePct, 100)}%` }} />
-                          </div>
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-8 py-5 text-right flex-1">
-                      <div className="text-[10px] font-medium text-slate-500 flex flex-col items-end gap-0.5">
-                        <span className="font-bold text-slate-400 uppercase tracking-tighter text-[9px]">OS: {node.info.os}</span>
-                        <span>{node.info.kernel}</span>
-                        <span className="bg-slate-100 px-1.5 py-0.5 rounded font-mono text-slate-600 mt-1">{node.info.kubelet}</span>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      <SegmentBar total={r.allocatable} height="h-2" segments={[
+        { key: 'u', label: 'Used', value: used, color: funnelColors.used, hint: metrics ? `${fmt(r.used)} ${unit}` : 'no reading' },
+        { key: 'i', label: 'Requested, not used', value: Math.max(0, r.requested - used), color: funnelColors.idle, hint: `${fmt(Math.max(0, r.requested - used))} ${unit}` },
+        { key: 'n', label: 'Not requested', value: Math.max(0, r.allocatable - r.requested), color: funnelColors.unallocated, hint: `${fmt(Math.max(0, r.allocatable - r.requested))} ${unit}` },
+      ]} />
     </div>
   )
 }
 
+function StatusBadges({ n }: { n: NodeView }) {
+  return (
+    <>
+      {n.status !== 'Ready' && <Badge tone="danger">{n.status === 'NotReady' ? 'Not ready' : 'Unknown'}</Badge>}
+      {n.unschedulable && <Badge tone="warning">Cordoned</Badge>}
+      {(n.pressure || []).map(p => <Badge key={p} tone="warning">{p.replace('Pressure', ' pressure')}</Badge>)}
+      {n.consolidationCandidate && <Badge tone="brand">Could be emptied</Badge>}
+      {n.capacityType === 'spot' && <Badge tone="info">Spot</Badge>}
+    </>
+  )
+}
+
+function NodeTile({ n, currency, onOpen }: { n: NodeView; currency: string; onOpen: () => void }) {
+  const border = n.status !== 'Ready' ? 'border-rose-300' : n.consolidationCandidate ? 'border-dashed border-brand-400' : 'border-slate-200'
+  return (
+    <button onClick={onOpen} className={`text-left bg-white rounded-xl border-2 ${border} p-4 hover:shadow-md hover:border-slate-300 transition-all`}>
+      <div className="flex items-start gap-2">
+        <span className={`mt-1.5 w-2 h-2 rounded-full shrink-0 ${n.status === 'Ready' ? (n.unschedulable ? 'bg-amber-500' : 'bg-brand-500') : 'bg-rose-500'}`} />
+        <div className="min-w-0 flex-1">
+          <div className="font-semibold text-sm text-slate-800 truncate" title={n.name}>{n.name}</div>
+          <div className="text-[11px] text-slate-500 truncate">{[n.instanceType, n.zone].filter(Boolean).join(' · ') || n.arch}</div>
+        </div>
+        <div className="text-right shrink-0">
+          <div className="text-sm font-bold text-slate-800 tabular-nums">{formatMoney(n.monthlyCost, currency)}</div>
+          <div className="text-[10px] text-slate-400">/mo</div>
+        </div>
+      </div>
+      <div className="mt-3 space-y-2">
+        <ResourceBar label="CPU" unit="cores" r={n.cpu} metrics={n.metricsAvailable} />
+        <ResourceBar label="Memory" unit="GiB" r={n.memoryGiB} metrics={n.metricsAvailable} />
+      </div>
+      <div className="mt-3 flex flex-wrap items-center gap-1">
+        <span className="text-[11px] text-slate-500 mr-1">{n.pods}/{n.maxPods} pods · {age(n.createdAt)}</span>
+        <StatusBadges n={n} />
+      </div>
+    </button>
+  )
+}
+
+function FindingRow({ f, currency }: { f: Opportunity; currency: string }) {
+  const warn = f.kind === 'node-not-ready' || f.kind === 'node-pressure' || f.kind === 'pending-pods'
+  return (
+    <div className="flex items-start gap-3 p-4 rounded-xl border border-slate-200 bg-white">
+      <span className={`mt-0.5 w-8 h-8 shrink-0 rounded-lg flex items-center justify-center ${warn ? 'bg-amber-50 text-amber-600' : 'bg-brand-50 text-brand-700'}`}>
+        {findingIcon[f.kind] || <Server size={16} />}
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="font-semibold text-slate-800 text-sm">{f.title}</div>
+        <div className="text-xs text-slate-500 mt-0.5 leading-relaxed">{f.detail}</div>
+      </div>
+      {f.monthlySavings ? <div className="shrink-0 text-sm font-bold text-brand-700 tabular-nums">−{formatMoney(f.monthlySavings, currency)}<span className="text-xs font-medium text-slate-400">/mo</span></div> : null}
+    </div>
+  )
+}
+
+function NodeDetails({ n, currency, onClose }: { n: NodeView; currency: string; onClose: () => void }) {
+  const [pods, setPods] = useState<NodePod[] | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  usePolling(() => { fetchNodePods(n.name).then(setPods).catch(e => setError(errorMessage(e))) }, 30000, n.name)
+  const rate = n.cpu.capacity > 0 ? n.monthlyCost : 0
+  return (
+    <Modal title={n.name} size="xl" tall onClose={onClose}
+      subtitle={[n.pool && `pool ${n.pool}`, n.instanceType, n.zone, n.capacityType, `${age(n.createdAt)} old`].filter(Boolean).join(' · ')}
+      headerExtra={<div className="flex flex-wrap gap-1"><StatusBadges n={n} /></div>}>
+      <div className="grid gap-4 md:grid-cols-3">
+        <KpiTile label="Monthly cost" value={formatMoney(rate, currency)} sub={`${formatMoney(n.monthlyRequested, currency)} requested by pods`} />
+        <KpiTile label="Not requested" value={formatMoney(Math.max(0, n.monthlyCost - n.monthlyRequested), currency)} sub="Capacity on this node no pod asked for" />
+        <KpiTile label="Pods" value={`${n.pods} / ${n.maxPods}`} sub={n.metricsAvailable ? `${fmt(n.cpu.used)} cores and ${fmt(n.memoryGiB.used)} GiB in use` : 'No metrics-server reading'} />
+      </div>
+      <div className="mt-5 space-y-3">
+        <ResourceBar label="CPU" unit="cores" r={n.cpu} metrics={n.metricsAvailable} />
+        <ResourceBar label="Memory" unit="GiB" r={n.memoryGiB} metrics={n.metricsAvailable} />
+        <SegmentLegend items={resourceLegend} />
+        <p className="text-[11px] text-slate-400">
+          Allocatable is what pods can use: {fmt(n.cpu.allocatable)} of {fmt(n.cpu.capacity)} cores and {fmt(n.memoryGiB.allocatable)} of {fmt(n.memoryGiB.capacity)} GiB; the kubelet keeps the rest for the system.
+        </p>
+      </div>
+      {n.namespaces.length > 0 && (
+        <div className="mt-6">
+          <h3 className="text-sm font-semibold text-slate-800 mb-3">Namespaces on this node</h3>
+          <div className="space-y-1.5">
+            {n.namespaces.map(t => (
+              <div key={t.namespace} className="grid grid-cols-[minmax(0,12rem)_1fr_auto] items-center gap-3 text-sm">
+                <span className="truncate text-slate-700">{t.namespace}</span>
+                <SegmentBar total={n.cpu.allocatable} height="h-2" segments={[{ key: 'r', label: 'CPU requested', value: t.cpu, color: funnelColors.idle, hint: `${fmt(t.cpu)} cores` }]} />
+                <span className="text-xs text-slate-500 tabular-nums">{t.pods} pod{t.pods === 1 ? '' : 's'} · {fmt(t.cpu)} cores · {fmt(t.memoryGiB)} GiB</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      <div className="mt-6">
+        <h3 className="text-sm font-semibold text-slate-800 mb-3">Pods</h3>
+        {error ? <p className="text-sm text-rose-600">{error}</p> : !pods ? (
+          <div className="flex items-center gap-2 text-sm text-slate-400"><Loader2 size={14} className="animate-spin" /> Loading…</div>
+        ) : (
+          <div className="overflow-x-auto rounded-xl border border-slate-200">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 text-xs text-slate-500">
+                <tr>
+                  <th className="px-3 py-2 text-left font-semibold">Pod</th>
+                  <th className="px-3 py-2 text-right font-semibold whitespace-nowrap">CPU used / req.</th>
+                  <th className="px-3 py-2 text-right font-semibold whitespace-nowrap">Memory used / req.</th>
+                  <th className="px-3 py-2 text-right font-semibold">Cost/mo</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pods.map(p => (
+                  <tr key={`${p.namespace}/${p.name}`} className="border-t border-slate-100">
+                    <td className="px-3 py-2">
+                      <div className="font-medium text-slate-800 truncate max-w-[24rem]" title={p.name}>{p.name}</div>
+                      <div className="text-[11px] text-slate-500">{p.namespace}{p.daemonSet && ' · DaemonSet'}{p.phase !== 'Running' && ` · ${p.phase}`}</div>
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums text-slate-600">{fmt(p.cpuUsed)} / {fmt(p.cpuRequest)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums text-slate-600">{fmt(p.memoryUsedGiB)} / {fmt(p.memoryRequestGiB)} GiB</td>
+                    <td className="px-3 py-2 text-right tabular-nums font-medium text-slate-800">{formatMoney(p.monthlyCost, currency)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+      <div className="mt-6 grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+        {[['Architecture', n.arch], ['OS', n.os], ['Kernel', n.kernel], ['Kubelet', n.kubelet]].map(([k, v]) => (
+          <div key={k} className="rounded-lg bg-slate-50 border border-slate-100 p-2.5">
+            <div className="text-slate-400">{k}</div>
+            <div className="mt-0.5 font-medium text-slate-700 break-all">{v || '—'}</div>
+          </div>
+        ))}
+      </div>
+    </Modal>
+  )
+}
+
+export default function ClusterDashboard() {
+  const [data, setData] = useState<{ k8sVersion: string; report: NodesReport } | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [groupBy, setGroupBy] = useState<GroupBy>('pool')
+  const [view, setView] = useState<View>('map')
+  const [query, setQuery] = useState('')
+  const [open, setOpen] = useState<string | null>(null)
+
+  usePolling(() => {
+    fetchNodes().then(d => { setData(d); setError(null) }).catch(e => setError(errorMessage(e)))
+  }, 30000)
+
+  const groups = useMemo(() => {
+    if (!data) return []
+    const q = query.trim().toLowerCase()
+    const nodes = data.report.nodes.filter(n => !q || [n.name, n.pool, n.instanceType, n.zone].some(v => (v || '').toLowerCase().includes(q)))
+    const m = new Map<string, NodeView[]>()
+    for (const n of nodes) m.set(groupOf(n, groupBy), [...(m.get(groupOf(n, groupBy)) || []), n])
+    return [...m.entries()].map(([key, items]) => ({ key, items, cost: items.reduce((a, n) => a + n.monthlyCost, 0) })).sort((a, b) => b.cost - a.cost)
+  }, [data, groupBy, query])
+
+  if (!data) {
+    return (
+      <div className="p-8 max-w-[1600px] mx-auto">
+        <PageHeader title="Cluster Node Map" subtitle="What the nodes cost, how well pods fill them, and where capacity sits idle" />
+        {error ? <p className="text-sm text-rose-600">Could not load the nodes: {error}</p>
+          : <div className="flex items-center gap-2 text-sm text-slate-400"><Loader2 size={16} className="animate-spin" /> Loading…</div>}
+      </div>
+    )
+  }
+
+  const { report } = data
+  const s = report.summary
+  const cur = report.currency
+  const openNode = report.nodes.find(n => n.name === open)
+
+  return (
+    <div className="p-8 max-w-[1600px] mx-auto">
+      <PageHeader
+        title="Cluster Node Map"
+        subtitle="What the nodes cost, how well pods fill them, and where capacity sits idle"
+        actions={<>
+          <Badge>Kubernetes {data.k8sVersion}</Badge>
+          <div className="inline-flex rounded-lg border border-slate-200 bg-white p-0.5">
+            {([['map', 'Map', <LayoutGrid key="m" size={15} />], ['table', 'Table', <Rows3 key="t" size={15} />]] as const).map(([v, label, icon]) => (
+              <button key={v} onClick={() => setView(v)}
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-sm font-semibold ${view === v ? 'bg-slate-900 text-white' : 'text-slate-500 hover:text-slate-800'}`}>
+                {icon}{label}
+              </button>
+            ))}
+          </div>
+        </>}
+      />
+
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+        <KpiTile label="Nodes" value={s.nodes}
+          sub={<>{s.ready} ready · {s.spot} spot{report.spot ? ` (${percent(report.spot.spotShare)} of the bill)` : ''}{s.unschedulable ? ` · ${s.unschedulable} cordoned` : ''}</>} />
+        <KpiTile label="Node bill" value={<>{formatMoney(s.monthlyCost, cur)}<span className="text-sm font-medium text-slate-400">/mo</span></>}
+          sub={<span title={report.rates.basis}>{formatMoney(s.monthlyCost / 730 * 24, cur)} a day · {report.rates.basis.split(' — ')[0]}</span>} />
+        <KpiTile label="Requests fill the nodes"
+          status={packingRating((s.cpu.allocatable ? s.cpu.requested / s.cpu.allocatable : 0), (s.memoryGiB.allocatable ? s.memoryGiB.requested / s.memoryGiB.allocatable : 0))}
+          value={<span className="whitespace-nowrap">{percent(s.cpu.allocatable ? s.cpu.requested / s.cpu.allocatable : undefined)}<span className="text-slate-300 font-normal"> / </span>{percent(s.memoryGiB.allocatable ? s.memoryGiB.requested / s.memoryGiB.allocatable : undefined)}</span>}
+          sub="CPU / memory: share of allocatable capacity pods request (bin-packing)" />
+        <KpiTile label="Not requested" value={<>{formatMoney(s.monthlyUnrequested, cur)}<span className="text-sm font-medium text-slate-400">/mo</span></>}
+          sub={`${percent(s.monthlyCost ? s.monthlyUnrequested / s.monthlyCost : undefined)} of the node bill`} />
+        <KpiTile label="Pods" value={<>{s.pods}<span className="text-sm font-medium text-slate-400"> / {s.maxPods}</span></>}
+          sub={s.pendingPods ? <span className="text-amber-700 font-semibold">{s.pendingPods} cannot be scheduled</span> : 'All pods placed'} />
+      </div>
+
+      {report.recommendations.length > 0 && (
+        <div className="mt-6">
+          <SectionTitle aside={<span className="text-xs text-slate-400">sized to what pods request, at 85% fill, list prices</span>}>Node shape recommendations</SectionTitle>
+          <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 text-xs text-slate-500">
+                <tr>
+                  <th className="px-3 py-2.5 text-left font-semibold">Pool</th>
+                  <th className="px-3 py-2.5 text-left font-semibold">Now</th>
+                  <th className="px-3 py-2.5 text-left font-semibold">Suggested</th>
+                  <th className="px-3 py-2.5 text-right font-semibold">Saves</th>
+                  <th className="px-3 py-2.5 text-left font-semibold">Why</th>
+                </tr>
+              </thead>
+              <tbody>
+                {report.recommendations.map(r => (
+                  <tr key={r.pool} className="border-t border-slate-100 align-top">
+                    <td className="px-3 py-3 font-medium text-slate-800">{r.pool}</td>
+                    <td className="px-3 py-3 text-slate-600 whitespace-nowrap">{r.currentNodes} × {r.currentType}<div className="text-[11px] text-slate-400">{formatMoney(r.currentMonthly, cur)}/mo</div></td>
+                    <td className="px-3 py-3 text-slate-800 whitespace-nowrap">{r.nodes} × {r.type}<div className="text-[11px] text-slate-400">{formatMoney(r.monthly, cur)}/mo · {r.family}</div></td>
+                    <td className="px-3 py-3 text-right font-bold text-brand-700 tabular-nums whitespace-nowrap">−{formatMoney(r.monthlySavings, cur)}<span className="text-xs font-medium text-slate-400">/mo</span></td>
+                    <td className="px-3 py-3 text-xs text-slate-600 leading-relaxed max-w-[28rem]">
+                      {r.reason}
+                      {r.arm && <div className="mt-1 text-slate-500">On arm64: {r.arm.nodes} × {r.arm.type}, −{formatMoney(r.arm.monthlySavings, cur)}/mo, if your images are built for it.</div>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {report.findings.filter(f => f.kind !== 'node-type').length > 0 && (
+        <div className="mt-6">
+          <SectionTitle aside={<span className="text-xs text-slate-400">from requests, not from guesses about your workloads</span>}>Findings</SectionTitle>
+          <div className="grid gap-2 lg:grid-cols-2">
+            {report.findings.filter(f => f.kind !== 'node-type').map((f, i) => <FindingRow key={i} f={f} currency={cur} />)}
+          </div>
+        </div>
+      )}
+
+      {report.pools.length > 1 && (
+        <Card className="p-5 mt-6">
+          <h2 className="text-base font-semibold text-slate-800 mb-1">Node pools</h2>
+          <p className="text-xs text-slate-500 mb-4">What each pool costs, and how much of it pods request and use.</p>
+          <BarList currency={cur} items={report.pools.map(p => {
+            const share = (r: typeof p.cpu) => r.allocatable ? r.requested / r.allocatable : 0
+            const requested = p.monthlyCost * (share(p.cpu) + share(p.memoryGiB)) / 2
+            const used = p.monthlyCost * ((p.cpu.allocatable ? Math.min(p.cpu.used, p.cpu.requested) / p.cpu.allocatable : 0) + (p.memoryGiB.allocatable ? Math.min(p.memoryGiB.used, p.memoryGiB.requested) / p.memoryGiB.allocatable : 0)) / 2
+            return {
+              key: p.name, label: <span>{p.name} <span className="text-xs text-slate-400">{p.nodes} node{p.nodes === 1 ? '' : 's'}{p.spot ? `, ${p.spot} spot` : ''}</span></span>,
+              used, idle: Math.max(0, requested - used), total: p.monthlyCost, sub: p.instanceTypes.slice(0, 2).join(', '),
+              onClick: () => { setGroupBy('pool'); setQuery(p.name === 'Unpooled' ? '' : p.name) },
+            }
+          })} rest={{ label: 'Not requested', color: funnelColors.unallocated }} />
+          <div className="mt-4"><SegmentLegend items={resourceLegend} /></div>
+        </Card>
+      )}
+
+      <div className="flex flex-wrap items-center gap-2 mt-8 mb-4">
+        <div className="relative">
+          <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Node, pool, type or zone"
+            className="pl-9 pr-3 py-2 w-64 text-sm bg-white border border-slate-200 rounded-lg outline-none focus:border-brand-500" />
+        </div>
+        <select aria-label="Group by" value={groupBy} onChange={e => setGroupBy(e.target.value as GroupBy)}
+          className="py-2 pl-3 pr-8 text-sm bg-white border border-slate-200 rounded-lg outline-none focus:border-brand-500 text-slate-700">
+          {(Object.keys(groupLabel) as GroupBy[]).map(g => <option key={g} value={g}>{g === 'none' ? 'No grouping' : `Group by ${groupLabel[g].toLowerCase()}`}</option>)}
+        </select>
+        <div className="ml-auto"><SegmentLegend items={resourceLegend} /></div>
+      </div>
+
+      {view === 'map' ? groups.map(g => (
+        <section key={g.key || 'all'} className="mb-6">
+          {groupBy !== 'none' && (
+            <div className="flex items-baseline gap-3 mb-3">
+              <h2 className="font-semibold text-slate-800">{g.key}</h2>
+              <span className="text-xs text-slate-500">{g.items.length} node{g.items.length === 1 ? '' : 's'} · {formatMoney(g.cost, cur)}/mo</span>
+            </div>
+          )}
+          <div className="grid gap-3 grid-cols-[repeat(auto-fill,minmax(17rem,1fr))]">
+            {g.items.map(n => <NodeTile key={n.name} n={n} currency={cur} onOpen={() => setOpen(n.name)} />)}
+          </div>
+        </section>
+      )) : (
+        <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-50 text-xs text-slate-500">
+              <tr>
+                {['Node', 'Type · zone', 'Age', 'Pods', 'CPU requested', 'Memory requested', 'Cost/mo', 'Not requested', ''].map(h => (
+                  <th key={h} className={`px-3 py-2.5 font-semibold whitespace-nowrap ${['Cost/mo', 'Not requested', 'Pods', 'Age'].includes(h) ? 'text-right' : 'text-left'}`}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {groups.map(g => (
+                <Fragment key={g.key || 'all'}>
+                  {groupBy !== 'none' && (
+                    <tr className="bg-slate-50/70 border-t border-slate-200"><td colSpan={9} className="px-3 py-2 font-semibold text-slate-800">{g.key} <span className="ml-2 text-xs font-normal text-slate-500">{g.items.length} nodes · {formatMoney(g.cost, cur)}/mo</span></td></tr>
+                  )}
+                  {g.items.map(n => (
+                    <tr key={n.name} onClick={() => setOpen(n.name)} className="border-t border-slate-100 hover:bg-slate-50 cursor-pointer">
+                      <td className="px-3 py-2.5 font-medium text-slate-800">{n.name}<div className="flex flex-wrap gap-1 mt-1"><StatusBadges n={n} /></div></td>
+                      <td className="px-3 py-2.5 text-slate-600">{[n.instanceType, n.zone].filter(Boolean).join(' · ') || '—'}</td>
+                      <td className="px-3 py-2.5 text-right text-slate-600 tabular-nums">{age(n.createdAt)}</td>
+                      <td className="px-3 py-2.5 text-right text-slate-600 tabular-nums">{n.pods}/{n.maxPods}</td>
+                      <td className="px-3 py-2.5 min-w-[10rem]"><ResourceBar label="" unit="cores" r={n.cpu} metrics={n.metricsAvailable} /></td>
+                      <td className="px-3 py-2.5 min-w-[10rem]"><ResourceBar label="" unit="GiB" r={n.memoryGiB} metrics={n.metricsAvailable} /></td>
+                      <td className="px-3 py-2.5 text-right font-semibold text-slate-800 tabular-nums">{formatMoney(n.monthlyCost, cur)}</td>
+                      <td className="px-3 py-2.5 text-right text-slate-600 tabular-nums">{formatMoney(Math.max(0, n.monthlyCost - n.monthlyRequested), cur)}</td>
+                      <td className="px-3 py-2.5 text-slate-400"><ArrowRight size={14} /></td>
+                    </tr>
+                  ))}
+                </Fragment>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <p className="mt-3 text-xs text-slate-400 flex items-center gap-1.5">
+        <Cpu size={12} /> Node cost is its capacity at {report.rates.basis.toLowerCase().startsWith('custom') ? 'your custom rates' : 'the rates in effect'}; used is the live metrics-server reading.
+      </p>
+
+      {openNode && <NodeDetails n={openNode} currency={cur} onClose={() => setOpen(null)} />}
+    </div>
+  )
+}

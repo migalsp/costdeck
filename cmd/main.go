@@ -19,7 +19,9 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"flag"
+	"fmt"
 	"os"
 
 	// Embeds the IANA timezone database into the binary. The runtime image is
@@ -29,10 +31,12 @@ import (
 
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
@@ -45,8 +49,11 @@ import (
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
 	"github.com/migalsp/costdeck-operator/internal/api"
+	cdconfig "github.com/migalsp/costdeck-operator/internal/config"
 	"github.com/migalsp/costdeck-operator/internal/controller"
+	"github.com/migalsp/costdeck-operator/internal/finops"
 	"github.com/migalsp/costdeck-operator/internal/metrics"
+	"github.com/migalsp/costdeck-operator/internal/pricing"
 	"github.com/migalsp/costdeck-operator/internal/webex"
 	// +kubebuilder:scaffold:imports
 )
@@ -104,11 +111,13 @@ func main() {
 	config := ctrl.GetConfigOrDie()
 	mgr, err := ctrl.NewManager(config, ctrl.Options{
 		Scheme:                 scheme,
+		Cache:                  cacheOptions(cdconfig.OperatorNamespace()),
+		Client:                 clientOptions(),
 		Metrics:                metricsServerOptions,
 		WebhookServer:          webhookServer,
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
-		LeaderElectionID:       "fdcd422b.costdeck.io",
+		LeaderElectionID:       cdconfig.LeaderElectionID,
 	})
 	if err != nil {
 		setupLog.Error(err, "Failed to start manager")
@@ -127,10 +136,23 @@ func main() {
 		os.Exit(1)
 	}
 
+	// The metrics source is resolved from the live CostDeckConfig on every query, so
+	// VictoriaMetrics settings saved in the UI apply without a restart.
+	metricsProvider := metrics.NewProvider(mgr.GetClient(), &metrics.MetricsServerSource{Client: metricsClient})
+	// One rate resolver for every cost estimate: API, assistant, savings and metrics.
+	pricingResolver := &pricing.Resolver{
+		Client: mgr.GetClient(),
+		AWS:    pricing.AWSFromConfig(mgr.GetClient()),
+		Azure:  pricing.AzureRetail(),
+	}
+
 	apiServer := &api.Server{
 		Client:        mgr.GetClient(),
+		APIReader:     mgr.GetAPIReader(),
 		K8sClient:     k8sClient,
 		MetricsClient: metricsClient,
+		Metrics:       metricsProvider,
+		Pricing:       pricingResolver,
 		Port:          "8082",
 	}
 	if err := mgr.Add(apiServer); err != nil {
@@ -138,7 +160,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	webexPoller := &webex.WebexPoller{
+	webexPoller := &webex.Poller{
 		Client: mgr.GetClient(),
 	}
 	if err := mgr.Add(webexPoller); err != nil {
@@ -146,36 +168,56 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Try to initialize VictoriaMetrics client from CostDeckConfig
-	var vmClient *metrics.VMClient
-	{
-		operatorNs := os.Getenv("POD_NAMESPACE")
-		if operatorNs == "" {
-			operatorNs = "costdeck"
-		}
-		var cdConfig finopsv1.CostDeckConfig
-		configKey := client.ObjectKey{Name: "default", Namespace: operatorNs}
-		ctx := context.Background()
-		if err := mgr.GetAPIReader().Get(ctx, configKey, &cdConfig); err == nil {
-			if cdConfig.Spec.Integrations.VictoriaMetrics != nil && cdConfig.Spec.Integrations.VictoriaMetrics.Enabled && cdConfig.Spec.Integrations.VictoriaMetrics.Endpoint != "" {
-				vm, err := metrics.NewVMClient(ctx, mgr.GetClient(), cdConfig.Spec.Integrations.VictoriaMetrics.Endpoint, cdConfig.Spec.Integrations.VictoriaMetrics.SecretRef, operatorNs)
-				if err != nil {
-					setupLog.Error(err, "Failed to initialize VictoriaMetrics client, falling back to metrics-server")
-				} else {
-					vmClient = vm
-					setupLog.Info("VictoriaMetrics client initialized", "endpoint", cdConfig.Spec.Integrations.VictoriaMetrics.Endpoint)
-				}
-			}
-		} else {
-			setupLog.Info("No CostDeckConfig found at startup, using metrics-server")
-		}
+	// The daily cost history behind trends, month to date and week-over-week changes.
+	costHistory := &finops.Collector{
+		Client:    mgr.GetClient(),
+		Pricing:   pricingResolver,
+		Namespace: cdconfig.OperatorNamespace(),
+		Live:      mgr.GetAPIReader(),
+	}
+	if err := mgr.Add(costHistory); err != nil {
+		setupLog.Error(err, "Failed to add cost history collector to manager")
+		os.Exit(1)
+	}
+
+	// The scheduled cost digest, posted to the Webex space; the leader sends it.
+	digest := &finops.DigestScheduler{
+		Client:    mgr.GetClient(),
+		Pricing:   pricingResolver,
+		Poster:    &webex.Notifier{Client: mgr.GetClient()},
+		Namespace: cdconfig.OperatorNamespace(),
+		Overview:  apiServer.FinOpsOverview,
+	}
+	if err := mgr.Add(digest); err != nil {
+		setupLog.Error(err, "Failed to add digest scheduler to manager")
+		os.Exit(1)
+	}
+
+	// Budgets and anomaly alerts, sent to the Webex space when there is one.
+	alerter := &finops.Alerter{
+		Client:    mgr.GetClient(),
+		Live:      mgr.GetAPIReader(),
+		Pricing:   pricingResolver,
+		Poster:    alertPoster{&webex.Notifier{Client: mgr.GetClient()}},
+		Namespace: cdconfig.OperatorNamespace(),
+	}
+	if err := mgr.Add(alerter); err != nil {
+		setupLog.Error(err, "Failed to add the budget alerter to manager")
+		os.Exit(1)
+	}
+
+	// Reconciliation with the cloud bill, so discounts and spot prices reach every figure.
+	billing := &finops.BillingReconciler{Client: mgr.GetClient(), Namespace: cdconfig.OperatorNamespace()}
+	if err := mgr.Add(billing); err != nil {
+		setupLog.Error(err, "Failed to add the billing reconciler to manager")
+		os.Exit(1)
 	}
 
 	if err := (&controller.NamespaceFinOpsReconciler{
-		Client:        mgr.GetClient(),
-		Scheme:        mgr.GetScheme(),
-		MetricsClient: metricsClient,
-		VMClient:      vmClient,
+		Client:  mgr.GetClient(),
+		Scheme:  mgr.GetScheme(),
+		Metrics: metricsProvider,
+		Pricing: pricingResolver,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "NamespaceFinOps")
 		os.Exit(1)
@@ -188,16 +230,21 @@ func main() {
 		setupLog.Error(err, "Failed to create controller", "controller", "NamespaceDiscovery")
 		os.Exit(1)
 	}
+	notifier := &webex.Notifier{Client: mgr.GetClient()}
 	if err := (&controller.ScalingConfigReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Pricing:  pricingResolver,
+		Notifier: notifier,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "ScalingConfig")
 		os.Exit(1)
 	}
 	if err := (&controller.ScalingGroupReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Pricing:  pricingResolver,
+		Notifier: notifier,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "ScalingGroup")
 		os.Exit(1)
@@ -224,6 +271,36 @@ func main() {
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
 		setupLog.Error(err, "Failed to run manager")
 		os.Exit(1)
+	}
+}
+
+// cacheOptions confines the informers for everything CostDeck owns to the operator
+// namespace. Watching these kinds cluster-wide would need cluster-wide list/watch RBAC and
+// would hold every Event in the cluster in memory. Cached objects drop their managedFields,
+// often the largest part of a Pod, which CostDeck never reads.
+func cacheOptions(operatorNs string) cache.Options {
+	inOperatorNs := cache.ByObject{Namespaces: map[string]cache.Config{operatorNs: {}}}
+	return cache.Options{
+		DefaultTransform: cache.TransformStripManagedFields(),
+		ByObject: map[client.Object]cache.ByObject{
+			&corev1.Event{}:                   inOperatorNs,
+			&finopsv1.CostDeckConfig{}:        inOperatorNs,
+			&finopsv1.NamespaceFinOps{}:       inOperatorNs,
+			&finopsv1.NamespaceOptimization{}: inOperatorNs,
+			&finopsv1.ScalingConfig{}:         inOperatorNs,
+			&finopsv1.ScalingGroup{}:          inOperatorNs,
+		},
+	}
+}
+
+// clientOptions makes Secrets and ConfigMaps bypass the cache. CostDeck reads a handful of
+// its own Secrets by name; caching them would start an informer that lists and watches
+// every Secret it can see, which is both a needless privilege and a memory cost.
+func clientOptions() client.Options {
+	return client.Options{
+		Cache: &client.CacheOptions{
+			DisableFor: []client.Object{&corev1.Secret{}, &corev1.ConfigMap{}},
+		},
 	}
 }
 
@@ -258,4 +335,15 @@ func setupMetricsOptions(flags map[string]string, secure bool) metricsserver.Opt
 		opts.KeyName = flags["metricsCertKey"]
 	}
 	return opts
+}
+
+// alertPoster posts alerts to Webex; without a Webex space they are only recorded.
+type alertPoster struct{ n *webex.Notifier }
+
+func (p alertPoster) Post(ctx context.Context, markdown string) error {
+	err := p.n.Post(ctx, markdown)
+	if errors.Is(err, webex.ErrNoSpace) {
+		return fmt.Errorf("%w: %v", finops.ErrNoDestination, err)
+	}
+	return err
 }

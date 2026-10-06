@@ -2,6 +2,7 @@ package scaling
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -23,6 +24,16 @@ import (
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
 )
 
+// ProviderAWS is the name external targets and discovery use for AWS.
+const ProviderAWS = "aws"
+
+// AWS resource types CostDeck can discover, start and stop.
+const (
+	AWSTypeAurora = "aurora"
+	AWSTypeEC2    = "ec2"
+)
+
+// AWSProvider starts and stops AWS resources (Aurora clusters, EC2 instances).
 type AWSProvider struct {
 	cfg aws.Config
 }
@@ -44,7 +55,7 @@ func NewAWSProvider(ctx context.Context) (*AWSProvider, error) {
 // NewAWSProviderFromCredentials creates an AWS provider using static credentials.
 func NewAWSProviderFromCredentials(ctx context.Context, accessKey, secretKey, region string) (*AWSProvider, error) {
 	if region == "" {
-		region = "us-east-1"
+		region = usEast1
 	}
 
 	customHTTPClient := &http.Client{
@@ -66,7 +77,7 @@ func NewAWSProviderFromCredentials(ctx context.Context, accessKey, secretKey, re
 // NewAWSProviderFromSecret creates an AWS provider using credentials from a K8s Secret.
 // The secret must contain keys: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY.
 // Optionally AWS_REGION can be specified in the secret.
-func NewAWSProviderFromSecret(ctx context.Context, k8sClient client.Client, secretName, namespace, region string) (*AWSProvider, error) {
+func NewAWSProviderFromSecret(ctx context.Context, k8sClient client.Reader, secretName, namespace, region string) (*AWSProvider, error) {
 	secret := &corev1.Secret{}
 	if err := k8sClient.Get(ctx, types.NamespacedName{Name: secretName, Namespace: namespace}, secret); err != nil {
 		return nil, fmt.Errorf("failed to read secret %s/%s: %w", namespace, secretName, err)
@@ -84,7 +95,7 @@ func NewAWSProviderFromSecret(ctx context.Context, k8sClient client.Client, secr
 		region = secretRegion
 	}
 	if region == "" {
-		region = "us-east-1"
+		region = usEast1
 	}
 
 	customHTTPClient := &http.Client{
@@ -113,15 +124,24 @@ func (p *AWSProvider) ValidateConnectivity(ctx context.Context) error {
 	return nil
 }
 
+// Config returns the AWS SDK configuration (credentials and region) of the provider.
+func (p *AWSProvider) Config() aws.Config { return p.cfg }
+
 func (p *AWSProvider) Name() string {
-	return "aws"
+	return ProviderAWS
 }
+
+// AWSResourceTypes lists every type the AWS provider supports.
+var AWSResourceTypes = []string{AWSTypeAurora, AWSTypeEC2}
+
+// ResourceTypes implements CloudProvider.
+func (p *AWSProvider) ResourceTypes() []string { return AWSResourceTypes }
 
 func (p *AWSProvider) Scale(ctx context.Context, target finopsv1.ExternalTarget, active bool) error {
 	switch target.Type {
-	case "aurora":
+	case AWSTypeAurora:
 		return p.scaleAurora(ctx, target, active)
-	case "ec2":
+	case AWSTypeEC2:
 		return p.scaleEC2(ctx, target, active)
 	default:
 		return fmt.Errorf("unsupported AWS resource type: %s", target.Type)
@@ -130,9 +150,9 @@ func (p *AWSProvider) Scale(ctx context.Context, target finopsv1.ExternalTarget,
 
 func (p *AWSProvider) IsReady(ctx context.Context, target finopsv1.ExternalTarget, active bool) (bool, error) {
 	switch target.Type {
-	case "aurora":
+	case AWSTypeAurora:
 		return p.isAuroraReady(ctx, target, active)
-	case "ec2":
+	case AWSTypeEC2:
 		return p.isEC2Ready(ctx, target, active)
 	default:
 		return false, fmt.Errorf("unsupported AWS resource type: %s", target.Type)
@@ -142,9 +162,9 @@ func (p *AWSProvider) IsReady(ctx context.Context, target finopsv1.ExternalTarge
 // Discover returns a list of scalable targets, optionally filtered by tags.
 func (p *AWSProvider) Discover(ctx context.Context, resourceType string, tags map[string]string) ([]finopsv1.ExternalTarget, error) {
 	switch resourceType {
-	case "aurora":
+	case AWSTypeAurora:
 		return p.discoverAurora(ctx, tags)
-	case "ec2":
+	case AWSTypeEC2:
 		return p.discoverEC2(ctx, tags)
 	default:
 		return nil, fmt.Errorf("discovery unsupported for type: %s", resourceType)
@@ -168,7 +188,7 @@ func (p *AWSProvider) scaleAurora(ctx context.Context, target finopsv1.ExternalT
 			DBClusterIdentifier: aws.String(target.Identifier),
 		})
 		if err != nil {
-			if strings.Contains(err.Error(), "InvalidDBClusterStateFault") {
+			if isInvalidClusterState(err) {
 				l.Info("Cluster is already starting or running")
 				return nil
 			}
@@ -180,7 +200,7 @@ func (p *AWSProvider) scaleAurora(ctx context.Context, target finopsv1.ExternalT
 			DBClusterIdentifier: aws.String(target.Identifier),
 		})
 		if err != nil {
-			if strings.Contains(err.Error(), "InvalidDBClusterStateFault") {
+			if isInvalidClusterState(err) {
 				l.Info("Cluster is already stopping or stopped")
 				return nil
 			}
@@ -188,6 +208,13 @@ func (p *AWSProvider) scaleAurora(ctx context.Context, target finopsv1.ExternalT
 		}
 	}
 	return nil
+}
+
+// isInvalidClusterState reports the RDS error returned when a cluster is already in, or
+// moving to, the requested state.
+func isInvalidClusterState(err error) bool {
+	var stateErr *rdstypes.InvalidDBClusterStateFault
+	return errors.As(err, &stateErr)
 }
 
 func (p *AWSProvider) isAuroraReady(ctx context.Context, target finopsv1.ExternalTarget, active bool) (bool, error) {
@@ -211,7 +238,7 @@ func (p *AWSProvider) isAuroraReady(ctx context.Context, target finopsv1.Externa
 	if active {
 		return status == "available", nil
 	}
-	return status == "stopped", nil
+	return status == stateStopped, nil
 }
 
 func (p *AWSProvider) discoverAurora(ctx context.Context, tags map[string]string) ([]finopsv1.ExternalTarget, error) {
@@ -239,7 +266,7 @@ func (p *AWSProvider) discoverAurora(ctx context.Context, tags map[string]string
 
 			targets = append(targets, finopsv1.ExternalTarget{
 				Provider:   "aws",
-				Type:       "aurora",
+				Type:       AWSTypeAurora,
 				Identifier: aws.ToString(cluster.DBClusterIdentifier),
 				Region:     p.cfg.Region,
 				Status:     aws.ToString(cluster.Status),
@@ -325,12 +352,11 @@ func (p *AWSProvider) discoverEC2(ctx context.Context, tags map[string]string) (
 	var targets []finopsv1.ExternalTarget
 
 	// Build filters: only running + stopped instances (exclude terminated)
-	filters := []ec2types.Filter{
-		{
-			Name:   aws.String("instance-state-name"),
-			Values: []string{"running", "stopped"},
-		},
-	}
+	filters := make([]ec2types.Filter, 0, 1+len(tags))
+	filters = append(filters, ec2types.Filter{
+		Name:   aws.String("instance-state-name"),
+		Values: []string{"running", "stopped"},
+	})
 
 	// Add tag filters
 	for k, v := range tags {
@@ -357,7 +383,7 @@ func (p *AWSProvider) discoverEC2(ctx context.Context, tags map[string]string) (
 
 				targets = append(targets, finopsv1.ExternalTarget{
 					Provider:   "aws",
-					Type:       "ec2",
+					Type:       AWSTypeEC2,
 					Identifier: id,
 					Region:     p.cfg.Region,
 					Status:     string(instance.State.Name),

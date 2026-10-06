@@ -14,7 +14,38 @@ spec:
     singular: scalinggroup
   scope: Namespaced
   versions:
-  - name: v1
+  - additionalPrinterColumns:
+    - jsonPath: .status.mode
+      name: Mode
+      type: string
+    - jsonPath: .spec.dependsOn
+      name: Depends on
+      priority: 1
+      type: string
+    - jsonPath: .status.desiredState
+      name: Desired
+      type: string
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.namespacesReady
+      name: Ready
+      type: integer
+    - jsonPath: .status.namespacesTotal
+      name: Total
+      priority: 1
+      type: integer
+    - jsonPath: .status.nextTransition.time
+      name: Next change
+      type: string
+    - jsonPath: .status.estimatedHourlySavings
+      name: Saving/h
+      priority: 1
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1
     schema:
       openAPIV3Schema:
         description: ScalingGroup is the Schema for the scalinggroups API
@@ -39,12 +70,22 @@ spec:
           spec:
             description: spec defines the desired state of ScalingGroup
             properties:
+              activation:
+                description: |-
+                  Activation decides what drives this group's own desired state.
+                  Schedule (default): spec.schedules and spec.active; dependents can additionally
+                  keep the group up. OnDemand: the group has no schedule of its own and is up only
+                  while a group that depends on it needs it (or a manual override forces it).
+                enum:
+                - Schedule
+                - OnDemand
+                type: string
               active:
                 description: |-
-                  Active is the manual override for scaling.
-                  If null, the schedule is followed.
-                  If true, the group is forced to Scale Up.
-                  If false, the group is forced to Scale Down.
+                  Active is a manual override. While it is set the schedule is ignored completely:
+                  true forces the group up, false forces it down. Remove the field (null) to return
+                  to the schedule, or set ActiveUntil so that happens automatically.
+                  status.mode shows which of the two is in control.
                 type: boolean
               activeUntil:
                 description: |-
@@ -57,6 +98,18 @@ spec:
                 description: Category is the group classification (e.g. Solution,
                   Platform)
                 type: string
+              dependsOn:
+                description: |-
+                  DependsOn lists ScalingGroups (in the same namespace) this group needs, for example
+                  a shared platform. This group only starts scaling up once every dependency reports
+                  ScaledUp. In turn, a dependency is kept up while any group that depends on it wants
+                  to be up, and is only scaled down after all of its dependents are fully down.
+                  A manual override on the dependency itself still wins.
+                items:
+                  type: string
+                maxItems: 32
+                type: array
+                x-kubernetes-list-type: set
               externalTargets:
                 description: ExternalTargets allows you to manage 3rd party cloud
                   resources alongside Kubernetes resources.
@@ -263,6 +316,27 @@ spec:
                   - type
                   type: object
                 type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              conflictingNamespaces:
+                description: |-
+                  ConflictingNamespaces lists namespaces this group skips because an older
+                  ScalingGroup already manages them. A namespace is never scaled by two groups.
+                items:
+                  type: string
+                type: array
+              currency:
+                description: Currency of EstimatedHourlySavings.
+                type: string
+              desiredState:
+                description: DesiredState is Up or Down.
+                type: string
+              estimatedHourlySavings:
+                description: |-
+                  EstimatedHourlySavings is what the workloads CostDeck keeps scaled down would cost
+                  per hour at the current rates (requests x missing replicas), e.g. "1.2400".
+                type: string
               lastAction:
                 description: LastAction is the timestamp of the last scaling event
                 format: date-time
@@ -271,6 +345,13 @@ spec:
                 description: ManagedCount is the current number of successfully managed
                   namespaces in the group
                 type: integer
+              mode:
+                description: |-
+                  Mode is what currently decides the desired state:
+                  Schedule (spec.schedules), ManualUp / ManualDown (spec.active is set and the
+                  schedule is ignored), AlwaysOn (no usable schedule, kept up as a fail-safe) or
+                  Dependency (a ScalingGroup kept up for a group that depends on it).
+                type: string
               namespacesReady:
                 description: NamespacesReady is the number of namespaces that have
                   reached their target state
@@ -279,6 +360,22 @@ spec:
                 description: NamespacesTotal is the total number of namespaces in
                   this group
                 type: integer
+              nextTransition:
+                description: |-
+                  NextTransition is when the desired state next changes on its own, either at a
+                  schedule boundary or when the override expires. Unset when it never does.
+                properties:
+                  desiredState:
+                    description: 'DesiredState after the change: Up or Down.'
+                    type: string
+                  time:
+                    description: Time of the change.
+                    format: date-time
+                    type: string
+                required:
+                - desiredState
+                - time
+                type: object
               originalReplicas:
                 additionalProperties:
                   format: int32
@@ -287,6 +384,12 @@ spec:
                   OriginalReplicas stores the previous replica counts for restoration
                   Key format: "Namespace/Kind/Name"
                 type: object
+              overrideExpiresAt:
+                description: |-
+                  OverrideExpiresAt is when the manual override hands control back to the schedule.
+                  Unset while an override without spec.activeUntil is in force.
+                format: date-time
+                type: string
               phase:
                 description: Phase is the current state of the group (ScaledUp, ScalingDown,
                   ScaledDown)
@@ -294,6 +397,12 @@ spec:
               readyNamespaces:
                 description: ReadyNamespaces is the list of namespaces that are currently
                   at their target state
+                items:
+                  type: string
+                type: array
+              requiredBy:
+                description: RequiredBy lists the dependent groups that currently
+                  keep this group up.
                 items:
                   type: string
                 type: array

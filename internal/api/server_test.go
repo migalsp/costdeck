@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
+	"strings"
 	"testing"
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
@@ -26,8 +26,11 @@ func buildMockServerWithK8s() *Server {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	utilruntime.Must(finopsv1.AddToScheme(scheme))
 
-	client := fakeclient.NewClientBuilder().WithScheme(scheme).Build()
-	k8sClient := fake.NewSimpleClientset()
+	// NamespaceOptimization status is written through the status subresource, exactly as
+	// the real CRD requires.
+	client := fakeclient.NewClientBuilder().WithScheme(scheme).
+		WithStatusSubresource(&finopsv1.NamespaceOptimization{}).Build()
+	k8sClient := fake.NewClientset()
 
 	k8sClient.Discovery().(*fakediscovery.FakeDiscovery).FakedServerVersion = &version.Info{
 		GitVersion: "v1.35.0",
@@ -41,10 +44,8 @@ func buildMockServerWithK8s() *Server {
 }
 
 func TestHandleOperatorHealth(t *testing.T) {
-	os.Setenv("HOSTNAME", "costdeck-operator-1234")
-	os.Setenv("POD_NAMESPACE", "costdeck")
-	defer os.Unsetenv("HOSTNAME")
-	defer os.Unsetenv("POD_NAMESPACE")
+	t.Setenv("HOSTNAME", "costdeck-operator-1234")
+	t.Setenv("POD_NAMESPACE", "costdeck")
 
 	server := buildMockServerWithK8s()
 
@@ -54,7 +55,7 @@ func TestHandleOperatorHealth(t *testing.T) {
 	}
 
 	rr := httptest.NewRecorder()
-	handler := http.HandlerFunc(server.handleOperatorHealth)
+	handler := server.routes()
 	handler.ServeHTTP(rr, req)
 
 	if status := rr.Code; status != http.StatusOK {
@@ -85,7 +86,7 @@ func TestHandleClusterInfo(t *testing.T) {
 	}
 
 	rr := httptest.NewRecorder()
-	handler := http.HandlerFunc(server.handleClusterInfo)
+	handler := server.routes()
 	handler.ServeHTTP(rr, req)
 
 	if status := rr.Code; status != http.StatusOK {
@@ -108,7 +109,9 @@ func TestHandleNamespaces(t *testing.T) {
 	ns := &finopsv1.NamespaceFinOps{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-ns", Namespace: "costdeck"},
 	}
-	server.Client.Create(context.Background(), ns)
+	if err := server.Client.Create(context.Background(), ns); err != nil {
+		t.Fatal(err)
+	}
 
 	req, err := http.NewRequest("GET", "/api/namespaces", nil)
 	if err != nil {
@@ -116,7 +119,7 @@ func TestHandleNamespaces(t *testing.T) {
 	}
 
 	rr := httptest.NewRecorder()
-	handler := http.HandlerFunc(server.handleNamespaces)
+	handler := server.routes()
 	handler.ServeHTTP(rr, req)
 
 	if status := rr.Code; status != http.StatusOK {
@@ -137,20 +140,33 @@ func TestHandleDiscovery(t *testing.T) {
 	server := buildMockServerWithK8s()
 
 	// Test 1: Unsupported provider
-	req, _ := http.NewRequest("GET", "/api/discovery/gcp/aurora", nil)
+	req, _ := http.NewRequest("GET", "/api/discovery/oracle/db", nil)
 	rr := httptest.NewRecorder()
-	server.handleDiscovery(rr, req)
+	server.routes().ServeHTTP(rr, req)
 	if rr.Code != http.StatusNotImplemented {
-		t.Errorf("expected 501 Not Implemented for gcp, got %v", rr.Code)
+		t.Errorf("expected 501 Not Implemented for oracle, got %v", rr.Code)
+	}
+
+	// Azure and Google Cloud are supported; while disabled they discover nothing.
+	for _, p := range []string{"/api/discovery/azure/vm", "/api/discovery/gcp/gce"} {
+		rr = httptest.NewRecorder()
+		server.routes().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, p, nil))
+		if rr.Code != http.StatusOK || strings.TrimSpace(rr.Body.String()) != "[]" {
+			t.Errorf("GET %s = %d %s, want 200 []", p, rr.Code, rr.Body.String())
+		}
+	}
+	rr = httptest.NewRecorder()
+	server.routes().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/discovery", nil))
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), `"resources":[]`) {
+		t.Errorf("GET /api/discovery = %d %s", rr.Code, rr.Body.String())
 	}
 
 	// Test 2: AWS disabled
-	os.Setenv("AWS_PROVIDER_ENABLED", "false")
-	defer os.Unsetenv("AWS_PROVIDER_ENABLED")
+	t.Setenv("AWS_PROVIDER_ENABLED", "false")
 
 	req, _ = http.NewRequest("GET", "/api/discovery/aws/aurora", nil)
 	rr = httptest.NewRecorder()
-	server.handleDiscovery(rr, req)
+	server.routes().ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusOK {
 		t.Errorf("expected 200 OK for disabled AWS, got %v", rr.Code)
@@ -166,8 +182,7 @@ func TestHandleDiscovery(t *testing.T) {
 }
 
 func TestServeHistory(t *testing.T) {
-	os.Setenv("POD_NAMESPACE", "costdeck")
-	defer os.Unsetenv("POD_NAMESPACE")
+	t.Setenv("POD_NAMESPACE", "costdeck")
 
 	server := buildMockServerWithK8s()
 
@@ -179,11 +194,13 @@ func TestServeHistory(t *testing.T) {
 			},
 		},
 	}
-	server.Client.Create(context.Background(), ns)
+	if err := server.Client.Create(context.Background(), ns); err != nil {
+		t.Fatal(err)
+	}
 
 	req, _ := http.NewRequest("GET", "/api/namespaces/test-ns/history", nil)
 	rr := httptest.NewRecorder()
-	server.handleNamespaceRouting(rr, req)
+	server.routes().ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusOK {
 		t.Errorf("expected 200 OK, got %v", rr.Code)
@@ -203,7 +220,7 @@ func TestServePods(t *testing.T) {
 
 	req, _ := http.NewRequest("GET", "/api/namespaces/test-ns/pods", nil)
 	rr := httptest.NewRecorder()
-	server.handleNamespaceRouting(rr, req)
+	server.routes().ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusOK {
 		t.Errorf("expected 200 OK, got %v", rr.Code)
@@ -223,7 +240,7 @@ func TestServeWorkloads(t *testing.T) {
 
 	req, _ := http.NewRequest("GET", "/api/namespaces/test-ns/workloads", nil)
 	rr := httptest.NewRecorder()
-	server.handleNamespaceRouting(rr, req)
+	server.routes().ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusOK {
 		t.Errorf("expected 200 OK, got %v", rr.Code)
@@ -238,35 +255,8 @@ func TestServeWorkloads(t *testing.T) {
 	}
 }
 
-func TestHandleNamespaceOptimize(t *testing.T) {
-	os.Setenv("POD_NAMESPACE", "costdeck")
-	defer os.Unsetenv("POD_NAMESPACE")
-
-	server := buildMockServerWithK8s()
-
-	// Pre-create the required finops object
-	nsFinOps := &finopsv1.NamespaceFinOps{
-		ObjectMeta: metav1.ObjectMeta{Name: "test-ns", Namespace: "costdeck"},
-		Status: finopsv1.NamespaceFinOpsStatus{
-			History: []finopsv1.MetricDataPoint{
-				{Timestamp: metav1.Now(), CPU: finopsv1.ResourceMetrics{Usage: "100m"}},
-			},
-		},
-	}
-	server.Client.Create(context.Background(), nsFinOps)
-
-	req, _ := http.NewRequest("POST", "/api/namespaces/test-ns/optimize", nil)
-	rr := httptest.NewRecorder()
-	server.handleNamespaceRouting(rr, req)
-
-	if rr.Code != http.StatusInternalServerError {
-		t.Errorf("expected 500 InternalsServerError when no metrics client exists, got %v", rr.Code)
-	}
-}
-
 func TestHandleNamespaceRevert(t *testing.T) {
-	os.Setenv("POD_NAMESPACE", "costdeck")
-	defer os.Unsetenv("POD_NAMESPACE")
+	t.Setenv("POD_NAMESPACE", "costdeck")
 
 	server := buildMockServerWithK8s()
 
@@ -285,11 +275,13 @@ func TestHandleNamespaceRevert(t *testing.T) {
 			},
 		},
 	}
-	server.Client.Create(context.Background(), opt)
+	if err := server.Client.Create(context.Background(), opt); err != nil {
+		t.Fatal(err)
+	}
 
 	req, _ := http.NewRequest("POST", "/api/namespaces/test-ns/revert", nil)
 	rr := httptest.NewRecorder()
-	server.handleNamespaceRouting(rr, req)
+	server.routes().ServeHTTP(rr, req)
 
 	// Will likely return Ok as finding no deployment gracefully skips
 	if rr.Code != http.StatusOK {
@@ -298,8 +290,7 @@ func TestHandleNamespaceRevert(t *testing.T) {
 }
 
 func TestHandleScalingGroups(t *testing.T) {
-	os.Setenv("POD_NAMESPACE", "costdeck")
-	defer os.Unsetenv("POD_NAMESPACE")
+	t.Setenv("POD_NAMESPACE", "costdeck")
 
 	server := buildMockServerWithK8s()
 
@@ -309,11 +300,13 @@ func TestHandleScalingGroups(t *testing.T) {
 			Active: new(bool),
 		},
 	}
-	server.Client.Create(context.Background(), group)
+	if err := server.Client.Create(context.Background(), group); err != nil {
+		t.Fatal(err)
+	}
 
 	req, _ := http.NewRequest("GET", "/api/scaling/groups", nil)
 	rr := httptest.NewRecorder()
-	server.handleScalingGroups(rr, req)
+	server.routes().ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusOK {
 		t.Errorf("expected 200 OK, got %v", rr.Code)
@@ -329,8 +322,7 @@ func TestHandleScalingGroups(t *testing.T) {
 }
 
 func TestHandleScalingConfigs(t *testing.T) {
-	os.Setenv("POD_NAMESPACE", "costdeck")
-	defer os.Unsetenv("POD_NAMESPACE")
+	t.Setenv("POD_NAMESPACE", "costdeck")
 
 	server := buildMockServerWithK8s()
 
@@ -340,11 +332,13 @@ func TestHandleScalingConfigs(t *testing.T) {
 			Active: new(bool),
 		},
 	}
-	server.Client.Create(context.Background(), config)
+	if err := server.Client.Create(context.Background(), config); err != nil {
+		t.Fatal(err)
+	}
 
 	req, _ := http.NewRequest("GET", "/api/scaling/configs", nil)
 	rr := httptest.NewRecorder()
-	server.handleScalingConfigs(rr, req)
+	server.routes().ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusOK {
 		t.Errorf("expected 200 OK, got %v", rr.Code)
@@ -381,11 +375,14 @@ func TestHandleClusterNodes(t *testing.T) {
 			},
 		},
 	}
-	server.K8sClient.CoreV1().Nodes().Create(context.Background(), node, metav1.CreateOptions{})
+	// The handler reads nodes through the cached client.
+	if err := server.Client.Create(context.Background(), node); err != nil {
+		t.Fatal(err)
+	}
 
 	req, _ := http.NewRequest("GET", "/api/cluster/nodes", nil)
 	rr := httptest.NewRecorder()
-	server.handleClusterNodes(rr, req)
+	server.routes().ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusOK {
 		t.Errorf("expected 200 OK, got %v", rr.Code)

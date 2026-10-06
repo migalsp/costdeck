@@ -1,11 +1,9 @@
 <p align="center">
-  <img src="docs/assets/logo.png" width="180" alt="Cost Deck Logo">
+  <img src="docs/assets/brand/cost-deck-wordmark-640.png" width="320" alt="Cost Deck">
 </p>
 
-<h1 align="center">Cost Deck</h1>
-
 <p align="center">
-  <strong>Kubernetes FinOps Operator - stop paying for idle infrastructure.</strong>
+  <strong>Kubernetes FinOps operator: stop paying for idle infrastructure.</strong>
 </p>
 
 <p align="center">
@@ -16,72 +14,114 @@
 
 <br />
 
-Cost Deck is a lightweight Kubernetes Operator that **finds waste**, **right-sizes workloads**, and **shuts down idle environments** - all from a single dashboard.
+Cost Deck runs in your cluster, shows what each namespace costs and wastes, and scales
+non-production environments to zero when nobody needs them, then brings them back on time.
 
 ![Cost Deck Dashboard](docs/assets/dashboard.png)
 
 ## Features
 
-- **Namespace Insights**: Real-time CPU/Memory breakdown with waste detection.
-- **One-Click Optimization**: Right-size Deployments and StatefulSets based on actual usage.
-- **Scheduled Scaling**: Scale Dev/Staging environments down outside working hours.
-- **Sequential Pipelines**: Define stages to scale databases before apps, and apps before ingress.
-- **Cloud Scaling**: Start/stop cloud services (AWS, GCP, Azure) as part of scaling pipelines.
-- **Cluster Node Map**: Visual heat map of node utilization across availability zones.
-- **AI FinOps Assistant**: Ask questions and trigger optimizations directly from the UI.
+- **Scaling schedules.** Pick namespaces and when they should run: working hours, the work
+  week non-stop, or any custom windows, in any time zone. Outside those hours workloads go
+  to zero; their replica counts are restored afterwards.
+- **Shared platforms on demand.** A schedule can depend on another one. An on-demand
+  platform (databases, Kafka, logging) starts only while an environment that needs it is
+  up, and environments wait until it is fully up.
+- **Overrides that end on their own.** "Start now" or "Scale down now" holds until the next
+  scheduled change, or for a time you choose, then the schedule takes over again.
+- **Cloud resources too.** Namespaces start stage by stage and stop in reverse, and the
+  stages can include AWS Aurora and EC2, Azure VMs and PostgreSQL/MySQL flexible servers,
+  and Google Cloud Compute Engine and Cloud SQL. CronJobs are suspended and KEDA
+  ScaledObjects paused while a namespace is down.
+- **Cost and right-sizing.** Per-namespace cost from AWS or Azure list prices or your own rates,
+  live savings, and read-only advice on which requests can shrink, based on p95 usage when
+  VictoriaMetrics is connected. Cost Deck never edits your requests.
+- **Built for teams.** Microsoft Entra ID single sign-on with group-to-role mapping
+  (viewer / operator / admin), API tokens, and least-privilege RBAC: Secrets are only read
+  in the operator's own namespace.
+- **Where you already work.** A Webex bot that answers commands and announces finished
+  scaling, an AI assistant (Claude, OpenAI-compatible or Gemini), an MCP server for AI
+  clients, and Prometheus metrics.
 
-## Quick Start
-
-Deploy via Helm:
+## Quick start
 
 ```bash
 helm upgrade --install costdeck-operator \
   oci://ghcr.io/migalsp/costdeck/charts/costdeck-operator \
-  --version 1.0.0 \
-  --namespace costdeck --create-namespace
+  --version <version> --namespace costdeck --create-namespace
+
+kubectl get secret costdeck-operator-admin-credentials -n costdeck \
+  -o jsonpath='{.data.password}' | base64 -d; echo
+kubectl port-forward -n costdeck svc/costdeck-operator-api 8082:8082
 ```
 
-Configure Ingress in your `values.yaml` and open the dashboard. See the [Installation Guide](docs/installation.md) for details.
+Open http://localhost:8082 and sign in as `costdeck`. Pick the latest version from
+the [releases](https://github.com/migalsp/costdeck/releases). The
+[installation guide](docs/installation.md) covers Ingress, SSO, cloud accounts, monitoring
+and every chart value.
 
-## Architecture
+## Documentation
+
+- **In the dashboard**: the **Documentation** page has step-by-step guides (schedules,
+  cloud resources, cost and right-sizing, access, AI, Webex, troubleshooting) and a REST API
+  reference generated from the live OpenAPI document.
+- **[Installation guide](docs/installation.md)**: chart values, Ingress, single sign-on,
+  cloud permissions, monitoring, upgrades.
+- **API**: Swagger UI at `/api/docs`, the specification at `/api/openapi.yaml`.
+
+## How it fits together
 
 ```mermaid
 graph TD
-    subgraph UI["Web Dashboard (React)"]
-        A[Dashboard UI]
+    subgraph Clients
+        UI[Dashboard]
+        AI[AI clients via MCP]
+        WX[Webex space]
+        PR[Prometheus]
     end
 
-    subgraph Operator["Cost Deck Operator (Go)"]
-        B[REST API Server]
-        C[Reconciliation Loop]
-        D[AI Chat Handler]
-        E[Metrics Poller]
+    subgraph Operator["Cost Deck operator (one binary)"]
+        API[REST API, SSO, MCP]
+        CTRL[Controllers: schedules, dependencies, discovery]
+        BOT[Webex bot]
+        MET[metrics endpoint]
     end
 
-    subgraph K8s["Kubernetes API"]
-        F[Metrics Server]
-        G[Deployments / StatefulSets]
-        H[CRDs: NamespaceFinOps, ScalingGroup, ScalingConfig]
+    subgraph Cluster["Kubernetes"]
+        CRD[CRDs: ScalingGroup, ScalingConfig, NamespaceFinOps, CostDeckConfig]
+        WL[Deployments, StatefulSets, CronJobs, KEDA]
+        MS[metrics-server]
     end
 
-    subgraph Cloud["External Providers"]
-        I[AI Provider]
-        J[Cloud APIs]
-        K[Webex]
+    subgraph External
+        VM[VictoriaMetrics]
+        AWS[AWS, Azure, Google Cloud]
+        LLM[AI provider]
+        ENTRA[Microsoft Entra ID]
     end
 
-    A <-->|HTTP/JSON| B
-    B --> C
-    B <-->|SSE Stream| D
-    
-    C -->|Scale & Optimize| G
-    C -->|Read/Write State| H
-    C -->|Toggle Services| J
-    C -->|Alerts| K
-    
-    D <-->|Function Calling| I
-    E -->|Fetch Stats| F
-    E -->|Update Insights| H
+    UI --> API
+    AI --> API
+    WX <--> BOT
+    PR --> MET
+    API --> CRD
+    CTRL --> CRD
+    CTRL --> WL
+    CTRL --> AWS
+    CTRL --> MS
+    CTRL --> VM
+    API --> LLM
+    API --> ENTRA
+```
+
+## Development
+
+```bash
+make test        # unit and envtest tests
+make lint        # golangci-lint
+make ui-lint     # TypeScript and ESLint
+make ui build    # dashboard + manager binary with the dashboard embedded
+make test-e2e    # Kind cluster + Helm install + hack/e2e-smoke.sh
 ```
 
 ## License

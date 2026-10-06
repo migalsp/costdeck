@@ -6,11 +6,12 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
+	"strings"
 	"testing"
 	"time"
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
+	"github.com/migalsp/costdeck-operator/internal/scaling"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -24,15 +25,11 @@ func buildMockServer() *Server {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	utilruntime.Must(finopsv1.AddToScheme(scheme))
 
-	client := fake.NewClientBuilder().WithScheme(scheme).Build()
-	return &Server{
-		Client: client,
-	}
+	return &Server{Client: fake.NewClientBuilder().WithScheme(scheme).Build()}
 }
 
 func TestHandleScalingGroupsGET(t *testing.T) {
-	os.Setenv("POD_NAMESPACE", "costdeck")
-	defer os.Unsetenv("POD_NAMESPACE")
+	t.Setenv("POD_NAMESPACE", "costdeck")
 
 	server := buildMockServer()
 
@@ -46,7 +43,9 @@ func TestHandleScalingGroupsGET(t *testing.T) {
 			Namespaces: []string{"default"},
 		},
 	}
-	server.Client.Create(context.Background(), group)
+	if err := server.Client.Create(context.Background(), group); err != nil {
+		t.Fatal(err)
+	}
 
 	req, err := http.NewRequest("GET", "/api/scaling/groups", nil)
 	if err != nil {
@@ -54,7 +53,7 @@ func TestHandleScalingGroupsGET(t *testing.T) {
 	}
 
 	rr := httptest.NewRecorder()
-	handler := http.HandlerFunc(server.handleScalingGroups)
+	handler := server.routes()
 	handler.ServeHTTP(rr, req)
 
 	if status := rr.Code; status != http.StatusOK {
@@ -72,8 +71,7 @@ func TestHandleScalingGroupsGET(t *testing.T) {
 }
 
 func TestHandleScalingGroupsPOST(t *testing.T) {
-	os.Setenv("POD_NAMESPACE", "costdeck")
-	defer os.Unsetenv("POD_NAMESPACE")
+	t.Setenv("POD_NAMESPACE", "costdeck")
 
 	server := buildMockServer()
 
@@ -84,7 +82,7 @@ func TestHandleScalingGroupsPOST(t *testing.T) {
 	}
 
 	rr := httptest.NewRecorder()
-	handler := http.HandlerFunc(server.handleScalingGroups)
+	handler := server.routes()
 	handler.ServeHTTP(rr, req)
 
 	if status := rr.Code; status != http.StatusCreated {
@@ -93,15 +91,16 @@ func TestHandleScalingGroupsPOST(t *testing.T) {
 
 	// Verify it was created in the mock cluster
 	list := &finopsv1.ScalingGroupList{}
-	server.Client.List(context.Background(), list)
+	if err := server.Client.List(context.Background(), list); err != nil {
+		t.Fatal(err)
+	}
 	if len(list.Items) != 1 {
 		t.Errorf("Expected 1 group created in cluster, got %d", len(list.Items))
 	}
 }
 
 func TestHandleScalingConfigsGET(t *testing.T) {
-	os.Setenv("POD_NAMESPACE", "costdeck")
-	defer os.Unsetenv("POD_NAMESPACE")
+	t.Setenv("POD_NAMESPACE", "costdeck")
 
 	server := buildMockServer()
 
@@ -114,7 +113,9 @@ func TestHandleScalingConfigsGET(t *testing.T) {
 			TargetNamespace: "app-ns",
 		},
 	}
-	server.Client.Create(context.Background(), config)
+	if err := server.Client.Create(context.Background(), config); err != nil {
+		t.Fatal(err)
+	}
 
 	req, err := http.NewRequest("GET", "/api/scaling/configs", nil)
 	if err != nil {
@@ -122,7 +123,7 @@ func TestHandleScalingConfigsGET(t *testing.T) {
 	}
 
 	rr := httptest.NewRecorder()
-	handler := http.HandlerFunc(server.handleScalingConfigs)
+	handler := server.routes()
 	handler.ServeHTTP(rr, req)
 
 	if status := rr.Code; status != http.StatusOK {
@@ -140,8 +141,7 @@ func TestHandleScalingConfigsGET(t *testing.T) {
 }
 
 func TestHandleScalingConfigActionsGETAndDELETE(t *testing.T) {
-	os.Setenv("POD_NAMESPACE", "costdeck")
-	defer os.Unsetenv("POD_NAMESPACE")
+	t.Setenv("POD_NAMESPACE", "costdeck")
 
 	server := buildMockServer()
 
@@ -151,12 +151,14 @@ func TestHandleScalingConfigActionsGETAndDELETE(t *testing.T) {
 			Namespace: "costdeck",
 		},
 	}
-	server.Client.Create(context.Background(), config)
+	if err := server.Client.Create(context.Background(), config); err != nil {
+		t.Fatal(err)
+	}
 
 	// GET
 	reqGet, _ := http.NewRequest("GET", "/api/scaling/configs/test-config-action", nil)
 	rrGet := httptest.NewRecorder()
-	handler := http.HandlerFunc(server.handleScalingConfigActions)
+	handler := server.routes()
 	handler.ServeHTTP(rrGet, reqGet)
 
 	if status := rrGet.Code; status != http.StatusOK {
@@ -199,7 +201,7 @@ func postManual(t *testing.T, server *Server, name, body string) *httptest.Respo
 		t.Fatal(err)
 	}
 	rr := httptest.NewRecorder()
-	http.HandlerFunc(server.handleScalingGroupActions).ServeHTTP(rr, req)
+	server.routes().ServeHTTP(rr, req)
 	return rr
 }
 
@@ -216,8 +218,7 @@ func fetchGroup(t *testing.T, server *Server, name string) *finopsv1.ScalingGrou
 // A null "active" is the only way back to schedule-driven behaviour, so it must clear
 // spec.active rather than being treated as "no change" or as false.
 func TestHandleScalingGroupManualNullClearsOverride(t *testing.T) {
-	os.Setenv("POD_NAMESPACE", "costdeck")
-	defer os.Unsetenv("POD_NAMESPACE")
+	t.Setenv("POD_NAMESPACE", "costdeck")
 
 	server := buildMockServer()
 	seedGroup(t, server, "pinned-group")
@@ -239,8 +240,7 @@ func TestHandleScalingGroupManualNullClearsOverride(t *testing.T) {
 }
 
 func TestHandleScalingGroupManualFalsePinsDown(t *testing.T) {
-	os.Setenv("POD_NAMESPACE", "costdeck")
-	defer os.Unsetenv("POD_NAMESPACE")
+	t.Setenv("POD_NAMESPACE", "costdeck")
 
 	server := buildMockServer()
 	seedGroup(t, server, "down-group")
@@ -256,8 +256,7 @@ func TestHandleScalingGroupManualFalsePinsDown(t *testing.T) {
 }
 
 func TestHandleScalingGroupManualActiveUntil(t *testing.T) {
-	os.Setenv("POD_NAMESPACE", "costdeck")
-	defer os.Unsetenv("POD_NAMESPACE")
+	t.Setenv("POD_NAMESPACE", "costdeck")
 
 	server := buildMockServer()
 	seedGroup(t, server, "temp-group")
@@ -283,5 +282,100 @@ func TestHandleScalingGroupManualActiveUntil(t *testing.T) {
 	}
 	if rr := postManual(t, server, "temp-group", string(stale)); rr.Code != http.StatusBadRequest {
 		t.Errorf("POST /manual with a past deadline returned %d, want %d", rr.Code, http.StatusBadRequest)
+	}
+}
+
+func TestHandleScalingGroupManualUntilNextTransition(t *testing.T) {
+	t.Setenv("POD_NAMESPACE", "costdeck")
+	server := buildMockServer()
+	seedGroup(t, server, "night-group")
+
+	before := time.Now()
+	if rr := postManual(t, server, "night-group", `{"active": true, "until": "nextTransition"}`); rr.Code != http.StatusOK {
+		t.Fatalf("POST /manual returned %d: %s", rr.Code, rr.Body.String())
+	}
+	got := fetchGroup(t, server, "night-group")
+	if got.Spec.ActiveUntil == nil {
+		t.Fatal("until=nextTransition must set spec.activeUntil")
+	}
+	// The seeded schedule is Mon-Fri 09:00-18:00 UTC, so the next change is at most a
+	// weekend away and always on a minute boundary.
+	want := (&scaling.Engine{}).NextScheduleChange(before, got.Spec.Schedules)
+	if want == nil || !got.Spec.ActiveUntil.Time.Equal(*want) {
+		t.Errorf("activeUntil = %v, want the next schedule change %v", got.Spec.ActiveUntil, want)
+	}
+}
+
+func TestHandleScalingGroupManualDurationAndValidation(t *testing.T) {
+	t.Setenv("POD_NAMESPACE", "costdeck")
+	server := buildMockServer()
+	seedGroup(t, server, "dur-group")
+
+	if rr := postManual(t, server, "dur-group", `{"active": false, "until": "2h"}`); rr.Code != http.StatusOK {
+		t.Fatalf("POST /manual returned %d: %s", rr.Code, rr.Body.String())
+	}
+	got := fetchGroup(t, server, "dur-group")
+	if got.Spec.ActiveUntil == nil || time.Until(got.Spec.ActiveUntil.Time) < 119*time.Minute {
+		t.Errorf("activeUntil = %v, want about two hours from now", got.Spec.ActiveUntil)
+	}
+
+	for _, body := range []string{`{"active": true, "until": "soon"}`, `{"active": true, "until": "-1h"}`} {
+		if rr := postManual(t, server, "dur-group", body); rr.Code != http.StatusBadRequest {
+			t.Errorf("POST /manual %s returned %d, want 400", body, rr.Code)
+		}
+	}
+}
+
+func TestHandleScalingGroupManualNullClearsLegacyAnnotation(t *testing.T) {
+	t.Setenv("POD_NAMESPACE", "costdeck")
+	server := buildMockServer()
+	seedGroup(t, server, "legacy-group")
+	group := fetchGroup(t, server, "legacy-group")
+	group.Annotations = map[string]string{scaling.LegacyOverrideAnnotation: "ScaledUp"}
+	if err := server.Client.Update(context.Background(), group); err != nil {
+		t.Fatal(err)
+	}
+
+	if rr := postManual(t, server, "legacy-group", `{"active": null}`); rr.Code != http.StatusOK {
+		t.Fatalf("POST /manual returned %d", rr.Code)
+	}
+	if _, ok := fetchGroup(t, server, "legacy-group").Annotations[scaling.LegacyOverrideAnnotation]; ok {
+		t.Error("following the schedule must also drop the legacy override annotation")
+	}
+}
+
+func putSettings(t *testing.T, server *Server, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewBufferString(body))
+	rr := httptest.NewRecorder()
+	server.routes().ServeHTTP(rr, req)
+	return rr
+}
+
+func TestSettingsEntraValidationAndMasking(t *testing.T) {
+	t.Setenv("POD_NAMESPACE", "costdeck")
+	server := buildMockServer()
+
+	if rr := putSettings(t, server, `{"auth":{"entra":{"enabled":true}}}`); rr.Code != http.StatusBadRequest {
+		t.Errorf("enabling Entra without tenant/client = %d, want 400", rr.Code)
+	}
+	if rr := putSettings(t, server, `{"auth":{"entra":{"tenantId":"t","clientId":"c","groupRoleMapping":{"g1":"superuser"}}}}`); rr.Code != http.StatusBadRequest {
+		t.Errorf("unknown role in mapping = %d, want 400", rr.Code)
+	}
+
+	rr := putSettings(t, server, `{"auth":{"entra":{"enabled":true,"tenantId":"t","clientId":"c","clientSecret":"s","defaultRole":"reader","groupRoleMapping":{"g1":"owner"}}}}`)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("valid Entra settings = %d: %s", rr.Code, rr.Body.String())
+	}
+	if strings.Contains(rr.Body.String(), `"s"`) && strings.Contains(rr.Body.String(), "clientSecret") {
+		t.Error("the client secret must never be returned")
+	}
+	var resp SettingsResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	e := resp.Auth.Entra
+	if e == nil || !e.Enabled || !e.HasClientSecret || e.DefaultRole != "viewer" || e.GroupRoleMapping["g1"] != "operator" {
+		t.Errorf("stored Entra settings = %+v, want aliases normalised and the secret stored", e)
 	}
 }

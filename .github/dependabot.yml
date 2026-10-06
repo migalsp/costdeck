@@ -46,3 +46,34 @@ updates:
         applies-to: security-updates
         patterns:
           - "*"
+
+  # Workflows pin third-party actions by commit SHA, with the version in a comment that
+  # Dependabot keeps in step, and the Dockerfile pins base images by tag. Both stay on the
+  # same security-only policy: a PR appears only for an advisory.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 0
+    commit-message:
+      prefix: "ci(deps)"
+    groups:
+      actions-security:
+        applies-to: security-updates
+        patterns:
+          - "*"
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 0
+    commit-message:
+      prefix: "build(deps)"
+    groups:
+      docker-security:
+        applies-to: security-updates
+        patterns:
+          - "*"

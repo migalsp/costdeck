@@ -2,207 +2,120 @@ package api
 
 import (
 	"context"
-	"fmt"
+	"encoding/json"
 	"net/http"
-	"time"
+	"sync"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+
+	"github.com/migalsp/costdeck-operator/internal/ai"
+	"github.com/migalsp/costdeck-operator/internal/auth"
+	"github.com/migalsp/costdeck-operator/internal/config"
 )
 
-var (
-	mcpServer  *server.MCPServer
-	sseServer  *server.SSEServer
-	mcpHttpSrv *http.Server
-)
+// mcpInstructions tells MCP clients what the server is for.
+const mcpInstructions = `CostDeck exposes the FinOps view of one Kubernetes cluster: scaling groups and their schedules, namespace cost and waste estimates, right-sizing advice, and actions to scale groups and namespaces. Read tools are safe to call freely. Action tools change the cluster and require a token with the operator role.`
 
-func (s *Server) initMCPServer() {
-	if mcpServer != nil {
+// mcpHandler serves the Model Context Protocol over Streamable HTTP at /mcp on the API
+// port. It runs stateless, so any replica can answer any request, and it sits behind the
+// same authentication as the REST API: a browser session or an API token. Read-only tools
+// are offered to every caller; action tools only to operators and admins.
+func (s *Server) mcpHandler() http.Handler {
+	var once sync.Once
+	var streamable *server.StreamableHTTPServer
+	build := func() {
+		srv := server.NewMCPServer("costdeck", Version,
+			server.WithToolCapabilities(false),
+			server.WithInstructions(mcpInstructions),
+			server.WithToolFilter(func(ctx context.Context, tools []mcp.Tool) []mcp.Tool {
+				if mcpCanMutate(ctx) {
+					return tools
+				}
+				var out []mcp.Tool
+				for _, t := range tools {
+					if t.Annotations.ReadOnlyHint != nil && *t.Annotations.ReadOnlyHint {
+						out = append(out, t)
+					}
+				}
+				return out
+			}),
+		)
+		for _, t := range s.toolRegistry() {
+			s.registerMCPTool(srv, t)
+		}
+		streamable = server.NewStreamableHTTPServer(srv,
+			server.WithStateLess(true),
+			server.WithEndpointPath("/mcp"),
+			server.WithHTTPContextFunc(func(ctx context.Context, r *http.Request) context.Context {
+				return auth.WithIdentity(ctx, auth.FromContext(r.Context()))
+			}),
+		)
+	}
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cfg, err := config.Get(r.Context(), s.Client)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if m := cfg.Spec.Integrations.MCP; m == nil || !m.Enabled {
+			writeError(w, http.StatusNotFound, "the MCP server is disabled; enable it under Settings → MCP Server")
+			return
+		}
+		once.Do(build)
+		streamable.ServeHTTP(w, r)
+	})
+}
+
+// mcpCanMutate reports whether the caller may run action tools.
+func mcpCanMutate(ctx context.Context) bool {
+	id := auth.FromContext(ctx)
+	return id == nil || id.Role.Allows(auth.RoleOperator)
+}
+
+func (s *Server) registerMCPTool(srv *server.MCPServer, t ai.Tool) {
+	schema, err := json.Marshal(t.Parameters)
+	if err != nil {
 		return
 	}
+	tool := mcp.NewToolWithRawSchema(t.Name, t.Description, schema)
+	tool.Annotations = mcp.ToolAnnotation{
+		ReadOnlyHint:    new(!t.Mutating),
+		DestructiveHint: new(t.Mutating),
+		OpenWorldHint:   new(false),
+	}
 
-	mcpServer = server.NewMCPServer("costdeck-mcp", "1.0.0")
-
-	// Tool: get_namespace_status
-	toolGetNamespaceStatus := mcp.NewTool("get_namespace_status",
-		mcp.WithDescription("Get CPU/Memory usage, waste, insights, and current scaling phase for a namespace."),
-		mcp.WithString("namespace", mcp.Required(), mcp.Description("The target Kubernetes namespace.")),
-	)
-	mcpServer.AddTool(toolGetNamespaceStatus, s.mcpGetNamespaceStatusHandler)
-
-	// Tool: scale_group
-	toolScaleGroup := mcp.NewTool("scale_group",
-		mcp.WithDescription("Force a ScalingGroup to scale up, down, or reset its state."),
-		mcp.WithString("group_name", mcp.Required(), mcp.Description("The name of the ScalingGroup.")),
-		mcp.WithString("action", mcp.Required(), mcp.Description("Action to perform: 'up', 'down', or 'reset'.")),
-	)
-	mcpServer.AddTool(toolScaleGroup, s.mcpScaleGroupHandler)
-
-	// Tool: scale_config
-	toolScaleConfig := mcp.NewTool("scale_config",
-		mcp.WithDescription("Force a ScalingConfig (namespace level) to scale up, down, or reset its state."),
-		mcp.WithString("namespace", mcp.Required(), mcp.Description("The target Kubernetes namespace containing the ScalingConfig.")),
-		mcp.WithString("action", mcp.Required(), mcp.Description("Action to perform: 'up', 'down', or 'reset'.")),
-	)
-	mcpServer.AddTool(toolScaleConfig, s.mcpScaleConfigHandler)
-
-	// Tool: optimize_namespace
-	toolOptimizeNamespace := mcp.NewTool("optimize_namespace",
-		mcp.WithDescription("Trigger a one-click optimization for a namespace to reduce resource waste based on AI recommendations."),
-		mcp.WithString("namespace", mcp.Required(), mcp.Description("The target Kubernetes namespace.")),
-	)
-	mcpServer.AddTool(toolOptimizeNamespace, s.mcpOptimizeNamespaceHandler)
-
-	sseServer = server.NewSSEServer(mcpServer)
-	logf.Log.Info("MCP Server initialized internally")
-}
-
-// StartMCPServerLoop watches the config and starts/stops the MCP HTTP server
-func (s *Server) StartMCPServerLoop(ctx context.Context) {
-	s.initMCPServer()
-
-	log := logf.Log.WithName("mcp-server")
-	var currentPort int
-	var currentEnabled bool
-
-	ticker := time.NewTicker(10 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			if mcpHttpSrv != nil {
-				mcpHttpSrv.Shutdown(context.Background())
-			}
-			return
-		case <-ticker.C:
-			config := s.getOrCreateDefaultConfig(ctx)
-			enabled := false
-			port := 8083
-
-			if config.Spec.Integrations.MCP != nil {
-				enabled = config.Spec.Integrations.MCP.Enabled
-				if config.Spec.Integrations.MCP.Port > 0 {
-					port = config.Spec.Integrations.MCP.Port
-				}
-			}
-
-			if enabled != currentEnabled || port != currentPort {
-				if mcpHttpSrv != nil {
-					log.Info("Shutting down existing MCP server due to config change")
-					mcpHttpSrv.Shutdown(context.Background())
-					mcpHttpSrv = nil
-				}
-
-				if enabled {
-					log.Info("Starting MCP Server", "port", port)
-					mux := http.NewServeMux()
-					mux.Handle("/sse", sseServer.SSEHandler())
-					mux.Handle("/messages", sseServer.MessageHandler())
-
-					mcpHttpSrv = &http.Server{
-						Addr:    fmt.Sprintf(":%d", port),
-						Handler: mux,
-					}
-
-					go func() {
-						if err := mcpHttpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-							log.Error(err, "MCP Server failed")
-						}
-					}()
-				}
-
-				currentEnabled = enabled
-				currentPort = port
-			}
+	srv.AddTool(tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := req.GetArguments()
+		if args == nil {
+			args = map[string]any{}
 		}
-	}
-}
-
-// ─── Tool Execution Handlers ────────────────────────────────────────────────
-
-func (s *Server) mcpGetNamespaceStatusHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	args, ok := request.Params.Arguments.(map[string]any)
-	if !ok {
-		return mcp.NewToolResultError("invalid arguments format"), nil
-	}
-	namespace, ok := args["namespace"].(string)
-	if !ok || namespace == "" {
-		return mcp.NewToolResultError("namespace is required"), nil
-	}
-
-	report, err := s.generateNamespaceReport(ctx, namespace)
-	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("failed to get namespace report: %v", err)), nil
-	}
-
-	res := fmt.Sprintf("Namespace: %s\nStatus: %s\nCost: $%.2f/month\nWaste: $%.2f/month\nPods: %d\nInsights: %s",
-		namespace, report.ScalingPhase, report.CurrentCost, report.CurrentWaste, report.TotalPods, report.AIInsight)
-
-	return mcp.NewToolResultText(res), nil
-}
-
-func (s *Server) mcpScaleGroupHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	args, ok := request.Params.Arguments.(map[string]any)
-	if !ok {
-		return mcp.NewToolResultError("invalid arguments format"), nil
-	}
-	groupName, _ := args["group_name"].(string)
-	action, _ := args["action"].(string)
-	if groupName == "" || action == "" {
-		return mcp.NewToolResultError("group_name and action are required"), nil
-	}
-
-	if action != "up" && action != "down" && action != "reset" {
-		return mcp.NewToolResultError("action must be 'up', 'down', or 'reset'"), nil
-	}
-
-	err := s.executeScalingGroupAction(ctx, groupName, action)
-	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Failed to scale group %s: %v", groupName, err)), nil
-	}
-
-	return mcp.NewToolResultText(fmt.Sprintf("Successfully initiated '%s' action on ScalingGroup '%s'.", action, groupName)), nil
-}
-
-func (s *Server) mcpScaleConfigHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	args, ok := request.Params.Arguments.(map[string]any)
-	if !ok {
-		return mcp.NewToolResultError("invalid arguments format"), nil
-	}
-	namespace, _ := args["namespace"].(string)
-	action, _ := args["action"].(string)
-	if namespace == "" || action == "" {
-		return mcp.NewToolResultError("namespace and action are required"), nil
-	}
-
-	if action != "up" && action != "down" && action != "reset" {
-		return mcp.NewToolResultError("action must be 'up', 'down', or 'reset'"), nil
-	}
-
-	err := s.executeScalingConfigAction(ctx, namespace, action)
-	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Failed to scale config in namespace %s: %v", namespace, err)), nil
-	}
-
-	return mcp.NewToolResultText(fmt.Sprintf("Successfully initiated '%s' action on ScalingConfig in namespace '%s'.", action, namespace)), nil
-}
-
-func (s *Server) mcpOptimizeNamespaceHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	args, ok := request.Params.Arguments.(map[string]any)
-	if !ok {
-		return mcp.NewToolResultError("invalid arguments format"), nil
-	}
-	namespace, _ := args["namespace"].(string)
-	if namespace == "" {
-		return mcp.NewToolResultError("namespace is required"), nil
-	}
-
-	err := s.triggerNamespaceOptimization(ctx, namespace)
-	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Failed to optimize namespace %s: %v", namespace, err)), nil
-	}
-
-	return mcp.NewToolResultText(fmt.Sprintf("Optimization triggered for namespace '%s'. Recommendations are being applied.", namespace)), nil
+		if t.Mutating {
+			// MCP clients ask their user before calling a destructive tool; CostDeck
+			// additionally requires the operator role.
+			if !mcpCanMutate(ctx) {
+				return mcp.NewToolResultError("this action needs a token with the operator role"), nil
+			}
+			out, err := s.executeMutatingTool(ctx, t.Name, args)
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			who := "anonymous"
+			if id := auth.FromContext(ctx); id != nil {
+				who = id.Subject
+			}
+			logf.FromContext(ctx).Info("Executed MCP action", "action", t.Name, "args", args, "user", who)
+			return mcp.NewToolResultText(out), nil
+		}
+		if err := ai.ValidateArgs(t.Parameters, args); err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		out, err := t.Run(ctx, args)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		return mcp.NewToolResultText(out), nil
+	})
 }

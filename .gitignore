@@ -36,6 +36,11 @@ bin/
 ui/dist/
 ui/node_modules/
 
+# Compiled dashboard, embedded via go:embed. `make ui` (or the container build) fills it;
+# only the .gitkeep that lets the package compile without it is tracked.
+internal/api/ui/*
+!internal/api/ui/.gitkeep
+
 # OS generated files
 .DS_Store
 .DS_Store?

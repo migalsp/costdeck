@@ -2,93 +2,114 @@ package api
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha1" //nolint:gosec // Webex signs webhooks with HMAC-SHA1; this is not our choice.
+	"encoding/hex"
 	"encoding/json"
+	"io"
 	"net/http"
-	"os"
 
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
-
+	"github.com/migalsp/costdeck-operator/internal/config"
 	"github.com/migalsp/costdeck-operator/internal/webex"
 )
 
+// webhookPayload is the envelope Webex POSTs for a "messages created" webhook.
+type webhookPayload struct {
+	Resource string `json:"resource"`
+	Event    string `json:"event"`
+	Data     struct {
+		ID     string `json:"id"`
+		RoomID string `json:"roomId"`
+	} `json:"data"`
+}
+
+// handleWebexWebhook receives Webex webhooks. It is exempt from session authentication;
+// instead every request must carry a valid X-Spark-Signature computed with the
+// WEBHOOK_SECRET from the Webex credentials Secret. Without that secret, webhook delivery
+// is disabled and the poller is used.
 func (s *Server) handleWebexWebhook(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	log := logf.FromContext(ctx).WithName("api-webex")
+	log := logf.FromContext(ctx).WithName("webex-webhook")
 
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "could not read body")
 		return
 	}
 
-	var payload webex.WebhookPayload
-	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-		log.Error(err, "Failed to decode Webex webhook payload")
-		http.Error(w, "Invalid payload", http.StatusBadRequest)
+	settings, err := webex.LoadSettings(ctx, s.Client)
+	if err != nil {
+		log.Error(err, "Could not load Webex settings")
+		writeError(w, http.StatusInternalServerError, "webex is misconfigured")
+		return
+	}
+	if settings == nil || settings.WebhookSecret == "" {
+		writeError(w, http.StatusForbidden, "webhook delivery is not enabled (set WEBHOOK_SECRET in the Webex credentials Secret)")
+		return
+	}
+	if !validWebexSignature(body, settings.WebhookSecret, r.Header.Get("X-Spark-Signature")) {
+		writeError(w, http.StatusUnauthorized, "invalid webhook signature")
 		return
 	}
 
-	// 1. Check if Webex integration is enabled
-	config := s.getOrCreateDefaultConfig(ctx)
-	if config.Spec.Integrations.Messenger == nil || config.Spec.Integrations.Messenger.Webex == nil || !config.Spec.Integrations.Messenger.Webex.Enabled {
-		log.Info("Webex integration is disabled, ignoring webhook")
-		w.WriteHeader(http.StatusOK)
+	var payload webhookPayload
+	if err := json.Unmarshal(body, &payload); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid payload")
 		return
 	}
-	wxCfg := config.Spec.Integrations.Messenger.Webex
-
-	// Make sure this is roughly matching the room we expect. (Optional security, we can comment it if we allow cross-room management, but it's safer)
-	if wxCfg.RoomID != "" && payload.Data.RoomID != "" && wxCfg.RoomID != payload.Data.RoomID {
-		log.Info("Received webhook from unexpected room", "expected", wxCfg.RoomID, "got", payload.Data.RoomID)
-		// We still return 200 OK because Webex expects it and doesn't need to know we ignored it.
-		w.WriteHeader(http.StatusOK)
+	// Webex only needs a fast 2xx; anything we ignore is still acknowledged.
+	if payload.Resource != "messages" || payload.Event != "created" {
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-
-	operatorNs := os.Getenv("POD_NAMESPACE")
-	if operatorNs == "" {
-		operatorNs = "costdeck"
-	}
-
-	// 2. Fetch the bot token
-	if wxCfg.SecretRef == "" {
-		log.Info("No Webex credentials secret configured")
-		w.WriteHeader(http.StatusOK)
+	if settings.RoomID != "" && payload.Data.RoomID != settings.RoomID {
+		log.Info("Ignoring Webex webhook from an unexpected room", "room", payload.Data.RoomID)
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 
-	var secret *corev1.Secret
-	var err error
-	if secret, err = s.K8sClient.CoreV1().Secrets(operatorNs).Get(ctx, wxCfg.SecretRef, metav1.GetOptions{}); err != nil {
-		// fallback to controller-runtime client
-		var crSecret corev1.Secret
-		if err2 := s.Client.Get(ctx, types.NamespacedName{Name: wxCfg.SecretRef, Namespace: operatorNs}, &crSecret); err2 != nil {
-			log.Error(err2, "Failed to get Webex credentials secret")
-			http.Error(w, "Failed to get credentials", http.StatusInternalServerError)
-			return
-		}
-		secret = &crSecret
-	}
+	go s.processWebexMessage(settings, payload.Data.ID)
+	w.WriteHeader(http.StatusAccepted)
+}
 
-	token := string(secret.Data["BOT_TOKEN"])
-	if token == "" {
-		log.Info("BOT_TOKEN is empty in secret")
-		w.WriteHeader(http.StatusOK)
+func (s *Server) processWebexMessage(settings *webex.Settings, messageID string) {
+	ctx := s.backgroundContext()
+	log := logf.FromContext(ctx).WithName("webex-webhook")
+	api := webex.NewClient(settings.Token)
+
+	me, err := api.Me(ctx)
+	if err != nil {
+		log.Error(err, "Could not identify the Webex bot")
 		return
 	}
+	msg, err := api.Message(ctx, messageID)
+	if err != nil {
+		log.Error(err, "Could not fetch Webex message", "messageId", messageID)
+		return
+	}
+	bot := &webex.Bot{API: api, K8s: s.Client, Namespace: config.OperatorNamespace(), ClusterName: settings.ClusterName, SpaceID: settings.RoomID, Me: me, Background: ctx}
+	if err := bot.ProcessMessage(ctx, msg); err != nil {
+		log.Error(err, "Could not process Webex message", "messageId", messageID)
+	}
+}
 
-	// 3. Process the webhook asynchronously to avoid blocking Webex
-	go func() {
-		bot := webex.NewBot(token, s.Client, config.Spec.ClusterName)
-		// Assuming we always respond from background context
-		if err := bot.ProcessWebhook(context.Background(), payload, operatorNs); err != nil {
-			log.Error(err, "Error processing webex webhook")
-		}
-	}()
+// validWebexSignature checks the HMAC-SHA1 Webex computes over the raw body.
+func validWebexSignature(body []byte, secret, signature string) bool {
+	if signature == "" {
+		return false
+	}
+	mac := hmac.New(sha1.New, []byte(secret))
+	mac.Write(body)
+	expected := hex.EncodeToString(mac.Sum(nil))
+	return hmac.Equal([]byte(expected), []byte(signature))
+}
 
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(`{"status":"ok"}`))
+// backgroundContext is the server's lifetime context, for work that outlives a request.
+func (s *Server) backgroundContext() context.Context {
+	if s.rootCtx != nil {
+		return s.rootCtx
+	}
+	return context.Background()
 }

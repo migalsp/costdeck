@@ -1,144 +1,68 @@
 import { useState, useEffect } from 'react'
-import { 
-  Plus, 
-  Clock, 
-  Power,
-  Play,
-  Square,
-  Settings2,
-  LayoutGrid,
-  Layers,
-  CalendarClock,
-  Cloud,
-  Database,
-  ChevronUp,
-  ChevronDown,
-  RotateCcw
-} from 'lucide-react'
-import ScalingConfigModal from '../components/ScalingConfigModal'
-import ScalingPipelineModal from '../components/ScalingPipelineModal'
-import { AWSLogo } from '../components/ProviderLogos'
+import { Plus, Cloud, Database, ChevronUp, ChevronDown, CalendarClock, MoonStar, Link2, Hand } from 'lucide-react'
+import { errorMessage } from '../lib/api'
+import { formatMoney } from '../lib/format'
+import type { ExternalTarget, ScalingConfig, ScalingGroup, ScalingSpec } from '../lib/types'
+import { usePolling } from '../lib/usePolling'
+import type { NamespaceFinOps } from '../lib/types'
+import WorkloadRulesDialog from '../components/WorkloadRulesDialog'
+import ScheduleCard from '../components/ScheduleCard'
+import ScheduleDetails, { type DetailsTab } from '../components/ScheduleDetails'
+import ScheduleWizard, { type WizardTab } from '../components/ScheduleWizard'
+import { ProviderLogo } from '../components/ProviderLogos'
+import { cloudLabel } from '../lib/cloud'
+import { useAuth } from '../lib/auth'
+import OverrideDialog, { type OverrideUntil } from '../components/OverrideDialog'
+import { Button, SectionTitle } from '../components/ui'
 
-interface ScalingSchedule {
-  days?: number[];
-  startDay?: number;
-  endDay?: number;
-  startTime: string;
-  endTime: string;
-  timezone?: string;
-}
+type Target = { type: 'group' | 'config'; name: string }
 
-interface ScalingGroup {
-  metadata: {
-    name: string;
-  };
-  spec: {
-    category: string;
-    namespaces: string[];
-    active?: boolean;
-    activeUntil?: string;
-    schedules?: ScalingSchedule[];
-    sequence?: string[];
-    exclusions?: string[];
-    featureFlags?: {
-      skipOnTimeout: boolean;
-      timeoutMinutes: number;
-    };
-  };
-  status?: {
-    phase: string;
-    lastAction: string;
-    managedCount: number;
-    namespacesReady?: number;
-    namespacesTotal?: number;
-  };
-}
+// Kubernetes' own system namespaces are left out of the "not scheduled yet" list.
+const isSystemNamespace = (ns: string) => ns.startsWith('kube-')
 
-interface ScalingConfig {
-  metadata: {
-    name: string;
-  };
-  spec: {
-    targetNamespace: string;
-    active?: boolean;
-    activeUntil?: string;
-    schedules?: ScalingSchedule[];
-    sequence?: string[];
-    exclusions?: string[];
-  };
-  status?: {
-    phase: string;
-    lastAction: string;
-  };
-}
+type WizardState =
+  | { kind: 'group'; existing?: ScalingGroup; initialNamespaces?: string[]; initialTab?: WizardTab }
+  | { kind: 'config'; existing: ScalingConfig }
 
 const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ onSelectNamespace }) => {
+  const { can } = useAuth();
   const [groups, setGroups] = useState<ScalingGroup[]>([]);
   const [policies, setPolicies] = useState<ScalingConfig[]>([]);
   const [namespaces, setNamespaces] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
-  
-  // Modal States
-  const [editingGroup, setEditingGroup] = useState<ScalingGroup | null>(null);
-  const [viewingPipelineGroupName, setViewingPipelineGroupName] = useState<string | null>(null);
-  const [isAddingGroup, setIsAddingGroup] = useState(false);
-  const [editingPolicy, setEditingPolicy] = useState<{ mode: 'schedule' | 'sequence' | 'group', name: string, spec: any } | null>(null);
-  const [newGroupName, setNewGroupName] = useState('');
-  const [newGroupCategory, setNewGroupCategory] = useState('Solution');
-  const [selectedNS, setSelectedNS] = useState<string[]>([]);
-  const [deletingGroupName, setDeletingGroupName] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [isScalingMap, setIsScalingMap] = useState<Record<string, boolean>>({});
-  const [skipOnTimeout, setSkipOnTimeout] = useState(false);
-  const [timeoutMinutes, setTimeoutMinutes] = useState(5);
 
-  // Section Collapse State
-  const [namespacesCollapsed, setNamespacesCollapsed] = useState(false);
-  const [discoveredCollapsed, setDiscoveredCollapsed] = useState(false);
+  const [wizard, setWizard] = useState<WizardState | null>(null);
+  // Workload rules (exclusions and workload order) of a single-namespace config.
+  const [ordering, setOrdering] = useState<{ name: string; spec: ScalingSpec } | null>(null);
+  const [details, setDetails] = useState<{ kind: 'group' | 'config'; name: string; tab: DetailsTab } | null>(null);
+  const [isScalingMap, setIsScalingMap] = useState<Record<string, boolean>>({});
+  const [overridePrompt, setOverridePrompt] = useState<Target & { active: boolean; hasSchedule: boolean } | null>(null);
+  const [cloudExpanded, setCloudExpanded] = useState(false);
 
   // Discovery State
-  const [discoveredResources, setDiscoveredResources] = useState<Record<string, any[]>>({});
+  const [discoveredResources, setDiscoveredResources] = useState<Record<string, ExternalTarget[]>>({});
   const [activeDiscoveryTab, setActiveDiscoveryTab] = useState<string>('');
+  // Fall back to the first tab when nothing (or a tab that has since emptied) is selected.
+  const discoveryTab = discoveredResources[activeDiscoveryTab] ? activeDiscoveryTab : Object.keys(discoveredResources)[0] ?? '';
 
   useEffect(() => {
     const fetchDiscovery = async () => {
       try {
-        const [auroraRes, ec2Res] = await Promise.all([
-          fetch('/api/discovery/aws/aurora'),
-          fetch('/api/discovery/aws/ec2')
-        ]);
-        
-        const aurora = await auroraRes.json() || [];
-        const ec2 = await ec2Res.json() || [];
-        
-        const resources: Record<string, any[]> = {};
-        if (aurora.length > 0) resources['Databases'] = aurora;
-        if (ec2.length > 0) resources['Compute'] = ec2;
-        
+        const res = await fetch('/api/discovery');
+        const data: { resources: ExternalTarget[] } = res.ok ? await res.json() : { resources: [] };
+        // One tab per cloud, in a stable order.
+        const resources: Record<string, ExternalTarget[]> = {};
+        for (const t of data.resources || []) (resources[cloudLabel(t.provider)] ||= []).push(t);
         setDiscoveredResources(resources);
-        
-        // Auto-select first available tab if none selected
-        if (!activeDiscoveryTab || !resources[activeDiscoveryTab]) {
-          const firstTab = Object.keys(resources)[0];
-          if (firstTab) setActiveDiscoveryTab(firstTab);
-        }
       } catch (err) {
         console.error("Failed to fetch discovered resources", err);
       }
     };
-
     fetchDiscovery();
   }, []);
 
-  useEffect(() => {
-    fetchData();
-    // Auto-refresh every 10 seconds for real-time status (silent)
-    const interval = setInterval(() => fetchData(true), 10000);
-    return () => clearInterval(interval);
-  }, []);
-
-  const fetchData = async (silent = false) => {
-    if (!silent) setLoading(true);
+  const fetchData = async () => {
     try {
       const [groupsRes, policiesRes, nsRes] = await Promise.all([
         fetch('/api/scaling/groups'),
@@ -148,483 +72,127 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
       const groupsData = await groupsRes.json();
       const policiesData = await policiesRes.json();
       const nsData = await nsRes.json();
-      
-      setGroups((groupsData || []).sort((a: any, b: any) => a.metadata.name.localeCompare(b.metadata.name)));
-      setPolicies((policiesData || []).sort((a: any, b: any) => a.spec.targetNamespace.localeCompare(b.spec.targetNamespace)));
-      // deduplicate and sort namespaces
-      const uniqueNamespaces = Array.from(new Set(nsData.map((n: any) => n.spec.targetNamespace || n.metadata.name))) as string[];
+      setGroups(((groupsData || []) as ScalingGroup[]).sort((a, b) => a.metadata.name.localeCompare(b.metadata.name)));
+      setPolicies(((policiesData || []) as ScalingConfig[]).sort((a, b) => a.spec.targetNamespace.localeCompare(b.spec.targetNamespace)));
+      const uniqueNamespaces = Array.from(new Set((nsData as NamespaceFinOps[]).map(n => n.spec.targetNamespace || n.metadata.name)));
       uniqueNamespaces.sort((a, b) => a.localeCompare(b));
       setNamespaces(uniqueNamespaces);
     } catch (err) {
       console.error("Failed to fetch scaling data", err);
     } finally {
-      if (!silent) setLoading(false);
+      setLoading(false);
     }
   };
 
-  const handleUpsertGroup = async () => {
-    if (!newGroupName) return;
-    
-    // Auto-sanitize for the user: lowercase, spaces/invalid replaced by hyphens, multiple hyphens collapsed
-    const sanitizedGroupUrlName = newGroupName
-      .toLowerCase()
-      .trim()
-      .replace(/[^a-z0-9-]/g, '-')
-      .replace(/-+/g, '-')
-      .replace(/^-|-$/g, '');
-    
-    // Validate Kubernetes naming convention (RFC 1123) after sanitization
-    const k8sNameRegex = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/;
-    if (!k8sNameRegex.test(sanitizedGroupUrlName)) {
-      setError('Invalid group name format. Must start and end with an alphanumeric character.');
-      return;
-    }
+  // Status refreshes every 10 seconds; the first load clears the skeleton.
+  usePolling(() => fetchData(), 10000);
 
-    if (selectedNS.length === 0) {
-      setError('Please select at least one namespace for the group.');
-      return;
-    }
-
-    setError(null);
-    try {
-      const method = editingGroup ? 'PUT' : 'POST';
-      const endpoint = editingGroup ? `/api/scaling/groups/${editingGroup.metadata.name}` : '/api/scaling/groups';
-      
-      const res = await fetch(endpoint, {
-        method: method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          metadata: { name: sanitizedGroupUrlName },
-          spec: {
-            ...(editingGroup?.spec || {}),
-            category: newGroupCategory,
-            namespaces: selectedNS,
-            // A new group must start schedule-driven. Pinning active:true here used to
-            // make every freshly created group permanently immune to its own schedule.
-            ...(editingGroup?.spec.active !== undefined ? { active: editingGroup.spec.active } : {}),
-            featureFlags: {
-              skipOnTimeout,
-              timeoutMinutes: skipOnTimeout ? timeoutMinutes : 5,
-            }
-          }
-        })
-      });
-      if (!res.ok) {
-        const errText = await res.text();
-        setError(`Failed to save group: ${errText}`);
-        return;
-      }
-      setIsAddingGroup(false);
-      setEditingGroup(null);
-      setNewGroupName('');
-      setSelectedNS([]);
-      fetchData();
-    } catch (err: any) {
-      console.error("Failed to save group", err);
-      setError(`Failed to save group: ${err.message}`);
-    }
-  };
-
-  // `active` of null clears spec.active so the schedule takes control again. Without it
-  // a single Scale Up / Scale Down click pins the target forever.
-  const handleManualScale = async (type: 'group' | 'config', name: string, active: boolean | null) => {
+  // `active` of null clears spec.active so the schedule takes control again. `until`
+  // bounds the override so a single click never pins the target forever.
+  const handleManualScale = async (type: 'group' | 'config', name: string, active: boolean | null, until?: OverrideUntil) => {
     const key = `${type}-${name}`;
     if (isScalingMap[key]) return;
-    
     setIsScalingMap(prev => ({ ...prev, [key]: true }));
-
-    // Optimistic UI update
-    if (type === 'group') {
-      setGroups(prev => prev.map((g: any) => g.metadata.name === name ? {
-        ...g,
-        status: { ...(g.status || {}), phase: 'Scaling...', lastAction: g.status?.lastAction || '' }
-      } : g));
-    } else {
-      setPolicies(prev => prev.map(p => p.metadata.name === name ? {
-        ...p,
-        status: { ...(p.status || {}), phase: 'Scaling...', lastAction: p.status?.lastAction || '' }
-      } : p));
-    }
-
     const endpoint = type === 'group' ? `/api/scaling/groups/${name}/manual` : `/api/scaling/configs/${name}/manual`;
     try {
-      await fetch(endpoint, {
+      const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ active })
+        body: JSON.stringify({ active, ...(active !== null && until && until !== 'forever' ? { until } : {}) })
       });
-      fetchData(true);
-      
+      if (!res.ok) throw new Error(await res.text());
+      fetchData();
+      // Poll quickly for a while so the transition shows up without waiting for the
+      // regular refresh.
       let attempts = 0;
       const fastPoll = setInterval(() => {
-        fetchData(true);
-        attempts++;
-        if (attempts > 10) {
+        fetchData();
+        if (++attempts > 10) {
           clearInterval(fastPoll);
           setIsScalingMap(prev => ({ ...prev, [key]: false }));
         }
       }, 2000);
-      
-      setTimeout(() => setIsScalingMap(prev => ({ ...prev, [key]: false })), 22000);
-
     } catch (err) {
-      console.error("Failed to trigger scaling", err);
+      setError(`Could not change ${name}: ${errorMessage(err)}`);
       setIsScalingMap(prev => ({ ...prev, [key]: false }));
-      fetchData(true); // Revert optimistic UI on failure
     }
   };
 
-  const handleUpdateConfig = async (updatedSpec: any) => {
-    if (!editingPolicy) return;
-    // Determine endpoint: check if name matches a group
-    const isGroup = groups.some(g => g.metadata.name === editingPolicy.name);
-    const endpoint = isGroup ? `/api/scaling/groups/${editingPolicy.name}` : `/api/scaling/configs/${editingPolicy.name}`;
-    
-    // When saving schedule, clear manual override so schedule takes control.
-    // activeUntil has to go with it: a deadline without an override is meaningless and
-    // the API rejects it.
-    if (editingPolicy.mode === 'schedule') {
-      delete updatedSpec.active;
-      delete updatedSpec.activeUntil;
-    }
-    
+  const handleSaveOrder = async (spec: ScalingSpec) => {
+    if (!ordering) return;
+    const isGroup = groups.some(g => g.metadata.name === ordering.name);
+    const endpoint = isGroup ? `/api/scaling/groups/${ordering.name}` : `/api/scaling/configs/${ordering.name}`;
     try {
       const res = await fetch(endpoint, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          metadata: { name: editingPolicy.name },
-          spec: updatedSpec 
-        })
+        body: JSON.stringify({ metadata: { name: ordering.name }, spec })
       });
-
-      if (!res.ok) {
-        const text = await res.text();
-        throw new Error(text || res.statusText);
-      }
-
-      setEditingPolicy(null);
+      if (!res.ok) throw new Error((await res.text()) || res.statusText);
+      setOrdering(null);
       setError(null);
-      fetchData(true);
-    } catch (err: any) {
-      console.error("Failed to update config", err);
-      setError(`Failed to update configuration: ${err.message}`);
-    }
-  };
-
-  const handleDeleteGroup = (e: React.MouseEvent, name: string) => {
-    e.stopPropagation();
-    e.preventDefault();
-    setDeletingGroupName(name);
-  };
-
-  const confirmDeleteGroup = async () => {
-    if (!deletingGroupName) return;
-    try {
-      await fetch(`/api/scaling/groups/${deletingGroupName}`, { method: 'DELETE' });
       fetchData();
     } catch (err) {
-      console.error("Failed to delete group", err);
-    } finally {
-      setDeletingGroupName(null);
+      setError(`Could not save the start order: ${errorMessage(err)}`);
     }
   };
 
-  const handleCreateIndividualConfig = async (ns: string) => {
-    const groupName = getGroupForNamespace(ns);
-    if (groupName && !window.confirm(`Namespace "${ns}" is currently managed by the group "${groupName}". Individual configuration will be overridden by the group. Do you still want to create it?`)) {
-      return;
-    }
-    
+  const deleteGroup = async (name: string) => {
     try {
-      await fetch('/api/scaling/configs', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          // No `active` override: the config starts schedule-driven, and with no schedule
-          // yet defined the operator keeps the namespace up by default.
-          metadata: { name: `config-${ns}` },
-          spec: { targetNamespace: ns }
-        })
-      });
+      const res = await fetch(`/api/scaling/groups/${name}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error(await res.text());
+      setDetails(null);
       fetchData();
     } catch (err) {
-      console.error("Failed to create config", err);
+      setError(`Could not delete ${name}: ${errorMessage(err)}`);
     }
   };
 
-  const toggleNS = (ns: string) => {
-    setSelectedNS(prev => 
-      prev.includes(ns) ? prev.filter(n => n !== ns) : [...prev, ns]
-    );
-  };
+  const grouped = new Set(groups.flatMap(g => g.spec.namespaces));
+  // A config whose namespace belongs to a group only fine-tunes workloads for that group;
+  // a config on its own is a single-namespace schedule.
+  const standaloneConfigs = policies.filter(p => !grouped.has(p.spec.targetNamespace));
+  const scheduled = new Set([...grouped, ...standaloneConfigs.map(p => p.spec.targetNamespace)]);
+  const unscheduled = namespaces.filter(ns => !scheduled.has(ns) && !isSystemNamespace(ns));
+  const categories = Array.from(new Set(groups.map(g => g.spec.category || 'General'))).sort();
 
-  // A manual override (spec.active) fully disables the schedule until it is cleared.
-  // That state has to be visible, and it has to be reversible from the UI.
-  const OverrideBanner = ({ spec, onClear, busy }: {
-    spec: { active?: boolean; activeUntil?: string };
-    onClear: () => void;
-    busy?: boolean;
-  }) => {
-    if (spec.active === undefined || spec.active === null) return null;
-    const expiry = spec.activeUntil ? new Date(spec.activeUntil) : null;
-    const expired = expiry !== null && expiry.getTime() <= Date.now();
-    return (
-      <div className={`mb-3 flex items-center gap-2 px-3 py-2 rounded-xl border text-[11px] font-bold ${
-        expired ? 'bg-slate-50 border-slate-200 text-slate-500' : 'bg-amber-50 border-amber-200 text-amber-700'
-      }`}>
-        <Power size={13} className="shrink-0" />
-        <span className="flex-1 leading-snug">
-          {expired ? (
-            <>Override expired — schedule is back in control</>
-          ) : (
-            <>
-              Manual override: forced {spec.active ? 'UP' : 'DOWN'} — schedule ignored
-              {expiry && <> until {expiry.toLocaleString()}</>}
-            </>
-          )}
-        </span>
-        <button
-          onClick={(e) => { e.stopPropagation(); onClear(); }}
-          disabled={busy}
-          className="shrink-0 flex items-center gap-1 px-2 py-1 rounded-lg bg-white/70 hover:bg-white border border-current/20 uppercase tracking-wider transition-colors disabled:opacity-50"
-          title="Clear the override and follow the schedule again"
-        >
-          <RotateCcw size={11} /> Follow schedule
-        </button>
-      </div>
-    );
-  };
+  const totalHourly = [...groups.map(g => g.status), ...standaloneConfigs.map(p => p.status)]
+    .reduce((sum, st) => sum + (parseFloat(st?.estimatedHourlySavings || '') || 0), 0);
+  const currency = [...groups, ...policies].find(o => o.status?.currency)?.status?.currency || 'USD';
 
-  const GroupOfNamespaces = ({ group }: { group: ScalingGroup }) => {
-    const phase = getPhaseColor(group.status?.phase);
-    return (
-    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-all p-6">
-      {/* Header Row */}
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-3">
-          <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
-            group.spec.category === 'Solution' ? 'bg-indigo-50 text-indigo-500' : 'bg-amber-50 text-amber-500'
-          }`}>
-            {group.spec.category === 'Solution' ? <LayoutGrid size={20} /> : <Layers size={20} />}
-          </div>
-          <div>
-            <h3 className="font-bold text-slate-800 text-base">{group.metadata.name}</h3>
-            <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">
-              {group.spec.category} Group
-            </span>
-          </div>
-        </div>
-        <div className="flex items-center gap-1">
-          <button onClick={(e) => { e.stopPropagation(); handleManualScale('group', group.metadata.name, true); }}
-            disabled={isScalingMap[`group-${group.metadata.name}`]}
-            className={`p-1.5 rounded-lg transition-colors ${group.status?.phase === 'ScaledUp' ? 'bg-emerald-50 text-emerald-500' : 'bg-slate-50 text-slate-400 hover:bg-slate-100'} ${isScalingMap[`group-${group.metadata.name}`] ? 'opacity-50 cursor-not-allowed' : ''}`}
-            title="Scale Up">
-              {isScalingMap[`group-${group.metadata.name}`] && group.status?.phase === 'Scaling...' ? (
-                <div className="w-3.5 h-3.5 border-2 border-slate-300 border-t-emerald-500 rounded-full animate-spin"></div>
-              ) : (
-                <Play size={14} fill={group.status?.phase === 'ScaledUp' ? "currentColor" : "none"} />
-              )}
-          </button>
-          <button onClick={(e) => { e.stopPropagation(); handleManualScale('group', group.metadata.name, false); }}
-            disabled={isScalingMap[`group-${group.metadata.name}`]}
-            className={`p-1.5 rounded-lg transition-colors ${group.status?.phase === 'ScaledDown' ? 'bg-rose-50 text-rose-500' : 'bg-slate-50 text-slate-400 hover:bg-slate-100'} ${isScalingMap[`group-${group.metadata.name}`] ? 'opacity-50 cursor-not-allowed' : ''}`}
-            title="Scale Down">
-              {isScalingMap[`group-${group.metadata.name}`] && group.status?.phase === 'Scaling...' ? (
-                <div className="w-3.5 h-3.5 border-2 border-slate-300 border-t-rose-500 rounded-full animate-spin"></div>
-              ) : (
-                <Square size={14} fill={group.status?.phase === 'ScaledDown' ? "currentColor" : "none"} />
-              )}
-          </button>
-          <button onClick={(e) => { e.stopPropagation(); setEditingPolicy({ mode: 'schedule', name: group.metadata.name, spec: { ...group.spec } }); }}
-          className="p-1.5 text-slate-400 hover:bg-indigo-50 hover:text-indigo-500 rounded-lg transition-colors" title="Availability Schedule">
-          <CalendarClock size={14} /></button>
-        <button onClick={(e) => { e.stopPropagation(); setEditingPolicy({ mode: 'sequence', name: group.metadata.name, spec: { ...group.spec } }); }}
-          className="p-1.5 text-slate-400 hover:bg-indigo-50 hover:text-indigo-500 rounded-lg transition-colors" title="Namespace Scaling Sequence">
-          <Settings2 size={14} /></button>
-        <button onClick={(e) => { e.stopPropagation(); setEditingGroup(group); setNewGroupName(group.metadata.name); setNewGroupCategory(group.spec.category); setSelectedNS(group.spec.namespaces); setSkipOnTimeout(group.spec.featureFlags?.skipOnTimeout || false); setTimeoutMinutes(group.spec.featureFlags?.timeoutMinutes || 5); setIsAddingGroup(true); }}
-          className="p-1.5 text-slate-400 hover:bg-indigo-50 hover:text-indigo-500 rounded-lg transition-colors" title="Manage Group Namespaces">
-          <Layers size={14} /></button>
-          <button onClick={(e) => handleDeleteGroup(e, group.metadata.name)}
-            className="p-1.5 text-slate-300 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-colors" title="Delete Group">
-            <Plus size={14} className="rotate-45" /></button>
-        </div>
-      </div>
+  const prompt = (type: 'group' | 'config', name: string, active: boolean, spec: ScalingSpec) =>
+    setOverridePrompt({ type, name, active, hasSchedule: (spec.schedules?.length || 0) > 0 || spec.activation === 'OnDemand' });
 
-      <OverrideBanner
-        spec={group.spec}
-        busy={isScalingMap[`group-${group.metadata.name}`]}
-        onClear={() => handleManualScale('group', group.metadata.name, null)}
-      />
+  const groupCard = (group: ScalingGroup) => (
+    <ScheduleCard
+      key={group.metadata.name}
+      name={group.metadata.name}
+      namespaces={group.spec.namespaces}
+      spec={group.spec}
+      generation={group.metadata.generation}
+      status={group.status}
+      busy={isScalingMap[`group-${group.metadata.name}`]}
+      canOperate={can('operator')}
+      canAdmin={can('admin')}
+      onOpen={tab => setDetails({ kind: 'group', name: group.metadata.name, tab })}
+      onStart={() => prompt('group', group.metadata.name, true, group.spec)}
+      onStop={() => prompt('group', group.metadata.name, false, group.spec)}
+      onResume={() => handleManualScale('group', group.metadata.name, null)}
+      onEdit={() => setWizard({ kind: 'group', existing: group })}
+    />
+  );
 
-      {/* Namespaces */}
-      <div className="mb-3">
-        <div className="flex items-center justify-between text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2">
-          <span>Namespaces</span>
-          <span className="bg-slate-100 px-2 py-0.5 rounded-full text-slate-600">{group.spec.namespaces.length}</span>
-        </div>
-        <div className="flex flex-wrap gap-1.5">
-          {group.spec.namespaces.map(ns => (
-            <span key={ns} className="px-2.5 py-1 bg-slate-50 text-slate-600 rounded-lg text-[10px] font-medium border border-slate-200">{ns}</span>
-          ))}
-        </div>
-      </div>
-
-      {/* Progress Bar */}
-      <div 
-        className="mb-3 px-3 py-2 -mx-3 rounded-xl hover:bg-slate-50 transition-colors cursor-pointer group/pb relative"
-        title="View Execution Pipeline & Logs"
-        onClick={() => setViewingPipelineGroupName(group.metadata.name)}
-      >
-        <div className="flex items-center justify-between text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">
-          <span className="group-hover/pb:text-indigo-500 transition-colors">Scaling Progress</span>
-          <span className="text-slate-500">{group.status?.namespacesReady || 0} / {group.status?.namespacesTotal || group.spec.namespaces.length || 0} NS</span>
-        </div>
-        <div className="h-1.5 w-full bg-slate-100 rounded-full overflow-hidden relative">
-          <div 
-            className="absolute top-0 left-0 h-full bg-indigo-500 rounded-full transition-all duration-500 ease-out"
-            style={{ 
-              width: `${Math.min(100, Math.max(0, ((group.status?.namespacesReady || 0) / (group.status?.namespacesTotal || group.spec.namespaces.length || 1)) * 100))}%` 
-            }}
-          />
-        </div>
-      </div>
-
-      {/* Footer */}
-      <div className="pt-3 border-t border-slate-100 flex items-center justify-between">
-        <div className="flex items-center gap-2 text-[11px] text-slate-400 font-medium">
-          <Clock size={12} />
-          <span>{group.status?.lastAction ? new Date(group.status.lastAction).toLocaleTimeString() : 'N/A'}</span>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <div className={`w-2 h-2 rounded-full ${phase.dot}`} />
-          <span className={`text-[11px] font-bold uppercase tracking-tight ${phase.text}`}>{group.status?.phase || 'Idle'}</span>
-        </div>
-      </div>
-    </div>
-    );
-  };
-
-  const getGroupForNamespace = (ns: string): string | null => {
-    const group = groups.find(g => g.spec.namespaces.includes(ns));
-    return group ? group.metadata.name : null;
-  };
-
-  const getPhaseColor = (phase?: string) => {
-    switch (phase) {
-      case 'ScaledUp': return { dot: 'bg-emerald-500', text: 'text-emerald-600' };
-      case 'ScalingUp': return { dot: 'bg-emerald-400 animate-pulse', text: 'text-emerald-500' };
-      case 'ScaledDown': return { dot: 'bg-slate-300', text: 'text-slate-500' };
-      case 'ScalingDown': return { dot: 'bg-amber-400 animate-pulse', text: 'text-amber-500' };
-      case 'PartlyScaled': return { dot: 'bg-amber-500', text: 'text-amber-600' };
-      case 'OverriddenByGroup': return { dot: 'bg-indigo-300', text: 'text-indigo-500' };
-      case 'Scaling...': return { dot: 'bg-blue-400 animate-pulse', text: 'text-blue-500' };
-      default: return { dot: 'bg-slate-300', text: 'text-slate-400' };
-    }
-  };
-
-  const ConfigCard = ({ config }: { config: ScalingConfig }) => {
-    const managedBy = getGroupForNamespace(config.spec.targetNamespace);
-    const phase = getPhaseColor(config.status?.phase);
-    const overridden = config.spec.active !== undefined && config.spec.active !== null;
-
-    // Convert CamelCase to spaced strings e.g., ScaledUp -> Scaled Up
-    const parsePhase = (phaseStr?: string) => {
-      if (!phaseStr) return 'Idle';
-      if (phaseStr === 'OverriddenByGroup') return 'Overridden';
-      return phaseStr.replace(/([A-Z])/g, ' $1').trim();
-    };
-
-    return (
-    <div 
-      className="bg-white rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-all cursor-pointer min-h-[88px] flex items-center px-4 py-3 gap-3"
-      onClick={() => onSelectNamespace(config.spec.targetNamespace)}
-    >
-      <div className="w-10 h-10 rounded-xl bg-slate-50 text-slate-500 flex items-center justify-center shrink-0">
-        <Layers size={20} />
-      </div>
-      <div className="flex-1 min-w-0 flex flex-col justify-center gap-1.5">
-        <h4 className="font-bold text-slate-800 text-[15px] leading-tight break-words" title={config.spec.targetNamespace}>
-          {config.spec.targetNamespace}
-        </h4>
-        <div className="flex items-center gap-1.5 flex-wrap">
-          <div className={`w-2 h-2 rounded-full shrink-0 ${phase.dot}`} />
-          <span className={`text-[12px] font-bold tracking-wide ${phase.text}`}>
-            {parsePhase(config.status?.phase)}
-          </span>
-          {overridden && (
-            <span
-              className="px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 text-[10px] font-black uppercase tracking-wider"
-              title={`Manual override: forced ${config.spec.active ? 'up' : 'down'}, schedule ignored${config.spec.activeUntil ? ` until ${new Date(config.spec.activeUntil).toLocaleString()}` : ''}`}
-            >
-              Override
-            </span>
-          )}
-        </div>
-        <span className={`text-[12px] font-bold leading-none block break-words ${managedBy ? 'text-slate-800' : 'text-slate-400'}`}>
-          {managedBy ? `Managed by: ${managedBy}` : 'Self-managed'}
-        </span>
-      </div>
-      
-      <div className="flex flex-col gap-1 items-end shrink-0" onClick={(e) => e.stopPropagation()}>
-        <div className="flex gap-1">
-          <button onClick={() => handleManualScale('config', config.metadata.name, true)}
-            disabled={isScalingMap[`config-${config.metadata.name}`]}
-            className={`p-1.5 rounded-lg transition-colors ${config.status?.phase === 'ScaledUp' ? 'bg-emerald-50 text-emerald-500' : 'bg-slate-50 text-slate-400 hover:bg-slate-100'} ${isScalingMap[`config-${config.metadata.name}`] ? 'opacity-50 cursor-not-allowed' : ''}`}
-            title="Scale Up">
-              {isScalingMap[`config-${config.metadata.name}`] && config.status?.phase === 'Scaling...' ? (
-                <div className="w-3.5 h-3.5 border-2 border-slate-300 border-t-emerald-500 rounded-full animate-spin"></div>
-              ) : (
-                <Play size={14} fill={config.status?.phase === 'ScaledUp' ? "currentColor" : "none"} />
-              )}
-          </button>
-          <button onClick={() => handleManualScale('config', config.metadata.name, false)}
-            disabled={isScalingMap[`config-${config.metadata.name}`]}
-            className={`p-1.5 rounded-lg transition-colors ${config.status?.phase === 'ScaledDown' ? 'bg-rose-50 text-rose-500' : 'bg-slate-50 text-slate-400 hover:bg-slate-100'} ${isScalingMap[`config-${config.metadata.name}`] ? 'opacity-50 cursor-not-allowed' : ''}`}
-            title="Scale Down">
-              {isScalingMap[`config-${config.metadata.name}`] && config.status?.phase === 'Scaling...' ? (
-                <div className="w-3.5 h-3.5 border-2 border-slate-300 border-t-rose-500 rounded-full animate-spin"></div>
-              ) : (
-                <Square size={14} fill={config.status?.phase === 'ScaledDown' ? "currentColor" : "none"} />
-              )}
-          </button>
-        </div>
-        <div className="flex gap-1">
-          {overridden && (
-            <button onClick={() => handleManualScale('config', config.metadata.name, null)}
-              disabled={isScalingMap[`config-${config.metadata.name}`]}
-              className="p-1.5 rounded-lg bg-amber-50 text-amber-600 hover:bg-amber-100 transition-colors disabled:opacity-50"
-              title="Clear the manual override and follow the schedule again">
-              <RotateCcw size={14} /></button>
-          )}
-          <button onClick={() => setEditingPolicy({ mode: 'schedule', name: config.metadata.name, spec: config.spec })}
-            className="p-1.5 text-slate-400 hover:bg-indigo-50 hover:text-indigo-500 rounded-lg transition-colors" title="Schedule">
-            <CalendarClock size={14} /></button>
-          <button onClick={() => setEditingPolicy({ mode: 'sequence', name: config.metadata.name, spec: config.spec })}
-            className="p-1.5 text-slate-400 hover:bg-slate-100 rounded-lg transition-colors" title="Sequence & Exclusions">
-            <Settings2 size={14} /></button>
-        </div>
-      </div>
-    </div>
-    );
-  };
-
-  const ResourceCard = ({ item }: { item: any }) => (
-    <div className="bg-white border border-slate-200 rounded-2xl p-4 flex flex-col group hover:border-indigo-300 hover:shadow-md transition-all cursor-default relative overflow-hidden">
-      {item.executeAfter && (
-         <div className="absolute top-0 right-0 bg-indigo-100 text-indigo-700 text-[9px] font-black px-2 py-0.5 rounded-bl-lg uppercase">
-           Managed
-         </div>
-      )}
+  const ResourceCard = ({ item }: { item: ExternalTarget }) => (
+    <div className="bg-white border border-slate-200 rounded-xl p-4 flex flex-col group hover:border-brand-300 hover:shadow-md transition-all cursor-default relative overflow-hidden">
       <div className="flex items-center gap-3 min-w-0 mb-3 mt-1">
-        <AWSLogo className="grayscale group-hover:grayscale-0 transition-all" />
+        <ProviderLogo provider={item.provider} className="grayscale group-hover:grayscale-0 transition-all" />
         <div className="flex flex-col min-w-0">
           <span className="font-bold text-slate-700 text-sm whitespace-nowrap overflow-hidden text-ellipsis">{item.name || item.identifier}</span>
           <div className="flex items-center gap-2">
-            <span className="text-[11px] font-bold text-indigo-500 uppercase tracking-wider">{item.type}</span>
+            <span className="text-[11px] font-bold text-brand-500 uppercase tracking-wider">{item.type}</span>
             {item.status && (
               <span className={`flex items-center gap-1 text-[10px] font-bold uppercase ${item.status === 'available' || item.status === 'running' ? 'text-emerald-500' : item.status === 'stopped' ? 'text-rose-500' : 'text-amber-500'}`}>
-                <span className={`w-1.5 h-1.5 rounded-full ${item.status === 'available' || item.status === 'running' ? 'bg-emerald-500 animate-pulse' : item.status === 'stopped' ? 'bg-rose-500' : 'bg-amber-500 animate-pulse'}`}></span>
+                <span className={`w-1.5 h-1.5 rounded-full ${item.status === 'available' || item.status === 'running' ? 'bg-emerald-500' : item.status === 'stopped' ? 'bg-rose-500' : 'bg-amber-500'}`}></span>
                 {item.status}
               </span>
             )}
@@ -639,322 +207,215 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
 
   return (
     <div className="p-8 max-w-7xl mx-auto min-h-full">
-      <div className="flex justify-between items-center mb-8">
+      <div className="flex flex-wrap justify-between items-start gap-4 mb-8">
         <div>
-          <h1 className="text-3xl font-black text-slate-800 tracking-tight">Workload Scaling</h1>
-          <p className="text-slate-500 mt-1">Orchestrate infrastructure availability by schedule or on-demand.</p>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900 flex items-center gap-2">Scaling</h1>
+          <p className="mt-1 text-sm text-slate-500">Scale non-production namespaces to zero when nobody needs them, and bring them back on time.</p>
+          {totalHourly > 0 && (
+            <p className="mt-2 inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-emerald-50 border border-emerald-100 text-emerald-700 text-sm font-bold">
+              Saving ~{formatMoney(totalHourly, currency)}/h right now (≈ {formatMoney(totalHourly * 730, currency)}/month at this rate)
+            </p>
+          )}
         </div>
-        <div className="flex gap-3">
-          <button 
-            onClick={() => setIsAddingGroup(true)}
-            className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 rounded-xl font-bold shadow-lg shadow-indigo-600/20 transition-all border border-indigo-400/20"
-          >
-            <Plus size={20} />
-            New Group
-          </button>
-        </div>
+        {can('admin') && (
+          <Button variant="primary" icon={<Plus size={16} />} onClick={() => setWizard({ kind: 'group' })}>New schedule</Button>
+        )}
       </div>
 
       {error && (
-        <div className="mb-6 p-4 bg-rose-50 border border-rose-100 rounded-2xl flex items-center gap-3 text-rose-600 animate-in slide-in-from-top duration-300">
-          <Square className="rotate-45 shrink-0" size={20} />
+        <div className="mb-6 p-4 bg-rose-50 border border-rose-100 rounded-xl flex items-center gap-3 text-rose-600">
           <div className="flex-1 text-sm font-bold">{error}</div>
-          <button onClick={() => setError(null)} className="p-1 hover:bg-rose-100 rounded-full transition-colors text-rose-400">
-            <Plus size={16} className="rotate-45" />
-          </button>
+          <button onClick={() => setError(null)} className="p-1 hover:bg-rose-100 rounded-full text-rose-400"><Plus size={16} className="rotate-45" /></button>
         </div>
       )}
 
-      {loading && groups.length === 0 ? (
+      {loading ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {[1, 2, 3].map(i => <div key={i} className="h-48 bg-slate-100 rounded-2xl animate-pulse" />)}
+          {[1, 2, 3].map(i => <div key={i} className="h-64 bg-slate-100 rounded-xl animate-pulse" />)}
         </div>
       ) : (
-        <div className="space-y-12">
-          {/* Dynamic Category Sections */}
-          {Array.from(new Set(groups.map(g => g.spec.category))).sort().map(category => (
-            <section key={category}>
-              <div className="flex items-center gap-3 mb-6">
-                <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
-                  category === 'Solution' ? 'bg-indigo-500/10 text-indigo-500' : 
-                  category === 'Platform' ? 'bg-amber-500/10 text-amber-500' : 
-                  'bg-emerald-500/10 text-emerald-500'
-                }`}>
-                  {category === 'Solution' ? <LayoutGrid size={18} /> : 
-                   category === 'Platform' ? <Layers size={18} /> : 
-                   <LayoutGrid size={18} />}
-                </div>
-                <h2 className="text-xl font-bold text-slate-700">Scaling Groups</h2>
-                <div className="h-px flex-1 bg-slate-200/60 ml-2" />
+        <div className="space-y-10">
+          {groups.length === 0 && standaloneConfigs.length === 0 ? (
+            <div className="py-14 px-6 border-2 border-dashed border-slate-200 rounded-2xl text-center">
+              <CalendarClock size={40} className="mx-auto text-brand-400" />
+              <h2 className="mt-3 text-xl font-bold text-slate-700">No schedules yet</h2>
+              <p className="mt-1 text-slate-500 max-w-xl mx-auto">Pick namespaces and the hours they should run. Outside those hours CostDeck scales their workloads to zero and restores them afterwards.</p>
+              <div className="mt-6 grid gap-3 sm:grid-cols-3 max-w-3xl mx-auto text-left">
+                <div className="p-4 rounded-xl bg-slate-50"><MoonStar size={18} className="text-brand-500" /><div className="mt-2 text-sm font-bold text-slate-700">Off at night and at weekends</div><div className="text-xs text-slate-500">Weekdays 08:00–20:00 keeps a dev environment down 64% of the week.</div></div>
+                <div className="p-4 rounded-xl bg-slate-50"><Link2 size={18} className="text-brand-500" /><div className="mt-2 text-sm font-bold text-slate-700">Shared platforms on demand</div><div className="text-xs text-slate-500">A platform can start only when an environment that needs it is running.</div></div>
+                <div className="p-4 rounded-xl bg-slate-50"><Hand size={18} className="text-amber-500" /><div className="mt-2 text-sm font-bold text-slate-700">Override any time</div><div className="text-xs text-slate-500">Start or stop now with one click; the schedule takes over again later.</div></div>
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {groups.filter(g => g.spec.category === category).map(group => (
-                  <GroupOfNamespaces key={group.metadata.name} group={group} />
+              {can('admin') && (
+                <button onClick={() => setWizard({ kind: 'group' })} className="mt-6 px-5 py-2.5 rounded-xl bg-brand-600 text-white font-bold hover:bg-brand-700">
+                  Create your first schedule
+                </button>
+              )}
+            </div>
+          ) : (
+            <>
+              {categories.map(category => (
+                <section key={category}>
+                  {categories.length > 1 && (
+                    <SectionTitle>{category}</SectionTitle>
+                  )}
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {groups.filter(g => (g.spec.category || 'General') === category).map(groupCard)}
+                  </div>
+                </section>
+              ))}
+
+              {standaloneConfigs.length > 0 && (
+                <section>
+                  <SectionTitle>Single-namespace schedules</SectionTitle>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {standaloneConfigs.map(config => (
+                      <ScheduleCard
+                        key={config.metadata.name}
+                        name={config.spec.targetNamespace}
+                        namespaces={[config.spec.targetNamespace]}
+                        spec={config.spec}
+                        generation={config.metadata.generation}
+                        status={config.status}
+                        busy={isScalingMap[`config-${config.metadata.name}`]}
+                        canOperate={can('operator')}
+                        canAdmin={can('admin')}
+                        onOpen={() => setDetails({ kind: 'config', name: config.metadata.name, tab: 'overview' })}
+                        onStart={() => prompt('config', config.metadata.name, true, config.spec)}
+                        onStop={() => prompt('config', config.metadata.name, false, config.spec)}
+                        onResume={() => handleManualScale('config', config.metadata.name, null)}
+                        onEdit={() => setWizard({ kind: 'config', existing: config })}
+                      />
+                    ))}
+                  </div>
+                </section>
+              )}
+            </>
+          )}
+
+          {unscheduled.length > 0 && (
+            <section>
+              <SectionTitle aside={<span className="text-xs text-slate-400">always on until you give them a schedule</span>}>Not scheduled yet</SectionTitle>
+              <div className="flex flex-wrap gap-2">
+                {unscheduled.map(ns => (
+                  <div key={ns} className="flex items-center rounded-xl border border-slate-200 bg-white overflow-hidden">
+                    <button onClick={() => onSelectNamespace(ns)} className="px-3 py-1.5 text-sm font-semibold text-slate-600 hover:text-brand-600">{ns}</button>
+                    {can('admin') && (
+                      <button onClick={() => setWizard({ kind: 'group', initialNamespaces: [ns] })} title={`Schedule ${ns}`}
+                        className="px-2 py-1.5 border-l border-slate-200 text-slate-400 hover:bg-brand-50 hover:text-brand-600">
+                        <Plus size={14} />
+                      </button>
+                    )}
+                  </div>
                 ))}
               </div>
             </section>
-          ))}
-
-          {groups.length === 0 && (
-            <div className="py-24 border-2 border-dashed border-slate-200 rounded-3xl flex flex-col items-center justify-center text-slate-400 gap-3 grayscale opacity-60">
-               <LayoutGrid size={48} />
-               <p className="font-bold">No scaling groups configured yet.</p>
-               <button onClick={() => setIsAddingGroup(true)} className="text-indigo-600 font-bold hover:underline">Create your first group</button>
-            </div>
           )}
 
-          {/* Individual Namespaces Section */}
           <section>
-            <div className="flex items-center gap-3 mb-6">
-              <div className="w-8 h-8 bg-slate-500/10 text-slate-500 rounded-lg flex items-center justify-center">
-                <Power size={18} />
-              </div>
-              <h2 className="text-xl font-bold text-slate-700">Namespaces</h2>
-              <div className="h-px flex-1 bg-slate-200/60 ml-2" />
-              <button onClick={() => setNamespacesCollapsed(!namespacesCollapsed)} className="p-1.5 text-slate-400 hover:bg-slate-100 rounded-lg transition-colors" title={namespacesCollapsed ? "Expand" : "Collapse"}>
-                {namespacesCollapsed ? <ChevronDown size={18} /> : <ChevronUp size={18} />}
-              </button>
-            </div>
-            
-            {!namespacesCollapsed && (
-              <div className="animate-in slide-in-from-top-2 fade-in duration-200">
-                {namespaces.length === 0 ? (
-                  <div className="h-32 bg-slate-50 rounded-2xl flex items-center justify-center text-slate-400">Loading namespaces...</div>
-                ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                    {policies.map(config => (
-                      <ConfigCard key={config.metadata.name} config={config} />
+            <button onClick={() => setCloudExpanded(!cloudExpanded)} className="w-full text-left">
+              <SectionTitle aside={
+                <span className="inline-flex items-center gap-2 text-xs text-slate-400">
+                  {Object.values(discoveredResources).flat().length} discovered · add them to a schedule under Start order
+                  {cloudExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                </span>
+              }>
+                <span className="inline-flex items-center gap-2"><Cloud size={16} className="text-amber-500" /> Cloud resources</span>
+              </SectionTitle>
+            </button>
+            {cloudExpanded && (
+              Object.keys(discoveredResources).length > 0 ? (
+                <div className="space-y-4">
+                  <div className="flex p-1 bg-slate-100/80 rounded-xl w-fit">
+                    {Object.keys(discoveredResources).map(tab => (
+                      <button key={tab} onClick={() => setActiveDiscoveryTab(tab)}
+                        className={`flex items-center gap-2 px-5 py-1.5 rounded-xl text-sm font-bold transition-all ${discoveryTab === tab ? 'bg-white text-brand-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
+                        <ProviderLogo provider={discoveredResources[tab][0]?.provider} className="w-4 h-4" />
+                        {tab} <span className="text-[10px] text-slate-400">{discoveredResources[tab].length}</span>
+                      </button>
                     ))}
-                    {namespaces.map(ns => {
-                      const managedByGroup = groups.find(g => g.spec.namespaces?.includes(ns));
-                      const hasIndividualConfig = policies.some(p => p.spec.targetNamespace === ns);
-                      if (hasIndividualConfig) return null; // Handled in ConfigCard
-
-                      return (
-                      <div key={ns} className={`bg-white border rounded-2xl p-4 flex items-center justify-between group transition-all cursor-pointer ${managedByGroup ? 'border-indigo-100 hover:border-indigo-300' : 'border-dashed border-slate-200 hover:border-indigo-300'} hover:shadow-sm`}
-                        onClick={() => handleCreateIndividualConfig(ns)}
-                        title={managedByGroup ? `Click to override sequence/exclusions for ${ns}` : "Click to enable scaling control for this namespace"}>
-                        <div className="flex items-center gap-3 min-w-0">
-                          <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors shrink-0 ${managedByGroup ? 'bg-indigo-50 text-indigo-500' : 'bg-slate-50 text-slate-300 group-hover:bg-indigo-50 group-hover:text-indigo-500'}`}>
-                            <Layers size={20} />
-                          </div>
-                          <div className="flex flex-col min-w-0">
-                            <span className={`font-bold transition-colors whitespace-nowrap overflow-hidden text-ellipsis ${managedByGroup ? 'text-indigo-900' : 'text-slate-400 group-hover:text-slate-700'}`}>{ns}</span>
-                            <span className={`text-[11px] font-bold uppercase tracking-wider transition-colors ${managedByGroup ? 'text-indigo-400' : 'text-slate-300 group-hover:text-indigo-400'}`}>
-                              {managedByGroup ? `Managed by ${managedByGroup.metadata.name}` : 'Unmanaged'}
-                            </span>
-                          </div>
-                        </div>
-                        <div className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors shrink-0 ${managedByGroup ? 'bg-indigo-50 group-hover:bg-indigo-100' : 'bg-slate-50 group-hover:bg-indigo-50'}`}>
-                          <Plus size={16} className={`transition-colors ${managedByGroup ? 'text-indigo-400 group-hover:text-indigo-600' : 'text-slate-300 group-hover:text-indigo-500'}`} />
-                        </div>
-                      </div>
-                      );
-                    })}
                   </div>
-                )}
-              </div>
-            )}
-          </section>
-
-          {/* Public Cloud Managed Services Section */}
-          <section>
-            <div className="flex items-center gap-3 mb-6">
-              <div className="w-8 h-8 bg-amber-500/10 text-amber-500 rounded-lg flex items-center justify-center">
-                <Cloud size={18} />
-              </div>
-              <h2 className="text-xl font-bold text-slate-700">Public Cloud Managed Services</h2>
-              <div className="h-px flex-1 bg-slate-200/60 ml-2" />
-              <button onClick={() => setDiscoveredCollapsed(!discoveredCollapsed)} className="p-1.5 text-slate-400 hover:bg-slate-100 rounded-lg transition-colors" title={discoveredCollapsed ? "Expand" : "Collapse"}>
-                {discoveredCollapsed ? <ChevronDown size={18} /> : <ChevronUp size={18} />}
-              </button>
-            </div>
-
-            {!discoveredCollapsed && (
-              <div className="animate-in slide-in-from-top-2 fade-in duration-200">
-                {Object.keys(discoveredResources).length > 0 ? (
-                  <div className="space-y-6">
-                    {/* Tabs bar */}
-                    <div className="flex p-1 bg-slate-100/80 rounded-2xl w-fit">
-                      {Object.keys(discoveredResources).map(tab => (
-                        <button
-                          key={tab}
-                          onClick={() => setActiveDiscoveryTab(tab)}
-                          className={`flex items-center gap-2 px-6 py-2 rounded-xl text-sm font-bold transition-all ${
-                            activeDiscoveryTab === tab 
-                              ? 'bg-white text-indigo-900 shadow-sm' 
-                              : 'text-slate-500 hover:text-slate-700 hover:bg-white/50'
-                          }`}
-                        >
-                          {tab === 'Databases' ? <Database size={16} /> : <Layers size={16} />}
-                          {tab}
-                          <span className={`px-1.5 py-0.5 rounded-lg text-[10px] ml-1 ${
-                            activeDiscoveryTab === tab ? 'bg-indigo-50 text-indigo-600' : 'bg-slate-200 text-slate-500'
-                          }`}>
-                            {discoveredResources[tab].length}
-                          </span>
-                        </button>
-                      ))}
+                  {discoveryTab && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                      {discoveredResources[discoveryTab].map((item, i) => <ResourceCard key={i} item={item} />)}
                     </div>
-
-                    {/* Active tab content */}
-                    {activeDiscoveryTab && discoveredResources[activeDiscoveryTab] && (
-                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 animate-in fade-in duration-300">
-                        {discoveredResources[activeDiscoveryTab].map((item, i) => (
-                          <ResourceCard key={i} item={item} />
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  <div className="py-12 border border-dashed border-slate-200 rounded-3xl flex flex-col items-center justify-center text-slate-400 gap-2">
-                    <Cloud size={32} className="opacity-20" />
-                    <p className="font-bold text-sm">No resources discovered yet.</p>
-                    <p className="text-[11px]">Check your Cloud Provider settings to enable discovery.</p>
-                  </div>
-                )}
-              </div>
+                  )}
+                </div>
+              ) : (
+                <p className="text-sm text-slate-400">Nothing discovered. Connect a cloud account under Settings to stop databases and instances along with your schedules.</p>
+              )
             )}
           </section>
         </div>
       )}
 
-      {isAddingGroup && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-xl border border-white/20 animate-in fade-in zoom-in duration-300">
-             <div className="p-8 border-b border-slate-100 flex justify-between items-center bg-slate-50/50 rounded-t-3xl">
-               <h2 className="text-2xl font-black text-slate-800 tracking-tight">{editingGroup ? 'Edit Group' : 'Create New Group'}</h2>
-               <button onClick={() => { setIsAddingGroup(false); setEditingGroup(null); }} className="p-2 hover:bg-white rounded-full transition-colors text-slate-400">
-                 <Plus size={20} className="rotate-45" />
-               </button>
-             </div>
-             <div className="p-8 space-y-6 overflow-y-auto max-h-[70vh]">
-                <div>
-                  <label className="block text-sm font-bold text-slate-500 uppercase tracking-wider mb-2">Group Name</label>
-                  <input type="text" value={newGroupName} onChange={(e) => setNewGroupName(e.target.value)}
-                    disabled={!!editingGroup}
-                    className={`w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all font-medium text-slate-800 ${editingGroup ? 'opacity-50' : ''}`} placeholder="enterprise-dev-env" />
-                </div>
-                <div>
-                  <label className="block text-sm font-bold text-slate-500 uppercase tracking-wider mb-2">Category</label>
-                  <div className="relative">
-                    <input
-                      type="text"
-                      value={newGroupCategory}
-                      onChange={(e) => setNewGroupCategory(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all font-medium text-slate-800"
-                      placeholder="e.g. Solution, Platform, Production..."
-                    />
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {Array.from(new Set(groups.map(g => g.spec.category))).map(cat => (
-                        <button
-                          key={cat}
-                          onClick={() => setNewGroupCategory(cat)}
-                          className={`px-3 py-1 rounded-lg text-[10px] font-bold border transition-all ${newGroupCategory === cat ? 'bg-indigo-600 border-indigo-600 text-white' : 'bg-white border-slate-200 text-slate-400 hover:border-slate-300'}`}
-                        >
-                          {cat}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-sm font-bold text-slate-500 uppercase tracking-wider mb-2">Select Namespaces</label>
-                  <div className="max-h-48 overflow-y-auto pr-2 grid grid-cols-3 gap-2">
-                    {namespaces.filter(ns => {
-                      // Hide namespaces already in OTHER groups
-                      return !groups.some(g => editingGroup ? g.metadata.name !== editingGroup.metadata.name && g.spec.namespaces.includes(ns) : g.spec.namespaces.includes(ns));
-                    }).map(ns => (
-                      <div key={ns} onClick={() => toggleNS(ns)}
-                        className={`flex items-center justify-between p-3 rounded-xl cursor-pointer transition-all border ${selectedNS.includes(ns) ? 'bg-indigo-50/50 border-indigo-200' : 'bg-slate-50 border-transparent hover:border-slate-200'}`}>
-                        <span className={`font-semibold text-sm ${selectedNS.includes(ns) ? 'text-indigo-700' : 'text-slate-700'}`}>{ns}</span>
-                        <div className={`w-5 h-5 rounded-md border flex items-center justify-center transition-all ${selectedNS.includes(ns) ? 'bg-indigo-500 border-indigo-500' : 'bg-white border-slate-300'}`}>
-                          {selectedNS.includes(ns) && <Plus size={14} className="text-white rotate-45" />}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
+      {details && (() => {
+        const group = details.kind === 'group' ? groups.find(g => g.metadata.name === details.name) : undefined;
+        const config = details.kind === 'config' ? policies.find(c => c.metadata.name === details.name) : undefined;
+        if (!group && !config) return null;
+        const kind = details.kind;
+        const name = details.name;
+        const spec = (group || config)!.spec;
+        return (
+          <ScheduleDetails
+            target={group ? { kind: 'group', group } : { kind: 'config', config: config! }}
+            groups={groups}
+            tab={details.tab}
+            onTab={tab => setDetails({ ...details, tab })}
+            busy={isScalingMap[`${kind}-${name}`]}
+            canOperate={can('operator')}
+            canAdmin={can('admin')}
+            onClose={() => setDetails(null)}
+            onStart={() => prompt(kind, name, true, spec)}
+            onStop={() => prompt(kind, name, false, spec)}
+            onResume={() => handleManualScale(kind, name, null)}
+            onEdit={tab => {
+              // One dialog at a time: editing replaces the details view.
+              setDetails(null);
+              if (group) setWizard({ kind: 'group', existing: group, initialTab: tab });
+              else setWizard({ kind: 'config', existing: config! });
+            }}
+            onDelete={group ? () => deleteGroup(name) : undefined}
+            onRules={config ? () => setOrdering({ name, spec: config.spec }) : undefined}
+            onSelectNamespace={ns => { setDetails(null); onSelectNamespace(ns); }}
+          />
+        );
+      })()}
 
-                {/* Feature Flags */}
-                <div>
-                  <label className="block text-sm font-bold text-slate-500 uppercase tracking-wider mb-2">Feature Flags</label>
-                  <div className="bg-slate-50 rounded-xl border border-slate-200 px-4 py-3 space-y-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-bold text-slate-700">Skip Unresponsive Namespaces</p>
-                      <p className="text-[10px] text-slate-400 mt-0.5">Skip namespaces that fail to reach target state within timeout</p>
-                    </div>
-                    <label className="relative inline-flex items-center cursor-pointer">
-                      <input type="checkbox" checked={skipOnTimeout} onChange={e => setSkipOnTimeout(e.target.checked)} className="sr-only peer" />
-                      <div className={`w-11 h-6 rounded-full ${skipOnTimeout ? 'bg-indigo-500' : 'bg-slate-300'}`}>
-                        <div className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-md transition-transform ${skipOnTimeout ? 'translate-x-5' : 'translate-x-0'}`} />
-                      </div>
-                    </label>
-                  </div>
-                  {skipOnTimeout && (
-                    <div className="flex items-center gap-3 pt-2 border-t border-slate-200">
-                      <label className="text-xs font-bold text-slate-500">Timeout:</label>
-                      <input
-                        type="number"
-                        min={1}
-                        max={30}
-                        value={timeoutMinutes}
-                        onChange={e => setTimeoutMinutes(parseInt(e.target.value) || 5)}
-                        className="w-20 px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm text-center focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
-                      />
-                      <span className="text-xs text-slate-400">minutes (1-30)</span>
-                    </div>
-                  )}
-                  {!skipOnTimeout && (
-                    <p className="text-[10px] text-slate-400 italic">Default behavior: wait indefinitely for all services to reach target state</p>
-                  )}
-                </div>
-             </div>
-             </div>
-
-             <div className="p-8 bg-slate-50/50 border-t border-slate-100 flex gap-4 rounded-b-3xl">
-               <button onClick={() => { setIsAddingGroup(false); setEditingGroup(null); }} className="flex-1 px-6 py-3 rounded-xl font-bold text-slate-500 hover:bg-white transition-all">Cancel</button>
-               <button onClick={handleUpsertGroup} disabled={!newGroupName || selectedNS.length === 0}
-                 className="flex-1 px-6 py-3 rounded-xl bg-indigo-600 text-white font-bold shadow-lg shadow-indigo-600/20 hover:bg-indigo-700 transition-all disabled:opacity-50">Save Group</button>
-             </div>
-          </div>
-        </div>
-      )}
-
-      {/* Delete Confirmation Modal */}
-      {deletingGroupName && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[200] flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-8 text-center">
-            <div className="w-16 h-16 bg-rose-50 rounded-full flex items-center justify-center mx-auto mb-4">
-              <Plus size={32} className="rotate-45 text-rose-500" />
-            </div>
-            <h3 className="text-xl font-black text-slate-800 mb-2">Delete Group</h3>
-            <p className="text-slate-500 text-sm mb-6">Are you sure you want to delete <b className="text-slate-800">"{deletingGroupName}"</b>? This action cannot be undone.</p>
-            <div className="flex gap-3">
-              <button onClick={() => setDeletingGroupName(null)} className="flex-1 px-4 py-3 rounded-xl font-bold text-slate-500 hover:bg-slate-50 transition-all border border-slate-200">Cancel</button>
-              <button onClick={confirmDeleteGroup} className="flex-1 px-4 py-3 rounded-xl bg-rose-500 text-white font-bold shadow-lg shadow-rose-500/20 hover:bg-rose-600 transition-all">Delete</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {editingPolicy && (
-        <ScalingConfigModal 
-          name={editingPolicy.name}
-          mode={editingPolicy.mode}
-          spec={editingPolicy.spec} 
-          onClose={() => setEditingPolicy(null)} 
-          onSave={handleUpdateConfig} 
+      {wizard && (
+        <ScheduleWizard
+          {...wizard}
+          discovered={Object.values(discoveredResources).flat()}
+          namespaces={namespaces}
+          groups={groups}
+          onClose={() => setWizard(null)}
+          onSaved={() => { setWizard(null); fetchData(); }}
         />
       )}
 
-      {viewingPipelineGroupName && groups.find(g => g.metadata.name === viewingPipelineGroupName) && (
-        <ScalingPipelineModal 
-          group={groups.find(g => g.metadata.name === viewingPipelineGroupName)!} 
-          onClose={() => setViewingPipelineGroupName(null)} 
+      {overridePrompt && (
+        <OverrideDialog
+          name={overridePrompt.name}
+          kind={overridePrompt.type}
+          active={overridePrompt.active}
+          hasSchedule={overridePrompt.hasSchedule}
+          onCancel={() => setOverridePrompt(null)}
+          onConfirm={(until) => {
+            const { type, name, active } = overridePrompt;
+            setOverridePrompt(null);
+            handleManualScale(type, name, active, until);
+          }}
         />
       )}
+
+      {ordering && (
+        <WorkloadRulesDialog
+          namespace={policies.find(c => c.metadata.name === ordering.name)?.spec.targetNamespace || ordering.name}
+          spec={ordering.spec}
+          onClose={() => setOrdering(null)}
+          onSave={handleSaveOrder}
+        />
+      )}
+
     </div>
   );
 };
