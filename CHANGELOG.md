@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.1](https://github.com/migalsp/costdeck/compare/v1.5.0...v1.5.1) (2026-10-06)
+
+
+### Bug Fixes
+
+* **pricing:** estimate on-premises storage and align the default rates with list prices ([1ee4ba0](https://github.com/migalsp/costdeck/commit/1ee4ba0abfdab9f6db32ae2319f4f7be52ac9161))
+
 ## [1.5.0](https://github.com/migalsp/costdeck/compare/v1.4.0...v1.5.0) (2026-10-06)
 
 
