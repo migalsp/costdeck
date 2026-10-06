@@ -102,60 +102,85 @@ func (r *ScalingGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	// 3. Define stages from group.Spec.Sequence, skipping namespaces an older group owns.
 	stages := r.getScalingStages(group, targetActive, plan.ConflictingNamespaces)
 
+	// A transition starts whenever the group is not already moving towards the target
+	// state. It begins at the first stage; while it runs, status.currentStage and
+	// status.lastAction record the stage being waited on and when it started.
+	inProgress := scaling.PhaseScalingDown
+	if targetActive {
+		inProgress = scaling.PhaseScalingUp
+	}
+	currentStage, stageStarted := group.Status.CurrentStage, group.Status.LastAction.Time
+	if group.Status.Phase != inProgress {
+		currentStage, stageStarted = 0, time.Now()
+	}
+	skipOnTimeout := group.Spec.FeatureFlags != nil && group.Spec.FeatureFlags.SkipOnTimeout
+	stageTimeout := time.Duration(stageTimeoutMinutes(group)) * time.Minute
+
 	allReady := true
 	managedCount := 0
-
-	timeoutPassed := false
-	if group.Spec.FeatureFlags != nil && group.Spec.FeatureFlags.SkipOnTimeout {
-		if (group.Status.Phase == scaling.PhaseScalingUp || group.Status.Phase == scaling.PhaseScalingDown) &&
-			time.Since(group.Status.LastAction.Time) > time.Duration(stageTimeoutMinutes(group))*time.Minute {
-			timeoutPassed = true
-		}
-	}
-
 	namespacesReady := 0
 	namespacesTotal := 0
 	for _, stage := range stages {
 		namespacesTotal += len(stage)
 	}
 
-	var blockingNamespaces []string
-	var readyNamespaces []string
+	var blockingNamespaces, readyNamespaces, skippedNamespaces []string
 
-	// 4. Iterate over stages
+	// 4. Iterate over stages. A stage starts once the one before it is at the target
+	// state or, with skipOnTimeout, has used up its time to get there.
 	for i, stage := range stages {
 		l.Info("Processing scaling stage", "stageIndex", i, "namespaces", stage)
+		// Stages before currentStage were left behind in an earlier reconcile: their
+		// stragglers are still reconciled but no longer hold back the stages after them.
+		passed := i < currentStage
+		timedOut := passed || (skipOnTimeout && time.Since(stageStarted) > stageTimeout)
 
-		stageReady := true
+		var waiting []string
 		for _, ns := range stage {
 			managedCount++
 
-			isReady, err := r.reconcileTarget(ctx, group, ns, targetActive, timeoutPassed)
+			isReady, err := r.reconcileTarget(ctx, group, ns, targetActive, timedOut)
 			if err != nil {
 				l.Error(err, "failed to reconcile target", "target", ns)
-				allReady = false
-				stageReady = false
-				blockingNamespaces = append(blockingNamespaces, ns)
-				continue
 			}
-
-			if isReady {
+			if err == nil && isReady {
 				namespacesReady++
 				readyNamespaces = append(readyNamespaces, ns)
-			} else {
-				stageReady = false
-				allReady = false
-				blockingNamespaces = append(blockingNamespaces, ns)
+				continue
+			}
+			allReady = false
+			blockingNamespaces = append(blockingNamespaces, ns)
+			waiting = append(waiting, ns)
+		}
+
+		if len(waiting) > 0 {
+			if !timedOut {
+				l.Info("Stage not ready, waiting before next stage", "stageIndex", i)
+				r.Recorder.Eventf(group, nil, corev1.EventTypeNormal, "ScalingActive", "Scale",
+					"Executing Stage %d. Waiting for targets in: %s", i+1, strings.Join(waiting, ", "))
+				break
+			}
+			skippedNamespaces = append(skippedNamespaces, waiting...)
+			if !passed {
+				l.Info("Stage not ready within its timeout, moving on", "stageIndex", i, "skipped", waiting)
+				r.Recorder.Eventf(group, nil, corev1.EventTypeWarning, "ScalingTimeout", "Scale",
+					"Stage %d not ready after %d min, moving on without: %s", i+1, stageTimeoutMinutes(group), strings.Join(waiting, ", "))
 			}
 		}
-
-		if !stageReady {
-			l.Info("Stage not ready, waiting before next stage", "stageIndex", i)
-			break // Stop at this stage, wait for next reconcile
+		if !passed {
+			currentStage, stageStarted = i+1, time.Now()
 		}
 	}
+	// A settled group keeps no stage state, so its status stays unchanged between reconciles.
+	group.Status.CurrentStage, group.Status.SkippedNamespaces = 0, skippedNamespaces
+	if !allReady {
+		group.Status.CurrentStage = currentStage
+		group.Status.LastAction = metav1.NewTime(stageStarted)
+	}
 
-	r.emitScalingEvents(group, stages, blockingNamespaces, namespacesReady, namespacesTotal, timeoutPassed)
+	if namespacesReady > group.Status.NamespacesReady {
+		r.Recorder.Eventf(group, nil, corev1.EventTypeNormal, "ScalingProgress", "Scale", "Progress updated: %d of %d targets reached target state.", namespacesReady, namespacesTotal)
+	}
 
 	// 5. Update Status
 	applyDecision(&group.Status.ScheduleStatus, &group.Status.Conditions, decision, group.Generation, "group")
@@ -407,32 +432,6 @@ func (r *ScalingGroupReconciler) reconcileK8sTarget(ctx context.Context, group *
 
 	phase := r.Engine.ComputePhase(ctx, ns, targetActive)
 	return (targetActive && phase == scaling.PhaseScaledUp) || (!targetActive && phase == scaling.PhaseScaledDown), nil
-}
-
-func (r *ScalingGroupReconciler) emitScalingEvents(group *finopsv1.ScalingGroup, stages [][]string, blockingNamespaces []string, namespacesReady, namespacesTotal int, timeoutPassed bool) {
-	if len(blockingNamespaces) > 0 {
-		stageNumber := 0
-		for idx, stage := range stages {
-			if slices.Contains(stage, blockingNamespaces[0]) {
-				stageNumber = idx + 1
-			}
-			if stageNumber != 0 {
-				break
-			}
-		}
-
-		if timeoutPassed {
-			msg := fmt.Sprintf("Stage timeout of %d min exceeded, skipping unresponsive targets. Still waiting on Stage %d: %s", stageTimeoutMinutes(group), stageNumber, strings.Join(blockingNamespaces, ", "))
-			r.Recorder.Eventf(group, nil, corev1.EventTypeWarning, "ScalingTimeout", "Scale", "%s", msg)
-		} else {
-			msg := fmt.Sprintf("Executing Stage %d. Waiting for targets in: %s", stageNumber, strings.Join(blockingNamespaces, ", "))
-			r.Recorder.Eventf(group, nil, corev1.EventTypeNormal, "ScalingActive", "Scale", "%s", msg)
-		}
-	}
-
-	if namespacesReady > group.Status.NamespacesReady {
-		r.Recorder.Eventf(group, nil, corev1.EventTypeNormal, "ScalingProgress", "Scale", "Progress updated: %d of %d targets reached target state.", namespacesReady, namespacesTotal)
-	}
 }
 
 func (r *ScalingGroupReconciler) updateStatusAndPhase(ctx context.Context, group *finopsv1.ScalingGroup, before *finopsv1.ScalingGroupStatus, allReady bool, managedCount, namespacesReady, namespacesTotal int, readyNamespaces []string, decision scaling.Decision, detail string) (ctrl.Result, error) {

@@ -91,8 +91,10 @@ export default function ScheduleActivity({ group: initial }: { group: ScalingGro
   const stages = startStages(group)
   const runOrder = down ? [...stages].reverse() : stages
   const ready = new Set(group.status?.readyNamespaces || [])
+  // Namespaces the operator gave up waiting for after the stage timeout.
+  const skipped = new Set(group.status?.skippedNamespaces || [])
   // The stage being worked on: the first, in execution order, that is not fully there.
-  const current = busy && phase !== 'WaitingForDependencies' ? runOrder.find(s => s.some(i => !ready.has(i))) : undefined
+  const current = busy && phase !== 'WaitingForDependencies' ? runOrder.find(s => s.some(i => !ready.has(i) && !skipped.has(i))) : undefined
 
   usePolling(() => {
     fetch('/api/scaling/groups').then(r => (r.ok ? r.json() : [])).then(setGroups).catch(() => {})
@@ -100,16 +102,17 @@ export default function ScheduleActivity({ group: initial }: { group: ScalingGro
       setEvents([...(list || [])].sort((a, b) => new Date(eventTime(b)).getTime() - new Date(eventTime(a)).getTime())),
     ).catch(() => {})
     // Look for failing pods only where work is happening, plus the namespace being inspected.
-    const watch = new Set([...(current || []).filter(i => !i.startsWith(EXT) && !ready.has(i)), ...(selected ? [selected] : [])])
+    const watch = new Set([...(current || []), ...skipped].filter(i => !i.startsWith(EXT) && !ready.has(i)).concat(selected ? [selected] : []))
     watch.forEach(ns => {
       fetch(`/api/namespaces/${ns}/pods`).then(r => (r.ok ? r.json() : [])).then((list: Pod[]) => setPods(prev => ({ ...prev, [ns]: list || [] }))).catch(() => {})
     })
     if (selected) fetch(`/api/namespaces/${selected}/workloads`).then(r => (r.ok ? r.json() : [])).then(setWorkloads).catch(() => {})
-  }, 3000, `${name}/${selected}/${current?.join(',')}`)
+  }, 3000, `${name}/${selected}/${current?.join(',')}/${[...skipped].join(',')}`)
 
   const stateOf = (item: string, inCurrent: boolean): NodeState => {
     if (ready.has(item)) return busy || phase.startsWith('Scaled') ? 'done' : 'idle'
     if (!busy) return phase === 'ScaledDown' ? 'idle' : 'done'
+    if (skipped.has(item)) return 'problem'
     if (!inCurrent) return 'waiting'
     return (pods[item] || []).some(problemPod) ? 'problem' : 'running'
   }
@@ -129,8 +132,10 @@ export default function ScheduleActivity({ group: initial }: { group: ScalingGro
     if (!g) issues.push(`Depends on "${dep}", which does not exist.`)
     else if (phase === 'WaitingForDependencies' && g.status?.phase !== 'ScaledUp') issues.push(`Waiting for ${dep} to be fully up (now ${g.status?.phase || 'unknown'}).`)
   }
+  const timeout = group.spec.featureFlags?.timeoutMinutes || 5
+  for (const ns of skipped) if (!ready.has(ns)) issues.push(`${ns} was not ${down ? 'down' : 'ready'} within ${timeout} min; the next stages went ahead without it.`)
   for (const [ns, list] of Object.entries(pods)) {
-    if (!current?.includes(ns) || ready.has(ns)) continue
+    if ((!current?.includes(ns) && !skipped.has(ns)) || ready.has(ns)) continue
     for (const p of list.filter(problemPod).slice(0, 3)) issues.push(`${ns}/${p.name}: ${p.reason || p.status}${p.restarts ? `, ${p.restarts} restarts` : ''}`)
   }
   for (const c of group.status?.conditions || []) {
@@ -187,7 +192,8 @@ export default function ScheduleActivity({ group: initial }: { group: ScalingGro
                     const ext = item.startsWith(EXT)
                     const st = stateOf(item, inCurrent)
                     const failing = (pods[item] || []).filter(problemPod)
-                    const sub = st === 'problem' ? `${failing.length} pod${failing.length === 1 ? '' : 's'} failing`
+                    const sub = st === 'problem' && skipped.has(item) ? 'skipped after timeout'
+                      : st === 'problem' ? `${failing.length} pod${failing.length === 1 ? '' : 's'} failing`
                       : st === 'running' ? (down ? 'stopping' : 'starting')
                         : st === 'waiting' ? 'waiting' : st === 'done' ? (down ? 'down' : 'ready') : down ? 'down' : 'up'
                     return (

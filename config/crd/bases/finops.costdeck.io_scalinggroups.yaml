@@ -155,15 +155,15 @@ spec:
                 properties:
                   skipOnTimeout:
                     description: |-
-                      SkipOnTimeout if true, namespaces that don't reach target state within TimeoutMinutes
-                      will be skipped instead of blocking the entire pipeline.
-                      Default: false (wait indefinitely for all services to reach target state)
+                      SkipOnTimeout if true, a stage that does not reach the target state within
+                      TimeoutMinutes stops holding back the next stage. Its namespaces keep being
+                      reconciled and are listed in status.skippedNamespaces until they get there.
+                      Default: false (each stage waits until all of its namespaces are at the target state)
                     type: boolean
                   timeoutMinutes:
                     default: 5
-                    description: |-
-                      TimeoutMinutes is used when SkipOnTimeout is true.
-                      Namespaces not ready within this duration are skipped.
+                    description: TimeoutMinutes is how long each stage may take when
+                      SkipOnTimeout is true.
                     maximum: 30
                     minimum: 1
                     type: integer
@@ -329,6 +329,12 @@ spec:
               currency:
                 description: Currency of EstimatedHourlySavings.
                 type: string
+              currentStage:
+                description: |-
+                  CurrentStage is the index, in execution order, of the stage the running transition
+                  is on. Every earlier stage is at the target state or was given up on after the
+                  stage timeout.
+                type: integer
               desiredState:
                 description: DesiredState is Up or Down.
                 type: string
@@ -403,6 +409,14 @@ spec:
               requiredBy:
                 description: RequiredBy lists the dependent groups that currently
                   keep this group up.
+                items:
+                  type: string
+                type: array
+              skippedNamespaces:
+                description: |-
+                  SkippedNamespaces lists namespaces the running transition moved on without because
+                  they did not reach the target state within the stage timeout. A namespace leaves the
+                  list once it gets there.
                 items:
                   type: string
                 type: array

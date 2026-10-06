@@ -399,7 +399,8 @@ func (s *Server) toolGetGroup(ctx context.Context, name string) (string, error) 
 		"activation": g.Spec.Activation, "dependsOn": g.Spec.DependsOn, "override": g.Spec.Active,
 		"overrideUntil": g.Spec.ActiveUntil, "status": map[string]any{
 			"mode": g.Status.Mode, "desired": g.Status.DesiredState, "phase": g.Status.Phase,
-			"readyNamespaces": g.Status.ReadyNamespaces, "nextChange": describeTransition(g.Status.NextTransition),
+			"readyNamespaces": g.Status.ReadyNamespaces, "skippedNamespaces": g.Status.SkippedNamespaces,
+			"nextChange": describeTransition(g.Status.NextTransition),
 			"requiredBy": g.Status.RequiredBy, "conflictingNamespaces": g.Status.ConflictingNamespaces, "conditions": conds,
 		},
 	})
