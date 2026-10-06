@@ -47,8 +47,9 @@ updates:
         patterns:
           - "*"
 
-  # Workflows pin actions by major version and the Dockerfile by base-image tag. Both stay
-  # on the same security-only policy: a PR appears only for an advisory.
+  # Workflows pin third-party actions by commit SHA, with the version in a comment that
+  # Dependabot keeps in step, and the Dockerfile pins base images by tag. Both stay on the
+  # same security-only policy: a PR appears only for an advisory.
   - package-ecosystem: github-actions
     directory: /
     schedule:
