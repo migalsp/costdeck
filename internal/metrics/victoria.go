@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"k8s.io/apimachinery/pkg/api/resource"
+
+	"github.com/migalsp/costdeck-operator/internal/netguard"
 )
 
 // VMOptions configures a PromQL client.
@@ -61,7 +63,9 @@ func NewVMClient(opts VMOptions) (*VMClient, error) {
 		return nil, fmt.Errorf(`invalid label selector %q: expected PromQL matchers such as cluster="prod"`, opts.LabelSelector)
 	}
 
-	transport := http.DefaultTransport.(*http.Transport).Clone()
+	// The endpoint is configured by an administrator; it still may not reach the cloud
+	// metadata service and the node's credentials behind it.
+	transport := netguard.Transport()
 	tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12}
 	if len(opts.CACert) > 0 {
 		pool, err := x509.SystemCertPool()
@@ -86,12 +90,19 @@ func NewVMClient(opts VMOptions) (*VMClient, error) {
 	}, nil
 }
 
+// endpointPattern is the shape of an endpoint: http(s), a host without credentials (they
+// go in the Secret), then an optional path, query and fragment.
+var endpointPattern = regexp.MustCompile(`^https?://[^\s/?#@]+(/[^\s?#]*)?(\?[^\s#]*)?(#\S*)?$`)
+
 // NormalizeEndpoint turns the URL a user pasted into the base PromQL URL. It tolerates the
 // common mistakes: a trailing slash, or the full /api/v1/query path copied from Grafana.
 func NormalizeEndpoint(raw string) (*url.URL, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return nil, errors.New("endpoint is empty")
+	}
+	if !endpointPattern.MatchString(raw) {
+		return nil, fmt.Errorf("invalid endpoint %q: expected http(s)://host[:port][/path], with credentials in the Secret rather than the URL", raw)
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
@@ -102,6 +113,9 @@ func NormalizeEndpoint(raw string) (*url.URL, error) {
 	}
 	if u.Host == "" {
 		return nil, fmt.Errorf("invalid endpoint %q: host is missing", raw)
+	}
+	if netguard.ForbiddenHost(u.Hostname()) {
+		return nil, fmt.Errorf("invalid endpoint %q: link-local and cloud metadata addresses are not allowed", raw)
 	}
 	p := strings.TrimRight(u.Path, "/")
 	for _, suffix := range []string{"/api/v1/query_range", "/api/v1/query", "/api/v1"} {

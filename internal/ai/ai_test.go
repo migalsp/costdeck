@@ -150,6 +150,10 @@ func TestSettingsValidateBlocksInternalHostsForCloudProviders(t *testing.T) {
 	if err := (&Settings{Provider: ProviderLocal, Model: "llama3", BaseURL: "http://localhost:11434/v1"}).Validate(); err != nil {
 		t.Errorf("local provider on localhost rejected: %v", err)
 	}
+	// Not even the local provider may reach the cloud metadata service.
+	if (&Settings{Provider: ProviderLocal, Model: "llama3", BaseURL: "http://169.254.169.254/v1"}).Validate() == nil {
+		t.Error("local provider on the metadata address was accepted")
+	}
 }
 
 // recorder is a fake model endpoint that answers successive requests from a script.

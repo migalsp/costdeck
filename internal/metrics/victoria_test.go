@@ -69,9 +69,18 @@ func TestNormalizeEndpoint(t *testing.T) {
 		{"  http://vm:8428/api/v1/query ", "http://vm:8428", false},
 		{"http://vmselect:8481/select/0/prometheus/api/v1", "http://vmselect:8481/select/0/prometheus", false},
 		{"https://vm.example.com/select/0/prometheus/?extra_label=cluster=a", "https://vm.example.com/select/0/prometheus?extra_label=cluster=a", false},
+		{"http://10.0.3.7:8428", "http://10.0.3.7:8428", false},
+		{"http://127.0.0.1:8428", "http://127.0.0.1:8428", false},
 		{"vm:8428", "", true},
 		{"ftp://vm", "", true},
 		{"", "", true},
+		// The cloud metadata services hand out the node's credentials.
+		{"http://169.254.169.254/latest/meta-data", "", true},
+		{"http://[fd00:ec2::254]/latest", "", true},
+		{"http://[fe80::1]:8428", "", true},
+		// Credentials belong in the Secret, not in the URL.
+		{"http://admin:secret@vm:8428", "", true},
+		{"http://vm:8428/ space", "", true},
 	}
 	for _, tt := range tests {
 		got, err := NormalizeEndpoint(tt.in)

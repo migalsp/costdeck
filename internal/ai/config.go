@@ -15,6 +15,7 @@ import (
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
 	"github.com/migalsp/costdeck-operator/internal/config"
+	"github.com/migalsp/costdeck-operator/internal/netguard"
 )
 
 // Provider identifiers stored in CostDeckConfig.spec.integrations.ai.provider.
@@ -112,6 +113,9 @@ func (s *Settings) Validate() error {
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return fmt.Errorf("invalid AI base URL %q: must be an http(s) URL", s.BaseURL)
 	}
+	if netguard.ForbiddenHost(u.Hostname()) {
+		return fmt.Errorf("invalid AI base URL %q: link-local and cloud metadata addresses are not allowed", s.BaseURL)
+	}
 	if s.Provider != ProviderLocal && !allowInternalHosts && isInternalHost(u.Hostname()) {
 		return fmt.Errorf("the %s provider may not use the internal address %q; use the local provider for self-hosted models", s.Provider, u.Hostname())
 	}
@@ -140,7 +144,7 @@ func (s *Settings) baseURL() string {
 // httpClient builds the client for provider calls. There is no overall timeout: answers
 // stream for minutes. Connection setup and the first response byte are bounded instead.
 func (s *Settings) httpClient() *http.Client {
-	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport := netguard.Transport() // a model server never lives at a metadata address
 	transport.ResponseHeaderTimeout = 2 * time.Minute
 	if s.SkipSSLVerify {
 		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // Explicit, admin-controlled opt-in.
