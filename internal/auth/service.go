@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/time/rate"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -47,6 +48,9 @@ type Service struct {
 
 	localUser     string
 	localPassword string
+	// localHash is the built-in admin's password as a bcrypt hash, made on first use.
+	localHash     []byte
+	localHashOnce sync.Once
 	// disabled is set by COSTDECK_AUTH_DISABLED=true, for local development only.
 	disabled bool
 
@@ -281,7 +285,7 @@ func (s *Service) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	case s.localConfigured() && constantTimeEqual(creds.Username, s.localUser):
 		// A hidden password form (spec.auth.disableLocalLogin) does not disable the
 		// built-in admin: it stays usable through the API as break-glass access.
-		if !constantTimeEqual(creds.Password, s.localPassword) {
+		if !s.builtinPasswordOK(creds.Password) {
 			s.rejectLogin(w, r, creds.Username, http.StatusUnauthorized, "Invalid credentials")
 			return
 		}
@@ -458,7 +462,20 @@ func clientIP(r *http.Request) string {
 	return host
 }
 
-// constantTimeEqual compares secrets without leaking their length or content through
+// builtinPasswordOK checks the built-in admin's password the way local users' passwords
+// are checked, against a bcrypt hash, so a wrong password takes as long for both kinds of
+// account. bcrypt reads at most 72 bytes; a longer password is compared directly.
+func (s *Service) builtinPasswordOK(password string) bool {
+	s.localHashOnce.Do(func() {
+		s.localHash, _ = bcrypt.GenerateFromPassword([]byte(s.localPassword), bcryptCost)
+	})
+	if s.localHash == nil {
+		return subtle.ConstantTimeCompare([]byte(password), []byte(s.localPassword)) == 1
+	}
+	return bcrypt.CompareHashAndPassword(s.localHash, []byte(password)) == nil
+}
+
+// constantTimeEqual compares user names without leaking their length or content through
 // timing. Hashing first equalises the lengths.
 func constantTimeEqual(a, b string) bool {
 	ha, hb := sha256.Sum256([]byte(a)), sha256.Sum256([]byte(b))

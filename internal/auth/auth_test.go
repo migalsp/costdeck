@@ -540,3 +540,16 @@ func TestMiddlewareRefusesCrossSiteWrites(t *testing.T) {
 		}
 	}
 }
+
+func TestBuiltinPasswordLongerThanBcryptReads(t *testing.T) {
+	long := strings.Repeat("x", 100)
+	svc := newTestService(t)
+	svc.localPassword = long
+	if !svc.builtinPasswordOK(long) || svc.builtinPasswordOK(long[:99]+"y") || svc.builtinPasswordOK(long[:72]) {
+		t.Error("a password past bcrypt's 72 bytes must still be compared in full")
+	}
+	short := newTestService(t)
+	if !short.builtinPasswordOK("pw") || short.builtinPasswordOK("pW") {
+		t.Error("the built-in password check is wrong")
+	}
+}
