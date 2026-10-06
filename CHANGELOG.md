@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.4.1](https://github.com/migalsp/costdeck/compare/v1.4.0...v1.4.1) (2026-10-06)
+
+
+### Bug Fixes
+
+* **ai:** send tool schemas that strict OpenAI-compatible servers accept ([02fe500](https://github.com/migalsp/costdeck/commit/02fe500699fa001df49433923ae8eaa4307a93a9))
+* **auth:** check the built-in admin's password against a bcrypt hash ([34cbada](https://github.com/migalsp/costdeck/commit/34cbada544d0a6d936a9fe73a3cccf86275e2d45))
+* **auth:** keep the post-login redirect on this site when its path hides a tab ([b86c44b](https://github.com/migalsp/costdeck/commit/b86c44b0cad9ccd6d6e1e88a4ec17bd97fc79fee))
+
 ## [1.4.0](https://github.com/migalsp/costdeck/compare/v1.3.0...v1.4.0) (2026-10-06)
 
 
