@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.5.0](https://github.com/migalsp/costdeck/compare/v1.4.0...v1.5.0) (2026-10-06)
+
+
+### Features
+
+* **budgets:** let one budget cover several namespaces ([b4a6adb](https://github.com/migalsp/costdeck/commit/b4a6adbbaeb0dd47c8a4c8f37aec698551a81f6f))
+
+
+### Bug Fixes
+
+* **ai:** send tool schemas that strict OpenAI-compatible servers accept ([02fe500](https://github.com/migalsp/costdeck/commit/02fe500699fa001df49433923ae8eaa4307a93a9))
+* **auth:** check the built-in admin's password against a bcrypt hash ([34cbada](https://github.com/migalsp/costdeck/commit/34cbada544d0a6d936a9fe73a3cccf86275e2d45))
+* **auth:** keep the post-login redirect on this site when its path hides a tab ([b86c44b](https://github.com/migalsp/costdeck/commit/b86c44b0cad9ccd6d6e1e88a4ec17bd97fc79fee))
+
 ## [1.4.0](https://github.com/migalsp/costdeck/compare/v1.3.0...v1.4.0) (2026-10-06)
 
 
