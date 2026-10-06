@@ -158,10 +158,14 @@ export default function ScheduleDetails(p: Props) {
             </section>
           )}
 
-          {isGroup && p.canAdmin && p.onDelete && (
+          {p.canAdmin && p.onDelete && (
             <section className="rounded-xl border border-rose-200 p-4">
               <h3 className="text-sm font-semibold text-rose-700">Delete schedule</h3>
-              <p className="text-sm text-slate-500 mt-1">Its namespaces keep their current size and are no longer scaled on a schedule.</p>
+              <p className="text-sm text-slate-500 mt-1">
+                {isGroup
+                  ? 'Its namespaces keep their current size and are no longer scaled on a schedule.'
+                  : 'The namespace keeps its current size and is no longer scaled on a schedule. Its workload rules (start order, exclusions) are removed too.'}
+              </p>
               <div className="mt-3 flex gap-2">
                 {confirmDelete ? (
                   <>

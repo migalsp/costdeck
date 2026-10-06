@@ -137,9 +137,9 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
     }
   };
 
-  const deleteGroup = async (name: string) => {
+  const deleteSchedule = async (kind: 'group' | 'config', name: string) => {
     try {
-      const res = await fetch(`/api/scaling/groups/${name}`, { method: 'DELETE' });
+      const res = await fetch(`/api/scaling/${kind === 'group' ? 'groups' : 'configs'}/${name}`, { method: 'DELETE' });
       if (!res.ok) throw new Error(await res.text());
       setDetails(null);
       fetchData();
@@ -374,7 +374,7 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
               if (group) setWizard({ kind: 'group', existing: group, initialTab: tab });
               else setWizard({ kind: 'config', existing: config! });
             }}
-            onDelete={group ? () => deleteGroup(name) : undefined}
+            onDelete={() => deleteSchedule(kind, name)}
             onRules={config ? () => setOrdering({ name, spec: config.spec }) : undefined}
             onSelectNamespace={ns => { setDetails(null); onSelectNamespace(ns); }}
           />
