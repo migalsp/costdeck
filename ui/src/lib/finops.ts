@@ -363,7 +363,10 @@ export type BudgetScope = 'cluster' | 'namespace' | 'team' | 'environment'
 export interface Budget {
   name: string
   scope: BudgetScope
+  // value names the team or environment; budgets saved before there could be several
+  // namespaces keep their one namespace here.
   value?: string
+  namespaces?: string[]
   monthlyLimit: string
   thresholds?: number[]
   forecast?: boolean

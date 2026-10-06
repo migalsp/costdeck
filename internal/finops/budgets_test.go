@@ -46,6 +46,7 @@ func TestEvaluateBudgets(t *testing.T) {
 		{Name: "payments", Scope: ScopeTeam, Value: "payments", MonthlyLimit: "250"},
 		{Name: "dev", Scope: ScopeEnvironment, Value: EnvNonProduction, MonthlyLimit: "20"},
 		{Name: "api", Scope: ScopeNamespace, Value: "api", MonthlyLimit: "500"},
+		{Name: "both", Scope: ScopeNamespace, Namespaces: []string{"api", "dev-web"}, MonthlyLimit: "500"},
 	}
 	st := EvaluateBudgets(budgets, snap, monthLedger(now))
 	byName := map[string]BudgetStatus{}
@@ -64,6 +65,10 @@ func TestEvaluateBudgets(t *testing.T) {
 	}
 	if a := byName["api"]; !near(a.SpentRatio(), 0.2) {
 		t.Errorf("api: %+v", a)
+	}
+	// Several namespaces in one budget: 10 + 2 a day for ten days.
+	if b := byName["both"]; !near(b.Spent, 120) || len(b.Namespaces) != 2 {
+		t.Errorf("a budget over two namespaces adds both up: %+v", b)
 	}
 }
 

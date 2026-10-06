@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { AlertTriangle, BellRing, Loader2, Pencil, Plus, Target, TrendingUp, Wallet } from 'lucide-react'
+import { useMemo, useState } from 'react'
+import { AlertTriangle, BellRing, Check, Loader2, Pencil, Plus, Search, Target, TrendingUp, Wallet } from 'lucide-react'
 import { Badge, Button, Card, Modal, PageHeader, SectionTitle, type Tone } from '../components/ui'
 import { useAuth } from '../lib/auth'
 import { environmentLabel, fetchBudgets, saveSettings, type AnomalySettings, type Budget, type BudgetScope, type BudgetStatus, type BudgetsResponse, type Environment } from '../lib/finops'
@@ -13,10 +13,18 @@ const stateLabel: Record<BudgetStatus['state'], { label: string; tone: Tone }> =
   over: { label: 'Over budget', tone: 'danger' },
 }
 
+// budgetNamespaces lists the namespaces a namespace budget names, old single-value
+// budgets included.
+const budgetNamespaces = (b: Budget) => [...new Set([...(b.namespaces || []), ...(b.value ? [b.value] : [])])]
+
 const scopeText = (b: Budget) => {
   switch (b.scope) {
     case 'cluster': return 'Whole cluster'
-    case 'namespace': return `Namespace ${b.value}`
+    case 'namespace': {
+      const names = budgetNamespaces(b)
+      if (names.length === 1) return `Namespace ${names[0]}`
+      return `${names.length} namespaces: ${names.slice(0, 3).join(', ')}${names.length > 3 ? ` +${names.length - 3}` : ''}`
+    }
     case 'team': return `Team ${b.value}`
     case 'environment': return `${environmentLabel[b.value as Environment] || b.value} namespaces`
   }
@@ -90,6 +98,7 @@ function BudgetEditor({ initial, existing, scopes, onClose, onSave }: {
   onSave: (budgets: Budget[]) => Promise<void>
 }) {
   const [b, setB] = useState<Budget>(initial || { name: '', scope: 'team', value: scopes.teams[0] || '', monthlyLimit: '', thresholds: [80, 100], forecast: true })
+  const [picked, setPicked] = useState<string[]>(() => (initial?.scope === 'namespace' ? budgetNamespaces(initial) : []))
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [confirmDelete, setConfirmDelete] = useState(false)
@@ -126,8 +135,11 @@ function BudgetEditor({ initial, existing, scopes, onClose, onSave }: {
           : <Button variant="ghost" onClick={() => setConfirmDelete(true)}>Delete</Button>)}
         <div className="ml-auto flex gap-2">
           <Button onClick={onClose}>Cancel</Button>
-          <Button variant="primary" disabled={saving || !b.name || !b.monthlyLimit || (b.scope !== 'cluster' && !b.value)}
-            onClick={() => submit([...others, { ...b, value: b.scope === 'cluster' ? undefined : b.value }])}>{saving ? 'Saving…' : 'Save budget'}</Button>
+          <Button variant="primary"
+            disabled={saving || !b.name || !b.monthlyLimit || (b.scope === 'namespace' ? picked.length === 0 : b.scope !== 'cluster' && !b.value)}
+            onClick={() => submit([...others, b.scope === 'namespace'
+              ? { ...b, value: undefined, namespaces: picked }
+              : { ...b, value: b.scope === 'cluster' ? undefined : b.value, namespaces: undefined }])}>{saving ? 'Saving…' : 'Save budget'}</Button>
         </div>
       </>}>
       <div className="space-y-4">
@@ -140,14 +152,14 @@ function BudgetEditor({ initial, existing, scopes, onClose, onSave }: {
             <span className="text-sm font-medium text-slate-700">Covers</span>
             <select className={field} value={b.scope} onChange={e => { const scope = e.target.value as BudgetScope; set({ scope, value: options[scope][0] || '' }) }}>
               <option value="team">A team</option>
-              <option value="namespace">A namespace</option>
+              <option value="namespace">Namespaces</option>
               <option value="environment">An environment</option>
               <option value="cluster">The whole cluster</option>
             </select>
           </label>
-          {b.scope !== 'cluster' && (
+          {b.scope !== 'cluster' && b.scope !== 'namespace' && (
             <label className="block">
-              <span className="text-sm font-medium text-slate-700">{b.scope === 'team' ? 'Team' : b.scope === 'namespace' ? 'Namespace' : 'Environment'}</span>
+              <span className="text-sm font-medium text-slate-700">{b.scope === 'team' ? 'Team' : 'Environment'}</span>
               {options[b.scope].length > 0 ? (
                 <select className={field} value={b.value} onChange={e => set({ value: e.target.value })}>
                   {options[b.scope].map(o => <option key={o} value={o}>{b.scope === 'environment' ? environmentLabel[o as Environment] : o}</option>)}
@@ -156,6 +168,7 @@ function BudgetEditor({ initial, existing, scopes, onClose, onSave }: {
             </label>
           )}
         </div>
+        {b.scope === 'namespace' && <NamespacePicker options={scopes.namespaces} value={picked} onChange={setPicked} />}
         {b.scope === 'team' && scopes.teams.length === 0 && <p className="text-xs text-slate-500">No namespace has a team label yet: label them with <code className="px-1 rounded bg-slate-100">team=&lt;name&gt;</code>.</p>}
         <label className="block">
           <span className="text-sm font-medium text-slate-700">Monthly limit</span>
@@ -178,6 +191,50 @@ function BudgetEditor({ initial, existing, scopes, onClose, onSave }: {
         {error && <p className="text-sm text-rose-600">{error}</p>}
       </div>
     </Modal>
+  )
+}
+
+// NamespacePicker chooses any number of namespaces, with a search for long lists.
+function NamespacePicker({ options, value, onChange }: { options: string[]; value: string[]; onChange: (v: string[]) => void }) {
+  const [query, setQuery] = useState('')
+  // Namespaces saved earlier stay listed even when they no longer exist.
+  const all = useMemo(() => [...new Set([...options, ...value])].sort(), [options, value])
+  const shown = all.filter(n => n.includes(query.trim().toLowerCase()))
+  const toggle = (n: string) => onChange(value.includes(n) ? value.filter(x => x !== n) : [...value, n].sort())
+  return (
+    <div>
+      <div className="flex items-baseline justify-between">
+        <span className="text-sm font-medium text-slate-700">Namespaces</span>
+        <span className="text-xs text-slate-500">
+          {value.length} selected
+          {value.length > 0 && <button type="button" className="ml-2 font-medium text-brand-700 hover:underline" onClick={() => onChange([])}>Clear</button>}
+        </span>
+      </div>
+      <div className="mt-1 rounded-lg border border-slate-200">
+        <div className="flex items-center gap-2 px-3 border-b border-slate-100">
+          <Search size={14} className="text-slate-400" />
+          <input className="w-full py-2 text-sm outline-none bg-transparent" placeholder="Filter namespaces" value={query} onChange={e => setQuery(e.target.value)} />
+          {query && shown.length > 0 && (
+            <button type="button" className="shrink-0 text-xs font-medium text-brand-700 hover:underline"
+              onClick={() => onChange([...new Set([...value, ...shown])].sort())}>Select {shown.length}</button>
+          )}
+        </div>
+        <div className="max-h-48 overflow-y-auto py-1" role="listbox" aria-multiselectable="true">
+          {shown.length === 0 && <p className="px-3 py-2 text-sm text-slate-400">No namespace matches.</p>}
+          {shown.map(n => {
+            const on = value.includes(n)
+            return (
+              <button key={n} type="button" role="option" aria-selected={on} onClick={() => toggle(n)}
+                className={`w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left ${on ? 'bg-brand-50/60 text-slate-900' : 'text-slate-700 hover:bg-slate-50'}`}>
+                <span className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 ${on ? 'bg-brand-600 border-brand-600 text-white' : 'border-slate-300'}`}>{on && <Check size={12} />}</span>
+                <span className="truncate">{n}</span>
+              </button>
+            )
+          })}
+        </div>
+      </div>
+      <p className="mt-1 text-xs text-slate-500">The budget covers what these namespaces cost together.</p>
+    </div>
   )
 }
 

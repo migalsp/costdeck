@@ -2040,7 +2040,8 @@ components:
       properties:
         name: { type: string, example: payments }
         scope: { type: string, enum: [cluster, namespace, team, environment] }
-        value: { type: string, description: "Namespace, team label value or environment; empty for cluster.", example: payments }
+        value: { type: string, description: "Team label value or environment; empty for cluster. Older namespace budgets keep their one namespace here.", example: payments }
+        namespaces: { type: array, maxItems: 500, items: { type: string }, description: "The namespaces a namespace budget covers together; stored sorted and without duplicates.", example: [dev-api, dev-web] }
         monthlyLimit: { type: string, example: "1200" }
         thresholds: { type: array, items: { type: integer }, example: [80, 100] }
         forecast: { type: boolean, description: Also alert when the month is forecast to exceed the limit. }

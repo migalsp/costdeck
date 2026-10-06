@@ -828,7 +828,7 @@ spec:
           {
             steps: [
               'Open **Budgets & Alerts** and click **New budget**.',
-              'Choose what it covers: a team (namespaces with that `team` label), a namespace, an environment or the whole cluster.',
+              'Choose what it covers: a team (namespaces with that `team` label), one or more namespaces, an environment or the whole cluster.',
               'Enter the monthly limit and the thresholds that alert, 80% and 100% by default.',
               'Keep **Also alert when the month is heading over** on to hear early: it alerts once when spending so far plus the current hourly cost for the rest of the month exceeds the limit.',
             ],
@@ -844,7 +844,11 @@ spec:
       value: payments
       monthlyLimit: "1200"
       thresholds: [80, 100]
-      forecast: true`,
+      forecast: true
+    - name: dev
+      scope: namespace       # several namespaces share one limit
+      namespaces: [dev-api, dev-web]
+      monthlyLimit: "300"`,
             },
           },
         ],

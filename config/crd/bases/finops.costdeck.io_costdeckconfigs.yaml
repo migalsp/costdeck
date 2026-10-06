@@ -230,9 +230,19 @@ spec:
                       maxLength: 63
                       pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                       type: string
+                    namespaces:
+                      description: Namespaces are the namespaces a namespace budget
+                        covers together, besides Value.
+                      items:
+                        maxLength: 63
+                        pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                        type: string
+                      maxItems: 500
+                      type: array
+                      x-kubernetes-list-type: set
                     scope:
                       description: |-
-                        Scope is what the budget covers: the whole cluster, one namespace, a team (the
+                        Scope is what the budget covers: the whole cluster, namespaces, a team (the
                         namespaces whose team label has Value) or an environment.
                       enum:
                       - cluster
@@ -251,8 +261,8 @@ spec:
                       x-kubernetes-list-type: set
                     value:
                       description: |-
-                        Value names the namespace, team or environment (production, non-production, system
-                        or unclassified). Empty for the cluster.
+                        Value names the team or environment (production, non-production, system or
+                        unclassified), or one namespace. Empty for the cluster.
                       type: string
                   required:
                   - monthlyLimit

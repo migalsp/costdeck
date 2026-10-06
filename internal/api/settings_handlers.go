@@ -9,12 +9,14 @@ import (
 	"maps"
 	"net/http"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -808,7 +810,11 @@ func applyBudgetSettings(_ context.Context, cfg *finopsv1.CostDeckConfig, req *S
 		return nil
 	}
 	seen := map[string]bool{}
-	for _, b := range *req.Budgets {
+	for i := range *req.Budgets {
+		b := &(*req.Budgets)[i]
+		if err := normalizeBudgetNamespaces(b); err != nil {
+			return err
+		}
 		switch {
 		case !budgetName.MatchString(b.Name) || len(b.Name) > 63:
 			return badRequestf("budget name %q must be lowercase letters, digits and dashes", b.Name)
@@ -816,7 +822,7 @@ func applyBudgetSettings(_ context.Context, cfg *finopsv1.CostDeckConfig, req *S
 			return badRequestf("there are two budgets named %q", b.Name)
 		case b.Scope != finops.ScopeCluster && b.Scope != finops.ScopeNamespace && b.Scope != finops.ScopeTeam && b.Scope != finops.ScopeEnvironment:
 			return badRequestf("budget %q: scope must be cluster, namespace, team or environment", b.Name)
-		case b.Scope != finops.ScopeCluster && b.Value == "":
+		case b.Scope != finops.ScopeCluster && b.Value == "" && len(b.Namespaces) == 0:
 			return badRequestf("budget %q: say which %s it covers", b.Name, b.Scope)
 		case len(b.Value) > 253:
 			return badRequestf("budget %q: the %s name is too long", b.Name, b.Scope)
@@ -833,6 +839,34 @@ func applyBudgetSettings(_ context.Context, cfg *finopsv1.CostDeckConfig, req *S
 		seen[b.Name] = true
 	}
 	cfg.Spec.Budgets = *req.Budgets
+	return nil
+}
+
+// maxBudgetNamespaces matches the CRD's limit on a budget's namespaces.
+const maxBudgetNamespaces = 500
+
+// normalizeBudgetNamespaces checks the namespaces of a namespace budget and stores them as
+// one sorted list without duplicates, folding in the single namespace older budgets kept
+// in value. Other scopes take no namespace list.
+func normalizeBudgetNamespaces(b *finopsv1.Budget) error {
+	if b.Scope != finops.ScopeNamespace {
+		if len(b.Namespaces) > 0 {
+			return badRequestf("budget %q: only a namespace budget lists namespaces", b.Name)
+		}
+		return nil
+	}
+	names := finops.BudgetNamespaces(*b)
+	for _, n := range names {
+		if errs := validation.IsDNS1123Label(n); len(errs) > 0 {
+			return badRequestf("budget %q: %q is not a namespace name", b.Name, n)
+		}
+	}
+	slices.Sort(names)
+	names = slices.Compact(names)
+	if len(names) > maxBudgetNamespaces {
+		return badRequestf("budget %q: at most %d namespaces", b.Name, maxBudgetNamespaces)
+	}
+	b.Namespaces, b.Value = names, ""
 	return nil
 }
 

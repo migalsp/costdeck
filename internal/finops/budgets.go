@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"time"
@@ -88,6 +89,16 @@ func Thresholds(b finopsv1.Budget) []int {
 	return out
 }
 
+// BudgetNamespaces lists the namespaces a namespace budget names: its namespaces and,
+// for budgets saved before there could be several, its value.
+func BudgetNamespaces(b finopsv1.Budget) []string {
+	out := slices.Clone(b.Namespaces)
+	if b.Value != "" && !slices.Contains(out, b.Value) {
+		out = append(out, b.Value)
+	}
+	return out
+}
+
 // matcher says which namespaces a budget covers.
 func matcher(b finopsv1.Budget, s Snapshot) func(name string) bool {
 	labels := map[string]map[string]string{}
@@ -96,7 +107,11 @@ func matcher(b finopsv1.Budget, s Snapshot) func(name string) bool {
 	}
 	switch b.Scope {
 	case ScopeNamespace:
-		return func(name string) bool { return name == b.Value }
+		covered := map[string]bool{}
+		for _, name := range BudgetNamespaces(b) {
+			covered[name] = true
+		}
+		return func(name string) bool { return covered[name] }
 	case ScopeTeam:
 		return func(name string) bool { l, ok := labels[name]; return ok && Team(l) == b.Value }
 	case ScopeEnvironment:

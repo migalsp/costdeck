@@ -414,15 +414,23 @@ type Budget struct {
 	// +kubebuilder:validation:MaxLength=63
 	Name string `json:"name"`
 
-	// Scope is what the budget covers: the whole cluster, one namespace, a team (the
+	// Scope is what the budget covers: the whole cluster, namespaces, a team (the
 	// namespaces whose team label has Value) or an environment.
 	// +kubebuilder:validation:Enum=cluster;namespace;team;environment
 	Scope string `json:"scope"`
 
-	// Value names the namespace, team or environment (production, non-production, system
-	// or unclassified). Empty for the cluster.
+	// Value names the team or environment (production, non-production, system or
+	// unclassified), or one namespace. Empty for the cluster.
 	// +optional
 	Value string `json:"value,omitempty"`
+
+	// Namespaces are the namespaces a namespace budget covers together, besides Value.
+	// +kubebuilder:validation:MaxItems=500
+	// +kubebuilder:validation:items:MaxLength=63
+	// +kubebuilder:validation:items:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +listType=set
+	// +optional
+	Namespaces []string `json:"namespaces,omitempty"`
 
 	// MonthlyLimit is the budget for a calendar month in the cost currency, e.g. "1200".
 	// +kubebuilder:validation:Pattern=`^[0-9]+(\.[0-9]+)?$`
