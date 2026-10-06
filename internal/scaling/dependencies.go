@@ -46,8 +46,9 @@ func (p GroupPlan) BlockedOnDependencies() bool {
 // dependsOn edges into account:
 //
 //   - a group's own desire comes from its override or schedules (nothing for OnDemand);
-//   - a dependency is additionally kept up while any dependent wants to be up or is not
-//     fully scaled down yet, so it only goes down after its dependents;
+//   - a dependency is brought up while any dependent wants to be up, and a running
+//     dependency is kept up until its dependents are fully down, so it stops after them;
+//     a dependent on its way down never starts a dependency that is already down;
 //   - a manual override on the dependency itself always wins.
 func (e *Engine) PlanGroups(now time.Time, groups []finopsv1.ScalingGroup) map[string]GroupPlan {
 	byName := make(map[string]*finopsv1.ScalingGroup, len(groups))
@@ -78,7 +79,11 @@ func (e *Engine) PlanGroups(now time.Time, groups []finopsv1.ScalingGroup) map[s
 		plan := GroupPlan{Decision: e.ownDecision(now, g), InCycle: inCycle[name]}
 		for _, d := range dependents[name] {
 			dp := resolve(d)
-			if dp.Decision.Active || byName[d].Status.Phase != PhaseScaledDown {
+			// A dependent that wants to be up needs this group up. One that is still on its
+			// way down only holds this group while it is running, so that it stops after its
+			// dependents; it never brings a group that is down, or going down, back up.
+			goingDown := !dp.Decision.Active && byName[d].Status.Phase != PhaseScaledDown
+			if dp.Decision.Active || (goingDown && isRunning(g.Status.Phase)) {
 				plan.RequiredBy = append(plan.RequiredBy, d)
 			}
 		}
@@ -121,6 +126,11 @@ func (e *Engine) PlanGroups(now time.Time, groups []finopsv1.ScalingGroup) map[s
 		plans[name] = plan
 	}
 	return plans
+}
+
+// isRunning reports whether a group's workloads are up or coming up.
+func isRunning(phase string) bool {
+	return phase == PhaseScaledUp || phase == PhaseScalingUp
 }
 
 // ownDecision is the group's desired state before dependents are considered.

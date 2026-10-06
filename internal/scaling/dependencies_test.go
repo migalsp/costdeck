@@ -69,6 +69,20 @@ func TestPlanGroupsPlatformFollowsItsDependents(t *testing.T) {
 		}
 	})
 
+	t.Run("a dependent scaling down does not start a stopped platform", func(t *testing.T) {
+		plans := e.PlanGroups(at(t, time.Saturday, "00:05"), greenZone(PhaseScaledDown, PhaseScalingDown, PhaseScaledDown, PhaseScaledDown))
+		if p := plans["platform"]; p.Decision.Active || len(p.RequiredBy) != 0 {
+			t.Errorf("platform plan = %+v, want it to stay down: pps1 is going down, not up", p)
+		}
+	})
+
+	t.Run("a new dependent that wants to be down does not start the platform", func(t *testing.T) {
+		plans := e.PlanGroups(at(t, time.Saturday, "03:00"), greenZone(PhaseScaledDown, "", PhaseScaledDown, PhaseScaledDown))
+		if p := plans["platform"]; p.Decision.Active || len(p.RequiredBy) != 0 {
+			t.Errorf("platform plan = %+v, want it to stay down for a new, idle dependent", p)
+		}
+	})
+
 	t.Run("weekday business hours: platform up for every running environment", func(t *testing.T) {
 		plans := e.PlanGroups(at(t, time.Wednesday, "10:00"), greenZone(PhaseScaledDown, PhaseScaledDown, PhaseScaledDown, PhaseScaledDown))
 		p := plans["platform"]
