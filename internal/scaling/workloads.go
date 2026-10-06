@@ -73,7 +73,9 @@ func (e *Engine) groupAndSortPriorities(resources []client.Object, sequence []st
 	}
 	sort.Ints(priorities)
 
-	if active {
+	// Stages start in order and stop in reverse, as a group's namespaces do; workloads in
+	// no stage therefore start last and stop first.
+	if !active {
 		for i, j := 0, len(priorities)-1; i < j; i, j = i+1, j-1 {
 			priorities[i], priorities[j] = priorities[j], priorities[i]
 		}
@@ -194,21 +196,45 @@ func isExcluded(name string, exclusions []string) bool {
 	return false
 }
 
-// getSequenceIndex returns the index of the first sequence stage that matches the
-// workload. A stage is a space separated list of patterns; each pattern is a workload name
-// glob ("api", "api-*"), optionally qualified as "Kind/name" or "group/version:Kind/name".
-// A bare "*" matches everything at its position.
+// getSequenceIndex returns the stage a workload belongs to. A stage is a space separated
+// list of patterns; each pattern is a workload name glob ("api", "api-*"), optionally
+// qualified as "Kind/name" or "group/version:Kind/name", and a bare "*" matches every
+// workload. The most specific matching pattern decides: an exact name beats a glob, which
+// beats "*", so "*" in one stage and "my-operator" in a later one puts the operator
+// after everything else. Among equally specific matches the earlier stage wins.
 func getSequenceIndex(obj client.Object, sequence []string) int {
 	kind := workloadKind(obj)
 	name := obj.GetName()
+	best, bestScore := unsequenced, 0
 	for i, stage := range sequence {
 		for pattern := range strings.FieldsSeq(stage) {
-			if matchWorkloadPattern(pattern, kind, name) {
-				return i
+			if !matchWorkloadPattern(pattern, kind, name) {
+				continue
+			}
+			if score := patternSpecificity(pattern); score > bestScore {
+				best, bestScore = i, score
 			}
 		}
 	}
-	return unsequenced
+	return best
+}
+
+// patternSpecificity ranks how precisely a pattern names a workload: 3 for an exact
+// name, 2 for a glob, 1 for "*".
+func patternSpecificity(pattern string) int {
+	if pattern == "*" {
+		return 1
+	}
+	if _, rest, ok := strings.Cut(pattern, ":"); ok {
+		pattern = rest
+	}
+	if _, n, ok := strings.Cut(pattern, "/"); ok {
+		pattern = n
+	}
+	if strings.ContainsAny(pattern, "*?[") {
+		return 2
+	}
+	return 3
 }
 
 func matchWorkloadPattern(pattern, kind, name string) bool {

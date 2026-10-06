@@ -104,7 +104,11 @@ export default function WorkloadRulesDialog({ namespace, spec, onClose, onSave }
 
         <section>
           <h3 className="text-sm font-semibold text-slate-800 flex items-center gap-1.5"><ListOrdered size={15} className="text-brand-600" /> Start order</h3>
-          <p className="text-sm text-slate-500 mb-3">Stages start from the top and stop from the bottom. Workloads in no stage start last.</p>
+          <p className="text-sm text-slate-500 mb-1">Stages start from the top and stop from the bottom. Workloads in no stage start last and stop first.</p>
+          <p className="text-xs text-slate-400 mb-3">
+            A workload goes to the stage of its most specific pattern: its exact name, then a pattern such as <code>api-*</code>, then <code>*</code>.
+            To stop an operator before everything it manages, put <code>*</code> in stage 1 and the operator in stage 2.
+          </p>
           <div className="space-y-2">
             {stages.map((stage, i) => (
               <div key={i} className="rounded-lg border border-slate-200 bg-slate-50/60 p-3">

@@ -135,10 +135,12 @@ type ScalingConfigSpec struct {
 	// +listType=atomic
 	Schedules []ScalingSchedule `json:"schedules,omitempty"`
 
-	// Sequence defines the order of scaling resources. Each entry is a stage: a space
-	// separated list of workload name globs ("db", "api-*"), optionally qualified as
-	// "Kind/name" or "group/version:Kind/name". "*" matches every workload.
-	// Format: "Group/Version:Kind/Name" (e.g. "apps/v1:Deployment/my-app" or "apps/v1:Deployment/*")
+	// Sequence orders the namespace's workloads in stages that start first to last and stop
+	// last to first; workloads in no stage start last and stop first. Each entry is a stage:
+	// a space separated list of workload name globs ("db", "api-*"), optionally qualified
+	// as "Kind/name" or "group/version:Kind/name"; "*" matches every workload. A workload
+	// goes to the stage of its most specific pattern (exact name, then glob, then "*"), so
+	// ["*", "my-operator"] stops the operator before everything else.
 	// +optional
 	// +listType=atomic
 	Sequence []string `json:"sequence,omitempty"`

@@ -344,7 +344,11 @@ claude mcp add --transport http costdeck https://costdeck.example.com/mcp \
 - **Overrides**: Start now and Scale down now ignore the schedule until the next scheduled
   change, for a chosen time, or until you click **Follow schedule**.
 - **Workload rules** (on the namespace page): workloads that never scale down, and the
-  order workloads start in. They apply under any schedule.
+  order workloads start in, in stages that start top to bottom and stop bottom to top;
+  workloads in no stage start last and stop first. A workload goes to the stage of its
+  most specific pattern (its exact name, then a glob such as `api-*`, then `*`), so `*` in
+  stage 1 and an operator in stage 2 stops the operator before what it manages. They apply
+  under any schedule.
 - While a namespace is down, its **CronJobs are suspended** and **KEDA ScaledObjects are
   paused**. Both are restored on scale-up. An **HPA** stops acting on a workload with zero
   replicas and takes over again once replicas are restored.

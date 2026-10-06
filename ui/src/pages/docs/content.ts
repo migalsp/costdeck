@@ -344,9 +344,10 @@ spec:
           {
             list: [
               '**Keep running**: workloads that never scale down, by name or pattern such as `redis-*`. Their CronJobs and KEDA objects are left alone too.',
-              '**Start order**: the order workloads start in within the namespace, for example the database before the API.',
+              '**Start order**: stages of workloads that start top to bottom and stop bottom to top, for example the database before the API. Workloads in no stage start last and stop first.',
             ],
           },
+          { p: 'A workload goes to the stage of its most specific pattern: its exact name, then a pattern such as `api-*`, then `*`. To stop an operator before the workloads it manages, so it cannot bring them back, put `*` in stage 1 and the operator in stage 2.' },
           { p: 'Rules apply under whichever schedule covers the namespace.' },
           {
             ways: {
@@ -358,7 +359,9 @@ spec:
   exclusions: ["redis-*", prometheus]
   sequence:
     - postgres
-    - "api-* worker"`,
+    - "api-* worker"
+# Stop an operator first: everything else, then the operator.
+#   sequence: ["*", my-operator]`,
             },
           },
         ],

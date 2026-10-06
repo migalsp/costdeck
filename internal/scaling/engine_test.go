@@ -2,6 +2,7 @@ package scaling
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -712,5 +713,79 @@ func TestKeptDownCountsMissingReplicas(t *testing.T) {
 	// api: 3 missing replicas x (500m, max(1Gi, 2Gi init)); db is at its original count.
 	if cpu.MilliValue() != 1500 || mem.Value() != 6<<30 {
 		t.Errorf("KeptDown() = %s CPU, %s memory; want 1500m and 6Gi", cpu.String(), mem.String())
+	}
+}
+
+// TestWorkloadStagesStartInOrderAndStopInReverse keeps a namespace's workload order the
+// way the dashboard and the docs describe it, and the way a group orders namespaces:
+// stage 1 starts first and stops last, workloads in no stage start last and stop first.
+func TestWorkloadStagesStartInOrderAndStopInReverse(t *testing.T) {
+	e := buildMockEngine()
+	deploy := func(name string) client.Object { return &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: name}} }
+	resources := []client.Object{deploy("api"), deploy("worker"), deploy("db")}
+	order := func(active bool) []string {
+		priorities, groups := e.groupAndSortPriorities(resources, []string{"db", "api"}, active)
+		names := make([]string, 0, len(resources))
+		for _, p := range priorities {
+			for _, o := range groups[p] {
+				names = append(names, o.GetName())
+			}
+		}
+		return names
+	}
+	if got := strings.Join(order(true), " "); got != "db api worker" {
+		t.Errorf("scale-up order = %q, want db, then api, then the unplaced worker", got)
+	}
+	if got := strings.Join(order(false), " "); got != "worker api db" {
+		t.Errorf("scale-down order = %q, want the unplaced worker, then api, then db", got)
+	}
+}
+
+func TestMostSpecificSequencePatternWins(t *testing.T) {
+	deploy := func(name string) client.Object { return &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: name}} }
+	for _, c := range []struct {
+		sequence []string
+		name     string
+		want     int
+	}{
+		{[]string{"*", "my-operator"}, "my-operator", 1}, // everything else first, the operator after
+		{[]string{"*", "my-operator"}, "postgres", 0},
+		{[]string{"api-*", "api-gateway"}, "api-gateway", 1},
+		{[]string{"api-*", "api-gateway"}, "api-users", 0},
+		{[]string{"*", "Deployment/my-operator"}, "my-operator", 1},
+		{[]string{"api-*", "Deployment/api-*"}, "api-users", 0}, // equally specific: the earlier stage
+	} {
+		if got := getSequenceIndex(deploy(c.name), c.sequence); got != c.want {
+			t.Errorf("getSequenceIndex(%s, %v) = %d, want %d", c.name, c.sequence, got, c.want)
+		}
+	}
+}
+
+// TestScaleDownStopsTheOperatorFirst is the case of an operator that would bring its
+// workloads back: it is scaled down, and the rest waits until it is gone.
+func TestScaleDownStopsTheOperatorFirst(t *testing.T) {
+	e := buildMockEngine()
+	ctx := context.Background()
+	one := int32(1)
+	for _, name := range []string{"my-operator", "postgres", "api"} {
+		must(t, e.Client.Create(ctx, &appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "ops-ns"},
+			Spec:       appsv1.DeploymentSpec{Replicas: &one},
+			Status:     appsv1.DeploymentStatus{Replicas: 1, ReadyReplicas: 1},
+		}))
+	}
+	// Stage 1: everything; stage 2: the operator, which therefore stops first.
+	_, done, err := e.ScaleTarget(ctx, "ops-ns", false, []string{"*", "my-operator"}, nil, nil, false)
+	if err != nil || done {
+		t.Fatalf("the first pass should only stop the operator: done=%v err=%v", done, err)
+	}
+	replicas := func(name string) int32 {
+		d := &appsv1.Deployment{}
+		must(t, e.Client.Get(ctx, client.ObjectKey{Namespace: "ops-ns", Name: name}, d))
+		return *d.Spec.Replicas
+	}
+	if replicas("my-operator") != 0 || replicas("postgres") != 1 || replicas("api") != 1 {
+		t.Errorf("operator=%d postgres=%d api=%d; only the operator may be scaled down first",
+			replicas("my-operator"), replicas("postgres"), replicas("api"))
 	}
 }
