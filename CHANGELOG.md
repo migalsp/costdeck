@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.5.4](https://github.com/migalsp/costdeck/compare/v1.5.3...v1.5.4) (2026-10-06)
+
+
+### Bug Fixes
+
+* **scaling:** move on from a stage that misses its timeout ([8148b55](https://github.com/migalsp/costdeck/commit/8148b5501a282d79f9a6d1e0cc326c7132716872))
+* **scaling:** move on from a stage that misses its timeout ([b14ff64](https://github.com/migalsp/costdeck/commit/b14ff64ed3f1ae0562a0d848e4c3952654927ef0))
+
 ## [1.5.3](https://github.com/migalsp/costdeck/compare/v1.5.2...v1.5.3) (2026-10-06)
 
 
