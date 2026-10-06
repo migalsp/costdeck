@@ -407,8 +407,12 @@ func TestEntraTestConnection(t *testing.T) {
 
 func TestSafeReturnPath(t *testing.T) {
 	for in, want := range map[string]string{
-		"/scaling": "/scaling", "": "/", "https://evil.example": "/", "//evil.example": "/",
-		`/\evil`: "/", CallbackPath: "/",
+		"/scaling": "/scaling", "/reports?period=week": "/reports?period=week", "": "/",
+		"https://evil.example": "/", "//evil.example": "/", `/\evil`: "/", CallbackPath: "/",
+		// Browsers drop tabs and newlines, which would turn these into //evil.example.
+		"/\t/evil.example": "/", "/\n/evil.example": "/", "/\r\n/evil.example": "/", "/ /evil.example": "/",
+		// Still encoded, a tab is only a character of the path.
+		"/%09/evil.example": "/%09/evil.example",
 	} {
 		if got := safeReturnPath(in); got != want {
 			t.Errorf("safeReturnPath(%q) = %q, want %q", in, got, want)

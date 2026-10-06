@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
@@ -214,10 +215,17 @@ func redirectURL(r *http.Request, cfg finopsv1.EntraConfig) string {
 	return scheme + "://" + host + CallbackPath
 }
 
-// safeReturnPath keeps post-login redirects on this site.
+// safeReturnPath keeps post-login redirects on this site: a path with one leading slash.
+// Browsers treat a backslash as a slash and drop tabs and newlines from a URL, so
+// "/<TAB>/evil.example" would arrive as "//evil.example", another site; such characters
+// are refused outright.
 func safeReturnPath(p string) string {
-	if p == "" || !strings.HasPrefix(p, "/") || strings.HasPrefix(p, "//") || strings.Contains(p, `\`) ||
+	if p == "" || p[0] != '/' || (len(p) > 1 && (p[1] == '/' || p[1] == '\\')) ||
+		strings.ContainsFunc(p, func(r rune) bool { return r == '\\' || unicode.IsSpace(r) || unicode.IsControl(r) }) ||
 		strings.HasPrefix(p, CallbackPath) || strings.HasPrefix(p, SPACallbackPath) {
+		return "/"
+	}
+	if u, err := url.Parse(p); err != nil || u.Scheme != "" || u.Host != "" {
 		return "/"
 	}
 	return p
