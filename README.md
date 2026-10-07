@@ -160,7 +160,18 @@ make test        # unit and envtest tests
 make lint        # golangci-lint
 make ui-lint     # TypeScript and ESLint
 make ui build    # dashboard + manager binary with the dashboard embedded
-make test-e2e    # Kind cluster + Helm install + hack/e2e-smoke.sh
+make test-e2e    # Kind cluster + Helm install + the regression scenarios in hack/e2e
+```
+
+The end-to-end suite runs in CI on every pull request. Every scenario in `hack/e2e`
+covers behaviour users depend on (scheduling, dependencies, stage timeouts, workload
+rules, auth, API, VictoriaMetrics history, MCP), so a change that breaks one fails the
+build. A feature or fix that changes behaviour adds or extends a scenario. To run it
+against an existing test cluster instead of a new Kind cluster:
+
+```bash
+SKIP_INSTALL=1 ./hack/e2e-smoke.sh                 # skips the settings-changing scenarios
+SKIP_INSTALL=1 DISPOSABLE=1 E2E_ONLY='30|40' ./hack/e2e-smoke.sh
 ```
 
 ## License
