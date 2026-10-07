@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.5.5](https://github.com/migalsp/costdeck/compare/v1.5.4...v1.5.5) (2026-10-07)
+
+
+### Bug Fixes
+
+* **insights:** chart namespace usage over the VictoriaMetrics lookback window ([4076a1f](https://github.com/migalsp/costdeck/commit/4076a1f9b137ae8a0b0f12a3e67e420bf2bcb5ec))
+* **scaling:** leave excluded workloads out when deciding a namespace is up or down ([842c08f](https://github.com/migalsp/costdeck/commit/842c08fc0df8cd78502e4ff5f25f2626299912ad))
+* **ui:** read memory quantities in decimal units (500M, 1G) in the namespace charts, which were shown as almost zero ([4076a1f](https://github.com/migalsp/costdeck/commit/4076a1f9b137ae8a0b0f12a3e67e420bf2bcb5ec))
+
 ## [1.5.4](https://github.com/migalsp/costdeck/compare/v1.5.3...v1.5.4) (2026-10-06)
 
 
