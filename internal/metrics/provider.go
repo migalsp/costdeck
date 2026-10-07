@@ -46,6 +46,15 @@ type Provider struct {
 	vm         *VMClient
 	vmErr      error
 	lookback   time.Duration
+
+	historyMu sync.Mutex
+	history   map[time.Duration]cachedHistory
+}
+
+type cachedHistory struct {
+	key    string
+	at     time.Time
+	points map[string][]finopsv1.MetricDataPoint
 }
 
 // NewProvider builds a Provider that falls back to the given metrics-server source.
@@ -176,3 +185,35 @@ var (
 	_ Source = (*VMClient)(nil)
 	_ Source = (*MetricsServerSource)(nil)
 )
+
+// NamespaceHistory returns the usage history of every namespace from VictoriaMetrics over
+// the window, which is capped at the configured lookback (retentionDays). It returns the
+// window actually covered, and ErrNoHistory when VictoriaMetrics is not enabled. Results
+// are shared for a short while, as every namespace card asks for its own slice.
+func (p *Provider) NamespaceHistory(ctx context.Context, window time.Duration) (map[string][]finopsv1.MetricDataPoint, time.Duration, error) {
+	vm, lookback, err := p.resolve(ctx)
+	if vm == nil {
+		if err == nil {
+			err = ErrNoHistory
+		}
+		return nil, 0, err
+	}
+	window = min(window, lookback)
+
+	p.historyMu.Lock()
+	defer p.historyMu.Unlock()
+	key := vm.Endpoint() + "|" + vm.labelSelector
+	if c, ok := p.history[window]; ok && c.key == key && time.Since(c.at) < historyCacheTTL {
+		return c.points, window, nil
+	}
+	step := HistoryStep(window)
+	points, err := vm.NamespaceHistory(ctx, time.Now().Truncate(step), window, step)
+	if err != nil {
+		return nil, window, err
+	}
+	if p.history == nil {
+		p.history = map[time.Duration]cachedHistory{}
+	}
+	p.history[window] = cachedHistory{key: key, at: time.Now(), points: points}
+	return points, window, nil
+}

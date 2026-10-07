@@ -361,18 +361,37 @@ paths:
       x-role: viewer
       tags: [Namespaces]
       summary: Usage history
-      description: Resource usage history for the last 60 minutes.
+      description: >-
+        Resource usage, requests and limits over a window. The last hour comes from the
+        operator itself, one point a minute. Longer windows come from VictoriaMetrics,
+        averaged per step (10 minutes for a day, an hour for a week) and capped at its
+        retentionDays; without VictoriaMetrics, or when it has nothing for the namespace,
+        the answer falls back to the last hour. Requests and limits need kube-state-metrics
+        in VictoriaMetrics; without it, the current ones are repeated.
       parameters:
         - $ref: "#/components/parameters/Namespace"
+        - name: range
+          in: query
+          description: Window as hours or days, such as 1h (default), 24h or 7d.
+          schema: { type: string, pattern: "^[0-9]+[hd]$", example: 7d }
       responses:
         "200":
-          description: History data points
+          description: History data points, oldest first
+          headers:
+            X-History-Range:
+              description: The window actually covered, such as 1h or 7d.
+              schema: { type: string }
+            X-History-Source:
+              description: Where the points come from, costdeck (its own last hour) or victoriametrics.
+              schema: { type: string, enum: [costdeck, victoriametrics] }
           content:
             application/json:
               schema:
                 type: array
                 items:
                   $ref: "#/components/schemas/HistoryPoint"
+        "400":
+          description: The range is not a number of hours or days
         "401":
           $ref: "#/components/responses/Unauthorized"
 

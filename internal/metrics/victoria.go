@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	"net/http"
 	"net/url"
@@ -287,15 +288,27 @@ func sampleValue(sample [2]any) (float64, error) {
 }
 
 func (c *VMClient) query(ctx context.Context, query string) (*promResponse, error) {
+	var pr promResponse
+	if err := c.get(ctx, "/api/v1/query", url.Values{"query": {query}}, &pr); err != nil {
+		return nil, err
+	}
+	if pr.Status != "success" {
+		return nil, fmt.Errorf("query failed: %s: %s", pr.ErrorType, pr.Error)
+	}
+	return &pr, nil
+}
+
+// get calls a Prometheus HTTP API path with the given parameters and decodes the answer.
+func (c *VMClient) get(ctx context.Context, path string, params url.Values, out any) error {
 	u := *c.base
-	u.Path += "/api/v1/query"
+	u.Path += path
 	q := u.Query() // Keep parameters from the endpoint, e.g. VictoriaMetrics extra_label.
-	q.Set("query", query)
+	maps.Copy(q, params)
 	u.RawQuery = q.Encode()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	switch {
 	case c.opts.BearerToken != "":
@@ -306,33 +319,29 @@ func (c *VMClient) query(ctx context.Context, query string) (*promResponse, erro
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("request %s: %w", c.base.Redacted(), err)
+		return fmt.Errorf("request %s: %w", c.base.Redacted(), err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
 	if err != nil {
-		return nil, fmt.Errorf("read response: %w", err)
+		return fmt.Errorf("read response: %w", err)
 	}
 
 	switch resp.StatusCode {
 	case http.StatusOK:
 	case http.StatusUnauthorized, http.StatusForbidden:
-		return nil, fmt.Errorf("%s rejected the credentials (HTTP %d)", c.base.Redacted(), resp.StatusCode)
+		return fmt.Errorf("%s rejected the credentials (HTTP %d)", c.base.Redacted(), resp.StatusCode)
 	case http.StatusNotFound:
-		return nil, fmt.Errorf("%s/api/v1/query returned 404: for a VictoriaMetrics cluster the endpoint must include /select/<accountID>/prometheus", c.base.Redacted())
+		return fmt.Errorf("%s%s returned 404: for a VictoriaMetrics cluster the endpoint must include /select/<accountID>/prometheus", c.base.Redacted(), path)
 	default:
-		return nil, fmt.Errorf("%s returned HTTP %d: %s", c.base.Redacted(), resp.StatusCode, truncate(string(body), 300))
+		return fmt.Errorf("%s returned HTTP %d: %s", c.base.Redacted(), resp.StatusCode, truncate(string(body), 300))
 	}
 
-	var pr promResponse
-	if err := json.Unmarshal(body, &pr); err != nil {
-		return nil, fmt.Errorf("response is not a Prometheus API payload (is the endpoint a PromQL URL?): %w", err)
+	if err := json.Unmarshal(body, out); err != nil {
+		return fmt.Errorf("response is not a Prometheus API payload (is the endpoint a PromQL URL?): %w", err)
 	}
-	if pr.Status != "success" {
-		return nil, fmt.Errorf("query failed: %s: %s", pr.ErrorType, pr.Error)
-	}
-	return &pr, nil
+	return nil
 }
 
 func truncate(s string, n int) string {

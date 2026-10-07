@@ -160,14 +160,18 @@ stored; the token is shown once.
   `container_memory_working_set_bytes`, so cAdvisor must be scraped.
 - **Label selector**: narrows a shared VictoriaMetrics down to this cluster, for example
   `cluster="prod-eu"`.
+- **Lookback window**: how many days the namespace usage charts can show (Namespace
+  Insights → Cards: 1h, 24h, 7d …) and the history behind right-sizing advice (at most
+  14 days). Requests and limits in the charts come from kube-state-metrics
+  (`kube_pod_container_resource_requests`/`_limits`); without it the current ones are shown.
 - Bearer token, basic auth or a custom CA, as needed.
 
 **Test connection** reports both reachability and whether container metrics actually
 exist; "connected but no series" is the most common setup mistake. The connection status
 is also shown in `kubectl get costdeckconfig default -n costdeck -o yaml`.
 
-Without VictoriaMetrics, everything falls back to metrics-server: live numbers only, and
-right-sizing advice based on a single reading.
+Without VictoriaMetrics, everything falls back to metrics-server: live numbers, charts of
+the last hour only, and right-sizing advice based on a single reading.
 
 ## Cost rates
 

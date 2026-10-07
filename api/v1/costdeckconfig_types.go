@@ -217,8 +217,9 @@ type VictoriaMetricsConfig struct {
 	// +optional
 	SkipSSLVerify bool `json:"skipSslVerify,omitempty"`
 
-	// RetentionDays is the lookback window for historical queries. Right-sizing advice
-	// uses it, capped at 14 days.
+	// RetentionDays is the lookback window for historical queries: how far back the
+	// namespace usage charts can go, and the history behind right-sizing advice, which
+	// is capped at 14 days.
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:default=7
 	// +optional

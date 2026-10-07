@@ -10,6 +10,7 @@ import {
 import { formatMoney } from '../lib/format'
 import { errorMessage } from '../lib/api'
 import { usePolling } from '../lib/usePolling'
+import { describeRange, historyRanges, type HistorySource } from '../lib/history'
 
 type View = 'table' | 'cards'
 type SortKey = 'cost' | 'idle' | 'efficiency' | 'save' | 'change' | 'name'
@@ -25,12 +26,21 @@ interface Filters {
 
 const NO_TEAM = '__none__'
 const VIEW_KEY = 'costdeck.insights.view'
+const RANGE_KEY = 'costdeck.insights.range'
 
 function storedView(): View {
   try {
     return localStorage.getItem(VIEW_KEY) === 'cards' ? 'cards' : 'table'
   } catch {
     return 'table'
+  }
+}
+
+function storedRange(): string {
+  try {
+    return localStorage.getItem(RANGE_KEY) || ''
+  } catch {
+    return ''
   }
 }
 
@@ -77,10 +87,25 @@ export default function NamespaceInsights({ onSelectNamespace }: { onSelectNames
   const [groupBy, setGroupBy] = useState<GroupBy>('none')
   const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({ key: 'cost', desc: true })
   const [idleShare, setIdleShare] = useState(false)
+  const [historySource, setHistorySource] = useState<HistorySource | null>(null)
+  const [chosenRange, setChosenRange] = useState(storedRange)
 
   usePolling(() => {
     fetchOverview().then(d => { setData(d); setError(null) }).catch(e => setError(errorMessage(e)))
   }, 30000)
+  // Whether VictoriaMetrics is on, and how far back it reaches, decides the chart windows.
+  usePolling(() => {
+    fetch('/api/settings').then(r => (r.ok ? r.json() : null))
+      .then(d => setHistorySource(d?.integrations?.victoriaMetrics ?? { enabled: false }))
+      .catch(() => setHistorySource({ enabled: false }))
+  }, 300000)
+  const ranges = historyRanges(historySource)
+  // Unless the viewer picked one, the charts show the whole configured lookback window.
+  const range = ranges.includes(chosenRange) ? chosenRange : ranges[ranges.length - 1]
+  const changeRange = (r: string) => {
+    setChosenRange(r)
+    try { localStorage.setItem(RANGE_KEY, r) } catch { /* per-browser convenience only */ }
+  }
 
   const changeView = (v: View) => {
     setView(v)
@@ -143,6 +168,17 @@ export default function NamespaceInsights({ onSelectNamespace }: { onSelectNames
         title="Namespace Insights"
         subtitle="What every namespace costs, how much of it is used, and what could be saved"
         actions={<>
+          {view === 'cards' && (
+            <div className="inline-flex rounded-lg border border-slate-200 bg-white p-0.5"
+              title={ranges.length > 1 ? 'Usage history shown in the charts' : 'Longer usage history needs VictoriaMetrics (Settings → Integrations)'}>
+              {ranges.map(r => (
+                <button key={r} onClick={() => changeRange(r)} aria-label={`Last ${describeRange(r)}`}
+                  className={`px-2.5 py-1.5 rounded-md text-sm font-semibold ${range === r ? 'bg-slate-900 text-white' : 'text-slate-500 hover:text-slate-800'}`}>
+                  {r}
+                </button>
+              ))}
+            </div>
+          )}
           <div className="inline-flex rounded-lg border border-slate-200 bg-white p-0.5">
             <ViewButton active={view === 'table'} onClick={() => changeView('table')} icon={<Rows3 size={15} />} label="Table" />
             <ViewButton active={view === 'cards'} onClick={() => changeView('cards')} icon={<LayoutGrid size={15} />} label="Cards" />
@@ -195,7 +231,7 @@ export default function NamespaceInsights({ onSelectNamespace }: { onSelectNames
               <Fragment key={g.key}>
                 {g.key && <GroupTitle name={g.key} rows={g.rows} currency={cur} />}
                 <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 mb-6">
-                  {g.rows.map(r => <NamespaceCard key={r.ns.name} namespace={r.ns.name} insights={r.ns.insights} onClick={() => onSelectNamespace(r.ns.name)} />)}
+                  {g.rows.map(r => <NamespaceCard key={r.ns.name} namespace={r.ns.name} insights={r.ns.insights} range={historySource ? range : null} onClick={() => onSelectNamespace(r.ns.name)} />)}
                 </div>
               </Fragment>
             ))

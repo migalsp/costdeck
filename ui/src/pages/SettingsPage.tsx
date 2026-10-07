@@ -1345,7 +1345,7 @@ export default function SettingsPage() {
                     onChange={e => setVmRetentionDays(parseInt(e.target.value) || 7)}
                     className="w-24 px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm text-center focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-400 transition-all"
                   />
-                  <span className="text-xs text-slate-400">days of history behind right-sizing advice (at most 14 are used)</span>
+                  <span className="text-xs text-slate-400">days of history in the namespace usage charts and behind right-sizing advice (advice uses at most 14)</span>
                 </div>
               </div>
 

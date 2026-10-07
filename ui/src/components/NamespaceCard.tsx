@@ -18,6 +18,8 @@ import { fetchNamespaceCost, fetchRecommendations } from '../lib/api'
 import { formatMoney } from '../lib/format'
 import type { CostEstimate, OptimizationStatus, Recommendations } from '../lib/types'
 import { usePolling } from '../lib/usePolling'
+import { describeRange, pointLabel, rangeHours } from '../lib/history'
+import { quantity } from '../lib/quantity'
 
 interface UsagePoint {
   time: string
@@ -32,31 +34,19 @@ interface UsagePoint {
 interface NamespaceCardProps {
   namespace: string;
   insights?: string[];
+  // History window such as "1h" or "7d"; null while the page still works out which.
+  range?: string | null;
   onClick?: () => void;
 }
 
-// Convert "100m" to 0.1, "1" to 1.0
-// Convert "512Mi" to 512, "1Gi" to 1024
-const parseCpu = (v: string): number => {
-  if (!v) return 0;
-  if (v.endsWith('n')) return parseInt(v.slice(0, -1), 10) / 1000000000;
-  if (v.endsWith('u')) return parseInt(v.slice(0, -1), 10) / 1000000;
-  if (v.endsWith('m')) return parseInt(v.slice(0, -1), 10) / 1000;
-  return parseFloat(v) || 0;
-}
+// CPU in cores and memory in MiB, from Kubernetes quantities in any notation.
+const parseCpu = (v?: string) => quantity(v)
+const parseMem = (v?: string) => quantity(v) / 2 ** 20
 
-const parseMem = (v: string): number => {
-  if (!v) return 0;
-  if (v.endsWith('ki') || v.endsWith('Ki')) return parseInt(v.slice(0, -2)) / 1024;
-  if (v.endsWith('mi') || v.endsWith('Mi')) return parseInt(v.slice(0, -2));
-  if (v.endsWith('gi') || v.endsWith('Gi')) return parseInt(v.slice(0, -2)) * 1024;
-  // If it's just raw bytes
-  return parseInt(v) / (1024 * 1024) || 0;
-}
-
-export default function NamespaceCard({ namespace, insights = [], onClick }: NamespaceCardProps) {
+export default function NamespaceCard({ namespace, insights = [], range = '1h', onClick }: NamespaceCardProps) {
   const { can } = useAuth()
   const [history, setHistory] = useState<UsagePoint[]>([])
+  const [coverage, setCoverage] = useState({ range: '1h', source: 'costdeck' })
   const [optimization, setOptimization] = useState<OptimizationStatus | null>(null)
   const [loading, setLoading] = useState(true)
   const [reverting, setReverting] = useState(false)
@@ -77,13 +67,19 @@ export default function NamespaceCard({ namespace, insights = [], onClick }: Nam
   }
 
   const fetchData = () => {
-    fetch(`/api/namespaces/${namespace}/history`)
-      .then(res => res.json())
-      .then(data => {
+    if (!range) return
+    fetch(`/api/namespaces/${namespace}/history?range=${range}`)
+      .then(async res => {
+        // The server says which window it could cover: without VictoriaMetrics, the last hour.
+        const covered = res.headers.get('X-History-Range') || '1h'
+        setCoverage({ range: covered, source: res.headers.get('X-History-Source') || 'costdeck' })
+        return { covered, data: await res.json() }
+      })
+      .then(({ covered, data }) => {
         const formattedData = (data || []).map((point: MetricDataPoint): UsagePoint => {
           const t = new Date(point.timestamp)
           return {
-            time: `${t.getHours().toString().padStart(2, '0')}:${t.getMinutes().toString().padStart(2, '0')}`,
+            time: pointLabel(t, covered),
             cpuUsage: parseCpu(point.cpu?.usage),
             cpuReq: parseCpu(point.cpu?.requests),
             cpuLim: parseCpu(point.cpu?.limits),
@@ -100,8 +96,8 @@ export default function NamespaceCard({ namespace, insights = [], onClick }: Nam
       .finally(() => setLoading(false))
   }
 
+  usePolling(fetchData, 30000, `${namespace}/${range}`)
   usePolling(() => {
-    fetchData()
     fetchOptimization()
     fetchCost()
     fetchRecommendations(namespace).then(setAdvice).catch(() => setAdvice(null))
@@ -123,6 +119,12 @@ export default function NamespaceCard({ namespace, insights = [], onClick }: Nam
       setReverting(false)
     }
   }
+
+  const historyNote = coverage.source === 'victoriametrics'
+    ? `Last ${describeRange(coverage.range)} · averages from VictoriaMetrics`
+    : range && rangeHours(range) > rangeHours(coverage.range)
+      ? `Last ${describeRange(coverage.range)} · no longer history available`
+      : `Last ${describeRange(coverage.range)}`
 
   const latest = history[history.length - 1] || {
     cpuUsage: 0, cpuReq: 0, cpuLim: 0, memUsage: 0, memReq: 0, memLim: 0
@@ -224,7 +226,7 @@ export default function NamespaceCard({ namespace, insights = [], onClick }: Nam
             )}
           </div>
           <div className="mt-3 text-[11px] text-slate-400 text-center">
-            Last 60 Minutes History
+            {historyNote}
           </div>
         </div>
 
@@ -278,7 +280,7 @@ export default function NamespaceCard({ namespace, insights = [], onClick }: Nam
             )}
           </div>
           <div className="mt-3 text-[11px] text-slate-400 text-center">
-            Last 60 Minutes History
+            {historyNote}
           </div>
         </div>
 

@@ -666,6 +666,7 @@ spec:
             ],
           },
           { tip: '"Connected, but no container metrics found" means the URL works but cAdvisor is not scraped, or the label selector matches nothing. Cost Deck needs `container_cpu_usage_seconds_total` and `container_memory_working_set_bytes`.' },
+          { p: 'The lookback window (`retentionDays`) is how far back the namespace usage charts go (Namespace Insights → Cards, 1h to the full window) and the history behind right-sizing advice (at most 14 days). Requests and limits in the charts come from kube-state-metrics; without it the current ones are shown.' },
           {
             ways: {
               kubectl: `spec:

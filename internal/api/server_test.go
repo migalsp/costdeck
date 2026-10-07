@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
+	"github.com/migalsp/costdeck-operator/internal/metrics"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -212,6 +214,73 @@ func TestServeHistory(t *testing.T) {
 	}
 	if len(parsed) != 1 || parsed[0].CPU.Usage != "100m" {
 		t.Errorf("expected history data, got %v", parsed)
+	}
+	if rr.Header().Get("X-History-Range") != "1h" || rr.Header().Get("X-History-Source") != historySourceCostDeck {
+		t.Errorf("headers = %v, want the operator's last hour", rr.Header())
+	}
+}
+
+func TestServeHistoryRange(t *testing.T) {
+	t.Setenv("POD_NAMESPACE", "costdeck")
+	server := buildMockServerWithK8s()
+	ctx := context.Background()
+	recent := finopsv1.MetricDataPoint{Timestamp: metav1.Now(),
+		CPU:    finopsv1.ResourceMetrics{Usage: "100m", Requests: "1", Limits: "2"},
+		Memory: finopsv1.ResourceMetrics{Usage: "64Mi", Requests: "1Gi", Limits: "2Gi"}}
+	if err := server.Client.Create(ctx, &finopsv1.NamespaceFinOps{
+		ObjectMeta: metav1.ObjectMeta{Name: "shop", Namespace: "costdeck"},
+		Spec:       finopsv1.NamespaceFinOpsSpec{TargetNamespace: "shop"},
+		Status:     finopsv1.NamespaceFinOpsStatus{History: []finopsv1.MetricDataPoint{recent}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &finopsv1.CostDeckConfig{ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: "costdeck"}}
+	if err := server.Client.Create(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	server.Metrics = metrics.NewProvider(server.Client, nil)
+
+	get := func(rng string) *httptest.ResponseRecorder {
+		rr := httptest.NewRecorder()
+		server.routes().ServeHTTP(rr, httptest.NewRequest("GET", "/api/namespaces/shop/history?range="+rng, nil))
+		return rr
+	}
+
+	if rr := get("7x"); rr.Code != http.StatusBadRequest {
+		t.Errorf("range=7x: got %d, want 400", rr.Code)
+	}
+	if rr := get("7d"); rr.Code != http.StatusOK || rr.Header().Get("X-History-Range") != "1h" || rr.Header().Get("X-History-Source") != historySourceCostDeck {
+		t.Errorf("without VictoriaMetrics range=7d must fall back to the last hour, got %d %v", rr.Code, rr.Header())
+	}
+
+	// VictoriaMetrics without kube-state-metrics: usage only.
+	prom := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		result := []any{}
+		if strings.Contains(r.URL.Query().Get("query"), "container_cpu_usage_seconds_total") {
+			end, _ := strconv.Atoi(r.URL.Query().Get("end"))
+			result = append(result, map[string]any{"metric": map[string]string{"namespace": "shop"}, "values": []any{[]any{end, "0.25"}}})
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "success", "data": map[string]any{"resultType": "matrix", "result": result}})
+	}))
+	defer prom.Close()
+	cfg.Spec.Integrations.VictoriaMetrics = &finopsv1.VictoriaMetricsConfig{Enabled: true, Endpoint: prom.URL, RetentionDays: 3}
+	if err := server.Client.Update(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	rr := get("7d")
+	if rr.Header().Get("X-History-Range") != "3d" || rr.Header().Get("X-History-Source") != metrics.SourceVictoriaMetrics {
+		t.Fatalf("headers = %v, want 3d from VictoriaMetrics (capped at retentionDays)", rr.Header())
+	}
+	var points []finopsv1.MetricDataPoint
+	if err := json.NewDecoder(rr.Body).Decode(&points); err != nil {
+		t.Fatal(err)
+	}
+	if len(points) != 145 {
+		t.Fatalf("want 3 days of half-hour points (145), got %d", len(points))
+	}
+	if last := points[len(points)-1]; last.CPU.Usage != "250m" || last.CPU.Requests != "1" || last.Memory.Limits != "2Gi" {
+		t.Errorf("last point = %+v, want VictoriaMetrics usage with the current requests and limits", last)
 	}
 }
 

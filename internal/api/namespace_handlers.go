@@ -2,8 +2,11 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -68,11 +71,74 @@ func (s *Server) serveHistory(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	history := nsFinOps.Status.History
+	window, ok := parseHistoryRange(r.URL.Query().Get("range"))
+	if !ok {
+		writeError(w, http.StatusBadRequest, "range must be a number of hours or days, such as 1h, 24h or 7d")
+		return
+	}
+
+	// The operator keeps the last hour itself; longer windows come from VictoriaMetrics,
+	// and fall back to that hour when it is not enabled or has nothing for the namespace.
+	history, source, covered := nsFinOps.Status.History, historySourceCostDeck, time.Hour
+	if window > time.Hour {
+		all, span, err := s.metricsProvider().NamespaceHistory(r.Context(), window)
+		switch {
+		case err == nil && len(all[nsFinOps.Spec.TargetNamespace]) > 0:
+			history, source, covered = withCurrentAllocation(all[nsFinOps.Spec.TargetNamespace], nsFinOps.Status.History), metrics.SourceVictoriaMetrics, span
+		case err != nil && !errors.Is(err, metrics.ErrNoHistory):
+			logf.FromContext(r.Context()).Error(err, "Could not read usage history from VictoriaMetrics", "namespace", nsFinOps.Spec.TargetNamespace)
+		}
+	}
 	if history == nil {
 		history = []finopsv1.MetricDataPoint{}
 	}
+	w.Header().Set("X-History-Range", formatHistoryRange(covered))
+	w.Header().Set("X-History-Source", source)
 	writeJSON(w, http.StatusOK, history)
+}
+
+// historySourceCostDeck is the X-History-Source of the last hour Cost Deck keeps itself;
+// longer windows say metrics.SourceVictoriaMetrics.
+const historySourceCostDeck = "costdeck"
+
+// parseHistoryRange reads a history window such as "1h", "24h" or "7d"; empty means 1h.
+func parseHistoryRange(v string) (time.Duration, bool) {
+	if v == "" {
+		return time.Hour, true
+	}
+	unit := map[byte]time.Duration{'h': time.Hour, 'd': 24 * time.Hour}[v[len(v)-1]]
+	n, err := strconv.Atoi(v[:len(v)-1])
+	if unit == 0 || err != nil || n < 1 || n > 366 {
+		return 0, false
+	}
+	return time.Duration(n) * unit, true
+}
+
+// formatHistoryRange renders a window the way parseHistoryRange reads it.
+func formatHistoryRange(d time.Duration) string {
+	if d >= 24*time.Hour && d%(24*time.Hour) == 0 {
+		return fmt.Sprintf("%dd", d/(24*time.Hour))
+	}
+	return fmt.Sprintf("%dh", int(d.Hours()))
+}
+
+// withCurrentAllocation fills in requests and limits that VictoriaMetrics could not supply
+// (no kube-state-metrics) with the namespace's current ones, so the chart still shows
+// what the namespace has reserved.
+func withCurrentAllocation(points, recent []finopsv1.MetricDataPoint) []finopsv1.MetricDataPoint {
+	if len(recent) == 0 {
+		return points
+	}
+	now := recent[len(recent)-1]
+	out := make([]finopsv1.MetricDataPoint, len(points))
+	for i, p := range points {
+		if p.CPU.Requests == "" && p.Memory.Requests == "" {
+			p.CPU.Requests, p.CPU.Limits = now.CPU.Requests, now.CPU.Limits
+			p.Memory.Requests, p.Memory.Limits = now.Memory.Requests, now.Memory.Limits
+		}
+		out[i] = p
+	}
+	return out
 }
 
 // PodDetail is one pod row of the namespace details view.
