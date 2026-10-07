@@ -373,9 +373,10 @@ func (e *Engine) isResourceReady(ctx context.Context, o client.Object, targetAct
 }
 
 // ComputePhase checks actual replica states in the namespace and returns one of
-// ScaledUp, ScalingUp, ScaledDown or ScalingDown.
-func (e *Engine) ComputePhase(ctx context.Context, ns string, targetActive bool) string {
-	objs, err := e.listScalableResources(ctx, ns, nil)
+// ScaledUp, ScalingUp, ScaledDown or ScalingDown. Excluded workloads are never scaled, so
+// they do not count: a namespace whose only running workloads are excluded is down.
+func (e *Engine) ComputePhase(ctx context.Context, ns string, targetActive bool, exclusions []string) string {
+	objs, err := e.listScalableResources(ctx, ns, exclusions)
 	if err != nil {
 		if targetActive {
 			return PhaseScalingUp

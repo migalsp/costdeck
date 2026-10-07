@@ -423,7 +423,7 @@ func TestComputePhase(t *testing.T) {
 	ctx := context.Background()
 
 	// Empty namespace -> ScaledUp if active=true, ScaledDown if active=false
-	if p := e.ComputePhase(ctx, "test-ns", true); p != "ScaledUp" {
+	if p := e.ComputePhase(ctx, "test-ns", true, nil); p != "ScaledUp" {
 		t.Errorf("Expected ScaledUp for empty ns, got %v", p)
 	}
 
@@ -437,7 +437,7 @@ func TestComputePhase(t *testing.T) {
 	}
 	must(t, e.Client.Create(ctx, d1))
 
-	if p := e.ComputePhase(ctx, "test-ns", false); p != "ScaledDown" {
+	if p := e.ComputePhase(ctx, "test-ns", false, nil); p != "ScaledDown" {
 		t.Errorf("Expected ScaledDown, got %v", p)
 	}
 
@@ -450,8 +450,23 @@ func TestComputePhase(t *testing.T) {
 	must(t, e.Client.Create(ctx, s1))
 
 	// Mixed state
-	if p := e.ComputePhase(ctx, "test-ns", false); p != "ScalingDown" && p != "PartlyScaled" {
+	if p := e.ComputePhase(ctx, "test-ns", false, nil); p != "ScalingDown" && p != "PartlyScaled" {
 		t.Errorf("Expected ScalingDown or PartlyScaled, got %v", p)
+	}
+
+	// The running StatefulSet is excluded from scaling: the namespace is down without it,
+	// and coming up does not wait for it either.
+	if p := e.ComputePhase(ctx, "test-ns", false, []string{"s1"}); p != PhaseScaledDown {
+		t.Errorf("with s1 excluded, scaling down: got %v, want ScaledDown", p)
+	}
+	d1.Spec.Replicas = &one
+	must(t, e.Client.Update(ctx, d1))
+	d1.Status.ReadyReplicas = 1
+	must(t, e.Client.Status().Update(ctx, d1))
+	s1.Status.ReadyReplicas = 0
+	must(t, e.Client.Status().Update(ctx, s1))
+	if p := e.ComputePhase(ctx, "test-ns", true, []string{"s1"}); p != PhaseScaledUp {
+		t.Errorf("with an unready s1 excluded, scaling up: got %v, want ScaledUp", p)
 	}
 }
 
@@ -648,7 +663,7 @@ func TestScaleDownIgnoresEvictedPods(t *testing.T) {
 	if !e.isResourceReady(ctx, d, false) {
 		t.Fatal("a scaled-down Deployment with only an evicted pod left must count as scaled down")
 	}
-	if phase := e.ComputePhase(ctx, "test-ns", false); phase != PhaseScaledDown {
+	if phase := e.ComputePhase(ctx, "test-ns", false, nil); phase != PhaseScaledDown {
 		t.Errorf("ComputePhase() = %s, want %s", phase, PhaseScaledDown)
 	}
 

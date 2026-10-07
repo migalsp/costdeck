@@ -430,7 +430,7 @@ func (r *ScalingGroupReconciler) reconcileK8sTarget(ctx context.Context, group *
 		return false, nil
 	}
 
-	phase := r.Engine.ComputePhase(ctx, ns, targetActive)
+	phase := r.Engine.ComputePhase(ctx, ns, targetActive, exclusions)
 	return (targetActive && phase == scaling.PhaseScaledUp) || (!targetActive && phase == scaling.PhaseScaledDown), nil
 }
 

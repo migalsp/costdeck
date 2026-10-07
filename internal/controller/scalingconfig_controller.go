@@ -156,7 +156,7 @@ func (r *ScalingConfigReconciler) markAsOverridden(ctx context.Context, config *
 func (r *ScalingConfigReconciler) updateStatusPhase(ctx context.Context, config *finopsv1.ScalingConfig, targetActive bool) bool {
 	l := logf.FromContext(ctx)
 	currentPhase := config.Status.Phase
-	computedPhase := r.Engine.ComputePhase(ctx, config.Spec.TargetNamespace, targetActive)
+	computedPhase := r.Engine.ComputePhase(ctx, config.Spec.TargetNamespace, targetActive, config.Spec.Exclusions)
 
 	if currentPhase != computedPhase {
 		config.Status.Phase = computedPhase
