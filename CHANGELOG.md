@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.6](https://github.com/migalsp/costdeck/compare/v1.5.5...v1.5.6) (2026-10-09)
+
+
+### Bug Fixes
+
+* **ui:** make the entrance animations work without tailwindcss-animate ([a2d2e02](https://github.com/migalsp/costdeck/commit/a2d2e021c9ce05358ca21021d39539bad4c7bdbc))
+
 ## [1.5.5](https://github.com/migalsp/costdeck/compare/v1.5.4...v1.5.5) (2026-10-07)
 
 
