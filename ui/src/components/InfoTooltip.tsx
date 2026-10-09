@@ -36,7 +36,7 @@ export default function InfoTooltip({ content, position = 'top', children }: Inf
       )}
       
       {visible && (
-        <div className={`absolute z-[100] whitespace-normal w-56 ${positions[position]} animate-in fade-in zoom-in duration-200 pointer-events-none`}>
+        <div className={`absolute z-[100] whitespace-normal w-56 ${positions[position]} animate-pop pointer-events-none`}>
           <div className="bg-slate-900/95 backdrop-blur-md text-white text-[11px] leading-relaxed font-semibold px-3 py-2.5 rounded-xl shadow-2xl border border-white/10 ring-1 ring-black/20">
             {content}
             <div className={`absolute border-4 ${arrows[position]}`} />

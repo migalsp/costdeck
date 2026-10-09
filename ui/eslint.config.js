@@ -19,5 +19,13 @@ export default defineConfig([
       ecmaVersion: 2020,
       globals: globals.browser,
     },
+    rules: {
+      // tailwindcss-animate classes do nothing here: the plugin is not installed and
+      // Tailwind v4 has no such utilities, so the element just appears without the effect.
+      'no-restricted-syntax': ['error', ...['Literal[value', 'TemplateElement[value.raw'].map(node => ({
+        selector: `${node}=/(^|\\s)(animate-(in|out)|(fade|zoom|spin)-(in|out)(-\\S+)?|slide-(in|out)-(from|to)-\\S+)(\\s|$)/]`,
+        message: 'tailwindcss-animate classes are not available; use the animate-* tokens in src/index.css (pop, rise, drop, fade, slide-in).',
+      }))],
+    },
   },
 ])

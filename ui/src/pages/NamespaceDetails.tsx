@@ -298,7 +298,7 @@ export default function NamespaceDetails({ namespace, onBack }: NamespaceDetails
                       <td className="px-6 py-4 bg-brand-50/10 font-mono text-xs">{formatCpu(pod.cpu.usage)}</td>
                       <td className="px-6 py-4 bg-brand-50/10 font-mono text-xs text-slate-500">
                         {opt ? (
-                          <div className="flex flex-col animate-in fade-in slide-in-from-left duration-500">
+                          <div className="flex flex-col animate-fade">
                             <span className="line-through opacity-40 text-[10px]">{formatCpu(opt.original.cpuRequest)}</span>
                             <span className="text-emerald-600 font-bold flex items-center gap-1">
                               {formatCpu(pod.cpu.requests)}
@@ -335,7 +335,7 @@ export default function NamespaceDetails({ namespace, onBack }: NamespaceDetails
                       </td>
                       <td className="px-6 py-4 bg-emerald-50/10">
                         {pod.cost ? (
-                          <div className="flex flex-col animate-in fade-in zoom-in duration-300">
+                          <div className="flex flex-col animate-fade">
                             <span className="text-emerald-600 font-bold text-xs">${pod.cost.monthlyCost.toFixed(2)}<span className="text-[10px] font-medium opacity-70">/mo</span></span>
                             <span className="text-emerald-400 font-medium text-[10px]">${pod.cost.hourlyCost.toFixed(4)}/hr</span>
                           </div>

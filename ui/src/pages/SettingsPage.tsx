@@ -569,7 +569,7 @@ const ProviderCard = ({
       </div>
     </div>
     {expanded && !comingSoon && (
-      <div className="px-5 pb-5 pt-2 border-t border-slate-100 animate-in slide-in-from-top-2 duration-200">
+      <div className="px-5 pb-5 pt-2 border-t border-slate-100 animate-drop">
         {children}
       </div>
     )}
@@ -1037,7 +1037,7 @@ export default function SettingsPage() {
         <div className="flex-1 min-w-0 w-full" onChangeCapture={markDirty}>
 
       {section === 'users' && (
-        <div className="space-y-4 animate-in fade-in duration-300">
+        <div className="space-y-4 animate-rise">
           <SectionHeader
             icon={<UsersIcon className="text-brand-600" size={20} />}
             title="Users"
@@ -1049,7 +1049,7 @@ export default function SettingsPage() {
 
       {/* ─── Cloud Providers Section ─────────────────────────────────────── */}
       {section === 'clouds' && (
-        <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
+        <div className="space-y-4 animate-rise">
           <SectionHeader
             icon={<Cloud className="text-brand-600" size={20} />}
             title="Cloud accounts"
@@ -1262,7 +1262,7 @@ export default function SettingsPage() {
 
       {/* ─── Monitoring Section (VictoriaMetrics) ──────────────────────────── */}
       {section === 'metrics' && (
-        <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
+        <div className="space-y-4 animate-rise">
           <SectionHeader
             icon={<Activity className="text-brand-600" size={20} />}
             title="Usage metrics"
@@ -1441,7 +1441,7 @@ export default function SettingsPage() {
 
       {/* ─── AI Models Section ───────────────────────────────────────────── */}
       {section === 'ai' && (
-        <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
+        <div className="space-y-4 animate-rise">
           <SectionHeader
             icon={<Bot className="text-brand-500" size={20} />}
             title="AI assistant"
@@ -1564,7 +1564,7 @@ export default function SettingsPage() {
 
       {/* ─── Messengers Section ──────────────────────────────────────────── */}
       {section === 'notifications' && (
-        <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
+        <div className="space-y-4 animate-rise">
           <SectionHeader
             icon={<MessageSquare className="text-brand-500" size={20} />}
             title="Notifications"
@@ -1677,7 +1677,7 @@ export default function SettingsPage() {
 
       {/* ─── MCP Server Section ────────────────────────────────────────────── */}
       {section === 'mcp' && (
-        <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
+        <div className="space-y-4 animate-rise">
           <SectionHeader
             icon={<Plug className="text-brand-600" size={20} />}
             title="MCP server"
@@ -1735,7 +1735,7 @@ export default function SettingsPage() {
 
       {/* ─── Single sign-on ──────────────────────────────────────────────── */}
       {section === 'sso' && (
-        <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
+        <div className="space-y-4 animate-rise">
           <SectionHeader
             icon={<Shield className="text-brand-600" size={20} />}
             title="Single sign-on"
@@ -1880,7 +1880,7 @@ export default function SettingsPage() {
 
       {/* ─── Features Section ────────────────────────────────────────────── */}
       {section === 'pricing' && (
-        <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
+        <div className="space-y-4 animate-rise">
           <SectionHeader
             icon={<Coins className="text-brand-600" size={20} />}
             title="Prices"
@@ -1949,7 +1949,7 @@ export default function SettingsPage() {
       )}
 
       {section === 'billing' && (
-        <div className="space-y-4 animate-in fade-in duration-300">
+        <div className="space-y-4 animate-rise">
           <SectionHeader
             icon={<Receipt className="text-brand-600" size={20} />}
             title="Cloud bill"
@@ -1962,7 +1962,7 @@ export default function SettingsPage() {
       )}
 
       {section === 'tokens' && (
-        <div className="space-y-4 animate-in fade-in duration-300">
+        <div className="space-y-4 animate-rise">
           <SectionHeader
             icon={<KeyRound className="text-brand-600" size={20} />}
             title="API tokens"

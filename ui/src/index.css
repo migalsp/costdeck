@@ -15,8 +15,18 @@
   --color-brand-900: var(--color-emerald-900);
   --color-brand-950: var(--color-emerald-950);
 
+  /* The dashboard's entrance animations. Use these: Tailwind v4 has no animate-in, fade-in
+     or slide-in-from-* classes (tailwindcss-animate), and eslint.config.js rejects them.
+     slide-in  drawers coming in from the right
+     pop       tooltips, popovers and dialogs
+     rise      panels and tab contents
+     drop      sections expanding downwards
+     fade      values that appear in place, such as table cells */
   --animate-slide-in: slide-in 180ms ease-out;
   --animate-pop: pop 140ms ease-out;
+  --animate-rise: rise 200ms ease-out;
+  --animate-drop: drop 150ms ease-out;
+  --animate-fade: fade 200ms ease-out;
 
   @keyframes slide-in {
     from { transform: translateX(24px); opacity: 0; }
@@ -25,6 +35,26 @@
   @keyframes pop {
     from { transform: scale(0.97); opacity: 0; }
     to { transform: scale(1); opacity: 1; }
+  }
+  @keyframes rise {
+    from { transform: translateY(8px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+  }
+  @keyframes drop {
+    from { transform: translateY(-4px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+  }
+  @keyframes fade {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+}
+
+/* The entrance animations are decoration: leave them out for people who ask for less
+   motion. Loading spinners keep turning, they carry meaning. */
+@media (prefers-reduced-motion: reduce) {
+  .animate-slide-in, .animate-pop, .animate-rise, .animate-drop, .animate-fade {
+    animation: none;
   }
 }
 
