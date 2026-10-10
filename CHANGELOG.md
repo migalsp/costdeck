@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.5.7](https://github.com/migalsp/costdeck/compare/v1.5.6...v1.5.7) (2026-10-10)
+
+
+### Bug Fixes
+
+* **deps:** update golang.org/x/net to v0.60.0 and Go to 1.26.9 for the HTTP/2 vulnerabilities ([81d1b65](https://github.com/migalsp/costdeck/commit/81d1b657fbcfb1c64e48464aa9652a7b10e61b57))
+* **notify:** announce a group or schedule only when it settles in a new state ([41d535a](https://github.com/migalsp/costdeck/commit/41d535a5d61b4db2f5a3a32484a65dbfbc77b291))
+
 ## [1.5.6](https://github.com/migalsp/costdeck/compare/v1.5.5...v1.5.6) (2026-10-09)
 
 
