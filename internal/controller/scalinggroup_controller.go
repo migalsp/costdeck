@@ -52,7 +52,8 @@ type ScalingGroupReconciler struct {
 	// Pricing values the savings of kept-down workloads; optional.
 	Pricing *pricing.Resolver
 	// Notifier announces finished transitions; optional.
-	Notifier Notifier
+	Notifier  Notifier
+	announced transitionLog
 }
 
 // +kubebuilder:rbac:groups=finops.costdeck.io,namespace=costdeck,resources=scalinggroups,verbs=get;list;watch;create;update;patch;delete
@@ -470,7 +471,7 @@ func (r *ScalingGroupReconciler) updateStatusAndPhase(ctx context.Context, group
 	if err := updateStatus(ctx, r.Client, group, before, &group.Status); err != nil {
 		return ctrl.Result{}, err
 	}
-	announceTransition(ctx, r.Notifier, "Group", group.Name, oldPhase, newPhase, group.Status.ScheduleStatus, group.Status.RequiredBy)
+	r.announced.announce(ctx, r.Notifier, group.UID, "Group", group.Name, oldPhase, newPhase, group.Status.ScheduleStatus, group.Status.RequiredBy)
 	savings, _ := strconv.ParseFloat(group.Status.EstimatedHourlySavings, 64)
 	telemetry.RecordScaling("ScalingGroup", group.Name, targetActive, allReady,
 		decision.Mode == scaling.ModeManualUp || decision.Mode == scaling.ModeManualDown, savings, group.Status.Currency)

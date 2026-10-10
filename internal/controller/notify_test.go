@@ -35,10 +35,14 @@ func TestAnnounceTransitionOnlyForFinishedScaling(t *testing.T) {
 		Currency:               "USD",
 	}
 	ctx := context.Background()
-	announceTransition(ctx, n, "Group", "pps1", "", scaling.PhaseScaledDown, st, nil)                        // first reconcile
-	announceTransition(ctx, n, "Group", "pps1", scaling.PhaseScalingDown, scaling.PhaseScalingDown, st, nil) // no change
-	announceTransition(ctx, n, "Group", "pps1", scaling.PhaseScaledUp, scaling.PhaseScalingDown, st, nil)    // not finished
-	announceTransition(ctx, n, "Group", "pps1", scaling.PhaseScalingDown, scaling.PhaseScaledDown, st, nil)
+	var log transitionLog
+	announce := func(old, phase string) {
+		log.announce(ctx, n, "uid-pps1", "Group", "pps1", old, phase, st, nil)
+	}
+	announce("", scaling.PhaseScaledUp)                          // first reconcile
+	announce(scaling.PhaseScalingDown, scaling.PhaseScalingDown) // no change
+	announce(scaling.PhaseScaledUp, scaling.PhaseScalingDown)    // not finished
+	announce(scaling.PhaseScalingDown, scaling.PhaseScaledDown)
 	select {
 	case <-n.done:
 	case <-time.After(2 * time.Second):
@@ -54,6 +58,42 @@ func TestAnnounceTransitionOnlyForFinishedScaling(t *testing.T) {
 		if !strings.Contains(msg, want) {
 			t.Errorf("message %q does not contain %q", msg, want)
 		}
+	}
+}
+
+// A group that is up and whose pod keeps restarting goes ScaledUp, ScalingUp, ScaledUp
+// over and over; it is still the group that was announced as up, so nothing is posted.
+func TestTransitionLogAnnouncesOnlyRealChanges(t *testing.T) {
+	up, down := scaling.PhaseScaledUp, scaling.PhaseScaledDown
+	goingUp, goingDown := scaling.PhaseScalingUp, scaling.PhaseScalingDown
+	for _, tc := range []struct {
+		name  string
+		steps [][2]string // old phase, new phase
+		want  []bool
+	}{
+		{"a pod restarting in a group that is up",
+			[][2]string{{up, goingUp}, {goingUp, up}, {up, goingUp}, {goingUp, up}},
+			[]bool{false, false, false, false}},
+		{"scaling down and back up",
+			[][2]string{{up, goingDown}, {goingDown, down}, {down, goingUp}, {goingUp, up}},
+			[]bool{false, true, false, true}},
+		{"a hiccup while down, then a real start",
+			[][2]string{{down, goingDown}, {goingDown, down}, {down, scaling.PhaseWaitingForDependencies}, {scaling.PhaseWaitingForDependencies, goingUp}, {goingUp, up}},
+			[]bool{false, false, false, false, true}},
+		{"a transition the operator restarted in the middle of",
+			[][2]string{{goingUp, up}},
+			[]bool{true}},
+		{"a new object that first has to scale", [][2]string{{"", goingDown}, {goingDown, down}}, []bool{false, true}},
+		{"a new object already in place", [][2]string{{"", up}, {up, up}}, []bool{false, false}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var log transitionLog
+			for i, s := range tc.steps {
+				if got := log.changed("uid", s[0], s[1]); got != tc.want[i] {
+					t.Errorf("step %d %s -> %s: announce = %v, want %v", i, s[0], s[1], got, tc.want[i])
+				}
+			}
+		})
 	}
 }
 

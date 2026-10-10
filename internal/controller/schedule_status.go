@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
@@ -120,10 +122,43 @@ type Notifier interface {
 	Notify(ctx context.Context, markdown string)
 }
 
-// announceTransition notifies when an object has just finished scaling up or down. The
-// first reconcile of a new object (no previous phase) is not announced.
-func announceTransition(ctx context.Context, n Notifier, kind, name, oldPhase, newPhase string, st finopsv1.ScheduleStatus, requiredBy []string) {
-	if n == nil || oldPhase == "" || oldPhase == newPhase || (newPhase != scaling.PhaseScaledUp && newPhase != scaling.PhaseScaledDown) {
+// transitionLog remembers the settled phase (ScaledUp or ScaledDown) last announced for
+// each object, so that only real changes reach the chat. A group that is up and whose pod
+// restarts goes ScaledUp, ScalingUp, ScaledUp; announcing every return would post "is up"
+// again after each crash. It lives in memory on the leader: after a restart it learns an
+// object's settled phase from its next reconcile without announcing it.
+type transitionLog struct {
+	mu   sync.Mutex
+	last map[types.UID]string
+}
+
+func settled(phase string) bool {
+	return phase == scaling.PhaseScaledUp || phase == scaling.PhaseScaledDown
+}
+
+// changed records a reconcile's phase change and reports whether it is worth announcing:
+// the object has just settled in a phase other than the one last announced. The first
+// reconcile of a new object (no previous phase) is not announced.
+func (l *transitionLog) changed(uid types.UID, oldPhase, newPhase string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.last == nil {
+		l.last = map[types.UID]string{}
+	}
+	if _, known := l.last[uid]; !known && settled(oldPhase) {
+		l.last[uid] = oldPhase // learnt after a restart: it was announced back then, if at all
+	}
+	if !settled(newPhase) {
+		return false
+	}
+	last := l.last[uid]
+	l.last[uid] = newPhase
+	return oldPhase != "" && oldPhase != newPhase && last != newPhase
+}
+
+// announce notifies when an object has just settled in a new phase (see changed).
+func (l *transitionLog) announce(ctx context.Context, n Notifier, uid types.UID, kind, name, oldPhase, newPhase string, st finopsv1.ScheduleStatus, requiredBy []string) {
+	if n == nil || !l.changed(uid, oldPhase, newPhase) {
 		return
 	}
 	go n.Notify(context.WithoutCancel(ctx), transitionMessage(kind, name, newPhase, st, requiredBy))
