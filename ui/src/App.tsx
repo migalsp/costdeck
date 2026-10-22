@@ -18,6 +18,7 @@ import AuthCallback from './pages/AuthCallback'
 import ChangePasswordDialog from './components/ChangePasswordDialog'
 import ThemeSwitch from './components/ThemeSwitch'
 import Toaster from './components/Toaster'
+import LeaveDialog from './components/LeaveDialog'
 import { AuthContext, isManagedUser, type User } from './lib/auth'
 import { followLink, navigate, segment, splitPath, usePath } from './lib/router'
 import { Button, PageHeader } from './components/ui'
@@ -288,6 +289,7 @@ function App() {
       {changingPassword && (
         <ChangePasswordDialog onDone={() => { setChangingPassword(false); loadSession() }} onClose={() => setChangingPassword(false)} onSignOut={signOut} />
       )}
+      <LeaveDialog />
       <Toaster />
       </div>
     </div>

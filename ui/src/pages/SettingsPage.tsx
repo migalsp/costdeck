@@ -8,7 +8,7 @@ import { AWSLogo, AzureLogo, GCPLogo, WebexLogo } from '../components/ProviderLo
 import ApiTokens from '../components/ApiTokens'
 import UsersSettings from '../components/settings/UsersSettings'
 import { usePolling } from '../lib/usePolling'
-import { navigate, segment } from '../lib/router'
+import { navigate, segment, useLeaveGuard } from '../lib/router'
 import { apiError, errorMessage } from '../lib/api'
 import { Button, PageHeader } from '../components/ui'
 
@@ -154,6 +154,12 @@ const navGroups: { title: string; items: { id: Section; label: string; icon: Rea
   ] },
 ]
 const allSections = navGroups.flatMap(g => g.items.map(i => i.id))
+const sectionLabels = Object.fromEntries(navGroups.flatMap(g => g.items.map(i => [i.id, i.label]))) as Record<Section, string>
+// Moving between sections keeps every section's input, so only leaving Settings is held.
+const staysInSettings = (path: string) => path === '/settings' || path.startsWith('/settings/')
+
+// listOf joins names as prose: "A", "A and B", "A, B and C".
+const listOf = (names: string[]) => (names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}` : names[0])
 const sectionKey = 'costdeck.settings.section'
 
 // lastSection is the section opened last in this browser, shown for a bare /settings.
@@ -614,6 +620,8 @@ export default function SettingsPage({ section: requested }: { section?: string 
   const [expandedProvider, setExpandedProvider] = useState<string | null>('aws')
   const section = requested && allSections.includes(requested as Section) ? requested as Section : lastSection()
   const [dirty, setDirty] = useState<Partial<Record<Section, boolean>>>({})
+  const unsaved = allSections.filter(s => dirty[s]).map(s => sectionLabels[s])
+  useLeaveGuard(unsaved.length ? listOf(unsaved) : null, staysInSettings)
   const go = (s: Section) => {
     try { localStorage.setItem(sectionKey, s) } catch { /* not remembered */ }
     navigate(`/settings/${segment(s)}`)
