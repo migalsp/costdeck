@@ -278,7 +278,7 @@ export default function AIChatWidget() {
               )}
 
               {item.text && (
-                <div className="prose prose-sm prose-slate max-w-none text-slate-700 leading-relaxed prose-p:my-1 prose-pre:my-2 prose-pre:bg-slate-900 prose-pre:text-slate-50 prose-th:bg-slate-100 prose-th:p-2 prose-td:p-2 prose-table:border-collapse prose-table:w-full prose-table:border prose-table:border-slate-200">
+                <div className="prose prose-sm prose-slate dark:prose-invert max-w-none text-slate-700 leading-relaxed prose-p:my-1 prose-pre:my-2 prose-pre:theme-keep prose-pre:bg-slate-900 prose-pre:text-slate-50 prose-th:bg-slate-100 prose-th:p-2 prose-td:p-2 prose-table:border-collapse prose-table:w-full prose-table:border prose-table:border-slate-200">
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>{item.text}</ReactMarkdown>
                 </div>
               )}

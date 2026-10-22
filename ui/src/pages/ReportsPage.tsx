@@ -348,7 +348,7 @@ export default function ReportsPage() {
                   </div>
                 </div>
               )}
-              <div className="prose prose-slate max-w-none p-8 print-prose prose-headings:tracking-tight prose-a:text-brand-700 prose-table:text-sm">
+              <div className="prose prose-slate dark:prose-invert max-w-none p-8 print-prose prose-headings:tracking-tight prose-a:text-brand-700 prose-table:text-sm">
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>{shown || '…'}</ReactMarkdown>
               </div>
             </>

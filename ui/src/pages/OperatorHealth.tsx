@@ -170,40 +170,40 @@ export default function OperatorHealth() {
               <AreaChart data={history} margin={{ top: 10, right: 20, left: 10, bottom: 20 }}>
                 <defs>
                   <linearGradient id="colorCpu" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#047857" stopOpacity={0.15} />
-                    <stop offset="95%" stopColor="#047857" stopOpacity={0} />
+                    <stop offset="5%" stopColor="var(--color-emerald-700)" stopOpacity={0.15} />
+                    <stop offset="95%" stopColor="var(--color-emerald-700)" stopOpacity={0} />
                   </linearGradient>
                 </defs>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--color-slate-100)" />
                 <XAxis
                   dataKey="time"
                   fontSize={10}
-                  tick={{ fill: '#94a3b8' }}
+                  tick={{ fill: 'var(--color-slate-400)' }}
                   tickLine={false}
-                  axisLine={{ stroke: '#e2e8f0' }}
-                  label={{ value: 'Time', position: 'insideBottom', offset: -10, fontSize: 10, fill: '#94a3b8' }}
+                  axisLine={{ stroke: 'var(--color-slate-200)' }}
+                  label={{ value: 'Time', position: 'insideBottom', offset: -10, fontSize: 10, fill: 'var(--color-slate-400)' }}
                 />
                 <YAxis
                   fontSize={10}
-                  tick={{ fill: '#94a3b8' }}
+                  tick={{ fill: 'var(--color-slate-400)' }}
                   tickLine={false}
-                  axisLine={{ stroke: '#e2e8f0' }}
+                  axisLine={{ stroke: 'var(--color-slate-200)' }}
                   domain={[0, (dataMax: number) => Math.max(dataMax, cpuLim || 0.1) * 1.3]}
-                  label={{ value: 'Cores', angle: -90, position: 'insideLeft', offset: 5, fontSize: 10, fill: '#94a3b8' }}
+                  label={{ value: 'Cores', angle: -90, position: 'insideLeft', offset: 5, fontSize: 10, fill: 'var(--color-slate-400)' }}
                 />
                 <Tooltip
-                  contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', fontSize: '12px' }}
+                  contentStyle={{ borderRadius: '12px', border: 'none', backgroundColor: 'var(--color-white)', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', fontSize: '12px' }}
                   formatter={(value) => [`${Number(value).toFixed(4)} cores`, 'CPU Usage']}
                 />
                 <Legend iconType="circle" wrapperStyle={{ fontSize: '10px', paddingTop: '8px' }} />
-                <Area isAnimationActive={false} type="monotone" dataKey="cpuUsage" name="Usage" stroke="#047857" strokeWidth={2} fillOpacity={1} fill="url(#colorCpu)" dot={false} />
+                <Area isAnimationActive={false} type="monotone" dataKey="cpuUsage" name="Usage" stroke="var(--color-emerald-700)" strokeWidth={2} fillOpacity={1} fill="url(#colorCpu)" dot={false} />
                 {cpuReq > 0 && (
-                  <ReferenceLine y={cpuReq} stroke="#64748b" strokeDasharray="6 3" strokeWidth={1.5}
-                    label={{ position: 'right', value: `Req ${cpuReq}`, fill: '#64748b', fontSize: 9, fontWeight: 'bold' }} />
+                  <ReferenceLine y={cpuReq} stroke="var(--color-slate-500)" strokeDasharray="6 3" strokeWidth={1.5}
+                    label={{ position: 'right', value: `Req ${cpuReq}`, fill: 'var(--color-slate-500)', fontSize: 9, fontWeight: 'bold' }} />
                 )}
                 {cpuLim > 0 && (
-                  <ReferenceLine y={cpuLim} stroke="#94a3b8" strokeDasharray="6 3" strokeWidth={1.5}
-                    label={{ position: 'right', value: `Lim ${cpuLim}`, fill: '#94a3b8', fontSize: 9, fontWeight: 'bold' }} />
+                  <ReferenceLine y={cpuLim} stroke="var(--color-slate-400)" strokeDasharray="6 3" strokeWidth={1.5}
+                    label={{ position: 'right', value: `Lim ${cpuLim}`, fill: 'var(--color-slate-400)', fontSize: 9, fontWeight: 'bold' }} />
                 )}
               </AreaChart>
             </ResponsiveContainer>
@@ -228,40 +228,40 @@ export default function OperatorHealth() {
               <AreaChart data={history} margin={{ top: 10, right: 20, left: 10, bottom: 20 }}>
                 <defs>
                   <linearGradient id="colorMem" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#047857" stopOpacity={0.15} />
-                    <stop offset="95%" stopColor="#047857" stopOpacity={0} />
+                    <stop offset="5%" stopColor="var(--color-emerald-700)" stopOpacity={0.15} />
+                    <stop offset="95%" stopColor="var(--color-emerald-700)" stopOpacity={0} />
                   </linearGradient>
                 </defs>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--color-slate-100)" />
                 <XAxis
                   dataKey="time"
                   fontSize={10}
-                  tick={{ fill: '#94a3b8' }}
+                  tick={{ fill: 'var(--color-slate-400)' }}
                   tickLine={false}
-                  axisLine={{ stroke: '#e2e8f0' }}
-                  label={{ value: 'Time', position: 'insideBottom', offset: -10, fontSize: 10, fill: '#94a3b8' }}
+                  axisLine={{ stroke: 'var(--color-slate-200)' }}
+                  label={{ value: 'Time', position: 'insideBottom', offset: -10, fontSize: 10, fill: 'var(--color-slate-400)' }}
                 />
                 <YAxis
                   fontSize={10}
-                  tick={{ fill: '#94a3b8' }}
+                  tick={{ fill: 'var(--color-slate-400)' }}
                   tickLine={false}
-                  axisLine={{ stroke: '#e2e8f0' }}
+                  axisLine={{ stroke: 'var(--color-slate-200)' }}
                   domain={[0, (dataMax: number) => Math.max(dataMax, memLim || 128) * 1.3]}
-                  label={{ value: 'MiB', angle: -90, position: 'insideLeft', offset: 5, fontSize: 10, fill: '#94a3b8' }}
+                  label={{ value: 'MiB', angle: -90, position: 'insideLeft', offset: 5, fontSize: 10, fill: 'var(--color-slate-400)' }}
                 />
                 <Tooltip
-                  contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', fontSize: '12px' }}
+                  contentStyle={{ borderRadius: '12px', border: 'none', backgroundColor: 'var(--color-white)', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', fontSize: '12px' }}
                   formatter={(value) => [`${Number(value).toFixed(1)} MiB`, 'Memory Usage']}
                 />
                 <Legend iconType="circle" wrapperStyle={{ fontSize: '10px', paddingTop: '8px' }} />
-                <Area isAnimationActive={false} type="monotone" dataKey="memoryUsage" name="Usage" stroke="#047857" strokeWidth={2} fillOpacity={1} fill="url(#colorMem)" dot={false} />
+                <Area isAnimationActive={false} type="monotone" dataKey="memoryUsage" name="Usage" stroke="var(--color-emerald-700)" strokeWidth={2} fillOpacity={1} fill="url(#colorMem)" dot={false} />
                 {memReq > 0 && (
-                  <ReferenceLine y={memReq} stroke="#64748b" strokeDasharray="6 3" strokeWidth={1.5}
-                    label={{ position: 'right', value: `Req ${Math.round(memReq)}`, fill: '#64748b', fontSize: 9, fontWeight: 'bold' }} />
+                  <ReferenceLine y={memReq} stroke="var(--color-slate-500)" strokeDasharray="6 3" strokeWidth={1.5}
+                    label={{ position: 'right', value: `Req ${Math.round(memReq)}`, fill: 'var(--color-slate-500)', fontSize: 9, fontWeight: 'bold' }} />
                 )}
                 {memLim > 0 && (
-                  <ReferenceLine y={memLim} stroke="#94a3b8" strokeDasharray="6 3" strokeWidth={1.5}
-                    label={{ position: 'right', value: `Lim ${Math.round(memLim)}`, fill: '#94a3b8', fontSize: 9, fontWeight: 'bold' }} />
+                  <ReferenceLine y={memLim} stroke="var(--color-slate-400)" strokeDasharray="6 3" strokeWidth={1.5}
+                    label={{ position: 'right', value: `Lim ${Math.round(memLim)}`, fill: 'var(--color-slate-400)', fontSize: 9, fontWeight: 'bold' }} />
                 )}
               </AreaChart>
             </ResponsiveContainer>
@@ -270,7 +270,7 @@ export default function OperatorHealth() {
       </div>
 
       {/* Logs Section */}
-      <div className="bg-slate-900 rounded-xl shadow-xl overflow-hidden flex flex-col h-[500px]">
+      <div className="theme-keep bg-slate-900 rounded-xl shadow-xl overflow-hidden flex flex-col h-[500px]">
         <div className="bg-slate-800 px-6 py-3 flex justify-between items-center border-b border-slate-700">
           <div className="flex items-center gap-2 text-slate-300">
             <Terminal size={14} />

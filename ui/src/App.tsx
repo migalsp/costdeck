@@ -16,6 +16,7 @@ import ReportsPage from './pages/ReportsPage'
 import AIChatWidget from './components/AIChatModal'
 import AuthCallback from './pages/AuthCallback'
 import ChangePasswordDialog from './components/ChangePasswordDialog'
+import ThemeSwitch from './components/ThemeSwitch'
 import { AuthContext, isManagedUser, type User } from './lib/auth'
 import { followLink, navigate, segment, splitPath, usePath } from './lib/router'
 import { Button, PageHeader } from './components/ui'
@@ -164,7 +165,9 @@ function App() {
   if (user?.mustChangePassword) {
     return (
       <div className="min-h-screen bg-slate-900">
-        <ChangePasswordDialog required onDone={loadSession} onClose={signOut} onSignOut={signOut} />
+        <div className="theme-surface contents text-slate-900">
+          <ChangePasswordDialog required onDone={loadSession} onClose={signOut} onSignOut={signOut} />
+        </div>
       </div>
     )
   }
@@ -210,6 +213,7 @@ function App() {
         </nav>
         
         <div className="p-6 border-t border-slate-800">
+          <ThemeSwitch />
           {user && user.provider !== 'anonymous' && (
             <div className="flex items-center gap-3 mb-4 px-1" title={user.email || user.name}>
               <UserCircle2 size={28} className="text-slate-500 shrink-0" />
@@ -243,7 +247,8 @@ function App() {
         </div>
       </aside>
 
-      {/* Main Content Area */}
+      {/* Everything right of the sidebar follows the theme (see .theme-surface in index.css). */}
+      <div className="theme-surface contents text-slate-900">
       <main ref={main} className="flex-1 overflow-auto bg-slate-50">
         {page === 'overview' && (
           <Overview
@@ -282,6 +287,7 @@ function App() {
       {changingPassword && (
         <ChangePasswordDialog onDone={() => { setChangingPassword(false); loadSession() }} onClose={() => setChangingPassword(false)} onSignOut={signOut} />
       )}
+      </div>
     </div>
     </AuthContext.Provider>
   )

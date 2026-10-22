@@ -106,10 +106,11 @@ export const isDown = (ns: NamespaceRow) => ns.schedule?.desiredState === 'Down'
 // Categorical series colours for per-namespace charts, in fixed order (validated for
 // colour-vision deficiency on white); everything past them folds into neutral "Other".
 export const seriesColors = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4']
-export const otherColor = '#94a3b8'
+export const otherColor = 'var(--color-slate-400)'
 
-// The cost funnel is one ordinal emerald ramp, darkest for what is used.
-export const funnelColors = { used: '#064e3b', idle: '#047857', unallocated: '#10b981' }
+// The cost funnel is one ordinal emerald ramp, strongest for what is used: darkest on the
+// light theme, lightest on the dark one (the theme mirrors the scale).
+export const funnelColors = { used: 'var(--color-emerald-900)', idle: 'var(--color-emerald-700)', unallocated: 'var(--color-emerald-500)' }
 
 export const percent = (v: number | undefined, digits = 0) =>
   v === undefined || !isFinite(v) ? '—' : `${(v * 100).toFixed(digits)}%`

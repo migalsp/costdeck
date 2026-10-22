@@ -1716,7 +1716,7 @@ export default function SettingsPage({ section: requested }: { section?: string 
               <div className="bg-brand-50 border border-brand-100 rounded-xl p-4 space-y-3">
                 <div>
                   <h4 className="text-sm font-bold text-brand-800 mb-1">Cursor / any client with remote MCP support</h4>
-                  <pre className="bg-slate-900 rounded-lg p-3 overflow-x-auto text-xs text-slate-200">{`{
+                  <pre className="theme-keep bg-slate-900 rounded-lg p-3 overflow-x-auto text-xs text-slate-200">{`{
   "mcpServers": {
     "costdeck": {
       "url": "${window.location.origin}/mcp",
@@ -1727,7 +1727,7 @@ export default function SettingsPage({ section: requested }: { section?: string 
                 </div>
                 <div>
                   <h4 className="text-sm font-bold text-brand-800 mb-1">Claude Code</h4>
-                  <pre className="bg-slate-900 rounded-lg p-3 overflow-x-auto text-xs text-slate-200">{`claude mcp add --transport http costdeck ${window.location.origin}/mcp \
+                  <pre className="theme-keep bg-slate-900 rounded-lg p-3 overflow-x-auto text-xs text-slate-200">{`claude mcp add --transport http costdeck ${window.location.origin}/mcp \
   --header "Authorization: Bearer cdk_..."`}</pre>
                 </div>
               </div>

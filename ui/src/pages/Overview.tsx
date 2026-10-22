@@ -226,7 +226,7 @@ function priceSource(basis: string): string {
   return 'Estimated prices'
 }
 
-const restSegment = { label: 'Volumes and load balancers', color: '#cbd5e1' }
+const restSegment = { label: 'Volumes and load balancers', color: 'var(--color-slate-300)' }
 
 function Legend() {
   return (

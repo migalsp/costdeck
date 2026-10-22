@@ -27,7 +27,7 @@ export function CodeBlock({ code, label }: { code: string; label?: string }) {
     }).catch(() => {})
   }
   return (
-    <div className="mt-3 rounded-xl overflow-hidden border border-slate-800 bg-slate-900">
+    <div className="theme-keep mt-3 rounded-xl overflow-hidden border border-slate-800 bg-slate-900">
       <div className="flex items-center justify-between px-3 py-1.5 border-b border-slate-800 text-[11px] text-slate-400">
         <span className="font-semibold">{label || ''}</span>
         <button onClick={copy} className="inline-flex items-center gap-1 hover:text-white transition-colors">
