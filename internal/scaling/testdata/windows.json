@@ -1,0 +1,68 @@
+{
+  "comment": "When a schedule is up, shared by internal/scaling (windows_shared_test.go) and the dashboard (ui/src/lib/schedule.test.ts), so the week shown in the UI is the week the operator runs. Times are weekday and HH:MM in the schedule's own time zone.",
+  "cases": [
+    {
+      "name": "weekday business hours, both ends included",
+      "schedules": [{ "days": [1, 2, 3, 4, 5], "startTime": "08:00", "endTime": "20:00" }],
+      "up": ["Mon 08:00", "Mon 20:00", "Wed 12:30", "Fri 19:59"],
+      "down": ["Mon 07:59", "Mon 20:01", "Sat 12:00", "Sun 08:00"]
+    },
+    {
+      "name": "an overnight window runs into the next morning",
+      "schedules": [{ "days": [5], "startTime": "22:00", "endTime": "06:00" }],
+      "up": ["Fri 22:00", "Fri 23:59", "Sat 00:00", "Sat 06:00"],
+      "down": ["Fri 21:59", "Sat 06:01", "Thu 23:00"]
+    },
+    {
+      "name": "a Saturday overnight window wraps through Sunday midnight",
+      "schedules": [{ "days": [6], "startTime": "22:00", "endTime": "02:00" }],
+      "up": ["Sat 22:30", "Sun 00:00", "Sun 01:59", "Sun 02:00"],
+      "down": ["Sun 02:01", "Fri 23:00", "Sat 21:00"]
+    },
+    {
+      "name": "a continuous work week has no daily gap",
+      "schedules": [{ "startDay": 1, "startTime": "00:00", "endDay": 5, "endTime": "23:59" }],
+      "up": ["Mon 00:00", "Tue 03:00", "Thu 23:59", "Fri 23:59"],
+      "down": ["Sat 00:00", "Sun 12:00"]
+    },
+    {
+      "name": "a weekly window across the weekend wraps",
+      "schedules": [{ "startDay": 5, "startTime": "18:00", "endDay": 1, "endTime": "08:00" }],
+      "up": ["Fri 18:00", "Sat 12:00", "Sun 23:00", "Mon 08:00"],
+      "down": ["Fri 17:59", "Mon 08:01", "Wed 12:00"]
+    },
+    {
+      "name": "windows are combined",
+      "schedules": [
+        { "days": [1, 2, 3, 4, 5], "startTime": "08:00", "endTime": "12:00" },
+        { "days": [1, 2, 3, 4, 5], "startTime": "14:00", "endTime": "18:00" }
+      ],
+      "up": ["Tue 09:00", "Tue 15:00"],
+      "down": ["Tue 13:00", "Tue 19:00"]
+    },
+    {
+      "name": "start equal to end is up for that minute only",
+      "schedules": [{ "days": [3], "startTime": "12:00", "endTime": "12:00" }],
+      "up": ["Wed 12:00"],
+      "down": ["Wed 11:59", "Wed 12:01"]
+    },
+    {
+      "name": "a schedule without days is not usable, so the target stays up",
+      "schedules": [{ "days": [], "startTime": "08:00", "endTime": "20:00" }],
+      "up": ["Mon 03:00", "Sat 12:00"],
+      "down": []
+    },
+    {
+      "name": "days outside the week are ignored; none left keeps the target up",
+      "schedules": [{ "days": [7, -1], "startTime": "08:00", "endTime": "20:00" }],
+      "up": ["Mon 03:00", "Sun 12:00"],
+      "down": []
+    },
+    {
+      "name": "a valid window still counts next to a day outside the week",
+      "schedules": [{ "days": [1, 9], "startTime": "08:00", "endTime": "09:00" }],
+      "up": ["Mon 08:30"],
+      "down": ["Tue 08:30", "Mon 10:00"]
+    }
+  ]
+}

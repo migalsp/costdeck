@@ -1,0 +1,10 @@
+{
+  // The unit and component tests (npm test). They import a shared fixture from
+  // internal/scaling/testdata, which is why they are kept out of tsconfig.app.json.
+  "extends": "./tsconfig.app.json",
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.test.tsbuildinfo"
+  },
+  "include": ["src/**/*.test.ts", "src/**/*.test.tsx", "src/test"],
+  "exclude": []
+}

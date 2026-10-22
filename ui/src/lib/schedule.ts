@@ -112,18 +112,21 @@ const toMinutes = (hhmm: string): number | null => {
   return h < 24 && min < 60 ? h * 60 + min : null
 }
 
+const isWeekday = (d: number) => Number.isInteger(d) && d >= 0 && d <= 6
+
 // windowsOf converts schedules into [start, end] week-minute ranges; end < start wraps
-// through Sunday midnight, exactly as the operator evaluates them.
+// through Sunday midnight, exactly as the operator evaluates them. Like the operator it
+// skips days outside the week, so a schedule left with none counts as no schedule.
 function windowsOf(schedules: ScalingSchedule[]): [number, number][] {
   const out: [number, number][] = []
   for (const s of schedules) {
     const start = toMinutes(s.startTime), end = toMinutes(s.endTime)
     if (start === null || end === null) continue
     if (isWeekly(s)) {
-      out.push([s.startDay! * MINUTES_PER_DAY + start, s.endDay! * MINUTES_PER_DAY + end])
+      if (isWeekday(s.startDay!) && isWeekday(s.endDay!)) out.push([s.startDay! * MINUTES_PER_DAY + start, s.endDay! * MINUTES_PER_DAY + end])
       continue
     }
-    for (const d of s.days || []) {
+    for (const d of (s.days || []).filter(isWeekday)) {
       const a = d * MINUTES_PER_DAY + start
       const b = end >= start ? d * MINUTES_PER_DAY + end : ((d + 1) % 7) * MINUTES_PER_DAY + end
       out.push([a, b])
@@ -134,12 +137,18 @@ function windowsOf(schedules: ScalingSchedule[]): [number, number][] {
 
 const inWindow = (minute: number, [a, b]: [number, number]) => (a <= b ? minute >= a && minute <= b : minute >= a || minute <= b)
 
-// weekGrid returns 7 * 48 half-hour slots (Sunday first) that are up. Without a usable
-// window the operator keeps the target up (its fail-safe), and so does the grid.
-export function weekGrid(schedules: ScalingSchedule[] | undefined): boolean[] {
+// isUpAt says whether the schedules keep a target up at a minute of the week (Sunday
+// 00:00 = 0) in their own time zone. Without a usable window the operator keeps the
+// target up (its fail-safe), and so does this.
+export function isUpAt(schedules: ScalingSchedule[] | undefined, weekMinute: number): boolean {
   const windows = windowsOf(schedules || [])
-  return Array.from({ length: 7 * SLOTS_PER_DAY }, (_, slot) =>
-    windows.length === 0 || windows.some(w => inWindow((slot * 30 + 15) % MINUTES_PER_WEEK, w)))
+  return windows.length === 0 || windows.some(w => inWindow(weekMinute % MINUTES_PER_WEEK, w))
+}
+
+// weekGrid returns 7 * 48 half-hour slots (Sunday first) that are up, judged at the
+// middle of each slot.
+export function weekGrid(schedules: ScalingSchedule[] | undefined): boolean[] {
+  return Array.from({ length: 7 * SLOTS_PER_DAY }, (_, slot) => isUpAt(schedules, slot * 30 + 15))
 }
 
 export const upHours = (grid: boolean[]) => grid.filter(Boolean).length / 2
