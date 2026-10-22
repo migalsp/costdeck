@@ -3,6 +3,7 @@ import { CalendarClock, Check, Copy, Download, FileText, Loader2, Printer, Send,
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { apiError, errorMessage } from '../lib/api'
+import { toast } from '../lib/toast'
 import { useAuth } from '../lib/auth'
 import { Badge, Button, Card, PageHeader, SectionTitle, Tabs } from '../components/ui'
 import { Delta, KpiTile } from '../components/finops/charts'
@@ -100,6 +101,7 @@ function ScheduleCard({ index, onSaved }: { index: ReportsIndex; onSaved: () => 
       })
       if (!res.ok) throw new Error(await apiError(res))
       setDraft(null)
+      toast.success('Saved the digest schedule')
       onSaved()
     } catch (e) {
       setError(errorMessage(e))
@@ -159,7 +161,6 @@ export default function ReportsPage() {
   const [period, setPeriod] = useState<'week' | 'month'>('week')
   const [digest, setDigest] = useState<{ digest: Digest; markdown: string } | null>(null)
   const [digestError, setDigestError] = useState<string | null>(null)
-  const [notice, setNotice] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
   const [copied, setCopied] = useState(false)
 
@@ -181,14 +182,13 @@ export default function ReportsPage() {
 
   const sendDigest = async () => {
     setSending(true)
-    setNotice(null)
     try {
       const res = await fetch('/api/reports/digest/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ period }) })
       if (!res.ok) throw new Error(await apiError(res))
-      setNotice('Posted to the Webex space and saved in the history.')
+      toast.success('Posted the digest to the Webex space and saved it in the history')
       loadIndex()
     } catch (e) {
-      setNotice(errorMessage(e))
+      toast.error(`Could not post the digest: ${errorMessage(e)}`)
     } finally {
       setSending(false)
     }
@@ -246,11 +246,14 @@ export default function ReportsPage() {
     if (!viewed) return
     const res = await fetch(`/api/reports/${encodeURIComponent(viewed.report.id)}`, { method: 'DELETE' })
     setConfirmDelete(false)
-    if (res.ok) {
-      setSelected(null)
-      setViewed(null)
-      loadIndex()
+    if (!res.ok) {
+      toast.error(`Could not delete the report: ${await apiError(res)}`)
+      return
     }
+    toast.success('Deleted the report')
+    setSelected(null)
+    setViewed(null)
+    loadIndex()
   }
 
   const reports = index?.reports || []
@@ -284,7 +287,6 @@ export default function ReportsPage() {
                 <Button size="sm" variant="primary" onClick={sendDigest} disabled={!digest || sending || !index?.webexReady} icon={sending ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}>Send to Webex now</Button>
               </span>
             )}
-            {notice && <span className="text-xs text-slate-600">{notice}</span>}
           </div>
         </Card>
         {index && <ScheduleCard index={index} onSaved={loadIndex} />}

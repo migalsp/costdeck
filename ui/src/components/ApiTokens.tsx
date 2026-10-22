@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Trash2, Copy, Check, Plus } from 'lucide-react'
 import { apiError } from '../lib/api'
+import { toast } from '../lib/toast'
+import { Button } from './ui'
 
 interface TokenInfo {
   name: string
@@ -19,6 +21,7 @@ export default function ApiTokens() {
   const [created, setCreated] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [revoking, setRevoking] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     const res = await fetch('/api/tokens')
@@ -49,8 +52,10 @@ export default function ApiTokens() {
   }
 
   const revoke = async (tokenName: string) => {
+    setRevoking(null)
     const res = await fetch(`/api/tokens/${encodeURIComponent(tokenName)}`, { method: 'DELETE' })
-    if (!res.ok) setError(await apiError(res))
+    if (res.ok) toast.success(`Revoked the token ${tokenName}`)
+    else toast.error(`Could not revoke ${tokenName}: ${await apiError(res)}`)
     load()
   }
 
@@ -114,8 +119,16 @@ export default function ApiTokens() {
                 <td>{t.role}</td>
                 <td title={t.createdBy}>{new Date(t.createdAt).toLocaleDateString()}</td>
                 <td>{t.expiresAt ? new Date(t.expiresAt).toLocaleDateString() : 'never'}</td>
-                <td className="text-right">
-                  <button onClick={() => revoke(t.name)} className="p-1 text-slate-300 hover:text-rose-500" title="Revoke"><Trash2 size={14} /></button>
+                <td className="text-right whitespace-nowrap">
+                  {/* Revoking cannot be undone and breaks whatever uses the token: confirm first. */}
+                  {revoking === t.name ? (
+                    <span className="inline-flex gap-1">
+                      <Button size="sm" variant="danger" onClick={() => revoke(t.name)}>Revoke</Button>
+                      <Button size="sm" variant="ghost" onClick={() => setRevoking(null)}>Cancel</Button>
+                    </span>
+                  ) : (
+                    <button onClick={() => setRevoking(t.name)} className="p-1 text-slate-300 hover:text-rose-500" title="Revoke"><Trash2 size={14} /></button>
+                  )}
                 </td>
               </tr>
             ))}

@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { Search, Check, CalendarClock, ListOrdered, SlidersHorizontal } from 'lucide-react'
 import { apiError, errorMessage } from '../lib/api'
+import { toast } from '../lib/toast'
 import { planFromSpec, planProblem, specFromPlan, type SchedulePlan } from '../lib/schedule'
 import type { ExternalTarget, ScalingConfig, ScalingGroup, ScalingGroupSpec, ScalingSpec } from '../lib/types'
 import ScheduleEditor from './ScheduleEditor'
@@ -117,6 +118,7 @@ export default function ScheduleWizard(props: Props) {
         body: JSON.stringify({ metadata: { name: editing ? existing!.metadata.name : finalName }, spec }),
       })
       if (!res.ok) throw new Error(await apiError(res))
+      toast.success(editing ? `Saved the schedule ${existing!.metadata.name}` : `Created the schedule ${finalName}`)
       onSaved()
     } catch (err) {
       setError(errorMessage(err))

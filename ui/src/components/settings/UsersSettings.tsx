@@ -5,6 +5,7 @@ import { apiError, errorMessage } from '../../lib/api'
 import { roleHelp, useAuth, type Role } from '../../lib/auth'
 import { ago } from '../../lib/time'
 import { usePolling } from '../../lib/usePolling'
+import { toast } from '../../lib/toast'
 
 interface LocalUser {
   username: string
@@ -76,6 +77,7 @@ export default function UsersSettings({ onOpenSSO }: { onOpenSSO: () => void }) 
     setBusy(u.username)
     try {
       await send('PATCH', `/api/users/${encodeURIComponent(u.username)}`, { disabled: !u.disabled })
+      toast.success(`${u.disabled ? 'Enabled' : 'Disabled'} ${u.username}`)
       await load()
     } catch (e) {
       setError(errorMessage(e))
@@ -201,12 +203,13 @@ export default function UsersSettings({ onOpenSSO }: { onOpenSSO: () => void }) 
 
       {dialog?.kind === 'add' && (
         <UserForm min={data.minPasswordLength} onClose={() => setDialog(null)} onDone={(username, password) => {
+          toast.success(`Created the user ${username}`)
           load()
           setDialog(password ? { kind: 'password', username, password, created: true } : null)
         }} />
       )}
       {dialog?.kind === 'edit' && (
-        <UserForm min={data.minPasswordLength} user={dialog.user} self={isMe(dialog.user)} onClose={() => setDialog(null)} onDone={() => { load(); setDialog(null) }} />
+        <UserForm min={data.minPasswordLength} user={dialog.user} self={isMe(dialog.user)} onClose={() => setDialog(null)} onDone={() => { toast.success(`Saved ${dialog.user.username}`); load(); setDialog(null) }} />
       )}
       {dialog?.kind === 'reset' && (
         <ResetPassword user={dialog.user} min={data.minPasswordLength} onClose={() => setDialog(null)} onDone={password => {
@@ -215,7 +218,7 @@ export default function UsersSettings({ onOpenSSO }: { onOpenSSO: () => void }) 
         }} />
       )}
       {dialog?.kind === 'delete' && (
-        <ConfirmDelete user={dialog.user} onClose={() => setDialog(null)} onDone={() => { load(); setDialog(null) }} />
+        <ConfirmDelete user={dialog.user} onClose={() => setDialog(null)} onDone={() => { toast.success(`Deleted the user ${dialog.user.username}`); load(); setDialog(null) }} />
       )}
       {dialog?.kind === 'password' && <OneTimePassword {...dialog} onClose={() => setDialog(null)} />}
     </div>

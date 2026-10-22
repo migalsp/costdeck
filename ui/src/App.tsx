@@ -17,6 +17,7 @@ import AIChatWidget from './components/AIChatModal'
 import AuthCallback from './pages/AuthCallback'
 import ChangePasswordDialog from './components/ChangePasswordDialog'
 import ThemeSwitch from './components/ThemeSwitch'
+import Toaster from './components/Toaster'
 import { AuthContext, isManagedUser, type User } from './lib/auth'
 import { followLink, navigate, segment, splitPath, usePath } from './lib/router'
 import { Button, PageHeader } from './components/ui'
@@ -287,6 +288,7 @@ function App() {
       {changingPassword && (
         <ChangePasswordDialog onDone={() => { setChangingPassword(false); loadSession() }} onClose={() => setChangingPassword(false)} onSignOut={signOut} />
       )}
+      <Toaster />
       </div>
     </div>
     </AuthContext.Provider>

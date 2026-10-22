@@ -13,8 +13,9 @@ import {
 } from 'recharts'
 import { AlertTriangle, CheckCircle, Database, Cpu, Lightbulb, RotateCcw } from 'lucide-react'
 import InfoTooltip from './InfoTooltip'
-import { Badge } from './ui'
-import { fetchNamespaceCost, fetchRecommendations } from '../lib/api'
+import { Badge, Button } from './ui'
+import { apiError, errorMessage, fetchNamespaceCost, fetchRecommendations } from '../lib/api'
+import { toast } from '../lib/toast'
 import { formatMoney } from '../lib/format'
 import type { CostEstimate, OptimizationStatus, Recommendations } from '../lib/types'
 import { usePolling } from '../lib/usePolling'
@@ -50,6 +51,7 @@ export default function NamespaceCard({ namespace, insights = [], range = '1h', 
   const [optimization, setOptimization] = useState<OptimizationStatus | null>(null)
   const [loading, setLoading] = useState(true)
   const [reverting, setReverting] = useState(false)
+  const [confirmRevert, setConfirmRevert] = useState(false)
   const [advice, setAdvice] = useState<Recommendations | null>(null)
   const [namespaceCost, setNamespaceCost] = useState<CostEstimate | null>(null)
 
@@ -103,18 +105,19 @@ export default function NamespaceCard({ namespace, insights = [], range = '1h', 
     fetchRecommendations(namespace).then(setAdvice).catch(() => setAdvice(null))
   }, 30000, namespace)
 
+  // The card opens the namespace on click; its buttons keep their clicks to themselves.
   const handleRevert = async (e: React.MouseEvent) => {
     e.stopPropagation()
-    if (!window.confirm(`Revert optimization for ${namespace}? This will restore the original resource values.`)) return
-
+    setConfirmRevert(false)
     setReverting(true)
     try {
       const res = await fetch(`/api/namespaces/${namespace}/revert`, { method: 'POST' })
-      if (!res.ok) throw new Error('Revert failed')
+      if (!res.ok) throw new Error(await apiError(res))
+      toast.success(`Restored the original requests and limits in ${namespace}`)
       fetchOptimization()
       fetchData()
     } catch (err) {
-      alert("Failed to revert: " + err)
+      toast.error(`Could not revert ${namespace}: ${errorMessage(err)}`)
     } finally {
       setReverting(false)
     }
@@ -310,9 +313,15 @@ export default function NamespaceCard({ namespace, insights = [], range = '1h', 
             </span>
           )}
           {/* Optimizations applied by earlier versions can still be undone. */}
-          {can('operator') && optimization?.active && (
+          {can('operator') && optimization?.active && (confirmRevert ? (
+            <span className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
+              <span className="font-semibold text-amber-800">Restore the original requests and limits?</span>
+              <Button size="sm" variant="warning" icon={<RotateCcw size={14} />} onClick={handleRevert}>Revert</Button>
+              <Button size="sm" variant="ghost" onClick={() => setConfirmRevert(false)}>Cancel</Button>
+            </span>
+          ) : (
             <button
-              onClick={handleRevert}
+              onClick={e => { e.stopPropagation(); setConfirmRevert(true) }}
               disabled={reverting}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 text-amber-600 border border-amber-200 rounded-lg hover:bg-amber-100 transition-colors font-bold uppercase tracking-tight disabled:opacity-60"
               title="Restore the requests and limits from before the earlier automatic optimization"
@@ -324,7 +333,7 @@ export default function NamespaceCard({ namespace, insights = [], range = '1h', 
               )}
               {reverting ? 'Reverting...' : 'Revert optimization'}
             </button>
-          )}
+          ))}
         </div>
       </div>
     </div>

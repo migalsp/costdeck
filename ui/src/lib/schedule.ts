@@ -1,4 +1,5 @@
 import type { Condition, ScalingSchedule, ScalingSpec, ScheduleStatus } from './types'
+import type { OverrideUntil } from '../components/OverrideDialog'
 
 // Day indexes follow the operator: Sunday = 0.
 export const DAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -258,4 +259,14 @@ export function statusLine({ phase, status, dependsOn, activeUntil, generation }
   }
   if (up) return { tone: 'up', title: 'Up', detail: next ? `scales down ${when(next.time)}` : undefined }
   return { tone: 'down', title: 'Down', detail: next ? `starts ${when(next.time)}` : undefined }
+}
+
+// describeOverride confirms a manual start or stop, or the hand-back to the schedule
+// (active null), in the words of the override dialog.
+export function describeOverride(name: string, active: boolean | null, until?: OverrideUntil): string {
+  if (active === null) return `${name} follows its schedule again`
+  const span = !until || until === 'forever' ? 'until you hand it back to the schedule'
+    : until === 'nextTransition' ? 'until the next scheduled change'
+    : `for ${until.slice(0, -1)} hour${until === '1h' ? '' : 's'}`
+  return `${active ? 'Starting' : 'Stopping'} ${name} ${span}`
 }

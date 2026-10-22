@@ -5,6 +5,7 @@ import { useAuth } from '../lib/auth'
 import { environmentLabel, fetchBudgets, saveSettings, type AnomalySettings, type Budget, type BudgetScope, type BudgetStatus, type BudgetsResponse, type Environment } from '../lib/finops'
 import { formatMoney } from '../lib/format'
 import { errorMessage } from '../lib/api'
+import { toast } from '../lib/toast'
 import { usePolling } from '../lib/usePolling'
 
 const stateLabel: Record<BudgetStatus['state'], { label: string; tone: Tone }> = {
@@ -110,11 +111,12 @@ function BudgetEditor({ initial, existing, scopes, onClose, onSave }: {
     environment: ['production', 'non-production', 'system', 'unclassified'],
   }
   const others = existing.filter(x => x.name !== initial?.name)
-  const submit = async (list: Budget[]) => {
+  const submit = async (list: Budget[], done: string) => {
     setSaving(true)
     setError(null)
     try {
       await onSave(list)
+      toast.success(done)
       onClose()
     } catch (e) {
       setError(errorMessage(e))
@@ -131,7 +133,7 @@ function BudgetEditor({ initial, existing, scopes, onClose, onSave }: {
     <Modal title={initial ? `Budget ${initial.name}` : 'New budget'} subtitle="A monthly limit with alerts to the Webex space" size="md" onClose={onClose}
       footer={<>
         {initial && (confirmDelete
-          ? <Button variant="danger" onClick={() => submit(others)} disabled={saving}>Delete for good</Button>
+          ? <Button variant="danger" onClick={() => submit(others, `Deleted the budget ${initial.name}`)} disabled={saving}>Delete for good</Button>
           : <Button variant="ghost" onClick={() => setConfirmDelete(true)}>Delete</Button>)}
         <div className="ml-auto flex gap-2">
           <Button onClick={onClose}>Cancel</Button>
@@ -139,7 +141,8 @@ function BudgetEditor({ initial, existing, scopes, onClose, onSave }: {
             disabled={saving || !b.name || !b.monthlyLimit || (b.scope === 'namespace' ? picked.length === 0 : b.scope !== 'cluster' && !b.value)}
             onClick={() => submit([...others, b.scope === 'namespace'
               ? { ...b, value: undefined, namespaces: picked }
-              : { ...b, value: b.scope === 'cluster' ? undefined : b.value, namespaces: undefined }])}>{saving ? 'Saving…' : 'Save budget'}</Button>
+              : { ...b, value: b.scope === 'cluster' ? undefined : b.value, namespaces: undefined }],
+              initial ? `Saved the budget ${b.name}` : `Created the budget ${b.name}`)}>{saving ? 'Saving…' : 'Save budget'}</Button>
         </div>
       </>}>
       <div className="space-y-4">
@@ -248,6 +251,7 @@ function AnomalyCard({ settings, onSaved }: { settings: AnomalySettings; onSaved
       await saveSettings({ alerts: { anomalies: { enabled: !!a.enabled, percent: a.percent || 30, minimumDaily: a.minimumDaily || '1' } } })
       setDraft(null)
       setError(null)
+      toast.success('Saved the anomaly alerts')
       onSaved()
     } catch (e) {
       setError(errorMessage(e))

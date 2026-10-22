@@ -2,7 +2,8 @@ import { useState } from 'react'
 import { CalendarClock, ListChecks, Play, PowerOff, RotateCcw, Plus } from 'lucide-react'
 import { apiError, errorMessage } from '../lib/api'
 import { useAuth } from '../lib/auth'
-import { describeSpec, statusLine } from '../lib/schedule'
+import { describeOverride, describeSpec, statusLine } from '../lib/schedule'
+import { toast } from '../lib/toast'
 import type { ScalingConfig, ScalingGroup, ScalingSpec } from '../lib/types'
 import { usePolling } from '../lib/usePolling'
 import type { NamespaceFinOps } from '../lib/types'
@@ -63,6 +64,7 @@ export default function NamespaceScalingPanel({ namespace }: { namespace: string
         body: JSON.stringify({ active, ...(active !== null && until && until !== 'forever' ? { until } : {}) }),
       })
       if (!res.ok) throw new Error(await apiError(res))
+      toast.success(describeOverride(controller.type === 'group' ? `group ${controller.name}` : namespace, active, until))
       load()
     } catch (err) {
       setError(errorMessage(err))
@@ -99,9 +101,11 @@ export default function NamespaceScalingPanel({ namespace }: { namespace: string
       })
       if (!res.ok) throw new Error(await apiError(res))
       setRulesFor(null)
+      toast.success(`Saved the workload rules for ${namespace}`)
       load()
     } catch (err) {
-      setError(errorMessage(err))
+      // The rules dialog is still open over the panel, so the error goes in a toast.
+      toast.error(`Could not save the workload rules: ${errorMessage(err)}`)
     }
   }
 
