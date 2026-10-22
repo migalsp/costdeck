@@ -159,6 +159,7 @@ graph TD
 make test        # unit and envtest tests
 make lint        # golangci-lint
 make ui-lint     # TypeScript and ESLint
+make ui-test     # dashboard unit and component tests (Vitest)
 make ui build    # dashboard + manager binary with the dashboard embedded
 make test-e2e    # Kind cluster + Helm install + the regression scenarios in hack/e2e
 ```

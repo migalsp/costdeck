@@ -1,4 +1,4 @@
-import { defineConfig } from "vite";
+import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
@@ -12,5 +12,11 @@ export default defineConfig({
         changeOrigin: true,
       },
     },
+  },
+  // Unit and component tests (npm test): src/**/*.test.ts(x) in a simulated browser.
+  test: {
+    environment: "jsdom",
+    setupFiles: ["./src/test/setup.ts"],
+    restoreMocks: true,
   },
 });

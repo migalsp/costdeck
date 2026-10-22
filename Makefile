@@ -140,6 +140,10 @@ ui: ## Build the dashboard and sync it into internal/api/ui, where go:embed pick
 ui-lint: ## Type-check and lint the dashboard.
 	cd ui && npm ci && npx tsc -b && npm run lint
 
+.PHONY: ui-test
+ui-test: ## Run the dashboard's unit and component tests (Vitest, simulated browser).
+	cd ui && npm ci && npm test
+
 .PHONY: build
 build: manifests generate fmt vet ## Build manager binary (run `make ui` first to embed the dashboard).
 	go build -o bin/manager cmd/main.go
