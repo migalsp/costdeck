@@ -3,7 +3,7 @@ import { ArrowLeft, Search, Activity, AlertCircle } from 'lucide-react'
 import NamespaceScalingPanel from '../components/NamespaceScalingPanel'
 import InfoTooltip from '../components/InfoTooltip'
 import RecommendationsPanel from '../components/RecommendationsPanel'
-import { fetchNamespaceCost } from '../lib/api'
+import { apiError, errorMessage, fetchNamespaceCost, getJSON } from '../lib/api'
 import type { CostEstimate, OptimizationStatus } from '../lib/types'
 import { usePolling } from '../lib/usePolling'
 
@@ -81,23 +81,23 @@ export default function NamespaceDetails({ namespace, onBack }: NamespaceDetails
   const fetchPods = (silent = false) => {
     if (!silent) setLoading(true);
     fetch(`/api/namespaces/${namespace}/pods`)
-      .then(res => res.json())
+      .then(async res => {
+        if (!res.ok) throw new Error(await apiError(res));
+        return res.json();
+      })
       .then(data => {
-        setPods(data || []);
+        setPods(Array.isArray(data) ? data : []);
         setError(null);
       })
-      .catch(err => {
-        console.error(err);
-        if (!silent) setError("Failed to load pod details.");
-      })
+      // A failed refresh keeps the pods already shown and says why they may be stale.
+      .catch(err => setError(`Could not load the pods: ${errorMessage(err)}`))
       .finally(() => setLoading(false));
   }
 
 
 
   const fetchOptimization = () => {
-    fetch(`/api/namespaces/${namespace}/optimization`)
-      .then(res => res.json())
+    getJSON<OptimizationStatus>(`/api/namespaces/${namespace}/optimization`)
       .then(data => setOptimization(data))
       .catch(console.error);
   }

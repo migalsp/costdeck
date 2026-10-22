@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { CalendarClock, ListChecks, Play, PowerOff, RotateCcw, Plus } from 'lucide-react'
-import { apiError, errorMessage } from '../lib/api'
+import { apiError, errorMessage, getJSON } from '../lib/api'
 import { useAuth } from '../lib/auth'
 import { describeOverride, describeSpec, statusLine } from '../lib/schedule'
 import { toast } from '../lib/toast'
@@ -32,15 +32,16 @@ export default function NamespaceScalingPanel({ namespace }: { namespace: string
 
   const load = () => {
     Promise.all([
-      fetch('/api/scaling/groups').then(r => r.json()),
-      fetch('/api/scaling/configs').then(r => r.json()),
-      fetch('/api/namespaces').then(r => r.json()),
+      getJSON<ScalingGroup[] | null>('/api/scaling/groups'),
+      getJSON<ScalingConfig[] | null>('/api/scaling/configs'),
+      getJSON<NamespaceFinOps[] | null>('/api/namespaces'),
     ]).then(([g, c, n]) => {
       setGroups(g || [])
       setConfigs(c || [])
-      setNamespaces(((n || []) as NamespaceFinOps[]).map(x => x.spec.targetNamespace || x.metadata.name).sort())
-      setLoaded(true)
-    }).catch(err => setError(errorMessage(err)))
+      setNamespaces((n || []).map(x => x.spec.targetNamespace || x.metadata.name).sort())
+      setError(null)
+    }).catch(err => setError(`Could not load the schedules: ${errorMessage(err)}`))
+      .finally(() => setLoaded(true))
   }
   usePolling(load, 10000, namespace)
 

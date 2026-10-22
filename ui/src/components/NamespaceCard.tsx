@@ -14,7 +14,7 @@ import {
 import { AlertTriangle, CheckCircle, Database, Cpu, Lightbulb, RotateCcw } from 'lucide-react'
 import InfoTooltip from './InfoTooltip'
 import { Badge, Button } from './ui'
-import { apiError, errorMessage, fetchNamespaceCost, fetchRecommendations } from '../lib/api'
+import { apiError, errorMessage, fetchNamespaceCost, fetchRecommendations, getJSON } from '../lib/api'
 import { toast } from '../lib/toast'
 import { formatMoney } from '../lib/format'
 import type { CostEstimate, OptimizationStatus, Recommendations } from '../lib/types'
@@ -56,8 +56,7 @@ export default function NamespaceCard({ namespace, insights = [], range = '1h', 
   const [namespaceCost, setNamespaceCost] = useState<CostEstimate | null>(null)
 
   const fetchOptimization = () => {
-    fetch(`/api/namespaces/${namespace}/optimization`)
-      .then(res => res.json())
+    getJSON<OptimizationStatus>(`/api/namespaces/${namespace}/optimization`)
       .then(data => setOptimization(data))
       .catch(err => console.error("Failed to fetch optimization", err))
   }

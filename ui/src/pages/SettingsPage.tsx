@@ -9,7 +9,7 @@ import ApiTokens from '../components/ApiTokens'
 import UsersSettings from '../components/settings/UsersSettings'
 import { usePolling } from '../lib/usePolling'
 import { navigate, segment, useLeaveGuard } from '../lib/router'
-import { apiError, errorMessage } from '../lib/api'
+import { apiError, errorMessage, getJSON } from '../lib/api'
 import { Button, PageHeader } from '../components/ui'
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -254,7 +254,7 @@ function BillingSection({ onSaved }: { onSaved: (enabled: boolean) => void }) {
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
 
-  const load = () => fetch('/api/settings').then(r => r.json()).then(d => {
+  const load = () => getJSON<{ billing?: BillingSettings }>('/api/settings').then(d => {
     const bs: BillingSettings = d.billing || {}
     setB(bs)
     setCloud(bs.azure ? 'azure' : bs.gcp ? 'gcp' : 'aws')

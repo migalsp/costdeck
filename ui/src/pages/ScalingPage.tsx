@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Plus, Cloud, Database, ChevronUp, ChevronDown, CalendarClock, MoonStar, Link2, Hand } from 'lucide-react'
-import { apiError, errorMessage } from '../lib/api'
+import { apiError, errorMessage, getJSON } from '../lib/api'
 import { describeOverride } from '../lib/schedule'
 import { toast } from '../lib/toast'
 import { formatMoney } from '../lib/format'
@@ -32,6 +32,7 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
   const [policies, setPolicies] = useState<ScalingConfig[]>([]);
   const [namespaces, setNamespaces] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const [wizard, setWizard] = useState<WizardState | null>(null);
   // Workload rules (exclusions and workload order) of a single-namespace config.
@@ -65,21 +66,20 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
 
   const fetchData = async () => {
     try {
-      const [groupsRes, policiesRes, nsRes] = await Promise.all([
-        fetch('/api/scaling/groups'),
-        fetch('/api/scaling/configs'),
-        fetch('/api/namespaces')
+      const [groupsData, policiesData, nsData] = await Promise.all([
+        getJSON<ScalingGroup[] | null>('/api/scaling/groups'),
+        getJSON<ScalingConfig[] | null>('/api/scaling/configs'),
+        getJSON<NamespaceFinOps[] | null>('/api/namespaces'),
       ]);
-      const groupsData = await groupsRes.json();
-      const policiesData = await policiesRes.json();
-      const nsData = await nsRes.json();
-      setGroups(((groupsData || []) as ScalingGroup[]).sort((a, b) => a.metadata.name.localeCompare(b.metadata.name)));
-      setPolicies(((policiesData || []) as ScalingConfig[]).sort((a, b) => a.spec.targetNamespace.localeCompare(b.spec.targetNamespace)));
-      const uniqueNamespaces = Array.from(new Set((nsData as NamespaceFinOps[]).map(n => n.spec.targetNamespace || n.metadata.name)));
+      setGroups((groupsData || []).sort((a, b) => a.metadata.name.localeCompare(b.metadata.name)));
+      setPolicies((policiesData || []).sort((a, b) => a.spec.targetNamespace.localeCompare(b.spec.targetNamespace)));
+      const uniqueNamespaces = Array.from(new Set((nsData || []).map(n => n.spec.targetNamespace || n.metadata.name)));
       uniqueNamespaces.sort((a, b) => a.localeCompare(b));
       setNamespaces(uniqueNamespaces);
+      setLoadError(null);
     } catch (err) {
-      console.error("Failed to fetch scaling data", err);
+      // A failed refresh keeps what is shown and says why it may be stale.
+      setLoadError(`Could not load the schedules: ${errorMessage(err)}`);
     } finally {
       setLoading(false);
     }
@@ -225,6 +225,10 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
           <Button variant="primary" icon={<Plus size={16} />} onClick={() => setWizard({ kind: 'group' })}>New schedule</Button>
         )}
       </div>
+
+      {loadError && (
+        <div role="alert" className="mb-6 p-4 bg-rose-50 border border-rose-100 rounded-xl text-sm font-semibold text-rose-700">{loadError}</div>
+      )}
 
       {loading ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
