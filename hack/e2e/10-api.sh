@@ -6,6 +6,12 @@ expect_code 200 "dashboard at /" GET / "" -b "$JAR"
 curl -sf -b "$JAR" "localhost:$API_PORT/" | grep -q 'id="root"' || fail "/ does not serve the dashboard"
 expect_code 200 "OpenAPI document" GET /api/openapi.yaml
 expect_code 404 "an unknown API path is a 404, not the dashboard" GET /api/no-such-thing "" -b "$JAR"
+# Every page has its own address; opening one directly (a reload, a shared link) must
+# load the dashboard, which then shows that page.
+for page in /namespaces/default /scaling/default /settings/notifications "/docs/schedules#gitops"; do
+  curl -sf -b "$JAR" "localhost:$API_PORT$page" | grep -q 'id="root"' || fail "$page does not serve the dashboard"
+done
+ok "page addresses open the dashboard"
 
 log "Sign-in is required, and wrong passwords are refused"
 expect_code 401 "unauthenticated API call" GET /api/scaling/groups

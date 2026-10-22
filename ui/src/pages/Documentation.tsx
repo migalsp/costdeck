@@ -3,6 +3,7 @@ import { Activity, BookOpen, CalendarClock, Cloud, ExternalLink, FileCode2, File
 import { guides, proseOf, textOf, type Guide } from './docs/content'
 import { BlockView, Inline } from './docs/blocks'
 import ApiExplorer from './docs/ApiExplorer'
+import { followLink, navigate, segment, useHash } from '../lib/router'
 
 const icons: Record<Guide['icon'], ReactNode> = {
   start: <Rocket size={17} />,
@@ -35,10 +36,16 @@ function snippet(text: string, q: string): string {
   return (start > 0 ? '…' : '') + plain.slice(start, at + 100) + (at + 100 < plain.length ? '…' : '')
 }
 
-export default function Documentation() {
-  const [page, setPage] = useState<string>(guides[0].id)
+// docPath is the address of a guide, or of one topic in it: /docs/<guide>#<topic>.
+const docPath = (guide: string, topic?: string) => `/docs/${segment(guide)}${topic ? `#${segment(topic)}` : ''}`
+
+// Documentation shows the guide named in the path (/docs/<guide>) and scrolls to the topic
+// in the fragment, so a link can point at one answer.
+export default function Documentation({ guide: requested }: { guide?: string }) {
+  const page = requested && (requested === API || guides.some(g => g.id === requested)) ? requested : guides[0].id
+  const topic = useHash()
+  const target = topic ? anchor(page, topic) : null
   const [query, setQuery] = useState('')
-  const [target, setTarget] = useState<string | null>(null)
   const main = useRef<HTMLDivElement>(null)
 
   const guide = guides.find(g => g.id === page)
@@ -65,9 +72,8 @@ export default function Documentation() {
   }, [page, target])
 
   const open = (id: string, topic?: string) => {
-    setPage(id)
     setQuery('')
-    setTarget(topic ? anchor(id, topic) : null)
+    navigate(docPath(id, topic))
   }
 
   const order = [...guides.map(g => g.id), API]
@@ -140,8 +146,7 @@ export default function Documentation() {
               {guide.topics.length > 2 && (
                 <div className="mt-5 flex flex-wrap gap-1.5">
                   {guide.topics.map(t => (
-                    <a key={t.id} href={`#${anchor(guide.id, t.id)}`}
-                      onClick={e => { e.preventDefault(); document.getElementById(anchor(guide.id, t.id))?.scrollIntoView({ behavior: 'smooth', block: 'start' }) }}
+                    <a key={t.id} href={docPath(guide.id, t.id)} onClick={e => followLink(e, docPath(guide.id, t.id))}
                       className="px-2.5 py-1 rounded-lg border border-slate-200 text-xs font-medium text-slate-600 hover:border-brand-300 hover:text-brand-700">
                       {t.title}
                     </a>

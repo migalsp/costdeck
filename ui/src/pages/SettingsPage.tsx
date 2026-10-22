@@ -8,6 +8,7 @@ import { AWSLogo, AzureLogo, GCPLogo, WebexLogo } from '../components/ProviderLo
 import ApiTokens from '../components/ApiTokens'
 import UsersSettings from '../components/settings/UsersSettings'
 import { usePolling } from '../lib/usePolling'
+import { navigate, segment } from '../lib/router'
 import { apiError, errorMessage } from '../lib/api'
 import { Button, PageHeader } from '../components/ui'
 
@@ -155,7 +156,8 @@ const navGroups: { title: string; items: { id: Section; label: string; icon: Rea
 const allSections = navGroups.flatMap(g => g.items.map(i => i.id))
 const sectionKey = 'costdeck.settings.section'
 
-function initialSection(): Section {
+// lastSection is the section opened last in this browser, shown for a bare /settings.
+function lastSection(): Section {
   try {
     const v = localStorage.getItem(sectionKey) as Section | null
     if (v && allSections.includes(v)) return v
@@ -601,7 +603,8 @@ const DEFAULT_MODEL: Record<string, string> = {
   local: '',
 }
 
-export default function SettingsPage() {
+// SettingsPage shows the section named in the path (/settings/<section>).
+export default function SettingsPage({ section: requested }: { section?: string }) {
   const [settings, setSettings] = useState<SettingsData | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -609,11 +612,11 @@ export default function SettingsPage() {
   const [testResult, setTestResult] = useState<{ provider: string; connected: boolean; error?: string; message?: string } | null>(null)
   const [saveMessage, setSaveMessage] = useState<{ section: Section; text: string; ok: boolean } | null>(null)
   const [expandedProvider, setExpandedProvider] = useState<string | null>('aws')
-  const [section, setSection] = useState<Section>(initialSection)
+  const section = requested && allSections.includes(requested as Section) ? requested as Section : lastSection()
   const [dirty, setDirty] = useState<Partial<Record<Section, boolean>>>({})
   const go = (s: Section) => {
-    setSection(s)
     try { localStorage.setItem(sectionKey, s) } catch { /* not remembered */ }
+    navigate(`/settings/${segment(s)}`)
   }
 
   // AWS form state
