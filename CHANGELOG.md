@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.6.1](https://github.com/migalsp/costdeck/compare/v1.6.0...v1.6.1) (2026-10-23)
+
+
+### Bug Fixes
+
+* **estimate:** pass fail-above to the action's script through the environment ([dea092c](https://github.com/migalsp/costdeck/commit/dea092c5bf9ef172c0ae0d43067181c1e097396f))
+* **notifications:** write email headers from parsed addresses ([209fb56](https://github.com/migalsp/costdeck/commit/209fb56c55a5e1eb40ae2d295613411aae76a631))
+
 ## [1.6.0](https://github.com/migalsp/costdeck/compare/v1.5.7...v1.6.0) (2026-10-23)
 
 
