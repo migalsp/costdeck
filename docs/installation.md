@@ -273,6 +273,55 @@ token counts of the last seven days come from VictoriaMetrics, extrapolated to a
   namespace serving a model, GPUs included, divided by the tokens it served gives the cost
   per million tokens.
 
+## Cost estimates in pull requests
+
+Cost Deck can say what a change of Kubernetes manifests will cost before it is merged.
+Render the manifests of the base branch and of the pull request (`helm template`,
+`kustomize build`), and Cost Deck prices the difference. It covers Deployments,
+StatefulSets with their volume templates, DaemonSets on every node, Argo Rollouts, Pods,
+PersistentVolumeClaims and LoadBalancer Services. HorizontalPodAutoscalers count at
+`minReplicas`, and namespaces on a schedule count only the share of the time they run.
+
+- **With your Cost Deck** (`--server` and a viewer API token): your rates, storage classes,
+  load balancer price, node count and schedules.
+- **Offline**: list-price estimates for `--cloud aws|azure|gcp|local`, or your own
+  `--cpu-hour` and `--gib-hour`.
+
+The GitHub Action posts the estimate on the pull request and updates it on every push:
+
+```yaml
+on: pull_request
+permissions: { contents: read, pull-requests: write }
+jobs:
+  cost:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with: { fetch-depth: 0 }
+      - name: Render both sides
+        run: |
+          git show "origin/${{ github.base_ref }}:deploy/values.yaml" > /tmp/base-values.yaml
+          helm template app deploy/chart -f /tmp/base-values.yaml > /tmp/base.yaml
+          helm template app deploy/chart -f deploy/values.yaml > /tmp/head.yaml
+      - uses: migalsp/costdeck/actions/cost-estimate@v1
+        with:
+          base: /tmp/base.yaml
+          head: /tmp/head.yaml
+          server: https://costdeck.example.com   # leave out to price offline
+          token: ${{ secrets.COSTDECK_TOKEN }}   # a viewer API token
+          fail-above: "500"                      # optional: fail above +500 a month
+```
+
+Elsewhere, such as GitLab CI, run the image directly:
+
+```bash
+docker run --rm -v "$PWD:/work" -e COSTDECK_URL -e COSTDECK_TOKEN \
+  ghcr.io/migalsp/costdeck/costdeck-operator:1.6.0 estimate \
+  --base /work/base.yaml --head /work/head.yaml --format markdown
+```
+
+The same is `POST /api/estimate` with `{"base": ..., "head": ...}`.
+
 ## Several clusters
 
 Every Cost Deck installation serves a summary of its cluster (`GET /api/finops/summary`):

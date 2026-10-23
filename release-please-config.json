@@ -16,6 +16,10 @@
           "path": "internal/api/openapi.yaml"
         },
         {
+          "type": "generic",
+          "path": "actions/cost-estimate/action.yml"
+        },
+        {
           "type": "json",
           "path": "ui/package.json",
           "jsonpath": "$.version"

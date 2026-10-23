@@ -1054,6 +1054,15 @@ costdeck_budget_forecast_ratio > 1`, label: 'Alert from your own monitoring' },
     summary: 'The cost digest everyone reads, sent on a schedule, and AI-written reports for each audience.',
     topics: [
       {
+        id: 'estimate',
+        title: 'Cost estimates in pull requests',
+        blocks: [
+          { p: 'Render the manifests of the base branch and of the pull request (helm template, kustomize build) and Cost Deck prices the difference at your cluster\'s rates and with its schedules, so a pull request says it adds €340 a month before anyone merges it. HorizontalPodAutoscalers count at minReplicas, DaemonSets on every node.' },
+          { p: 'The GitHub Action `migalsp/costdeck/actions/cost-estimate` posts the estimate on the pull request and keeps it up to date; elsewhere, run the image with `estimate --base base.yaml --head head.yaml`. With `fail-above` a change that adds too much fails the check.' },
+          { ways: { api: `curl -H "Authorization: Bearer $TOKEN" -X POST "$COSTDECK/api/estimate" -d @change.json` } },
+        ],
+      },
+      {
         id: 'clusters',
         title: 'Several clusters side by side',
         blocks: [

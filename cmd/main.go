@@ -101,6 +101,10 @@ func parseFlags() (map[string]string, bool, string, bool, zap.Options) {
 }
 
 func main() {
+	// "manager estimate" prices a change of manifests for CI and exits.
+	if len(os.Args) > 1 && os.Args[1] == "estimate" {
+		os.Exit(runEstimate(os.Args[2:], os.Stdout, os.Stderr))
+	}
 	flags, enableLeaderElection, probeAddr, secureMetrics, zapOpts := parseFlags()
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&zapOpts)))
 

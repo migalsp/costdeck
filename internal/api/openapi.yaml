@@ -1178,6 +1178,50 @@ paths:
         "400": { description: A bad by, period or dates }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
+  /api/estimate:
+    post:
+      x-role: viewer
+      tags: [FinOps]
+      summary: What a change of manifests costs
+      description: >-
+        Prices the change between two sets of rendered manifests (helm template or kustomize build
+        of the base branch and of a pull request) at this cluster's rates: Deployments,
+        StatefulSets with their volume templates, DaemonSets on every node, Argo Rollouts, Pods,
+        PersistentVolumeClaims and LoadBalancer Services, with HorizontalPodAutoscalers counted at
+        minReplicas and namespaces on a schedule counted for the share of the time they run. The
+        markdown is a pull request comment; the costdeck-operator image runs the same as
+        "manager estimate".
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [base, head]
+              properties:
+                base: { type: string, description: Manifests before the change (multi-document YAML or JSON) }
+                head: { type: string, description: Manifests after the change }
+                namespace: { type: string, default: default, description: The namespace of objects without one }
+      responses:
+        "200":
+          description: The priced change
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  currency: { type: string }
+                  basis: { type: string }
+                  before: { type: number }
+                  after: { type: number }
+                  delta: { type: number }
+                  unchanged: { type: integer }
+                  warnings: { type: array, items: { type: string } }
+                  items: { type: array, items: { type: object } }
+                  markdown: { type: string }
+        "400": { description: Manifests that do not parse }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
   /api/finops/summary:
     get:
       x-role: viewer

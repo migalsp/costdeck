@@ -243,6 +243,10 @@ func customRates(p finopsv1.PricingConfig) (Rates, bool) {
 	return Rates{CPUCoreHour: cpu, MemoryGBHour: mem, Currency: currency(p.Currency), Basis: "Custom rates from CostDeckConfig"}, true
 }
 
+// HeuristicRates are the list-price estimates for a cloud (aws, azure, gcp, or local for
+// anything else) in USD, for estimates made without a cluster.
+func HeuristicRates(cloud string) Rates { return heuristicRates(cloud, "") }
+
 func heuristicRates(cloud, cur string) Rates {
 	h, ok := heuristics[cloud]
 	if !ok {

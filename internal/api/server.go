@@ -228,6 +228,7 @@ func (s *Server) routes() *http.ServeMux {
 	// Scaling
 	viewer("GET /api/namespace-selector", s.handleSelectNamespaces)
 	viewer("POST /api/scaling/preview", s.handlePreviewSchedule)
+	viewer("POST /api/estimate", s.handleEstimate)
 	viewer("GET /api/scaling/groups", s.listScalingGroups)
 	admin("POST /api/scaling/groups", s.createScalingGroup)
 	viewer("GET /api/scaling/groups/{name}", s.getScalingGroup)

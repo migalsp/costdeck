@@ -29,6 +29,7 @@
 #  995 preview cleanup deletes namespaces past their TTL    (disposable clusters only)
 #  996 cost allocation from the history, with its CSV     (disposable clusters only)
 #  997 several clusters side by side                       (disposable clusters only)
+#  998 cost estimates of a change of manifests              (disposable clusters only)
 #
 # Run it against a disposable cluster (Kind in CI, `make test-e2e` locally): it installs
 # CRDs, metrics-server and changes settings. IMAGE must already be loadable by the cluster

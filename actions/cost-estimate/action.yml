@@ -1,0 +1,110 @@
+name: Cost Deck estimate
+description: Comment on a pull request with what its change of Kubernetes manifests will cost, priced by Cost Deck.
+author: Cost Deck
+branding:
+  icon: dollar-sign
+  color: green
+
+inputs:
+  base:
+    description: Rendered manifests of the base branch, a file (helm template or kustomize build output).
+    required: true
+  head:
+    description: Rendered manifests of the pull request, a file.
+    required: true
+  server:
+    description: URL of a Cost Deck to price with its rates and schedules. Empty prices offline at list-price estimates.
+    required: false
+    default: ""
+  token:
+    description: A viewer API token of that Cost Deck.
+    required: false
+    default: ""
+  namespace:
+    description: Namespace of objects without one.
+    required: false
+    default: default
+  cloud:
+    description: Offline only, the list-price estimates of aws, azure, gcp or local.
+    required: false
+    default: local
+  fail-above:
+    description: Fail the job when the change adds more than this a month (0 never fails).
+    required: false
+    default: "0"
+  comment:
+    description: Post the estimate on the pull request, updating the earlier one.
+    required: false
+    default: "true"
+  version:
+    description: Version of the Cost Deck image that runs the estimate.
+    required: false
+    default: "1.5.7" # x-release-please-version
+  github-token:
+    description: Token that posts the comment.
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  delta:
+    description: What the change adds a month (negative when it saves).
+    value: ${{ steps.estimate.outputs.delta }}
+  markdown-file:
+    description: The estimate as Markdown.
+    value: ${{ steps.estimate.outputs.file }}
+
+runs:
+  using: composite
+  steps:
+    - id: estimate
+      shell: bash
+      env:
+        COSTDECK_URL: ${{ inputs.server }}
+        COSTDECK_TOKEN: ${{ inputs.token }}
+        IMAGE: ghcr.io/migalsp/costdeck/costdeck-operator:${{ inputs.version }}
+        BASE: ${{ inputs.base }}
+        HEAD: ${{ inputs.head }}
+        NAMESPACE: ${{ inputs.namespace }}
+        CLOUD: ${{ inputs.cloud }}
+        FAIL_ABOVE: ${{ inputs.fail-above }}
+      run: |
+        set -euo pipefail
+        dir=$(mktemp -d)
+        cp "$BASE" "$dir/base.yaml"
+        cp "$HEAD" "$dir/head.yaml"
+        set +e
+        docker run --rm -v "$dir:/work:ro" -e COSTDECK_URL -e COSTDECK_TOKEN "$IMAGE" estimate \
+          --base /work/base.yaml --head /work/head.yaml --namespace "$NAMESPACE" --cloud "$CLOUD" \
+          --format json --fail-above "$FAIL_ABOVE" > "$dir/estimate.json"
+        code=$?
+        set -e
+        if [ "$code" -gt 2 ] || [ "$code" -eq 1 ]; then exit "$code"; fi
+        jq -r .markdown "$dir/estimate.json" > "$dir/estimate.md"
+        cat "$dir/estimate.md" >> "$GITHUB_STEP_SUMMARY"
+        {
+          echo "delta=$(jq -r .delta "$dir/estimate.json")"
+          echo "file=$dir/estimate.md"
+          echo "over=$([ "$code" -eq 2 ] && echo true || echo false)"
+        } >> "$GITHUB_OUTPUT"
+
+    - if: inputs.comment == 'true' && github.event.pull_request.number != ''
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        FILE: ${{ steps.estimate.outputs.file }}
+        PR: ${{ github.event.pull_request.number }}
+        REPO: ${{ github.repository }}
+      run: |
+        set -euo pipefail
+        id=$(gh api "repos/$REPO/issues/$PR/comments" --paginate --jq '.[] | select(.body | startswith("<!-- costdeck-estimate -->")) | .id' | head -n 1)
+        if [ -n "$id" ]; then
+          gh api -X PATCH "repos/$REPO/issues/comments/$id" -F body=@"$FILE" >/dev/null
+        else
+          gh api -X POST "repos/$REPO/issues/$PR/comments" -F body=@"$FILE" >/dev/null
+        fi
+
+    - if: steps.estimate.outputs.over == 'true'
+      shell: bash
+      run: |
+        echo "::error::The change adds more than ${{ inputs.fail-above }} a month (see the estimate)"
+        exit 1
