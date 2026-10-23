@@ -1082,7 +1082,7 @@ spec:
     id: 'access',
     title: 'Access and sign-in',
     icon: 'access',
-    summary: 'Roles, users, single sign-on with Microsoft Entra ID, and API tokens.',
+    summary: 'Roles, users, single sign-on with Microsoft Entra ID, Keycloak or any OpenID Connect provider, and API tokens.',
     topics: [
       {
         id: 'roles',
@@ -1130,6 +1130,21 @@ spec:
           },
           { tip: 'Once SSO works you can turn off local login. Keep the admin password anyway: it is the way back in if SSO breaks.' },
           { p: 'The installation guide covers multi-tenant setups, app roles, sovereign clouds and the single-page-app redirect URI.' },
+        ],
+      },
+      {
+        id: 'oidc',
+        title: 'Sign in with Keycloak or another OpenID Connect provider',
+        blocks: [
+          {
+            steps: [
+              'In Keycloak, create a confidential OpenID Connect client with the standard flow, the redirect URI `https://<your-host>/api/auth/oidc/callback`, and a **Group Membership** mapper that adds `groups` to the ID token.',
+              'In Cost Deck open **Settings** → **Single sign-on**, click **Keycloak defaults**, and enter the issuer (`https://<keycloak>/realms/<realm>`), client ID and secret.',
+              'Map groups to roles: with full group paths a mapping works with or without the leading slash (`/costdeck-admins`). Realm roles named viewer, operator or admin count as they are.',
+              'Click **Test connection**, then use **Sign in with Keycloak** in a private window.',
+            ],
+          },
+          { p: 'Any other OpenID Connect provider (Okta, Auth0, Dex…) works the same way: set its issuer, and the claims that carry groups and roles; dotted paths such as `resource_access.costdeck.roles` reach nested claims. Without **Let anyone the provider signs in use Cost Deck**, only users with a mapped group or role get in.' },
         ],
       },
       {

@@ -204,6 +204,38 @@ paths:
         "302":
           description: Redirect back into the dashboard
 
+  /api/auth/oidc/login:
+    get:
+      tags: [Auth]
+      security: []
+      summary: Start OpenID Connect sign-in (Keycloak, Okta, …)
+      description: >-
+        Redirects the browser to the issuer in spec.auth.oidc (authorization code flow with
+        PKCE and a nonce).
+      parameters:
+        - name: return
+          in: query
+          description: Path to return to after signing in.
+          schema: { type: string, example: /scaling }
+      responses:
+        "302":
+          description: Redirect to the provider's sign-in page
+
+  /api/auth/oidc/callback:
+    get:
+      tags: [Auth]
+      security: []
+      summary: OpenID Connect redirect URI
+      description: >
+        Register https://<host>/api/auth/oidc/callback as the client's redirect URI. Verifies
+        state, PKCE, the ID token signature, audience, issuer and nonce, maps the groups claim
+        (spec.auth.oidc.groupsClaim, default groups) through groupRoleMapping and honours
+        roles named viewer, operator or admin in rolesClaim, sets the session cookie and
+        redirects back. Failures redirect with ?sso_error=<code>&sso_detail=<text>.
+      responses:
+        "302":
+          description: Redirect back into the dashboard
+
   /api/auth/entra/callback-spa:
     post:
       tags: [Auth]

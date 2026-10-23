@@ -151,6 +151,99 @@ spec:
                         enabled
                       rule: '!self.enabled || (size(self.tenantId) > 0 && size(self.clientId)
                         > 0)'
+                  oidc:
+                    description: |-
+                      OIDC configures single sign-on with any other OpenID Connect provider: Keycloak,
+                      Okta, Auth0, Dex, Google and the like.
+                    properties:
+                      autoProvision:
+                        default: true
+                        description: |-
+                          AutoProvision lets anyone the provider signs in use CostDeck with DefaultRole. When
+                          false, only users matched by GroupRoleMapping or RolesClaim may sign in.
+                        type: boolean
+                      clientId:
+                        description: ClientID of the client registered for CostDeck.
+                        maxLength: 256
+                        type: string
+                      clientSecretRef:
+                        description: |-
+                          ClientSecretRef names the Secret holding the client secret under CLIENT_SECRET.
+                          Without one the client is public and PKCE alone protects the code.
+                        type: string
+                      defaultRole:
+                        default: viewer
+                        description: 'DefaultRole is granted to users who match no
+                          group or role: viewer, operator or admin.'
+                        enum:
+                        - viewer
+                        - operator
+                        - admin
+                        type: string
+                      displayName:
+                        description: |-
+                          DisplayName labels the button: "Sign in with <DisplayName>". Defaults to "single
+                          sign-on".
+                        maxLength: 64
+                        type: string
+                      enabled:
+                        description: Enabled shows the sign-in button and accepts
+                          sign-ins from the provider.
+                        type: boolean
+                      groupRoleMapping:
+                        additionalProperties:
+                          type: string
+                        description: |-
+                          GroupRoleMapping maps groups (as GroupsClaim lists them) to a role. The most
+                          privileged match wins.
+                        type: object
+                      groupsClaim:
+                        description: |-
+                          GroupsClaim is the claim listing the user's groups; dotted paths reach nested claims.
+                          Defaults to groups (Keycloak's group membership mapper; full paths such as /team-a
+                          match a mapping with or without the leading slash).
+                        maxLength: 128
+                        type: string
+                      issuerUrl:
+                        description: |-
+                          IssuerURL is the provider's issuer, whose /.well-known/openid-configuration is read,
+                          e.g. https://keycloak.example.com/realms/costdeck. It must be HTTPS: the client
+                          secret is sent to it.
+                        maxLength: 512
+                        pattern: ^https://[^\s]+$
+                        type: string
+                      redirectUrl:
+                        description: |-
+                          RedirectURL must match a redirect URI of the client exactly:
+                          https://<host>/api/auth/oidc/callback. Derived from the request host when empty.
+                        maxLength: 512
+                        type: string
+                      rolesClaim:
+                        description: |-
+                          RolesClaim is a claim listing roles named viewer, operator or admin, which are honoured
+                          as they are, e.g. realm_access.roles (Keycloak realm roles) or
+                          resource_access.costdeck.roles (client roles).
+                        maxLength: 128
+                        type: string
+                      scopes:
+                        description: |-
+                          Scopes requested besides openid. Defaults to profile and email; add groups or roles
+                          when the provider only sends those claims for a scope.
+                        items:
+                          type: string
+                        type: array
+                        x-kubernetes-list-type: atomic
+                      skipSslVerify:
+                        description: |-
+                          SkipSSLVerify disables TLS verification towards the provider. Only for providers with
+                          a certificate the operator cannot verify, and SSL-inspecting proxies.
+                        type: boolean
+                    type: object
+                    x-kubernetes-validations:
+                    - message: issuerUrl and clientId are required when OIDC sign-in
+                        is enabled
+                      rule: '!self.enabled || (size(self.issuerUrl) > 0 && size(self.clientId)
+                        > 0)'
                 type: object
               billing:
                 description: Billing reconciles estimates with the cloud bill.

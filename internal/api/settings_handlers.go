@@ -64,6 +64,24 @@ type PricingSettingsResponse struct {
 type AuthSettingsResponse struct {
 	DisableLocalLogin bool                   `json:"disableLocalLogin"`
 	Entra             *EntraSettingsResponse `json:"entra,omitempty"`
+	OIDC              *OIDCSettingsResponse  `json:"oidc,omitempty"`
+}
+
+// OIDCSettingsResponse is the masked OpenID Connect configuration.
+type OIDCSettingsResponse struct {
+	Enabled          bool              `json:"enabled"`
+	DisplayName      string            `json:"displayName,omitempty"`
+	IssuerURL        string            `json:"issuerUrl,omitempty"`
+	ClientID         string            `json:"clientId,omitempty"`
+	RedirectURL      string            `json:"redirectUrl,omitempty"`
+	Scopes           []string          `json:"scopes,omitempty"`
+	GroupsClaim      string            `json:"groupsClaim,omitempty"`
+	RolesClaim       string            `json:"rolesClaim,omitempty"`
+	DefaultRole      string            `json:"defaultRole,omitempty"`
+	AutoProvision    bool              `json:"autoProvision"`
+	GroupRoleMapping map[string]string `json:"groupRoleMapping,omitempty"`
+	SkipSSLVerify    bool              `json:"skipSslVerify"`
+	HasClientSecret  bool              `json:"hasClientSecret"`
 }
 
 // EntraSettingsResponse is the masked Entra ID configuration.
@@ -212,6 +230,25 @@ type PricingUpdateRequest struct {
 type AuthUpdateRequest struct {
 	DisableLocalLogin *bool               `json:"disableLocalLogin,omitempty"`
 	Entra             *EntraUpdateRequest `json:"entra,omitempty"`
+	OIDC              *OIDCUpdateRequest  `json:"oidc,omitempty"`
+}
+
+// OIDCUpdateRequest changes OpenID Connect sign-in. Scopes and GroupRoleMapping replace
+// the whole list or mapping when present.
+type OIDCUpdateRequest struct {
+	Enabled          *bool             `json:"enabled,omitempty"`
+	DisplayName      *string           `json:"displayName,omitempty"`
+	IssuerURL        *string           `json:"issuerUrl,omitempty"`
+	ClientID         *string           `json:"clientId,omitempty"`
+	ClientSecret     string            `json:"clientSecret,omitempty"`
+	RedirectURL      *string           `json:"redirectUrl,omitempty"`
+	Scopes           []string          `json:"scopes,omitempty"`
+	GroupsClaim      *string           `json:"groupsClaim,omitempty"`
+	RolesClaim       *string           `json:"rolesClaim,omitempty"`
+	DefaultRole      *string           `json:"defaultRole,omitempty"`
+	AutoProvision    *bool             `json:"autoProvision,omitempty"`
+	GroupRoleMapping map[string]string `json:"groupRoleMapping,omitempty"`
+	SkipSSLVerify    *bool             `json:"skipSslVerify,omitempty"`
 }
 
 // EntraUpdateRequest changes Microsoft Entra ID SSO settings. GroupRoleMapping replaces the
@@ -486,6 +523,14 @@ func (s *Server) buildSettingsResponse(ctx context.Context, cfg *finopsv1.CostDe
 			GroupRoleMapping: e.GroupRoleMapping,
 			SkipSSLVerify:    e.SkipSSLVerify,
 			HasClientSecret:  e.ClientSecretRef != "" && s.secretExists(ctx, e.ClientSecretRef, cfg.Namespace),
+		}
+	}
+	if o := cfg.Spec.Auth.OIDC; o != nil {
+		resp.Auth.OIDC = &OIDCSettingsResponse{
+			Enabled: o.Enabled, DisplayName: o.DisplayName, IssuerURL: o.IssuerURL, ClientID: o.ClientID, RedirectURL: o.RedirectURL,
+			Scopes: o.Scopes, GroupsClaim: o.GroupsClaim, RolesClaim: o.RolesClaim, DefaultRole: o.DefaultRole,
+			AutoProvision: o.AutoProvision == nil || *o.AutoProvision, GroupRoleMapping: o.GroupRoleMapping, SkipSSLVerify: o.SkipSSLVerify,
+			HasClientSecret: o.ClientSecretRef != "" && s.secretExists(ctx, o.ClientSecretRef, cfg.Namespace),
 		}
 	}
 
@@ -991,6 +1036,9 @@ func (s *Server) applyAuthSettings(ctx context.Context, cfg *finopsv1.CostDeckCo
 	if req.Auth.DisableLocalLogin != nil {
 		cfg.Spec.Auth.DisableLocalLogin = *req.Auth.DisableLocalLogin
 	}
+	if err := s.applyOIDCSettings(ctx, cfg, req.Auth.OIDC); err != nil {
+		return err
+	}
 	er := req.Auth.Entra
 	if er == nil {
 		return nil
@@ -1046,6 +1094,81 @@ func (s *Server) applyAuthSettings(ctx context.Context, cfg *finopsv1.CostDeckCo
 		map[string][]byte{auth.SecretKeyClientSecret: []byte(er.ClientSecret)}, &e.ClientSecretRef)
 }
 
+// roleMapping validates a group-to-role mapping.
+func roleMapping(in map[string]string) (map[string]string, error) {
+	out := make(map[string]string, len(in))
+	for group, roleName := range in {
+		role, ok := auth.ParseRole(roleName)
+		if !ok || strings.TrimSpace(group) == "" {
+			return nil, badRequestf("invalid group mapping %q -> %q", group, roleName)
+		}
+		out[strings.TrimSpace(group)] = string(role)
+	}
+	return out, nil
+}
+
+// applyOIDCSettings applies the OpenID Connect section of a settings update.
+func (s *Server) applyOIDCSettings(ctx context.Context, cfg *finopsv1.CostDeckConfig, or *OIDCUpdateRequest) error {
+	if or == nil {
+		return nil
+	}
+	if cfg.Spec.Auth.OIDC == nil {
+		cfg.Spec.Auth.OIDC = &finopsv1.OIDCConfig{}
+	}
+	o := cfg.Spec.Auth.OIDC
+	for dst, src := range map[*string]*string{&o.DisplayName: or.DisplayName, &o.IssuerURL: or.IssuerURL, &o.ClientID: or.ClientID,
+		&o.RedirectURL: or.RedirectURL, &o.GroupsClaim: or.GroupsClaim, &o.RolesClaim: or.RolesClaim} {
+		if src != nil {
+			*dst = strings.TrimSpace(*src)
+		}
+	}
+	o.IssuerURL = strings.TrimRight(o.IssuerURL, "/")
+	if o.IssuerURL != "" && !strings.HasPrefix(o.IssuerURL, "https://") {
+		return badRequestf("the issuer URL must be HTTPS: the client secret is sent to it")
+	}
+	if or.Scopes != nil {
+		var scopes []string
+		for _, sc := range or.Scopes {
+			if sc = strings.TrimSpace(sc); sc != "" && sc != "openid" && !slices.Contains(scopes, sc) {
+				scopes = append(scopes, sc)
+			}
+		}
+		o.Scopes = scopes
+	}
+	if or.DefaultRole != nil {
+		role, ok := auth.ParseRole(*or.DefaultRole)
+		if !ok {
+			return badRequestf("unknown default role %q (use viewer, operator or admin)", *or.DefaultRole)
+		}
+		o.DefaultRole = string(role)
+	}
+	if or.GroupRoleMapping != nil {
+		mapping, err := roleMapping(or.GroupRoleMapping)
+		if err != nil {
+			return err
+		}
+		o.GroupRoleMapping = mapping
+	}
+	if or.AutoProvision != nil {
+		v := *or.AutoProvision
+		o.AutoProvision = &v
+	}
+	if or.SkipSSLVerify != nil {
+		o.SkipSSLVerify = *or.SkipSSLVerify
+	}
+	if or.Enabled != nil {
+		o.Enabled = *or.Enabled
+	}
+	if o.Enabled && (o.IssuerURL == "" || o.ClientID == "") {
+		return badRequestf("issuer URL and client ID are required to enable single sign-on")
+	}
+	if or.ClientSecret == "" {
+		return nil
+	}
+	return s.storeCredentials(ctx, "costdeck-oidc-credentials",
+		map[string][]byte{auth.SecretKeyClientSecret: []byte(or.ClientSecret)}, &o.ClientSecretRef)
+}
+
 // storeCredentials writes a credentials Secret and points the config field at it.
 func (s *Server) storeCredentials(ctx context.Context, name string, data map[string][]byte, ref *string) error {
 	if err := s.upsertSecret(ctx, config.OperatorNamespace(), name, data); err != nil {
@@ -1077,6 +1200,8 @@ func (s *Server) handleTestProvider(w http.ResponseWriter, r *http.Request) {
 		s.testWebex(w, ctx, r)
 	case "entra":
 		s.testEntra(w, ctx, cfg, r)
+	case "oidc":
+		s.testOIDC(w, ctx, cfg, r)
 	default:
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("Unknown provider: %s", providerName))
 	}
@@ -1187,6 +1312,37 @@ func validServiceAccountKey(raw string) error {
 
 // testEntra validates Entra SSO settings (unsaved form values first, stored ones otherwise):
 // the tenant must be discoverable and the client credentials must be accepted.
+// testOIDC checks the OpenID Connect settings typed into the form, before they are saved.
+func (s *Server) testOIDC(w http.ResponseWriter, ctx context.Context, cfg *finopsv1.CostDeckConfig, r *http.Request) {
+	var req OIDCUpdateRequest
+	if err := decodeJSON(w, r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	oc := finopsv1.OIDCConfig{}
+	if stored := cfg.Spec.Auth.OIDC; stored != nil {
+		oc = *stored
+	}
+	for dst, src := range map[*string]*string{&oc.IssuerURL: req.IssuerURL, &oc.ClientID: req.ClientID} {
+		if src != nil && *src != "" {
+			*dst = strings.TrimRight(strings.TrimSpace(*src), "/")
+		}
+	}
+	if req.SkipSSLVerify != nil {
+		oc.SkipSSLVerify = *req.SkipSSLVerify
+	}
+	o := &auth.OIDC{Client: s.Client}
+	if s.Auth != nil && s.Auth.OIDC != nil {
+		o = s.Auth.OIDC
+	}
+	msg, err := o.TestOIDC(ctx, oc)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"connected": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"connected": true, "message": msg})
+}
+
 func (s *Server) testEntra(w http.ResponseWriter, ctx context.Context, cfg *finopsv1.CostDeckConfig, r *http.Request) {
 	var req EntraUpdateRequest
 	if err := decodeJSON(w, r, &req); err != nil {

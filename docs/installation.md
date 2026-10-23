@@ -144,6 +144,34 @@ Local users change their own password from the menu under their name.
    **Test connection** checks the tenant and the client credentials. Once SSO works you
    can turn off local login. Keep the admin password: it is the way back in if SSO breaks.
 
+## Single sign-on with Keycloak and other OpenID Connect providers
+
+**Settings → Single sign-on → OpenID Connect** signs users in with any OpenID Connect
+provider (`spec.auth.oidc`): authorization code flow with PKCE and a nonce, and the ID token
+checked against the issuer's keys, audience and expiry.
+
+1. **In Keycloak**, create a confidential OpenID Connect client:
+   - standard flow;
+   - redirect URI `https://costdeck.example.com/api/auth/oidc/callback`;
+   - a **Group Membership** mapper with the claim name `groups`, added to the ID token.
+2. **In Cost Deck**, click **Keycloak defaults** (groups claim `groups`, roles claim
+   `realm_access.roles`), then fill in:
+   - the issuer `https://keycloak.example.com/realms/<realm>`, which must be HTTPS;
+   - the client ID and the client secret, stored in the `costdeck-oidc-credentials`
+     Secret.
+3. **Map groups to roles.** Keycloak sends full paths (`/costdeck-admins`); a mapping
+   matches with or without the leading slash. Roles named `viewer`, `operator` or `admin`
+   in the roles claim count as they are; client roles are at
+   `resource_access.<client>.roles`.
+4. **Choose who else gets in.** Turn off auto-provisioning to admit only users with a
+   mapped group or role.
+
+For Okta, Auth0, Dex and others, set their issuer and the claims that carry groups and
+roles; dotted paths reach nested claims. Extra scopes (such as `groups`) are requested
+when a provider sends a claim only for its scope. **Skip TLS verification** is for a
+provider whose certificate the operator cannot verify. **Single sign-on only** hides the
+password form while Entra ID or OpenID Connect sign-in is on.
+
 ## API tokens
 
 **Settings → API tokens** issues tokens (`cdk_…`) bound to a role, for

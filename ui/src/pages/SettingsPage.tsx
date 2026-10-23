@@ -8,6 +8,8 @@ import { AWSLogo, AzureLogo, GCPLogo, WebexLogo } from '../components/ProviderLo
 import ApiTokens from '../components/ApiTokens'
 import CalendarsEditor from '../components/settings/CalendarsEditor'
 import ModelPricesEditor from '../components/settings/ModelPricesEditor'
+import OIDCSettings from '../components/settings/OIDCSettings'
+import { emptyOIDC, oidcProblem, oidcRequest, type OIDCForm } from '../lib/oidc'
 import { llmModelProblem } from '../lib/llm'
 import { tokens } from '../lib/finops'
 import { formatMoney } from '../lib/format'
@@ -92,6 +94,22 @@ interface MCPSettings {
   path: string
 }
 
+interface OIDCSettingsData {
+  enabled: boolean
+  displayName?: string
+  issuerUrl?: string
+  clientId?: string
+  redirectUrl?: string
+  scopes?: string[]
+  groupsClaim?: string
+  rolesClaim?: string
+  defaultRole?: string
+  autoProvision: boolean
+  groupRoleMapping?: Record<string, string>
+  skipSslVerify: boolean
+  hasClientSecret: boolean
+}
+
 interface EntraSettings {
   enabled: boolean
   tenantId?: string
@@ -125,6 +143,7 @@ interface SettingsData {
   auth?: {
     disableLocalLogin: boolean
     entra?: EntraSettings
+    oidc?: OIDCSettingsData
   }
   pricing?: {
     cpuCoreHour?: string
@@ -199,7 +218,7 @@ function navStatus(st: SettingsData | null): Partial<Record<Section, NavStatus>>
   const clouds = [st.providers.aws?.enabled && 'AWS', st.providers.azure?.enabled && 'Azure', st.providers.gcp?.enabled && 'GCP'].filter(Boolean)
   const basis = st.pricing?.effective?.basis?.toLowerCase() || ''
   return {
-    sso: onOff(st.auth?.entra?.enabled),
+    sso: onOff(st.auth?.entra?.enabled || st.auth?.oidc?.enabled),
     pricing: { text: basis.startsWith('custom') ? 'Custom' : basis.includes('aws') || basis.includes('azure') ? 'List' : 'Estimate' },
     billing: onOff(st.billing?.enabled),
     metrics: { text: st.integrations.victoriaMetrics?.enabled ? 'VictoriaMetrics' : 'metrics-server' },
@@ -713,6 +732,7 @@ export default function SettingsPage({ section: requested }: { section?: string 
   // Access / SSO form state
   const [disableLocalLogin, setDisableLocalLogin] = useState(false)
   const [entraEnabled, setEntraEnabled] = useState(false)
+  const [oidc, setOIDC] = useState<OIDCForm>(emptyOIDC)
   const [entraTenant, setEntraTenant] = useState('')
   const [entraClient, setEntraClient] = useState('')
   const [entraSecret, setEntraSecret] = useState('')
@@ -790,6 +810,15 @@ export default function SettingsPage({ section: requested }: { section?: string 
         }
         if (data.auth) {
           setDisableLocalLogin(data.auth.disableLocalLogin)
+          const o = data.auth.oidc
+          if (o) {
+            setOIDC({
+              enabled: o.enabled, displayName: o.displayName || '', issuerUrl: o.issuerUrl || '', clientId: o.clientId || '', clientSecret: '',
+              hasClientSecret: o.hasClientSecret, redirectUrl: o.redirectUrl || '', scopes: (o.scopes || []).join(' '), groupsClaim: o.groupsClaim || '',
+              rolesClaim: o.rolesClaim || '', defaultRole: o.defaultRole || 'viewer', autoProvision: o.autoProvision, skipSslVerify: o.skipSslVerify,
+              mapping: Object.entries(o.groupRoleMapping || {}).map(([group, role]) => ({ group, role })),
+            })
+          }
           const e = data.auth.entra
           if (e) {
             setEntraEnabled(e.enabled)
@@ -814,7 +843,7 @@ export default function SettingsPage({ section: requested }: { section?: string 
   usePolling(fetchSettings, null)
 
   const handleSave = async (sec: SavedSection) => {
-    const invalid = sec === 'calendars' ? calendarProblem(calendars) : sec === 'pricing' ? llmModelProblem(llmModels) : null
+    const invalid = sec === 'calendars' ? calendarProblem(calendars) : sec === 'pricing' ? llmModelProblem(llmModels) : sec === 'sso' ? oidcProblem(oidc) : null
     if (invalid) {
       setSaveMessage({ section: sec, text: `Not saved: ${invalid}`, ok: false })
       return
@@ -892,6 +921,7 @@ export default function SettingsPage({ section: requested }: { section?: string 
         },
         auth: {
           disableLocalLogin,
+          oidc: oidcRequest(oidc),
           entra: {
             enabled: entraEnabled,
             tenantId: entraTenant,
@@ -1806,7 +1836,7 @@ export default function SettingsPage({ section: requested }: { section?: string 
           <SectionHeader
             icon={<Shield className="text-brand-600" size={20} />}
             title="Single sign-on"
-            subtitle="Let people sign in with Microsoft Entra ID; their groups decide their role"
+            subtitle="Let people sign in with Microsoft Entra ID, Keycloak or another OpenID Connect provider; their groups decide their role"
             action={saveAction('sso')}
           />
 
@@ -1933,12 +1963,14 @@ export default function SettingsPage({ section: requested }: { section?: string 
             </div>
           </div>
 
+          <OIDCSettings value={oidc} onChange={setOIDC} />
+
           <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
             <label className="flex items-start gap-3 cursor-pointer">
               <input type="checkbox" checked={disableLocalLogin} onChange={e => setDisableLocalLogin(e.target.checked)} className="mt-1 accent-brand-600" />
               <span>
-                <span className="block text-sm font-bold text-slate-700">Sign in with Microsoft only</span>
-                <span className="block text-xs text-slate-500">Hides the password form, and local users can no longer sign in. Only takes effect while Microsoft sign-in is enabled, so nobody is locked out; the built-in admin keeps working through the API as break-glass access.</span>
+                <span className="block text-sm font-bold text-slate-700">Single sign-on only</span>
+                <span className="block text-xs text-slate-500">Hides the password form, and local users can no longer sign in. Only takes effect while Microsoft or OpenID Connect sign-in is enabled, so nobody is locked out; the built-in admin keeps working through the API as break-glass access.</span>
               </span>
             </label>
           </div>

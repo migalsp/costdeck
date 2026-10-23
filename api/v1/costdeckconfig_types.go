@@ -266,6 +266,87 @@ type IntegrationsConfig struct {
 
 // ─── Authentication ──────────────────────────────────────────────────────────
 
+// OIDCConfig configures single sign-on with an OpenID Connect provider: the authorization
+// code flow with PKCE, a nonce and the issuer's keys, as for Entra ID.
+// +kubebuilder:validation:XValidation:rule="!self.enabled || (size(self.issuerUrl) > 0 && size(self.clientId) > 0)",message="issuerUrl and clientId are required when OIDC sign-in is enabled"
+type OIDCConfig struct {
+	// Enabled shows the sign-in button and accepts sign-ins from the provider.
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+
+	// DisplayName labels the button: "Sign in with <DisplayName>". Defaults to "single
+	// sign-on".
+	// +kubebuilder:validation:MaxLength=64
+	// +optional
+	DisplayName string `json:"displayName,omitempty"`
+
+	// IssuerURL is the provider's issuer, whose /.well-known/openid-configuration is read,
+	// e.g. https://keycloak.example.com/realms/costdeck. It must be HTTPS: the client
+	// secret is sent to it.
+	// +kubebuilder:validation:Pattern=`^https://[^\s]+$`
+	// +kubebuilder:validation:MaxLength=512
+	// +optional
+	IssuerURL string `json:"issuerUrl,omitempty"`
+
+	// ClientID of the client registered for CostDeck.
+	// +kubebuilder:validation:MaxLength=256
+	// +optional
+	ClientID string `json:"clientId,omitempty"`
+
+	// ClientSecretRef names the Secret holding the client secret under CLIENT_SECRET.
+	// Without one the client is public and PKCE alone protects the code.
+	// +optional
+	ClientSecretRef string `json:"clientSecretRef,omitempty"`
+
+	// RedirectURL must match a redirect URI of the client exactly:
+	// https://<host>/api/auth/oidc/callback. Derived from the request host when empty.
+	// +kubebuilder:validation:MaxLength=512
+	// +optional
+	RedirectURL string `json:"redirectUrl,omitempty"`
+
+	// Scopes requested besides openid. Defaults to profile and email; add groups or roles
+	// when the provider only sends those claims for a scope.
+	// +listType=atomic
+	// +optional
+	Scopes []string `json:"scopes,omitempty"`
+
+	// GroupsClaim is the claim listing the user's groups; dotted paths reach nested claims.
+	// Defaults to groups (Keycloak's group membership mapper; full paths such as /team-a
+	// match a mapping with or without the leading slash).
+	// +kubebuilder:validation:MaxLength=128
+	// +optional
+	GroupsClaim string `json:"groupsClaim,omitempty"`
+
+	// RolesClaim is a claim listing roles named viewer, operator or admin, which are honoured
+	// as they are, e.g. realm_access.roles (Keycloak realm roles) or
+	// resource_access.costdeck.roles (client roles).
+	// +kubebuilder:validation:MaxLength=128
+	// +optional
+	RolesClaim string `json:"rolesClaim,omitempty"`
+
+	// DefaultRole is granted to users who match no group or role: viewer, operator or admin.
+	// +kubebuilder:validation:Enum=viewer;operator;admin
+	// +kubebuilder:default=viewer
+	// +optional
+	DefaultRole string `json:"defaultRole,omitempty"`
+
+	// AutoProvision lets anyone the provider signs in use CostDeck with DefaultRole. When
+	// false, only users matched by GroupRoleMapping or RolesClaim may sign in.
+	// +kubebuilder:default=true
+	// +optional
+	AutoProvision *bool `json:"autoProvision,omitempty"`
+
+	// GroupRoleMapping maps groups (as GroupsClaim lists them) to a role. The most
+	// privileged match wins.
+	// +optional
+	GroupRoleMapping map[string]string `json:"groupRoleMapping,omitempty"`
+
+	// SkipSSLVerify disables TLS verification towards the provider. Only for providers with
+	// a certificate the operator cannot verify, and SSL-inspecting proxies.
+	// +optional
+	SkipSSLVerify bool `json:"skipSslVerify,omitempty"`
+}
+
 // EntraConfig configures Microsoft Entra ID (Azure AD) single sign-on using the OpenID
 // Connect authorization code flow with PKCE.
 // +kubebuilder:validation:XValidation:rule="!self.enabled || (size(self.tenantId) > 0 && size(self.clientId) > 0)",message="tenantId and clientId are required when Entra SSO is enabled"
@@ -335,6 +416,11 @@ type AuthConfig struct {
 	// Entra configures Microsoft Entra ID single sign-on.
 	// +optional
 	Entra *EntraConfig `json:"entra,omitempty"`
+
+	// OIDC configures single sign-on with any other OpenID Connect provider: Keycloak,
+	// Okta, Auth0, Dex, Google and the like.
+	// +optional
+	OIDC *OIDCConfig `json:"oidc,omitempty"`
 
 	// DisableLocalLogin hides the username/password form once SSO works. The built-in
 	// admin account (COSTDECK_AUTH_USER/PASSWORD) then only serves as break-glass access

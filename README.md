@@ -92,8 +92,9 @@ them back on time. There is no external service: one operator in your cluster do
 
 ### Fits your team
 
-- **Access.** Local users with viewer, operator and admin roles, Microsoft Entra ID single
-  sign-on with group-to-role mapping, API tokens, and least-privilege RBAC: Secrets are
+- **Access.** Local users with viewer, operator and admin roles, single sign-on with
+  Microsoft Entra ID, Keycloak or any OpenID Connect provider with group-to-role mapping,
+  API tokens, and least-privilege RBAC: Secrets are
   only read in the operator's own namespace.
 - **Where you already work.** A Webex bot, an AI assistant (Claude, OpenAI-compatible or
   Gemini) that proposes actions for you to confirm, an MCP server for AI clients, and

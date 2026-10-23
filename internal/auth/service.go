@@ -42,6 +42,7 @@ type Service struct {
 	Client   client.Client
 	Sessions *Sessions
 	Entra    *Entra
+	OIDC     *OIDC
 	Tokens   *Tokens
 	Users    *Users
 	SignIns  *SignIns
@@ -84,6 +85,7 @@ func NewService(ctx context.Context, c client.Client) (*Service, error) {
 		Client:        c,
 		Sessions:      sessions,
 		Entra:         &Entra{Client: c, Sessions: sessions},
+		OIDC:          &OIDC{Client: c, Sessions: sessions},
 		Tokens:        &Tokens{Client: c},
 		localUser:     os.Getenv(envAuthUser),
 		localPassword: os.Getenv(envAuthPassword),
@@ -105,6 +107,7 @@ func NewService(ctx context.Context, c client.Client) (*Service, error) {
 	svc.Users = &Users{Client: c, Reserved: svc.localUser}
 	svc.SignIns = &SignIns{Client: c}
 	svc.Entra.OnSignIn = svc.recordSignIn
+	svc.OIDC.OnSignIn = svc.recordSignIn
 	return svc, nil
 }
 
@@ -146,7 +149,7 @@ func PublicPath(path string) bool {
 	case "/api/login", "/api/logout", "/api/auth/config", "/api/docs", "/api/openapi.yaml", "/api/openapi.json", "/api/webex/webhook":
 		return true
 	}
-	return strings.HasPrefix(path, "/api/auth/entra/")
+	return strings.HasPrefix(path, "/api/auth/entra/") || strings.HasPrefix(path, "/api/auth/oidc/")
 }
 
 // protectedPath reports whether a path needs authentication: the REST API and the MCP
@@ -402,6 +405,7 @@ func (s *Service) HandleConfig(w http.ResponseWriter, r *http.Request) {
 		"disabled":   s.Disabled(ctx),
 		"localLogin": (s.localConfigured() || (s.Users != nil && s.Users.Any(ctx))) && !s.localLoginHidden(ctx),
 		"entra":      map[string]bool{"enabled": s.Entra.Enabled(ctx)},
+		"oidc":       map[string]any{"enabled": s.OIDC.Enabled(ctx), "displayName": s.OIDC.DisplayName(ctx)},
 	})
 }
 
@@ -412,7 +416,7 @@ func (s *Service) localLoginHidden(ctx context.Context) bool {
 	if err != nil || !cfg.Spec.Auth.DisableLocalLogin {
 		return false
 	}
-	return s.Entra.Enabled(ctx)
+	return s.Entra.Enabled(ctx) || s.OIDC.Enabled(ctx)
 }
 
 const (

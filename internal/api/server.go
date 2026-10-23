@@ -184,6 +184,8 @@ func (s *Server) routes() *http.ServeMux {
 		mux.HandleFunc("GET /api/auth/entra/login", s.Auth.Entra.HandleLogin)
 		mux.HandleFunc("GET /api/auth/entra/callback", s.Auth.Entra.HandleCallback)
 		mux.HandleFunc("POST /api/auth/entra/callback-spa", s.Auth.Entra.HandleSPACallback)
+		mux.HandleFunc("GET /api/auth/oidc/login", s.Auth.OIDC.HandleLogin)
+		mux.HandleFunc("GET /api/auth/oidc/callback", s.Auth.OIDC.HandleCallback)
 	}
 	viewer("GET /api/version", s.handleVersion)
 
