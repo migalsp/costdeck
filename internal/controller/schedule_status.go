@@ -173,6 +173,9 @@ func applyDecision(st *finopsv1.ScheduleStatus, conds *[]metav1.Condition, d sca
 	case scaling.ModeAlwaysOn:
 		cond.Status, cond.Reason = metav1.ConditionFalse, "NoSchedule"
 		cond.Message = fmt.Sprintf("The %s has no usable schedule and is kept up as a fail-safe.", kind)
+	case scaling.ModeIdle:
+		cond.Status, cond.Reason = metav1.ConditionFalse, "Idle"
+		cond.Message = fmt.Sprintf("The %s sleeps for being unused (status.idleUntil); a manual start wakes it.", kind)
 	case scaling.ModeException:
 		cond.Status, cond.Reason = metav1.ConditionFalse, "Exception"
 		cond.Message = fmt.Sprintf("The %s is kept %s for %q until %s; then the schedule takes over.", kind, strings.ToLower(d.State()), d.Exception, d.ExceptionEndsAt.UTC().Format(time.RFC3339))
@@ -266,6 +269,8 @@ func transitionMessage(kind, name, phase string, st finopsv1.ScheduleStatus, req
 		why = "because nothing needs it"
 	case scaling.ModeAlwaysOn:
 		why = "(no schedule)"
+	case scaling.ModeIdle:
+		why = "because nobody used it"
 	case scaling.ModeException:
 		why = "for " + st.Exception
 		if st.ExceptionEndsAt != nil {

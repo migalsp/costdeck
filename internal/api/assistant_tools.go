@@ -32,7 +32,7 @@ const assistantSystemPrompt = `You are CostDeck Assistant, the FinOps assistant 
 
 CostDeck scales non-production namespaces up and down on schedules (ScalingGroups for sets of namespaces, ScalingConfigs for single namespaces), tracks namespace resource usage, and estimates cost from configured rates.
 
-Look up live data with the tools instead of guessing, and never invent numbers. Cost figures are estimates; say so when you quote them. A group's mode tells who is in control: Schedule, ManualUp/ManualDown (a manual override that ignores the schedule), Exception (a dated exception or a holiday calendar day keeps it up or down), AlwaysOn (no schedule), Dependency or OnDemand (driven by groups that depend on it).
+Look up live data with the tools instead of guessing, and never invent numbers. Cost figures are estimates; say so when you quote them. A group's mode tells who is in control: Schedule, ManualUp/ManualDown (a manual override that ignores the schedule), Exception (a dated exception or a holiday calendar day keeps it up or down), AlwaysOn (no schedule), Dependency or OnDemand (driven by groups that depend on it), Idle (put to sleep inside its hours because nobody used it for its idleAfter period; it stays down until status idleUntil or a manual start).
 
 When the user asks to change something (scale a group or namespace, hand control back to the schedule, keep a schedule up or down on given dates, revert an earlier right-sizing), call the matching tool. For a one-off "keep it up until tonight" use a manual override; for dates in the future (a holiday, a release weekend) add an exception. CostDeck then asks the user to confirm before anything changes. CostDeck does not change resource requests itself: for right-sizing, present the recommendations and the YAML values the user should apply.
 
@@ -519,9 +519,10 @@ func (s *Server) toolGetGroup(ctx context.Context, name string) (string, error) 
 	return toJSON(map[string]any{
 		"name": g.Name, "namespaces": g.Members(), "namespaceSelector": g.Spec.NamespaceSelector, "sequence": g.Spec.Sequence, "schedules": g.Spec.Schedules,
 		"activation": g.Spec.Activation, "dependsOn": g.Spec.DependsOn, "override": g.Spec.Active,
-		"overrideUntil": g.Spec.ActiveUntil, "dryRun": g.Spec.DryRun, "exceptions": g.Spec.Exceptions, "calendars": g.Spec.Calendars, "status": map[string]any{
+		"overrideUntil": g.Spec.ActiveUntil, "dryRun": g.Spec.DryRun, "exceptions": g.Spec.Exceptions, "calendars": g.Spec.Calendars,
+		"sleepPage": g.Spec.SleepPage, "idleAfter": g.Spec.IdleAfter, "status": map[string]any{
 			"mode": g.Status.Mode, "desired": g.Status.DesiredState, "phase": g.Status.Phase,
-			"exception": g.Status.Exception, "exceptionEndsAt": g.Status.ExceptionEndsAt,
+			"exception": g.Status.Exception, "exceptionEndsAt": g.Status.ExceptionEndsAt, "idleUntil": g.Status.IdleUntil,
 			"readyNamespaces": g.Status.ReadyNamespaces, "skippedNamespaces": g.Status.SkippedNamespaces,
 			"nextChange": describeTransition(g.Status.NextTransition),
 			"requiredBy": g.Status.RequiredBy, "conflictingNamespaces": g.Status.ConflictingNamespaces, "conditions": conds,

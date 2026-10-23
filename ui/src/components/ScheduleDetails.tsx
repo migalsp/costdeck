@@ -48,6 +48,7 @@ export default function ScheduleDetails(p: Props) {
 
   const gitOps = status?.conditions?.find(c => c.type === 'GitOps')
   const sleepPage = status?.conditions?.find(c => c.type === 'SleepPage')
+  const idle = status?.conditions?.find(c => c.type === 'Idle')
   const line = statusLine({ phase: status?.phase, status, dependsOn: spec.dependsOn, activeUntil: spec.activeUntil, generation: obj.metadata.generation })
   const manual = status?.mode === 'ManualUp' || status?.mode === 'ManualDown' || (spec.active !== undefined && spec.active !== null)
   const up = status?.desiredState ? status.desiredState === 'Up' : status?.phase === 'ScaledUp'
@@ -106,6 +107,11 @@ export default function ScheduleDetails(p: Props) {
           {sleepPage && (
             <div className={`rounded-xl border px-4 py-3 text-sm ${sleepPage.reason === 'Forbidden' || sleepPage.reason === 'Failed' ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-slate-200 bg-slate-50 text-slate-600'}`} data-testid="sleep-note">
               <b>Sleep page:</b> {sleepPage.message}
+            </div>
+          )}
+          {idle && (
+            <div className={`rounded-xl border px-4 py-3 text-sm ${idle.reason === 'Failed' || idle.reason === 'NoVictoriaMetrics' || idle.reason === 'NoTrafficData' ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-slate-200 bg-slate-50 text-slate-600'}`} data-testid="idle-note">
+              <b>Sleep when unused:</b> {idle.message}
             </div>
           )}
 

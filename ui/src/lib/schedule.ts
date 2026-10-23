@@ -277,9 +277,25 @@ export function statusLine({ phase, status, dependsOn, activeUntil, generation }
       return { tone: 'down', title: 'Down', detail: 'starts when a schedule that depends on it needs it' }
     case 'AlwaysOn':
       return { tone: 'up', title: 'Up', detail: 'no schedule set' }
+    case 'Idle':
+      return { tone: 'down', title: 'Asleep, unused', detail: next ? `starts ${when(next.time)}, or when someone starts it` : 'until someone starts it' }
   }
   if (up) return { tone: 'up', title: 'Up', detail: next ? `scales down ${when(next.time)}` : undefined }
   return { tone: 'down', title: 'Down', detail: next ? `starts ${when(next.time)}` : undefined }
+}
+
+// IDLE_CHOICES are the idle periods the schedule editor offers.
+export const IDLE_CHOICES = ['30m', '1h', '2h', '4h', '8h']
+
+// shortDuration writes a Go duration as the API returns it ("1h0m0s") the way the editor
+// offers it ("1h"), so that a saved value selects its choice. Anything else is kept.
+export function shortDuration(d?: string): string {
+  const m = d ? /^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/.exec(d) : null
+  if (!d || !m) return d || ''
+  const seconds = Number(m[1] || 0) * 3600 + Number(m[2] || 0) * 60 + Number(m[3] || 0)
+  if (seconds % 3600 === 0) return `${seconds / 3600}h`
+  if (seconds % 60 === 0) return `${seconds / 60}m`
+  return `${seconds}s`
 }
 
 // describeOverride confirms a manual start or stop, or the hand-back to the schedule

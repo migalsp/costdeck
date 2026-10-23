@@ -77,6 +77,8 @@ them back on time. There is no external service: one operator in your cluster do
   with vLLM cost per million tokens.
 - **A sleep page while down.** A sleeping environment's Gateway API routes show a page that
   says it is asleep and links to waking it for an hour or two, instead of a gateway error.
+- **Sleep when unused.** An environment nobody has sent a request to for an hour (Envoy
+  Gateway, Istio or ingress-nginx metrics) goes down inside its schedule's hours too.
 - **Savings that reach the bill.** After a scale-down, each schedule shows which nodes the
   autoscaler removed and what keeps the others: a PodDisruptionBudget, `do-not-disrupt`,
   `safe-to-evict: "false"`, local storage, or other namespaces still using them.

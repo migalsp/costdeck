@@ -236,6 +236,7 @@ func main() {
 		Scheme:   mgr.GetScheme(),
 		Pricing:  pricingResolver,
 		Notifier: notifier,
+		Requests: metricsProvider,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "ScalingConfig")
 		os.Exit(1)
@@ -245,6 +246,7 @@ func main() {
 		Scheme:   mgr.GetScheme(),
 		Pricing:  pricingResolver,
 		Notifier: notifier,
+		Requests: metricsProvider,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "ScalingGroup")
 		os.Exit(1)

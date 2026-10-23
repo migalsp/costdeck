@@ -49,8 +49,11 @@ type ScalingConfigReconciler struct {
 	// Pricing values the savings of kept-down workloads; optional.
 	Pricing *pricing.Resolver
 	// Notifier announces finished transitions; optional.
-	Notifier  Notifier
+	Notifier Notifier
+	// Requests counts the traffic idle auto-sleep looks at; optional.
+	Requests  RequestCounter
 	announced transitionLog
+	idle      idleWatch
 }
 
 // +kubebuilder:rbac:groups=finops.costdeck.io,namespace=costdeck,resources=scalingconfigs,verbs=get;list;watch;create;update;patch;delete
@@ -80,7 +83,11 @@ func (r *ScalingConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	// 2. Determine desired state
 	exceptions, problems := scaling.ResolveExceptions(config.Spec.Exceptions, config.Spec.Calendars, calendars(ctx, r.Client), scaling.ExceptionZone(config.Spec.Schedules))
-	decision := r.Engine.Decide(time.Now(), scaling.Timetable{Schedules: config.Spec.Schedules, Exceptions: exceptions}, config.Spec.Active, config.Spec.ActiveUntil, config.Annotations)
+	timetable := scaling.Timetable{Schedules: config.Spec.Schedules, Exceptions: exceptions}
+	at := func(t time.Time) scaling.Decision {
+		return r.Engine.Decide(t, timetable, config.Spec.Active, config.Spec.ActiveUntil, config.Annotations)
+	}
+	decision := scaling.ApplyIdle(at(time.Now()), scaling.IdleUntil(&config.Status.ScheduleStatus), time.Now(), at)
 	targetActive := decision.Active
 	exclusions := scaling.ExclusionsWith(config.Spec.Exclusions, config.Spec.Hibernate)
 
@@ -101,6 +108,13 @@ func (r *ScalingConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{RequeueAfter: settledRequeue(decision, time.Now())}, nil
 	}
 	setDryRunCondition(&config.Status.Conditions, "", config.Generation)
+
+	// 2.2 Idle auto-sleep may take the namespace down inside its schedule's hours.
+	decision = r.idle.reconcile(ctx, r.Requests, &config.Status.ScheduleStatus, &config.Status.Conditions, idleCheck{
+		UID: config.UID, Generation: config.Generation, IdleAfter: config.Spec.IdleAfter, Namespaces: []string{config.Spec.TargetNamespace},
+		Phase: config.Status.Phase, UpSince: config.Status.LastAction.Time, At: at,
+	}, decision, time.Now())
+	targetActive = decision.Active
 
 	// 2.5 Phase and Timeout Logic
 	previousPhase := config.Status.Phase

@@ -4,7 +4,7 @@ import { apiError, errorMessage, getJSON } from '../lib/api'
 import { toast } from '../lib/toast'
 import { exceptionProblem } from '../lib/exceptions'
 import { hibernateIssue } from '../lib/hibernate'
-import { planFromSpec, planProblem, specFromPlan, type SchedulePlan } from '../lib/schedule'
+import { IDLE_CHOICES, planFromSpec, planProblem, shortDuration, specFromPlan, type SchedulePlan } from '../lib/schedule'
 import type { ExternalTarget, HibernateRule, HolidayCalendar, LabelSelector, ScalingConfig, ScalingGroup, ScalingGroupSpec, ScalingSpec, ScheduleException } from '../lib/types'
 import { usePolling } from '../lib/usePolling'
 import ExceptionsEditor from './ExceptionsEditor'
@@ -78,6 +78,7 @@ export default function ScheduleWizard(props: Props) {
   const [dryRun, setDryRun] = useState(!!existing?.spec.dryRun)
   const [pauseGitOps, setPauseGitOps] = useState(!!existing?.spec.pauseGitOps)
   const [sleepPage, setSleepPage] = useState(!!existing?.spec.sleepPage)
+  const [idleAfter, setIdleAfter] = useState(shortDuration(existing?.spec.idleAfter))
   const [hibernate, setHibernate] = useState<HibernateRule[]>(existingGroup?.spec.hibernate || [])
   const hibernateProblem = hibernateIssue(hibernate)
   const [calendarNames, setCalendarNames] = useState<string[]>(existing?.spec.calendars || [])
@@ -142,6 +143,7 @@ export default function ScheduleWizard(props: Props) {
         dryRun: dryRun || undefined,
         pauseGitOps: pauseGitOps || undefined,
         sleepPage: sleepPage || undefined,
+        idleAfter: idleAfter || undefined,
         hibernate: hibernate.length ? hibernate : undefined,
       }
     } else {
@@ -152,6 +154,7 @@ export default function ScheduleWizard(props: Props) {
         dryRun: dryRun || undefined,
         pauseGitOps: pauseGitOps || undefined,
         sleepPage: sleepPage || undefined,
+        idleAfter: idleAfter || undefined,
       }
     }
     // A new schedule is meant to take effect, so it ends a manual override.
@@ -265,6 +268,14 @@ export default function ScheduleWizard(props: Props) {
         <label className="flex items-start gap-2 text-sm text-slate-600 mt-2">
           <input type="checkbox" checked={sleepPage} onChange={e => setSleepPage(e.target.checked)} className="mt-0.5 accent-brand-600" />
           <span><b className="text-slate-800">Show a sleep page while down</b>: point the namespaces' Gateway API HTTPRoutes at a page that says the application is asleep and links to waking it, and back once it is up. Needs <code>sleepPage.enabled</code> in the Helm chart.</span>
+        </label>
+        <label className="flex flex-wrap items-center gap-2 text-sm text-slate-600 mt-3">
+          <b className="text-slate-800">Sleep when unused for</b>
+          <select value={idleAfter} onChange={e => setIdleAfter(e.target.value)} className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-sm">
+            <option value="">never</option>
+            {(IDLE_CHOICES.includes(idleAfter) || !idleAfter ? IDLE_CHOICES : [idleAfter, ...IDLE_CHOICES]).map(d => <option key={d} value={d}>{d}</option>)}
+          </select>
+          <span className="basis-full">Within the schedule's hours, scale the namespaces down once no request reached them for that long, until the schedule next starts them or someone does. Counts Envoy Gateway, Istio or ingress-nginx requests in VictoriaMetrics; without them nothing is treated as unused.</span>
         </label>
       </section>
 

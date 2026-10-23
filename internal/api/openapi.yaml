@@ -2194,6 +2194,14 @@ components:
                 Point the namespaces' Gateway API HTTPRoutes at Cost Deck's sleep page while the
                 schedule keeps them down, and back once they are up. Needs sleepPage.enabled in the
                 Helm chart.
+            idleAfter:
+              type: string
+              example: 1h
+              description: >-
+                Scale the namespaces down inside the schedule's hours once no request reached them
+                for this long (a duration such as 30m or 2h), counted from Envoy Gateway, Istio or
+                ingress-nginx metrics in VictoriaMetrics. They stay down until the schedule next
+                starts them, at most a week, or a manual start.
             hibernate:
               type: array
               description: >-
@@ -2239,8 +2247,9 @@ components:
           description: >-
             Written by the operator. phase is ScaledUp, ScalingUp, ScalingDown, ScaledDown or
             WaitingForDependencies; mode says what decides the state (Schedule, ManualUp,
-            ManualDown, Exception, AlwaysOn, Dependency, OnDemand). While mode is Exception,
-            exception names it and exceptionEndsAt says when it ends.
+            ManualDown, Exception, AlwaysOn, Dependency, OnDemand, Idle). While mode is
+            Exception, exception names it and exceptionEndsAt says when it ends; while it is
+            Idle, idleUntil says when the schedule takes over again.
 
     ScalingConfig:
       type: object
@@ -2295,6 +2304,14 @@ components:
                 Point the namespaces' Gateway API HTTPRoutes at Cost Deck's sleep page while the
                 schedule keeps them down, and back once they are up. Needs sleepPage.enabled in the
                 Helm chart.
+            idleAfter:
+              type: string
+              example: 1h
+              description: >-
+                Scale the namespaces down inside the schedule's hours once no request reached them
+                for this long (a duration such as 30m or 2h), counted from Envoy Gateway, Istio or
+                ingress-nginx metrics in VictoriaMetrics. They stay down until the schedule next
+                starts them, at most a week, or a manual start.
             hibernate:
               type: array
               description: >-

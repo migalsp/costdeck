@@ -539,6 +539,26 @@ run.
 - **Ingress controllers.** Ingress-based routing is not covered. ingress-nginx, the usual
   one, was retired in March 2026, and Gateway API is its recommended successor.
 
+### Sleep when unused
+
+**Sleep when unused for** (`spec.idleAfter`, such as `1h`) scales the namespaces down
+inside the schedule's hours once nobody has used them for that long. A test environment
+that is up from 8 to 18 but nobody touched after lunch stops paying for the afternoon.
+
+- **What counts as use.** Requests in VictoriaMetrics from the gateway or the mesh: Envoy
+  Gateway (`envoy_cluster_upstream_rq_total`, by the `httproute/<namespace>/…` cluster),
+  Istio (`istio_requests_total` from the callers' side) and ingress-nginx
+  (`nginx_ingress_controller_requests`). The namespaces must have been up for the whole
+  period. In a group, any of its namespaces having metrics is enough, and their requests
+  are added up. Namespaces without such metrics are never treated as unused (condition
+  `Idle`, reason `NoTrafficData`).
+- **How long it sleeps.** Until the schedule next starts the namespaces, at most a week,
+  with mode `Idle` and `status.idleUntil`. A manual start wakes them at once. Combined with
+  the sleep page, whoever opens the application can wake it. Once the manual start is
+  over, an unused environment goes back to sleep after the same period.
+- **What it does not override.** Manual starts and stops, exceptions and the fail-safe
+  keep their say, and a group stays up while groups that depend on it need it.
+
 ### Realized savings
 
 The saving a schedule shows is what the stopped workloads request. The bill drops only

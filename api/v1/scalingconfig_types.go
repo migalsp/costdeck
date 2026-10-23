@@ -143,8 +143,9 @@ type ScheduleStatus struct {
 	// Mode is what currently decides the desired state:
 	// Schedule (spec.schedules), ManualUp / ManualDown (spec.active is set and the
 	// schedule is ignored), Exception (a dated exception or calendar day), AlwaysOn (no
-	// usable schedule, kept up as a fail-safe) or Dependency (a ScalingGroup kept up for a
-	// group that depends on it).
+	// usable schedule, kept up as a fail-safe), Dependency (a ScalingGroup kept up for a
+	// group that depends on it) or Idle (the schedule's hours, put to sleep for being
+	// unused, see spec.idleAfter).
 	// +optional
 	Mode string `json:"mode,omitempty"`
 
@@ -190,6 +191,11 @@ type ScheduleStatus struct {
 	// ScaleDownAt is when that scale-down began.
 	// +optional
 	ScaleDownAt *metav1.Time `json:"scaleDownAt,omitempty"`
+
+	// IdleUntil is when idle auto-sleep hands the namespaces back to the schedule. Set
+	// while Mode is Idle; a manual start clears it.
+	// +optional
+	IdleUntil *metav1.Time `json:"idleUntil,omitempty"`
 }
 
 // ScaleDownNode is a node a scale-down could free.
@@ -290,6 +296,14 @@ type ScalingConfigSpec struct {
 	// sleepPage.enabled in the Helm chart.
 	// +optional
 	SleepPage bool `json:"sleepPage,omitempty"`
+
+	// IdleAfter puts the namespaces to sleep inside the schedule's hours once nobody has
+	// used them for this long: no requests through Envoy Gateway, Istio or ingress-nginx in
+	// VictoriaMetrics, counted once they have been up that long. They stay down until the
+	// schedule next starts them, at most a week, or until someone starts them by hand.
+	// Namespaces without such metrics are never treated as unused.
+	// +optional
+	IdleAfter *metav1.Duration `json:"idleAfter,omitempty"`
 }
 
 // ScalingConfigStatus defines the observed state of ScalingConfig.

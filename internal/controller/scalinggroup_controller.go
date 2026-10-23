@@ -53,8 +53,11 @@ type ScalingGroupReconciler struct {
 	// Pricing values the savings of kept-down workloads; optional.
 	Pricing *pricing.Resolver
 	// Notifier announces finished transitions; optional.
-	Notifier  Notifier
+	Notifier Notifier
+	// Requests counts the traffic idle auto-sleep looks at; optional.
+	Requests  RequestCounter
 	announced transitionLog
+	idle      idleWatch
 }
 
 // +kubebuilder:rbac:groups=finops.costdeck.io,namespace=costdeck,resources=scalinggroups,verbs=get;list;watch;create;update;patch;delete
@@ -107,6 +110,10 @@ func (r *ScalingGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return r.dryRun(ctx, group, before, plan)
 	}
 	setDryRunCondition(&group.Status.Conditions, "", group.Generation)
+
+	// 2.2 Idle auto-sleep may take the group down inside its schedule's hours.
+	plan.Decision = r.idle.reconcile(ctx, r.Requests, &group.Status.ScheduleStatus, &group.Status.Conditions, r.idleCheck(ctx, group, plan), plan.Decision, time.Now())
+	decision, targetActive = plan.Decision, plan.Decision.Active
 
 	// 2.5 A group that wants to come up holds back until its dependencies are ScaledUp.
 	// One that is already up keeps running even if a dependency briefly degrades.
@@ -519,6 +526,25 @@ func (r *ScalingGroupReconciler) reconcileK8sTarget(ctx context.Context, group *
 
 	phase := r.Engine.ComputePhase(ctx, ns, targetActive, exclusions)
 	return (targetActive && phase == scaling.PhaseScaledUp) || (!targetActive && phase == scaling.PhaseScaledDown), nil
+}
+
+// idleCheck describes the group for idle auto-sleep: its own namespaces, how long they
+// have been up and whether dependents need them.
+func (r *ScalingGroupReconciler) idleCheck(ctx context.Context, group *finopsv1.ScalingGroup, plan scaling.GroupPlan) idleCheck {
+	var namespaces []string
+	for _, ns := range group.Members() {
+		if !slices.Contains(plan.ConflictingNamespaces, ns) {
+			namespaces = append(namespaces, ns)
+		}
+	}
+	return idleCheck{
+		UID: group.UID, Generation: group.Generation, IdleAfter: group.Spec.IdleAfter, Namespaces: namespaces,
+		Phase: group.Status.Phase, UpSince: group.Status.LastAction.Time, Required: len(plan.RequiredBy) > 0,
+		At: func(t time.Time) scaling.Decision {
+			exceptions, _ := scaling.ResolveExceptions(group.Spec.Exceptions, group.Spec.Calendars, calendars(ctx, r.Client), scaling.ExceptionZone(group.Spec.Schedules))
+			return r.Engine.Decide(t, scaling.Timetable{Schedules: group.Spec.Schedules, Exceptions: exceptions}, group.Spec.Active, group.Spec.ActiveUntil, group.Annotations)
+		},
+	}
 }
 
 func (r *ScalingGroupReconciler) updateStatusAndPhase(ctx context.Context, group *finopsv1.ScalingGroup, before *finopsv1.ScalingGroupStatus, allReady bool, managedCount, namespacesReady, namespacesTotal int, readyNamespaces []string, decision scaling.Decision, detail string) (ctrl.Result, error) {

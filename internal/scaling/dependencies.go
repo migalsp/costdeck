@@ -144,12 +144,14 @@ func isRunning(phase string) bool {
 // exceptions it could not apply.
 func (e *Engine) ownDecision(now time.Time, g *finopsv1.ScalingGroup, calendars []finopsv1.HolidayCalendar) (Decision, []string) {
 	exceptions, problems := ResolveExceptions(g.Spec.Exceptions, g.Spec.Calendars, calendars, ExceptionZone(g.Spec.Schedules))
-	d := e.Decide(now, Timetable{Schedules: g.Spec.Schedules, Exceptions: exceptions}, g.Spec.Active, g.Spec.ActiveUntil, g.Annotations)
+	tt := Timetable{Schedules: g.Spec.Schedules, Exceptions: exceptions}
+	d := e.Decide(now, tt, g.Spec.Active, g.Spec.ActiveUntil, g.Annotations)
 	keeps := d.Mode == ModeManualUp || d.Mode == ModeManualDown || (d.Mode == ModeException && d.Active)
 	if g.Spec.Activation == finopsv1.ActivationOnDemand && !keeps {
 		return Decision{Active: false, Mode: ModeOnDemand}, problems
 	}
-	return d, problems
+	at := func(t time.Time) Decision { return e.Decide(t, tt, g.Spec.Active, g.Spec.ActiveUntil, g.Annotations) }
+	return ApplyIdle(d, IdleUntil(&g.Status.ScheduleStatus), now, at), problems
 }
 
 // namespaceOwners assigns every namespace to exactly one group, so a namespace shared by

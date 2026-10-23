@@ -73,7 +73,7 @@ export type DesiredState = 'Up' | 'Down'
 
 // ScheduleStatus mirrors what the operator reports about who is in control.
 export interface ScheduleStatus {
-  mode?: 'Schedule' | 'ManualUp' | 'ManualDown' | 'Exception' | 'AlwaysOn' | 'Dependency' | 'OnDemand'
+  mode?: 'Schedule' | 'ManualUp' | 'ManualDown' | 'Exception' | 'AlwaysOn' | 'Dependency' | 'OnDemand' | 'Idle'
   desiredState?: DesiredState
   // The exception or calendar day in force while mode is Exception, and when it ends.
   exception?: string
@@ -86,6 +86,8 @@ export interface ScheduleStatus {
   // realized-savings check.
   scaleDownNodes?: { name: string; hourlyCost?: string }[]
   scaleDownAt?: string
+  // When idle auto-sleep hands the namespaces back to the schedule, while mode is Idle.
+  idleUntil?: string
 }
 
 // Realized savings: GET /api/scaling/{groups|configs}/{name}/realized checks whether the
@@ -163,6 +165,9 @@ export interface ScalingGroupSpec {
   pauseGitOps?: boolean
   // sleepPage points the namespaces' HTTPRoutes at Cost Deck's sleep page while down.
   sleepPage?: boolean
+  // idleAfter puts the namespaces to sleep once nobody used them for this long (a Go
+  // duration: the API returns "1h0m0s" for "1h").
+  idleAfter?: string
   // hibernate stops operator-run services in every namespace of the group.
   hibernate?: HibernateRule[]
 }
@@ -209,6 +214,7 @@ export interface ScalingConfigSpec {
   dryRun?: boolean
   pauseGitOps?: boolean
   sleepPage?: boolean
+  idleAfter?: string
   hibernate?: HibernateRule[]
 }
 

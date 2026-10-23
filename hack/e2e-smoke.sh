@@ -23,6 +23,7 @@
 #   99 a schedule suggested from a week of usage        (disposable clusters only)
 #  990 single sign-on with a real Keycloak               (disposable clusters only)
 #  991 the sleep page on Gateway API HTTPRoutes           (disposable clusters only)
+#  992 idle auto-sleep from Envoy Gateway request counters (disposable clusters only)
 #
 # Run it against a disposable cluster (Kind in CI, `make test-e2e` locally): it installs
 # CRDs, metrics-server and changes settings. IMAGE must already be loadable by the cluster

@@ -108,3 +108,10 @@ func TestTransitionMessageForDependencyAndOverride(t *testing.T) {
 		t.Errorf("override message = %q", msg)
 	}
 }
+
+func TestTransitionMessageForIdleSleep(t *testing.T) {
+	msg := transitionMessage("Group", "shop", scaling.PhaseScaledDown, finopsv1.ScheduleStatus{Mode: scaling.ModeIdle}, nil)
+	if msg != "⏸️ Group `shop` is scaled down because nobody used it." {
+		t.Errorf("idle message = %q", msg)
+	}
+}
