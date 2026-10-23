@@ -1,5 +1,54 @@
 # Changelog
 
+## [1.6.0](https://github.com/migalsp/costdeck/compare/v1.5.7...v1.6.0) (2026-10-23)
+
+
+### Features
+
+* **ai:** cap the assistant's tokens with a monthly budget ([8ca54e8](https://github.com/migalsp/costdeck/commit/8ca54e8e08a66b84b1315572a66a79801a952d68))
+* **auth:** sign in with Keycloak or any OpenID Connect provider ([a9e306f](https://github.com/migalsp/costdeck/commit/a9e306f723ed72bcd38f05adb99a0bf8e823834a))
+* **cleanup:** delete preview namespaces after a time to live ([bd7011a](https://github.com/migalsp/costdeck/commit/bd7011aa2ded3ccb692168648aa886d0f583b284))
+* **estimate:** price a pull request's change of manifests before it is merged ([5d75a09](https://github.com/migalsp/costdeck/commit/5d75a09f2d2c7a87bf53814c92855c033d66663b))
+* **finops:** charge a period's cost to teams, with shared and idle cost, as CSV ([1e21aed](https://github.com/migalsp/costdeck/commit/1e21aed383bc6a64e306fea5c5f8d962a0abfc14))
+* **finops:** check whether a scale-down freed its nodes, and name what keeps them ([08803c9](https://github.com/migalsp/costdeck/commit/08803c9d517363b6fa14e03c3f7d9ee103467b4d))
+* **finops:** price GPUs, charge them to namespaces and find idle ones ([e606244](https://github.com/migalsp/costdeck/commit/e60624475db77081382a795cea132bde23eaa306))
+* **finops:** show other Cost Deck installations side by side ([bd8d3cf](https://github.com/migalsp/costdeck/commit/bd8d3cf65712545701d8d15e526f405f67a5cdbe))
+* **finops:** show what LLM APIs and self-hosted models cost, by team and model ([c94fcc3](https://github.com/migalsp/costdeck/commit/c94fcc32ba9142f99a717376aad81c5872e6c086))
+* **notifications:** send alerts, digests and scaling changes to Slack, Teams and email ([a69f216](https://github.com/migalsp/costdeck/commit/a69f2164cfb7e97ec5c5479a4249d8d336e48886))
+* **rightsizing:** apply advice with a guard that puts it back, or open a pull request ([e6dfc87](https://github.com/migalsp/costdeck/commit/e6dfc8716b9509b7f60ea636f3d729b1cff86291))
+* **scaling:** add namespaces to a schedule by label ([e8b7460](https://github.com/migalsp/costdeck/commit/e8b7460fa10a0bc6aef49becc385e50a4fa8388e))
+* **scaling:** keep schedules up or down on given dates and holiday calendars ([b1d4bc8](https://github.com/migalsp/costdeck/commit/b1d4bc8fc0992042225fa8cf0e77f775d94ca55c))
+* **scaling:** let idle GPUs put a namespace to sleep ([c2e48b1](https://github.com/migalsp/costdeck/commit/c2e48b141795fae5d8c6d5e53984789d05a732e5))
+* **scaling:** pause Flux and Argo CD while a schedule keeps workloads down ([238d1b2](https://github.com/migalsp/costdeck/commit/238d1b23a8ced5f51a35365100f819aa4b47d27b))
+* **scaling:** preview a schedule and try it in a dry run ([4458d5c](https://github.com/migalsp/costdeck/commit/4458d5c5ad09091def0feb9a581b84633f6e7a80))
+* **scaling:** put namespaces to sleep when nobody uses them ([c44ccd7](https://github.com/migalsp/costdeck/commit/c44ccd7ee693734021f2099c89bbc2159fe9e14d))
+* **scaling:** scale Argo Rollouts with their namespace ([b01524d](https://github.com/migalsp/costdeck/commit/b01524da96f7e1e656642d6f79a5c8469c731286))
+* **scaling:** show a sleep page while a namespace is down ([d0e31dd](https://github.com/migalsp/costdeck/commit/d0e31dd34cbc948df35c876ee9fde58409192a75))
+* **scaling:** stop operator-run databases and services with their namespace ([bbfc5fc](https://github.com/migalsp/costdeck/commit/bbfc5fc05410d8e1b5222aa98f0a95bd87cd9c22))
+* **scaling:** suggest a schedule from a week of usage ([17b3b34](https://github.com/migalsp/costdeck/commit/17b3b344e13c25fe0c44c30863dc93136058efce))
+* **settings:** set the dashboard address used by links that lead into Cost Deck ([d0e31dd](https://github.com/migalsp/costdeck/commit/d0e31dd34cbc948df35c876ee9fde58409192a75))
+* **ui:** add a dark theme ([f71970d](https://github.com/migalsp/costdeck/commit/f71970dabd26a7ce5af92e210a3880cb18ece814))
+* **ui:** give every page its own address ([89273b0](https://github.com/migalsp/costdeck/commit/89273b0febe614abe6ffed5e4f686aec3b710010))
+* **ui:** report the outcome of actions in toasts ([3240475](https://github.com/migalsp/costdeck/commit/32404751b48cfe3f13d7b6021607e3098462ad05))
+
+
+### Bug Fixes
+
+* **deps:** update Vite to 8.3.3 for the launch-editor advisories ([ca43c76](https://github.com/migalsp/costdeck/commit/ca43c7643c987a2428b5c3bf7434416ce05aab3f))
+* **finops:** keep changes made to the cost history between samples ([2d3b956](https://github.com/migalsp/costdeck/commit/2d3b9565b5f7803815bfa343127c7be991a6c9bd))
+* **insights:** confirm reverting an earlier optimization inline instead of in a browser dialog ([3240475](https://github.com/migalsp/costdeck/commit/32404751b48cfe3f13d7b6021607e3098462ad05))
+* **pricing:** a GPU node no longer inflates the CPU and memory rates of the whole cluster ([e606244](https://github.com/migalsp/costdeck/commit/e60624475db77081382a795cea132bde23eaa306))
+* **reports:** say so when deleting a report fails instead of doing nothing ([3240475](https://github.com/migalsp/costdeck/commit/32404751b48cfe3f13d7b6021607e3098462ad05))
+* **reports:** say the digest and budget alerts go to every channel under Settings → Notifications ([0228729](https://github.com/migalsp/costdeck/commit/02287295028881e67629286f41846ccc962695ac))
+* **reports:** show a failed post of the digest to Webex as an error instead of in the grey text of the success message ([3240475](https://github.com/migalsp/costdeck/commit/32404751b48cfe3f13d7b6021607e3098462ad05))
+* **settings:** ask before leaving unsaved settings ([873895b](https://github.com/migalsp/costdeck/commit/873895b697aa9ce35f267dec26aed0f327c140bb))
+* **settings:** give every settings card the same named switch, fields and connection test ([0228729](https://github.com/migalsp/costdeck/commit/02287295028881e67629286f41846ccc962695ac))
+* **tokens:** ask before revoking an API token, which took a single click and cannot be undone ([3240475](https://github.com/migalsp/costdeck/commit/32404751b48cfe3f13d7b6021607e3098462ad05))
+* **ui:** draw a schedule whose days are all outside the week as always on ([34701ea](https://github.com/migalsp/costdeck/commit/34701ea0e2f17185890df62cb26fb6d3240cf543))
+* **ui:** keep every page reachable from the sidebar on a laptop screen ([0228729](https://github.com/migalsp/costdeck/commit/02287295028881e67629286f41846ccc962695ac))
+* **ui:** keep status badges on one line ([58825af](https://github.com/migalsp/costdeck/commit/58825af5336573c409370f5868c63d8d08d69f9a))
+* **ui:** show why data could not load instead of a broken page ([24b56f1](https://github.com/migalsp/costdeck/commit/24b56f19ccf57065ab94e477b04a7be49011b646))
+
 ## [1.5.7](https://github.com/migalsp/costdeck/compare/v1.5.6...v1.5.7) (2026-10-10)
 
 
