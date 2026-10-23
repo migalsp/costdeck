@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -257,6 +258,36 @@ func TestSendMail(t *testing.T) {
 	}
 	if err := SendMail(context.Background(), Mail{Host: host, Port: p, From: "a@example.com", To: []string{"b@example.com"}}); err == nil || !strings.Contains(err.Error(), "STARTTLS") {
 		t.Errorf("starttls against a server without it: %v", err)
+	}
+}
+
+func TestSendMailWritesHeadersFromParsedAddresses(t *testing.T) {
+	addr, received := smtpServer(t)
+	host, port, _ := net.SplitHostPort(addr)
+	p, _ := strconv.Atoi(port)
+	m := Mail{Host: host, Port: p, Security: "none", From: "Cost Deck München <costdeck@example.com>",
+		To: []string{"FinOps <finops@example.com>", "ops@example.com"}, Subject: "s", Body: "b"}
+	if err := SendMail(context.Background(), m); err != nil {
+		t.Fatal(err)
+	}
+	got := <-received
+	// Header values are the parsed addresses, encoded, never the strings as they came.
+	for _, want := range []string{"From: =?utf-8?q?Cost_Deck_M=C3=BCnchen?= <costdeck@example.com>\r\n",
+		"To: \"FinOps\" <finops@example.com>, <ops@example.com>\r\n", "Message-ID: <", "@example.com>\r\n"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in\n%s", want, got)
+		}
+	}
+
+	// An address that does not parse is refused before anything is sent: the settings
+	// test sends a form that was never saved.
+	for _, bad := range []Mail{
+		{Host: host, Port: p, Security: "none", From: "a@example.com", To: []string{"b@example.com\r\nBcc: spy@example.net"}},
+		{Host: host, Port: p, Security: "none", From: "a@example.com\r\nBcc: spy@example.net", To: []string{"b@example.com"}},
+	} {
+		if err := SendMail(context.Background(), bad); err == nil || !strings.Contains(err.Error(), "mail: expected single address") {
+			t.Errorf("%q to %q was not refused as an address: %v", bad.From, bad.To, err)
+		}
 	}
 }
 

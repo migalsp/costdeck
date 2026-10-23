@@ -53,6 +53,10 @@ func SendMail(ctx context.Context, m Mail) error {
 	if m.Username != "" && m.Security == "none" {
 		return errors.New("refusing to send the SMTP password without TLS: use starttls or tls")
 	}
+	from, to, err := addresses(m.From, m.To)
+	if err != nil {
+		return err
+	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	conn, err := netguard.Dialer(10*time.Second).DialContext(ctx, "tcp", net.JoinHostPort(m.Host, strconv.Itoa(m.port())))
@@ -85,19 +89,19 @@ func SendMail(ctx context.Context, m Mail) error {
 			return fmt.Errorf("sign in: %w", err)
 		}
 	}
-	if err := c.Mail(envelope(m.From)); err != nil {
+	if err := c.Mail(from.Address); err != nil {
 		return err
 	}
-	for _, to := range m.To {
-		if err := c.Rcpt(envelope(to)); err != nil {
-			return fmt.Errorf("recipient %s: %w", to, err)
+	for _, a := range to {
+		if err := c.Rcpt(a.Address); err != nil {
+			return fmt.Errorf("recipient %s: %w", a.Address, err)
 		}
 	}
 	w, err := c.Data()
 	if err != nil {
 		return err
 	}
-	if _, err := w.Write(message(m, time.Now())); err != nil {
+	if _, err := w.Write(message(m, from, to, time.Now())); err != nil {
 		return err
 	}
 	if err := w.Close(); err != nil {
@@ -106,26 +110,41 @@ func SendMail(ctx context.Context, m Mail) error {
 	return c.Quit()
 }
 
-// envelope is the bare address of "Name <address>", as SMTP commands take it.
-func envelope(addr string) string {
-	if a, err := mail.ParseAddress(addr); err == nil {
-		return a.Address
+// addresses parses the sender and the recipients. Headers and SMTP commands are written
+// from what was parsed, so an address with a line break in it cannot add headers (a Bcc)
+// of its own: the test from the settings sends a form that was never saved.
+func addresses(from string, to []string) (*mail.Address, []*mail.Address, error) {
+	f, err := mail.ParseAddress(from)
+	if err != nil {
+		return nil, nil, fmt.Errorf("sender %q: %w", from, err)
 	}
-	return addr
+	out := make([]*mail.Address, 0, len(to))
+	for _, t := range to {
+		a, err := mail.ParseAddress(t)
+		if err != nil {
+			return nil, nil, fmt.Errorf("recipient %q: %w", t, err)
+		}
+		out = append(out, a)
+	}
+	return f, out, nil
 }
 
 // message renders m as a MIME message with a quoted-printable plain-text body.
-func message(m Mail, now time.Time) []byte {
+func message(m Mail, from *mail.Address, to []*mail.Address, now time.Time) []byte {
 	var b bytes.Buffer
 	id := make([]byte, 12)
 	_, _ = rand.Read(id)
 	domain := "costdeck"
-	if _, at, ok := strings.Cut(m.From, "@"); ok {
-		domain = strings.Trim(at, "> ")
+	if _, at, ok := strings.Cut(from.Address, "@"); ok {
+		domain = at
 	}
 	header := func(k, v string) { fmt.Fprintf(&b, "%s: %s\r\n", k, v) }
-	header("From", m.From)
-	header("To", strings.Join(m.To, ", "))
+	header("From", from.String())
+	recipients := make([]string, len(to))
+	for i, a := range to {
+		recipients[i] = a.String()
+	}
+	header("To", strings.Join(recipients, ", "))
 	header("Subject", mime.QEncoding.Encode("utf-8", m.Subject))
 	header("Date", now.Format(time.RFC1123Z))
 	header("Message-ID", "<"+hex.EncodeToString(id)+"@"+domain+">")
@@ -141,13 +160,6 @@ func message(m Mail, now time.Time) []byte {
 
 // CheckAddresses validates a sender and recipients before they are stored.
 func CheckAddresses(from string, to []string) error {
-	if _, err := mail.ParseAddress(from); err != nil {
-		return fmt.Errorf("sender %q: %w", from, err)
-	}
-	for _, t := range to {
-		if _, err := mail.ParseAddress(t); err != nil {
-			return fmt.Errorf("recipient %q: %w", t, err)
-		}
-	}
-	return nil
+	_, _, err := addresses(from, to)
+	return err
 }

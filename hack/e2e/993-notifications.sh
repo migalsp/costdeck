@@ -58,6 +58,17 @@ api POST /api/settings/providers/slack/test '{}' | jq -e '.connected' >/dev/null
 wait_for "the Slack test message arrived" hook_has slack 'Cost Deck test message'
 api POST /api/settings/providers/email/test '{}' | jq -e '.connected' >/dev/null || fail "the email test failed: $(api POST /api/settings/providers/email/test '{}')"
 wait_for "the test email arrived" mail_has 'Cost Deck test message'
+newest_from() { curl -sf "localhost:$MAILPIT_PORT/api/v1/messages" | jq -c '.messages[0].From'; }
+[[ "$(newest_from)" == '{"Name":"Cost Deck","Address":"costdeck@smoke.test"}' ]] || fail "the sender is $(newest_from)"
+ok "the sender header is the parsed address"
+# A sender with a line break could add headers of its own. The test sends the unsaved
+# form, so it is refused there, before anything reaches the SMTP server.
+mail_total() { curl -sf "localhost:$MAILPIT_PORT/api/v1/messages" | jq -r .total; }
+MAIL_BEFORE=$(mail_total)
+BAD_SENDER='{"email":{"enabled":false,"from":"costdeck@smoke.test\r\nBcc: spy@smoke.test"}}'
+out=$(api POST /api/settings/providers/email/test "$BAD_SENDER")
+echo "$out" | jq -e '.connected == false and (.error | test("sender"))' >/dev/null || fail "a sender with a line break: $out"
+holds_for 5 "nothing reaches the SMTP server" bash -c "[[ \$(curl -sf localhost:$MAILPIT_PORT/api/v1/messages | jq -r .total) == $MAIL_BEFORE ]]"
 
 log "A schedule that scales down is announced on Slack and by email, not on Teams"
 new_namespace smoke-notify-app
