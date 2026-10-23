@@ -1129,6 +1129,67 @@ paths:
         "404": { description: Preview cleanup does not select the namespace }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
+  /api/finops/allocation:
+    get:
+      x-role: viewer
+      tags: [FinOps]
+      summary: Cost allocation
+      description: >-
+        A period's cost from the daily history, charged to teams, environments, namespaces or the
+        values of a namespace label. Namespaces in spec.allocation.sharedNamespaces are charged to
+        the others (by the compute they request, or evenly), and capacity no pod requested is a line
+        of its own or charged too (spec.allocation.idle). The rows and unallocated add up to total,
+        the bill for the days the history covers.
+      parameters: &allocationParams
+        - { name: by, in: query, schema: { type: string, default: team }, description: "team, environment, namespace or label:<key>" }
+        - { name: period, in: query, schema: { type: string, enum: [this-month, last-month, last-7-days, last-30-days], default: this-month } }
+        - { name: from, in: query, schema: { type: string, format: date }, description: With to, instead of period. }
+        - { name: to, in: query, schema: { type: string, format: date } }
+      responses:
+        "200":
+          description: The report
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  currency: { type: string }
+                  from: { type: string, format: date }
+                  to: { type: string, format: date }
+                  by: { type: string }
+                  policy: { type: object }
+                  days: { type: integer }
+                  sharedNamespaces: { type: array, items: { type: string } }
+                  unallocated: { type: number }
+                  total: { type: number }
+                  rows:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        key: { type: string }
+                        namespaces: { type: array, items: { type: string } }
+                        compute: { type: number }
+                        storage: { type: number }
+                        network: { type: number }
+                        shared: { type: number }
+                        idle: { type: number }
+                        total: { type: number }
+        "400": { description: A bad by, period or dates }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/finops/allocation.csv:
+    get:
+      x-role: viewer
+      tags: [FinOps]
+      summary: Cost allocation as CSV
+      description: The same report as a CSV file for finance, with the unallocated capacity and the total as the last rows.
+      parameters: *allocationParams
+      responses:
+        "200": { description: The CSV file, content: { text/csv: { schema: { type: string } } } }
+        "400": { description: A bad by, period or dates }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
   /api/finops/ai:
     get:
       x-role: viewer

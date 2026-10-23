@@ -14,6 +14,7 @@ import {
 import { formatMoney } from '../lib/format'
 import { usePolling } from '../lib/usePolling'
 import { channelList } from '../lib/notifications'
+import AllocationCard from '../components/finops/AllocationCard'
 
 const audiences: { id: Audience; label: string; hint: string }[] = [
   { id: 'executive', label: 'Executive', hint: 'One page for leadership and finance: run rate, trend, savings, three decisions.' },
@@ -294,6 +295,11 @@ export default function ReportsPage() {
           </div>
         </Card>
         {index && <ScheduleCard index={index} onSaved={loadIndex} />}
+      </div>
+
+      <div className="mt-8 print-hide">
+        <SectionTitle aside={<span className="text-xs text-slate-400">showback and chargeback from the cost history</span>}>Cost allocation</SectionTitle>
+        <AllocationCard canAdmin={can('admin')} />
       </div>
 
       <div className="mt-8 print-hide">

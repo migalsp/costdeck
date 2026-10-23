@@ -235,6 +235,8 @@ func (s *Server) routes() *http.ServeMux {
 	viewer("GET /api/scaling/groups/{name}/events", s.handleScalingGroupEvents)
 	viewer("GET /api/scaling/groups/{name}/realized", s.handleGroupRealized)
 	viewer("GET /api/finops/ai", s.handleAICosts)
+	viewer("GET /api/finops/allocation", s.handleAllocation)
+	viewer("GET /api/finops/allocation.csv", s.handleAllocationCSV)
 	viewer("GET /api/wake/{ns}", s.handleWakeStatus)
 	viewer("GET /api/namespace-ttl", s.handleNamespaceTTL)
 	operator("POST /api/namespace-ttl/{ns}/extend", s.handleExtendNamespace)

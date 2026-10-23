@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"slices"
 	"sort"
 	"strings"
@@ -88,6 +89,31 @@ func (s *Server) toolRegistry() []ai.Tool {
 			Run: func(ctx context.Context, args map[string]any) (string, error) {
 				tz, _ := args["timezone"].(string)
 				return s.toolSuggestSchedule(ctx, args["namespace"].(string), tz)
+			},
+		},
+		{
+			Name: "get_cost_allocation",
+			Description: "Showback and chargeback: a period's cost from the daily history charged to teams, environments, " +
+				"namespaces or the values of a namespace label, with shared namespaces and unrequested capacity split by the " +
+				"configured policy. The rows and the unallocated capacity add up to the bill.",
+			Parameters: obj(map[string]any{
+				"by":     str("team (the default), environment, namespace, or label:<key> such as label:cost-center"),
+				"period": str("this-month (the default), last-month, last-7-days or last-30-days"),
+				"from":   str("First day, YYYY-MM-DD; with to, instead of period"),
+				"to":     str("Last day, YYYY-MM-DD"),
+			}),
+			Run: func(ctx context.Context, args map[string]any) (string, error) {
+				q := url.Values{}
+				for _, k := range []string{"by", "period", "from", "to"} {
+					if v, _ := args[k].(string); v != "" {
+						q.Set(k, v)
+					}
+				}
+				report, err := s.allocation(ctx, q)
+				if err != nil {
+					return "", err
+				}
+				return toJSON(report)
 			},
 		},
 		{

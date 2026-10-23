@@ -86,7 +86,11 @@ export default function NamespaceInsights({ onSelectNamespace }: { onSelectNames
   const [filters, setFilters] = useState<Filters>({ query: '', env: 'all', schedule: 'all', issue: 'all', team: 'all' })
   const [groupBy, setGroupBy] = useState<GroupBy>('none')
   const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({ key: 'cost', desc: true })
-  const [idleShare, setIdleShare] = useState(false)
+  // Showing capacity nobody requested as shared out follows the allocation policy until
+  // the viewer picks otherwise.
+  const [idleChoice, setIdleShare] = useState<boolean | null>(null)
+  const [idlePolicy, setIdlePolicy] = useState(false)
+  const idleShare = idleChoice ?? idlePolicy
   const [historySource, setHistorySource] = useState<HistorySource | null>(null)
   const [chosenRange, setChosenRange] = useState(storedRange)
 
@@ -96,7 +100,7 @@ export default function NamespaceInsights({ onSelectNamespace }: { onSelectNames
   // Whether VictoriaMetrics is on, and how far back it reaches, decides the chart windows.
   usePolling(() => {
     fetch('/api/settings').then(r => (r.ok ? r.json() : null))
-      .then(d => setHistorySource(d?.integrations?.victoriaMetrics ?? { enabled: false }))
+      .then(d => { setHistorySource(d?.integrations?.victoriaMetrics ?? { enabled: false }); setIdlePolicy(d?.allocation?.idle === 'proportional') })
       .catch(() => setHistorySource({ enabled: false }))
   }, 300000)
   const ranges = historyRanges(historySource)

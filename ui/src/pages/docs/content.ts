@@ -1054,6 +1054,15 @@ costdeck_budget_forecast_ratio > 1`, label: 'Alert from your own monitoring' },
     summary: 'The cost digest everyone reads, sent on a schedule, and AI-written reports for each audience.',
     topics: [
       {
+        id: 'allocation',
+        title: 'Cost allocation: showback and chargeback',
+        blocks: [
+          { p: '**Reports → Cost allocation** shows what each team, environment, namespace or label value (such as `cost-center`) cost this month, last month or over the last 7 or 30 days, from the cost history. **Download CSV** gives finance the same table, and the rows add up to the bill.' },
+          { p: 'Under **Settings → Cost allocation**, list the namespaces every team relies on (`kube-*`, `monitoring`): their cost is charged to the others, by what each requests or evenly. Capacity no pod requests is either a line of its own or charged to the namespaces too.' },
+          { ways: { api: `curl -H "Authorization: Bearer $TOKEN" "$COSTDECK/api/finops/allocation.csv?by=label:cost-center&period=last-month"` } },
+        ],
+      },
+      {
         id: 'digest',
         title: 'The cost digest',
         blocks: [

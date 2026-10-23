@@ -71,6 +71,37 @@ spec:
                         type: integer
                     type: object
                 type: object
+              allocation:
+                description: |-
+                  Allocation decides how cost that belongs to no team is charged in showback and
+                  chargeback: capacity no pod requests, and namespaces everyone shares.
+                properties:
+                  idle:
+                    description: |-
+                      Idle is how capacity no pod requests is charged: separate (its own line, the
+                      default) or proportional (spread over the namespaces by the compute they request).
+                    enum:
+                    - separate
+                    - proportional
+                    type: string
+                  sharedNamespaces:
+                    description: |-
+                      SharedNamespaces are charged to the other namespaces instead of to themselves:
+                      names or patterns such as kube-* or monitoring.
+                    items:
+                      type: string
+                    maxItems: 100
+                    type: array
+                    x-kubernetes-list-type: set
+                  sharedSplit:
+                    description: |-
+                      SharedSplit spreads the shared namespaces' cost by the compute the others request
+                      (proportional, the default) or evenly.
+                    enum:
+                    - proportional
+                    - even
+                    type: string
+                type: object
               auth:
                 description: Auth configures single sign-on and local login.
                 properties:

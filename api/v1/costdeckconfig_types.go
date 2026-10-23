@@ -842,6 +842,34 @@ type CostDeckConfigSpec struct {
 	// default; it also needs namespaceTTL.enabled in the Helm chart.
 	// +optional
 	NamespaceTTL NamespaceTTLConfig `json:"namespaceTTL,omitempty"`
+
+	// Allocation decides how cost that belongs to no team is charged in showback and
+	// chargeback: capacity no pod requests, and namespaces everyone shares.
+	// +optional
+	Allocation AllocationConfig `json:"allocation,omitempty"`
+}
+
+// AllocationConfig decides how cost that belongs to no team is charged: capacity no pod
+// requests, and namespaces everyone shares such as kube-system, monitoring or ingress.
+type AllocationConfig struct {
+	// Idle is how capacity no pod requests is charged: separate (its own line, the
+	// default) or proportional (spread over the namespaces by the compute they request).
+	// +kubebuilder:validation:Enum=separate;proportional
+	// +optional
+	Idle string `json:"idle,omitempty"`
+
+	// SharedNamespaces are charged to the other namespaces instead of to themselves:
+	// names or patterns such as kube-* or monitoring.
+	// +kubebuilder:validation:MaxItems=100
+	// +listType=set
+	// +optional
+	SharedNamespaces []string `json:"sharedNamespaces,omitempty"`
+
+	// SharedSplit spreads the shared namespaces' cost by the compute the others request
+	// (proportional, the default) or evenly.
+	// +kubebuilder:validation:Enum=proportional;even
+	// +optional
+	SharedSplit string `json:"sharedSplit,omitempty"`
 }
 
 // NamespaceTTLConfig deletes the namespaces a label selector picks once they are older

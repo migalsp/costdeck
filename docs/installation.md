@@ -273,6 +273,30 @@ token counts of the last seven days come from VictoriaMetrics, extrapolated to a
   namespace serving a model, GPUs included, divided by the tokens it served gives the cost
   per million tokens.
 
+## Cost allocation (showback and chargeback)
+
+**Reports → Cost allocation** charges a period's cost (this month, last month, the last 7
+or 30 days, or any dates through the API) to teams, environments, namespaces or the values
+of any namespace label such as `cost-center`, from the daily cost history. **Download CSV**
+gives finance the same table. The rows and the unallocated capacity add up to the bill for
+the days the history covers.
+
+**Settings → Cost allocation** (`spec.allocation`) decides how cost that belongs to no team
+is charged:
+
+- **Shared namespaces** (`sharedNamespaces`, names or patterns such as `kube-*`,
+  `monitoring`): their cost is charged to the other namespaces, by the compute each
+  requests (`sharedSplit: proportional`, the default) or evenly (`even`).
+- **Capacity no pod requests** (`idle`): a line of its own (`separate`, the default), for
+  the platform team to shrink, or charged to the namespaces by what they request
+  (`proportional`), so the groups cover the whole bill. Namespace Insights shares it out
+  the same way by default.
+
+A team is read from the namespace's `team`, `owner`, `cost-center` (and similar) labels. A
+namespace deleted since keeps its cost under "(no team)". The same report is available as
+`GET /api/finops/allocation` and `GET /api/finops/allocation.csv`, and to the assistant
+and MCP clients as `get_cost_allocation`.
+
 ## Reconciling with the cloud bill
 
 **Settings → Cloud bill** reads what the cloud charged for

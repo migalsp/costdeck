@@ -1,6 +1,6 @@
 import { useState, useCallback, type ReactNode } from 'react'
 import {
-  Cloud, Bot, MessageSquare, Plus, Trash2, RefreshCw,
+  Cloud, Bot, MessageSquare, Plus, Trash2, RefreshCw, PieChart,
   CheckCircle2, XCircle, AlertTriangle, ChevronDown,
   ChevronUp, Sparkles, ExternalLink, Activity, Plug, Shield, Info, Users as UsersIcon, KeyRound, Coins, Receipt, CalendarDays
 } from 'lucide-react'
@@ -11,6 +11,8 @@ import ModelPricesEditor from '../components/settings/ModelPricesEditor'
 import OIDCSettings from '../components/settings/OIDCSettings'
 import NotificationChannels from '../components/settings/NotificationChannels'
 import PreviewCleanup from '../components/settings/PreviewCleanup'
+import AllocationSettings from '../components/settings/AllocationSettings'
+import { allocationForm, allocationProblem, allocationRequest, type AllocationForm, type AllocationSettings as AllocationData } from '../lib/allocation'
 import { cleanupForm, cleanupProblem, cleanupRequest, type CleanupForm, type TTLSettings } from '../lib/cleanup'
 import { SecretInput } from '../components/settings/fields'
 import { channelsForm, channelsProblem, channelsRequest, type ChannelsForm, type NotificationsSettings } from '../lib/notifications'
@@ -165,14 +167,15 @@ interface SettingsData {
   billing?: { enabled?: boolean }
   calendars?: HolidayCalendar[]
   namespaceTTL?: TTLSettings
+  allocation?: AllocationData
 }
 
 // ─── Navigation ─────────────────────────────────────────────────────────────
 
-type Section = 'users' | 'sso' | 'tokens' | 'pricing' | 'billing' | 'metrics' | 'calendars' | 'cleanup' | 'clouds' | 'notifications' | 'ai' | 'mcp'
+type Section = 'users' | 'sso' | 'tokens' | 'pricing' | 'allocation' | 'billing' | 'metrics' | 'calendars' | 'cleanup' | 'clouds' | 'notifications' | 'ai' | 'mcp'
 // Sections whose form is saved with their Save button; the others act at once.
-type SavedSection = 'sso' | 'pricing' | 'metrics' | 'calendars' | 'cleanup' | 'clouds' | 'notifications' | 'ai' | 'mcp'
-const savedSections: Section[] = ['sso', 'pricing', 'metrics', 'calendars', 'cleanup', 'clouds', 'notifications', 'ai', 'mcp']
+type SavedSection = 'sso' | 'pricing' | 'allocation' | 'metrics' | 'calendars' | 'cleanup' | 'clouds' | 'notifications' | 'ai' | 'mcp'
+const savedSections: Section[] = ['sso', 'pricing', 'allocation', 'metrics', 'calendars', 'cleanup', 'clouds', 'notifications', 'ai', 'mcp']
 const isSaved = (s: Section): s is SavedSection => savedSections.includes(s)
 
 const navGroups: { title: string; items: { id: Section; label: string; icon: ReactNode }[] }[] = [
@@ -183,6 +186,7 @@ const navGroups: { title: string; items: { id: Section; label: string; icon: Rea
   ] },
   { title: 'Cost data', items: [
     { id: 'pricing', label: 'Prices', icon: <Coins size={16} /> },
+    { id: 'allocation', label: 'Cost allocation', icon: <PieChart size={16} /> },
     { id: 'billing', label: 'Cloud bill', icon: <Receipt size={16} /> },
     { id: 'metrics', label: 'Usage metrics', icon: <Activity size={16} /> },
   ] },
@@ -230,6 +234,7 @@ function navStatus(st: SettingsData | null): Partial<Record<Section, NavStatus>>
   return {
     sso: onOff(st.auth?.entra?.enabled || st.auth?.oidc?.enabled),
     pricing: { text: basis.startsWith('custom') ? 'Custom' : basis.includes('aws') || basis.includes('azure') ? 'List' : 'Estimate' },
+    allocation: { text: st.allocation?.sharedNamespaces?.length ? `${st.allocation.sharedNamespaces.length} shared` : 'Default', on: !!st.allocation?.sharedNamespaces?.length || st.allocation?.idle === 'proportional' },
     billing: onOff(st.billing?.enabled),
     metrics: { text: st.integrations.victoriaMetrics?.enabled ? 'VictoriaMetrics' : 'metrics-server' },
     calendars: { text: st.calendars?.length ? String(st.calendars.length) : 'None', on: !!st.calendars?.length },
@@ -724,6 +729,7 @@ export default function SettingsPage({ section: requested }: { section?: string 
   const [oidc, setOIDC] = useState<OIDCForm>(emptyOIDC)
   const [channels, setChannels] = useState<ChannelsForm>(() => channelsForm())
   const [cleanup, setCleanup] = useState<CleanupForm>(() => cleanupForm())
+  const [allocation, setAllocation] = useState<AllocationForm>(() => allocationForm())
   const [dashboardUrl, setDashboardUrl] = useState('')
   const [entraTenant, setEntraTenant] = useState('')
   const [entraClient, setEntraClient] = useState('')
@@ -802,6 +808,7 @@ export default function SettingsPage({ section: requested }: { section?: string 
         }
         setChannels(channelsForm(data.integrations?.notifications))
         setCleanup(cleanupForm(data.namespaceTTL))
+        setAllocation(allocationForm(data.allocation))
         if (data.auth) {
           setDisableLocalLogin(data.auth.disableLocalLogin)
           setDashboardUrl(data.dashboardUrl || '')
@@ -839,7 +846,8 @@ export default function SettingsPage({ section: requested }: { section?: string 
 
   const handleSave = async (sec: SavedSection) => {
     const invalid = sec === 'calendars' ? calendarProblem(calendars) : sec === 'pricing' ? llmModelProblem(llmModels) : sec === 'sso' ? oidcProblem(oidc)
-      : sec === 'notifications' ? channelsProblem(channels) : sec === 'cleanup' ? cleanupProblem(cleanup, settings?.namespaceTTL) : null
+      : sec === 'notifications' ? channelsProblem(channels) : sec === 'cleanup' ? cleanupProblem(cleanup, settings?.namespaceTTL)
+      : sec === 'allocation' ? allocationProblem(allocation) : null
     if (invalid) {
       setSaveMessage({ section: sec, text: `Not saved: ${invalid}`, ok: false })
       return
@@ -944,6 +952,7 @@ export default function SettingsPage({ section: requested }: { section?: string 
         sso: { auth: full.auth, dashboardUrl: dashboardUrl.trim() },
         calendars: { calendars },
         cleanup: { namespaceTTL: cleanupRequest(cleanup) },
+        allocation: { allocation: allocationRequest(allocation) },
       }
       const res = await fetch('/api/settings', {
         method: 'PUT',
@@ -969,6 +978,7 @@ export default function SettingsPage({ section: requested }: { section?: string 
         if (sec === 'calendars') setCalendars(data.calendars || [])
         if (sec === 'notifications') setChannels(channelsForm(data.integrations?.notifications))
         if (sec === 'cleanup') setCleanup(cleanupForm(data.namespaceTTL))
+        if (sec === 'allocation') setAllocation(allocationForm(data.allocation))
         setDirty(d => ({ ...d, [sec]: false }))
         setSaveMessage({ section: sec, text: 'Saved', ok: true })
         setTimeout(() => setSaveMessage(m => (m?.section === sec && m.ok ? null : m)), 3000)
@@ -1659,6 +1669,18 @@ export default function SettingsPage({ section: requested }: { section?: string 
       )}
 
       {/* ─── Messengers Section ──────────────────────────────────────────── */}
+      {section === 'allocation' && (
+        <div className="space-y-4 animate-rise">
+          <SectionHeader
+            icon={<PieChart className="text-brand-500" size={20} />}
+            title="Cost allocation"
+            subtitle="How cost that belongs to no team is charged in showback and chargeback (Reports → Cost allocation)"
+            action={saveAction('allocation')}
+          />
+          <AllocationSettings value={allocation} onChange={setAllocation} />
+        </div>
+      )}
+
       {section === 'cleanup' && (
         <div className="space-y-4 animate-rise">
           <SectionHeader
