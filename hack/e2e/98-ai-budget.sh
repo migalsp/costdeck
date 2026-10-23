@@ -62,7 +62,7 @@ api PUT /api/settings "$AI_ON" >/dev/null || fail "setting the budget"
 log "Each answer is counted; the budget refuses questions once it is spent"
 # The Service may take a moment to route to the new pod; refused attempts use no tokens.
 answer=""
-answered() { answer=$(chat) && echo "$answer" | grep -q 'smoke-history costs the most.'; }
+answered() { answer=$(chat) && grep -q 'smoke-history costs the most.' <<<"$answer"; }
 wait_for "the assistant answers through the fake model server" answered
 echo "$answer" | grep -q '"usage"' && fail "usage events reached the browser: $answer"
 [[ "$(used_tokens)" == "$((before + 127))" ]] || fail "the answer was not counted: $(api GET /api/settings | jq -c .integrations.ai.usage)"
@@ -73,5 +73,5 @@ code=$(api_code POST /api/ai/chat "$CHAT" -b "$JAR")
 ok "past the budget the assistant refuses with 429"
 # The settings API takes the AI section whole: baseUrl would be cleared without it.
 api PUT /api/settings "$AI_NO_BUDGET" >/dev/null || fail "removing the budget"
-chat | grep -q 'smoke-history costs the most.' || fail "without a budget the assistant should answer again"
+answered || fail "without a budget the assistant should answer again: $answer"
 ok "without a budget it answers again"
