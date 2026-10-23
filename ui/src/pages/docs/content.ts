@@ -148,7 +148,7 @@ kubectl port-forward -n costdeck svc/costdeck-operator-api 8082:8082`,
         id: 'how',
         title: 'What a schedule does',
         blocks: [
-          { p: 'A schedule covers one or more namespaces and, optionally, cloud resources. Outside its hours Cost Deck scales every Deployment and StatefulSet in those namespaces to zero. When the next window starts it restores the replica count each one had.' },
+          { p: 'A schedule covers one or more namespaces and, optionally, cloud resources. Outside its hours Cost Deck scales every Deployment, StatefulSet and Argo Rollout in those namespaces to zero. When the next window starts it restores the replica count each one had.' },
           {
             list: [
               'CronJobs are suspended and KEDA ScaledObjects paused while a namespace is down, and restored afterwards.',

@@ -450,8 +450,8 @@ claude mcp add --transport http costdeck https://costdeck.example.com/mcp \
 
 ## Scaling: what happens to workloads
 
-- **Schedules** (ScalingGroups) scale Deployments and StatefulSets in their namespaces to
-  zero outside their hours and restore the recorded replica counts afterwards. A workload
+- **Schedules** (ScalingGroups) scale Deployments, StatefulSets and Argo Rollouts in their
+  namespaces to zero outside their hours and restore the recorded replica counts afterwards. A workload
   scaled up with no recorded count gets one replica.
 - **Start order**: stages start top to bottom and stop bottom to top. Namespaces not in
   any stage start last and stop first. With **Don't wait forever** (Advanced), a stage
@@ -478,6 +478,18 @@ claude mcp add --transport http costdeck https://costdeck.example.com/mcp \
 - The replica count to restore is kept on each workload in the
   `costdeck.io/original-replicas` annotation, written in the same change that scales it
   down and removed once it is restored.
+
+### Argo Rollouts
+
+Rollouts (`argoproj.io/v1alpha1`) are scaled like Deployments: `spec.replicas` goes to zero
+with the `costdeck.io/original-replicas` annotation and comes back to that count. They
+appear in previews, savings, the namespace page and right-sizing advice. Workload rules
+name them `Rollout/<name>`.
+
+A Rollout that takes its pod template from a Deployment (`spec.workloadRef`) is scaled
+itself. Its owner keeps that Deployment at zero, so Cost Deck leaves the Deployment alone
+rather than starting a copy of the Rollout's pods. The operator's role can read and patch
+Rollouts; without Argo Rollouts installed nothing changes.
 
 ### GitOps (Argo CD, Flux)
 

@@ -60,6 +60,7 @@ type ScalingConfigReconciler struct {
 // +kubebuilder:rbac:groups=finops.costdeck.io,namespace=costdeck,resources=scalingconfigs/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=finops.costdeck.io,namespace=costdeck,resources=scalingconfigs/finalizers,verbs=update
 // +kubebuilder:rbac:groups=apps,resources=deployments;statefulsets,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups=argoproj.io,resources=rollouts,verbs=get;list;watch;patch
 
 func (r *ScalingConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	l := logf.FromContext(ctx)

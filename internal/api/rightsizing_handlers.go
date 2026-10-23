@@ -8,12 +8,11 @@ import (
 	"sync"
 	"time"
 
-	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/migalsp/costdeck-operator/internal/metrics"
 	"github.com/migalsp/costdeck-operator/internal/rightsizing"
+	"github.com/migalsp/costdeck-operator/internal/scaling"
 )
 
 // recommendationTTL bounds how often one namespace's demand is recomputed. A two-week p95
@@ -89,23 +88,17 @@ func (s *Server) recommendations(ctx context.Context, ns string) (rightsizing.Re
 	return report, nil
 }
 
-// workloadRequests lists the Deployments and StatefulSets of a namespace with the requests
-// of their containers.
+// workloadRequests lists the Deployments, StatefulSets and Argo Rollouts of a namespace
+// with the requests of their containers.
 func (s *Server) workloadRequests(ctx context.Context, ns string) ([]rightsizing.Workload, error) {
-	var out []rightsizing.Workload
-	var deploys appsv1.DeploymentList
-	if err := s.Client.List(ctx, &deploys, client.InNamespace(ns)); err != nil {
+	workloads, err := (&scaling.Engine{Client: s.Client}).Workloads(ctx, ns)
+	if err != nil {
 		return nil, err
 	}
-	for _, d := range deploys.Items {
-		out = append(out, toWorkload(kindDeployment, d.Name, d.Spec.Replicas, d.Spec.Template.Spec))
-	}
-	var stss appsv1.StatefulSetList
-	if err := s.Client.List(ctx, &stss, client.InNamespace(ns)); err != nil {
-		return nil, err
-	}
-	for _, st := range stss.Items {
-		out = append(out, toWorkload(kindStatefulSet, st.Name, st.Spec.Replicas, st.Spec.Template.Spec))
+	out := make([]rightsizing.Workload, 0, len(workloads))
+	for _, wl := range workloads {
+		replicas := wl.Replicas
+		out = append(out, toWorkload(wl.Kind, wl.Name, &replicas, wl.Template.Spec))
 	}
 	return out, nil
 }

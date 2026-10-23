@@ -19,6 +19,7 @@ import (
 	"github.com/migalsp/costdeck-operator/internal/config"
 	"github.com/migalsp/costdeck-operator/internal/metrics"
 	"github.com/migalsp/costdeck-operator/internal/pricing"
+	"github.com/migalsp/costdeck-operator/internal/scaling"
 )
 
 // Workload kinds CostDeck scales and right-sizes.
@@ -279,17 +280,11 @@ func (s *Server) serveWorkloads(w http.ResponseWriter, r *http.Request) {
 	nsName := r.PathValue("ns")
 	result := []WorkloadDetail{}
 
-	deployments := &appsv1.DeploymentList{}
-	if err := s.Client.List(ctx, deployments, client.InNamespace(nsName)); err == nil {
-		for _, d := range deployments.Items {
-			result = append(result, newWorkloadDetail(d.Name, kindDeployment, d.Spec.Replicas, d.Status.ReadyReplicas))
-		}
-	}
-
-	statefulSets := &appsv1.StatefulSetList{}
-	if err := s.Client.List(ctx, statefulSets, client.InNamespace(nsName)); err == nil {
-		for _, sts := range statefulSets.Items {
-			result = append(result, newWorkloadDetail(sts.Name, kindStatefulSet, sts.Spec.Replicas, sts.Status.ReadyReplicas))
+	// Deployments, StatefulSets and Argo Rollouts, as schedules scale them.
+	if workloads, err := (&scaling.Engine{Client: s.Client}).Workloads(ctx, nsName); err == nil {
+		for _, wl := range workloads {
+			replicas := wl.Replicas
+			result = append(result, newWorkloadDetail(wl.Name, wl.Kind, &replicas, wl.Ready))
 		}
 	}
 
@@ -313,29 +308,15 @@ func (s *Server) serveWorkloadAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var obj client.Object
-	switch req.Kind {
-	case kindDeployment:
-		obj = &appsv1.Deployment{}
-	case kindStatefulSet:
-		obj = &appsv1.StatefulSet{}
-	default:
-		writeError(w, http.StatusBadRequest, "Unknown kind")
+	err := (&scaling.Engine{Client: s.Client}).SetWorkloadReplicas(ctx, key.Namespace, req.Kind, key.Name, req.Replicas)
+	switch {
+	case errors.Is(err, scaling.ErrUnknownKind):
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
-	}
-
-	if err := s.Client.Get(ctx, key, obj); err != nil {
+	case apierrors.IsNotFound(err):
 		writeError(w, http.StatusNotFound, err.Error())
 		return
-	}
-	patch := client.MergeFrom(obj.DeepCopyObject().(client.Object))
-	switch o := obj.(type) {
-	case *appsv1.Deployment:
-		o.Spec.Replicas = &req.Replicas
-	case *appsv1.StatefulSet:
-		o.Spec.Replicas = &req.Replicas
-	}
-	if err := s.Client.Patch(ctx, obj, patch); err != nil {
+	case err != nil:
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

@@ -4,9 +4,7 @@ import (
 	"context"
 	"sort"
 
-	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
-	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -49,13 +47,7 @@ func (e *Engine) PreviewNamespace(ctx context.Context, ns string, exclusions []s
 		return out, err
 	}
 	for _, obj := range objs {
-		var tmpl corev1.PodTemplateSpec
-		switch v := obj.(type) {
-		case *appsv1.Deployment:
-			tmpl = v.Spec.Template
-		case *appsv1.StatefulSet:
-			tmpl = v.Spec.Template
-		}
+		tmpl := podTemplate(obj)
 		// The count a scale-up gives it, so a workload that is down shows what it returns to.
 		replicas := targetReplicas(true, getReplicas(obj), recordedReplicas(obj, nil))
 		cpu, mem := PodRequests(tmpl.Spec)

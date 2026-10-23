@@ -65,6 +65,8 @@ them back on time. There is no external service: one operator in your cluster do
   saving it, or let it run in a dry run that decides but scales nothing.
 - **GitOps-aware.** Workloads managed by Argo CD or Flux are named in the preview, and a
   schedule can pause the tool while it keeps them down and resume it afterwards.
+- **Argo Rollouts.** Canary and blue-green Rollouts scale to zero and back like
+  Deployments, including those that take their pods from a Deployment (`workloadRef`).
 - **Databases with their namespace.** CloudNativePG and Zalando Postgres clusters, Strimzi
   Kafka Connect, MirrorMaker 2 and Bridge, or any operator's resource with a replica field,
   stop after the namespace's workloads and start before them.
@@ -155,7 +157,7 @@ graph TD
 
     subgraph Cluster["Kubernetes"]
         CRD[CRDs: ScalingGroup, ScalingConfig, NamespaceFinOps, CostDeckConfig]
-        WL[Deployments, StatefulSets, CronJobs, KEDA]
+        WL[Deployments, StatefulSets, Argo Rollouts, CronJobs, KEDA]
         INF[Nodes, volumes, load balancers]
         MS[metrics-server]
     end

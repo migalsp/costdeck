@@ -249,7 +249,7 @@ export interface ContainerAdvice {
 }
 
 export interface WorkloadAdvice {
-  kind: 'Deployment' | 'StatefulSet'
+  kind: 'Deployment' | 'StatefulSet' | 'Rollout'
   name: string
   replicas: number
   monthlySavings: number

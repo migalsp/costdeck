@@ -103,7 +103,7 @@ export default function RecommendationsPanel({ namespace }: { namespace: string 
       </div>
 
       {report.workloads.length === 0 ? (
-        <div className="p-5 text-sm text-slate-500">No Deployments or StatefulSets here, so there is nothing to right-size.</div>
+        <div className="p-5 text-sm text-slate-500">No Deployments, StatefulSets or Argo Rollouts here, so there is nothing to right-size.</div>
       ) : rows.length === 0 ? (
         <div className="p-5 text-sm text-slate-500">Requests match observed usage. Nothing to reduce right now.</div>
       ) : (
