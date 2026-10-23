@@ -122,7 +122,7 @@ func BuildAICosts(u metrics.LLMUsage, s Snapshot, prices []finopsv1.LLMModelPric
 	}
 	maps.Copy(labels, s.Labels)
 	for _, c := range u.Clients {
-		price, priced := modelPrice(prices, c.Model)
+		price, priced := ModelPrice(prices, c.Model)
 		cost := (c.Input*price[0] + c.Output*price[1]) / 1e6 * month
 		t := team(Team(labels[c.Namespace]), SourceOpenTelemetry)
 		t.Monthly += cost
@@ -199,9 +199,9 @@ func BuildAICosts(u metrics.LLMUsage, s Snapshot, prices []finopsv1.LLMModelPric
 	return out
 }
 
-// modelPrice returns the input and output price per million tokens of the first entry
+// ModelPrice returns the input and output price per million tokens of the first entry
 // whose model or glob matches.
-func modelPrice(prices []finopsv1.LLMModelPrice, model string) ([2]float64, bool) {
+func ModelPrice(prices []finopsv1.LLMModelPrice, model string) ([2]float64, bool) {
 	for _, p := range prices {
 		if ok, err := path.Match(p.Model, model); err != nil || !ok {
 			continue

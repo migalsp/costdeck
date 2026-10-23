@@ -133,12 +133,17 @@ type MCPSettingsResponse struct {
 }
 
 type AISettingsResponse struct {
-	Enabled        bool   `json:"enabled"`
-	Provider       string `json:"provider,omitempty"`
-	Model          string `json:"model,omitempty"`
-	BaseURL        string `json:"baseUrl,omitempty"`
-	SkipSSLVerify  bool   `json:"skipSslVerify"`
-	HasCredentials bool   `json:"hasCredentials"`
+	Enabled            bool    `json:"enabled"`
+	Provider           string  `json:"provider,omitempty"`
+	Model              string  `json:"model,omitempty"`
+	BaseURL            string  `json:"baseUrl,omitempty"`
+	SkipSSLVerify      bool    `json:"skipSslVerify"`
+	HasCredentials     bool    `json:"hasCredentials"`
+	MonthlyTokenBudget int64   `json:"monthlyTokenBudget"`
+	Usage              AIUsage `json:"usage"`
+	// UsageCost prices this month's usage at the model's price under Settings -> Prices;
+	// absent without one.
+	UsageCost *float64 `json:"usageCost,omitempty"`
 }
 
 type MessengerSettingsResponse struct {
@@ -280,6 +285,8 @@ type AIUpdateRequest struct {
 	BaseURL       string `json:"baseUrl,omitempty"`
 	APIKey        string `json:"apiKey,omitempty"`
 	SkipSSLVerify *bool  `json:"skipSslVerify,omitempty"`
+	// MonthlyTokenBudget caps the tokens per month; 0 removes the cap.
+	MonthlyTokenBudget *int64 `json:"monthlyTokenBudget,omitempty"`
 }
 
 type MessengerUpdateRequest struct {
@@ -391,6 +398,11 @@ func (s *Server) buildSettingsResponse(ctx context.Context, cfg *finopsv1.CostDe
 			BaseURL:        cfg.Spec.Integrations.AI.BaseURL,
 			SkipSSLVerify:  cfg.Spec.Integrations.AI.SkipSSLVerify,
 			HasCredentials: cfg.Spec.Integrations.AI.SecretRef != "",
+		}
+		resp.Integrations.AI.MonthlyTokenBudget = cfg.Spec.Integrations.AI.MonthlyTokenBudget
+		if usage, err := s.aiUsage(ctx, time.Now()); err == nil {
+			resp.Integrations.AI.Usage = usage
+			resp.Integrations.AI.UsageCost = usageCost(usage, cfg.Spec.Integrations.AI.Model, cfg.Spec.Pricing.LLMModels)
 		}
 	}
 
@@ -655,6 +667,12 @@ func (s *Server) applyAISettings(ctx context.Context, cfg *finopsv1.CostDeckConf
 	ai.BaseURL = aiReq.BaseURL // May be cleared explicitly.
 	if aiReq.SkipSSLVerify != nil {
 		ai.SkipSSLVerify = *aiReq.SkipSSLVerify
+	}
+	if b := aiReq.MonthlyTokenBudget; b != nil {
+		if *b < 0 {
+			return badRequestf("the monthly token budget cannot be negative")
+		}
+		ai.MonthlyTokenBudget = *b
 	}
 	if aiReq.APIKey == "" {
 		return nil

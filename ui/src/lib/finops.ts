@@ -451,6 +451,8 @@ export interface AICosts {
   windowDays: number
   api: { monthly: number; sources: ('litellm' | 'opentelemetry')[]; teams: AITeam[]; models: AIModel[]; unpriced: string[] }
   selfHosted: SelfHostedModel[]
+  // assistant is what Cost Deck's own assistant used this month, when it is set up.
+  assistant?: { month: string; inputTokens: number; outputTokens: number; requests: number; estimated?: boolean; model: string; monthlyTokenBudget: number; cost?: number }
 }
 
 export async function fetchAICosts(): Promise<AICosts> {

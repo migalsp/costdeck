@@ -9,6 +9,8 @@ import ApiTokens from '../components/ApiTokens'
 import CalendarsEditor from '../components/settings/CalendarsEditor'
 import ModelPricesEditor from '../components/settings/ModelPricesEditor'
 import { llmModelProblem } from '../lib/llm'
+import { tokens } from '../lib/finops'
+import { formatMoney } from '../lib/format'
 import { calendarProblem } from '../lib/exceptions'
 import type { HolidayCalendar, LLMModelPrice } from '../lib/types'
 import UsersSettings from '../components/settings/UsersSettings'
@@ -62,6 +64,9 @@ interface AISettings {
   baseUrl?: string
   skipSslVerify?: boolean
   hasCredentials: boolean
+  monthlyTokenBudget?: number
+  usage?: { month: string; inputTokens: number; outputTokens: number; requests: number; estimated?: boolean }
+  usageCost?: number
 }
 
 interface WebexSettings {
@@ -681,6 +686,7 @@ export default function SettingsPage({ section: requested }: { section?: string 
   const [llmModels, setLLMModels] = useState<LLMModelPrice[]>([])
   const [aiApiKey, setAiApiKey] = useState('')
   const [aiSkipSslVerify, setAiSkipSslVerify] = useState(false)
+  const [aiBudget, setAiBudget] = useState('')
   const [aiModels, setAiModels] = useState<string[]>([])
   const [aiModelsLoading, setAiModelsLoading] = useState(false)
   const [aiModelsError, setAiModelsError] = useState<string | null>(null)
@@ -752,6 +758,7 @@ export default function SettingsPage({ section: requested }: { section?: string 
           setAiModel(data.integrations.ai.model || '')
           setAiBaseUrl(data.integrations.ai.baseUrl || '')
           setAiSkipSslVerify(data.integrations.ai.skipSslVerify || false)
+          setAiBudget(data.integrations.ai.monthlyTokenBudget ? String(data.integrations.ai.monthlyTokenBudget) : '')
         }
         if (data.integrations.messenger?.webex) {
           setWebexEnabled(data.integrations.messenger.webex.enabled)
@@ -847,6 +854,7 @@ export default function SettingsPage({ section: requested }: { section?: string 
             model: aiModel,
             baseUrl: aiBaseUrl,
             skipSslVerify: aiSkipSslVerify,
+            monthlyTokenBudget: Number(aiBudget) || 0,
             ...(aiApiKey ? { apiKey: aiApiKey } : {})
           },
           messenger: {
@@ -1569,6 +1577,27 @@ export default function SettingsPage({ section: requested }: { section?: string 
                   <input type="checkbox" checked={aiSkipSslVerify} onChange={e => setAiSkipSslVerify(e.target.checked)} className="accent-brand-500" />
                   Skip TLS verification (insecure)
                 </label>
+              </div>
+
+              <div className="mt-4" data-testid="ai-budget">
+                <label htmlFor="ai-budget" className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1 block">Monthly token budget</label>
+                <div className="flex flex-wrap items-center gap-3">
+                  <input id="ai-budget" type="number" min={0} step={10000} value={aiBudget} onChange={e => setAiBudget(e.target.value)} placeholder="no limit"
+                    className="w-40 px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm font-mono" />
+                  {settings?.integrations.ai?.usage && (
+                    <span className="text-xs text-slate-500">
+                      {(() => {
+                        const u = settings.integrations.ai.usage!
+                        const used = u.inputTokens + u.outputTokens
+                        const budget = settings.integrations.ai.monthlyTokenBudget || 0
+                        return <>Used {tokens(used)}{budget ? ` of ${tokens(budget)} (${Math.round((used / budget) * 100)}%)` : ''} tokens in {u.month} over {u.requests} request{u.requests === 1 ? '' : 's'}
+                          {settings.integrations.ai.usageCost !== undefined && <>, about {formatMoney(settings.integrations.ai.usageCost, settings.pricing?.effective.currency || 'USD')}</>}
+                          {u.estimated && ' (partly estimated: the provider does not report usage)'}.</>
+                      })()}
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-slate-400 mt-1">The assistant and AI reports refuse new requests once the month's tokens are used up. Empty means no limit.</p>
               </div>
 
               {/* Test Connection */}

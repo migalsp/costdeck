@@ -17,6 +17,15 @@ type aiCostsResponse struct {
 	Available bool   `json:"available"`
 	Error     string `json:"error,omitempty"`
 	finops.AICosts
+	// Assistant is what Cost Deck's own assistant used this month, when it is set up.
+	Assistant *assistantUsage `json:"assistant,omitempty"`
+}
+
+type assistantUsage struct {
+	AIUsage
+	Model              string   `json:"model"`
+	MonthlyTokenBudget int64    `json:"monthlyTokenBudget"`
+	Cost               *float64 `json:"cost,omitempty"`
 }
 
 func (s *Server) handleAICosts(w http.ResponseWriter, r *http.Request) {
@@ -52,6 +61,11 @@ func (s *Server) aiCosts(ctx context.Context) (aiCostsResponse, error) {
 		}
 	}
 	resp.AICosts = finops.BuildAICosts(usage, snap, cfg.Spec.Pricing.LLMModels)
+	if a := cfg.Spec.Integrations.AI; a != nil && a.Enabled {
+		if u, err := s.aiUsage(ctx, time.Now()); err == nil {
+			resp.Assistant = &assistantUsage{AIUsage: u, Model: a.Model, MonthlyTokenBudget: a.MonthlyTokenBudget, Cost: usageCost(u, a.Model, cfg.Spec.Pricing.LLMModels)}
+		}
+	}
 	return resp, nil
 }
 

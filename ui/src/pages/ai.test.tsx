@@ -47,6 +47,30 @@ describe('AI costs', () => {
     expect((await screen.findByTestId('ai-empty')).textContent).toContain('No LLM traffic in the last 7 days')
   })
 
+  it("shows what Cost Deck's own assistant used against its budget", async () => {
+    mockFetch(on('GET', '/api/finops/ai', () => json(costs({ assistant: { month: '2026-10', inputTokens: 900000, outputTokens: 100000, requests: 40, model: 'claude-sonnet-4-5', monthlyTokenBudget: 2000000, cost: 4.2 } }))))
+    render(<AICostsPage />)
+    expect((await screen.findByTestId('ai-assistant')).textContent).toBe("Cost Deck's assistant (claude-sonnet-4-5) used 1.0M tokens in 2026-10 of its budget of 2.0M, about $4.20. Budget")
+  })
+
+  it('sets the monthly token budget and shows the usage against it', async () => {
+    window.history.replaceState(null, '', '/settings/ai')
+    const settings = { providers: {}, auth: { disableLocalLogin: false }, calendars: [], pricing: { effective: { cpuCoreHour: 0.03, memoryGiBHour: 0.004, currency: 'USD', basis: 'x' } },
+      integrations: { ai: { enabled: true, provider: 'openai', model: 'gpt-4o', hasCredentials: true, monthlyTokenBudget: 500000,
+        usage: { month: '2026-10', inputTokens: 200000, outputTokens: 50000, requests: 12 }, usageCost: 1.5 } } }
+    const fetch = mockFetch(on('GET', '/api/settings', () => json(settings)), on('PUT', '/api/settings', () => json(settings)))
+    render(<SettingsPage section="ai" />)
+    const user = userEvent.setup()
+    const input = await screen.findByLabelText('Monthly token budget') as HTMLInputElement
+    expect(input.value).toBe('500000')
+    expect(within(screen.getByTestId('ai-budget')).getByText(/Used 250k of 500k \(50%\) tokens in 2026-10 over 12 requests, about \$1.50\./)).toBeTruthy()
+    await user.clear(input)
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    await screen.findByText('Saved')
+    const put = fetch.mock.calls.find(([, init]) => init?.method === 'PUT')!
+    expect(JSON.parse(put[1]!.body as string).integrations.ai.monthlyTokenBudget).toBe(0)
+  })
+
   it('shortens token counts', () => {
     expect([tokens(950), tokens(12_400), tokens(3_250_000), tokens(7.1e9)]).toEqual(['950', '12k', '3.3M', '7.1B'])
   })

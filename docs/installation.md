@@ -378,6 +378,14 @@ Azure OpenAI, vLLM, Ollama) or Gemini. The assistant reads live data through too
 (scaling, resuming, reverting) appear as confirmation cards and run only after a user with
 the operator role confirms.
 
+A **monthly token budget** (`spec.integrations.ai.monthlyTokenBudget`) caps what the
+assistant and AI reports may use in a calendar month (UTC). Usage is counted from what the
+provider reports, or estimated from the text when an OpenAI-compatible endpoint does not
+report it, and kept in the `costdeck-ai-usage` ConfigMap, so every replica counts against
+the same budget. Once the budget is spent, requests are refused (HTTP 429) until the next
+month or until it is raised. Settings and AI Costs show the month's usage, priced at the
+model's price under Settings → Prices.
+
 **Settings → MCP server** serves the same tools over MCP (Streamable HTTP) at
 `https://costdeck.example.com/mcp`, authenticated with an API token:
 

@@ -362,6 +362,14 @@ spec:
                           Model is the model ID, e.g. "claude-opus-5-5". Defaults per provider when empty;
                           the settings page lists the models the configured key can use.
                         type: string
+                      monthlyTokenBudget:
+                        description: |-
+                          MonthlyTokenBudget caps the tokens (input and output) the assistant and AI reports
+                          may use in a calendar month (UTC); once it is spent they refuse new requests until
+                          the next month. 0 means no cap.
+                        format: int64
+                        minimum: 0
+                        type: integer
                       provider:
                         description: |-
                           Provider is anthropic, openai, gemini, or local (any OpenAI-compatible endpoint such

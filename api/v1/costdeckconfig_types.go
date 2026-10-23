@@ -157,6 +157,13 @@ type AIIntegrationConfig struct {
 	// SkipSSLVerify allows skipping TLS certificate verification for custom endpoints
 	// +optional
 	SkipSSLVerify bool `json:"skipSslVerify,omitempty"`
+
+	// MonthlyTokenBudget caps the tokens (input and output) the assistant and AI reports
+	// may use in a calendar month (UTC); once it is spent they refuse new requests until
+	// the next month. 0 means no cap.
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	MonthlyTokenBudget int64 `json:"monthlyTokenBudget,omitempty"`
 }
 
 // WebexConfig configures the Webex bot.

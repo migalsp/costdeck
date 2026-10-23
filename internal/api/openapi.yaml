@@ -1317,7 +1317,9 @@ paths:
         Streams the answer as Server-Sent Events. Each `data:` line is a JSON event of type
         text, reset, tool_call, tool_result, confirm, error or done. A `confirm` event names a
         mutating tool the model wants to run; nothing happens until the client calls
-        POST /api/ai/tools/{name}.
+        POST /api/ai/tools/{name}. Every answer's tokens count against the monthly token
+        budget (spec.integrations.ai.monthlyTokenBudget); once it is spent the request is
+        refused with 429.
       requestBody:
         required: true
         content:
@@ -1346,6 +1348,7 @@ paths:
                   args: { type: object }
                   isError: { type: boolean }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { description: "The assistant's monthly token budget is spent" }
 
   /api/ai/tools/{name}:
     post:
@@ -1410,6 +1413,7 @@ paths:
       responses:
         "200": { description: Event stream, content: { text/event-stream: {} } }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { description: "The assistant's monthly token budget is spent" }
 
   /api/ai/report/save:
     post:

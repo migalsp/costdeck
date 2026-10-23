@@ -81,6 +81,15 @@ export default function AICostsPage() {
           sub={data.api.unpriced.length ? data.api.unpriced.join(', ') : 'Every model has a price'} />
       </div>
 
+      {data.assistant && (
+        <p className="mt-3 text-sm text-slate-600" data-testid="ai-assistant">
+          Cost Deck's assistant ({data.assistant.model}) used {tokens(data.assistant.inputTokens + data.assistant.outputTokens)} tokens in {data.assistant.month}
+          {data.assistant.monthlyTokenBudget > 0 && <> of its budget of {tokens(data.assistant.monthlyTokenBudget)}</>}
+          {data.assistant.cost !== undefined && <>, about {formatMoney(data.assistant.cost, cur)}</>}.{' '}
+          <a href="/settings/ai" onClick={e => followLink(e, '/settings/ai')} className="font-semibold underline">Budget</a>
+        </p>
+      )}
+
       {data.api.unpriced.length > 0 && (
         <p className="mt-3 text-sm text-amber-800" data-testid="ai-unpriced">
           {data.api.unpriced.join(', ')} {data.api.unpriced.length === 1 ? 'has' : 'have'} no price, so {data.api.unpriced.length === 1 ? 'its' : 'their'} tokens count for nothing.{' '}

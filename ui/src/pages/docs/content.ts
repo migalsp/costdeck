@@ -1171,6 +1171,7 @@ curl -H "Authorization: Bearer $TOKEN" "$COSTDECK/api/scaling/groups"`, label: '
             ],
           },
           { tip: 'The model sees what the assistant\'s tools return: namespace and workload names, usage, costs and schedule states. It cannot read Secrets or logs.' },
+          { p: '**Monthly token budget**: the assistant and AI reports count the tokens every answer uses, as the provider reports them (or estimated from the text, four characters a token, when it does not). Once the month\'s budget is used up they refuse new requests until the next month (UTC) or until an admin raises it. Settings shows the month\'s usage, priced at the model\'s price under Settings → Prices, and so does **AI Costs**.' },
         ],
       },
       {

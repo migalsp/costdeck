@@ -100,7 +100,7 @@ func (s *Server) handleAIChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	provider, ok := s.loadAIProvider(w, r)
-	if !ok {
+	if !ok || !s.checkAIBudget(w, r) {
 		return
 	}
 	stream, ok := newEventStream(w)
@@ -112,7 +112,9 @@ func (s *Server) handleAIChat(w http.ResponseWriter, r *http.Request) {
 	agent := &ai.Agent{Provider: provider, System: assistantSystemPrompt, Tools: s.toolsFor(r.Context())}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
 	defer cancel()
-	if err := agent.Run(ctx, req.Messages, stream.send); err != nil {
+	meter := &usageMeter{}
+	defer s.recordAIUsage(r.Context(), meter)
+	if err := agent.Run(ctx, req.Messages, meter.observe(stream.send)); err != nil {
 		logf.FromContext(ctx).Error(err, "Assistant request failed")
 		stream.send(ai.Event{Type: "error", Text: userMessage(err)})
 	}
