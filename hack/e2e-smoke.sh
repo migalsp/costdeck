@@ -16,6 +16,7 @@
 #   92 schedule preview and dry run
 #   93 pausing Flux and Argo CD while a schedule keeps workloads down
 #   94 stopping operator-run services (databases, Kafka Connect) with their namespace
+#   95 realized savings: the nodes a scale-down should free, and what keeps them
 #
 # Run it against a disposable cluster (Kind in CI, `make test-e2e` locally): it installs
 # CRDs, metrics-server and changes settings. IMAGE must already be loadable by the cluster

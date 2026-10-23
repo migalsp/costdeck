@@ -178,6 +178,26 @@ type ScheduleStatus struct {
 	// Currency of EstimatedHourlySavings.
 	// +optional
 	Currency string `json:"currency,omitempty"`
+
+	// ScaleDownNodes are the nodes the scaled workloads ran on when the last scale-down
+	// began, with what they cost then, so the realized-savings check can tell later whether
+	// they went away. Cleared once the target is up again.
+	// +kubebuilder:validation:MaxItems=200
+	// +listType=atomic
+	// +optional
+	ScaleDownNodes []ScaleDownNode `json:"scaleDownNodes,omitempty"`
+
+	// ScaleDownAt is when that scale-down began.
+	// +optional
+	ScaleDownAt *metav1.Time `json:"scaleDownAt,omitempty"`
+}
+
+// ScaleDownNode is a node a scale-down could free.
+type ScaleDownNode struct {
+	Name string `json:"name"`
+	// HourlyCost is what the node cost per hour when the scale-down began, e.g. "0.1920".
+	// +optional
+	HourlyCost string `json:"hourlyCost,omitempty"`
 }
 
 // ScheduledTransition is a future change of the desired state.

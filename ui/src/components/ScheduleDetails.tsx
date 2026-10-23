@@ -6,6 +6,7 @@ import { describeException, isPast } from '../lib/exceptions'
 import { describeRule } from '../lib/hibernate'
 import { targetLabel } from '../lib/cloud'
 import type { ScalingConfig, ScalingGroup, ScalingSpec } from '../lib/types'
+import RealizedSavings from './RealizedSavings'
 import ScheduleActivity from './ScheduleActivity'
 import ScheduleStatusLine from './ScheduleStatus'
 import WeekTimeline from './WeekTimeline'
@@ -98,6 +99,8 @@ export default function ScheduleDetails(p: Props) {
               Saving about <b>{formatMoney(saving, status?.currency)}/h</b> right now while workloads are scaled down.
             </div>
           )}
+
+          {!up && <RealizedSavings kind={p.target.kind} name={obj.metadata.name} />}
 
           {gitOps && (
             <div className={`rounded-xl border px-4 py-3 text-sm ${gitOps.reason === 'Paused' ? 'border-slate-200 bg-slate-50 text-slate-600' : 'border-amber-200 bg-amber-50 text-amber-800'}`} data-testid="gitops-note">

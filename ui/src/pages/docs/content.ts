@@ -533,6 +533,22 @@ spec:
           { p: 'It needs `hibernation.enabled=true` in the Helm chart, which grants reading and patching those resources, and `hibernation.extraRules` for other operators. The preview lists the services a schedule would stop. Remove a rule only while the namespace is up: a service it stopped stays stopped.' },
         ],
       },
+      {
+        id: 'realized',
+        title: 'Realized savings',
+        blocks: [
+          { p: 'The saving a schedule shows is what its stopped workloads request. The bill drops only when Cluster Autoscaler or Karpenter removes the nodes they ran on. When a scale-down begins, Cost Deck records those nodes and what they cost, and the card of a schedule that is down shows under **Realized savings** which of them were removed and what that saves against the estimate.' },
+          { p: 'For each node still there it says why:' },
+          {
+            list: [
+              '**Kept by a blocker**: a PodDisruptionBudget that allows no disruption, `karpenter.sh/do-not-disrupt`, `cluster-autoscaler.kubernetes.io/safe-to-evict: "false"`, local storage (`hostPath` or a disk-backed `emptyDir`), a pod no controller would recreate, a pod of another controller, a kube-system pod without a budget, or an opt-out annotation on the node. Cluster Autoscaler honours all of them; Karpenter the budgets and `do-not-disrupt`.',
+              '**Still needed**: pods of other namespaces request at least half of it.',
+              '**Not removed** although it is nearly empty: check that an autoscaler manages its node pool.',
+            ],
+          },
+          { p: 'Autoscalers get 15 minutes before the verdict (Cluster Autoscaler waits 10 by default); until then the card says it is waiting. A schedule that was already down when Cost Deck was upgraded shows nothing until its next scale-down. The assistant and MCP answer the same through `realized_savings`.' },
+        ],
+      },
     ],
   },
 
@@ -1227,6 +1243,7 @@ claude mcp add --transport http costdeck https://costdeck.example.com/mcp \\
                 ['list_calendars', 'Shared holiday calendars and their days to come'],
                 ['add_schedule_exception, remove_schedule_exception', 'Keep a schedule up or down on given dates (admin)'],
                 ['preview_schedule', 'What a schedule would scale, when, and what it saves, without changing anything'],
+                ['realized_savings', 'Which nodes a scale-down freed, and what keeps the others'],
                 ['list_namespaces, get_namespace_status', 'Usage and cost per namespace'],
                 ['get_cost_overview', 'Run rate, efficiency, month to date, savings and the ranked opportunities'],
                 ['get_rightsizing_recommendations', 'What can be reduced in a namespace'],

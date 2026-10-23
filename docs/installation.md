@@ -427,6 +427,26 @@ hibernation:
 
 Only what Cost Deck stopped is started again (it marks it with `costdeck.io/hibernated`).
 
+### Realized savings
+
+The saving a schedule shows is what the stopped workloads request. The bill drops only
+when Cluster Autoscaler or Karpenter removes the nodes they ran on. When a scale-down
+begins, Cost Deck records those nodes and what they cost (`status.scaleDownNodes`). The
+schedule's card then shows which nodes went away, and for each node still there what keeps
+it:
+
+- a PodDisruptionBudget that allows no disruption;
+- `karpenter.sh/do-not-disrupt`, or `cluster-autoscaler.kubernetes.io/safe-to-evict: "false"`;
+- pods Cluster Autoscaler will not move by default: local storage (`hostPath`, a
+  disk-backed `emptyDir`), pods without a controller, pods of other controllers, and
+  kube-system pods without a budget;
+- node annotations that opt out (`scale-down-disabled`, `do-not-disrupt`);
+- or pods of other namespaces that still need it.
+
+The verdict comes 15 minutes after the scale-down begins, once autoscalers have had time to
+act (Cluster Autoscaler waits 10 minutes by default). For this check the operator reads
+PodDisruptionBudgets cluster-wide.
+
 ## Right-sizing advice
 
 The namespace page lists containers whose requests are well above what they use, with a

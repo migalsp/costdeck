@@ -82,6 +82,42 @@ export interface ScheduleStatus {
   nextTransition?: { time: string; desiredState: DesiredState }
   estimatedHourlySavings?: string
   currency?: string
+  // The nodes the scaled workloads ran on when the last scale-down began, for the
+  // realized-savings check.
+  scaleDownNodes?: { name: string; hourlyCost?: string }[]
+  scaleDownAt?: string
+}
+
+// Realized savings: GET /api/scaling/{groups|configs}/{name}/realized checks whether the
+// nodes a schedule's workloads ran on went away after it scaled them down
+// (internal/finops/realized.go).
+export interface NodeBlocker {
+  reason: 'node' | 'pdb' | 'do-not-disrupt' | 'safe-to-evict' | 'local-storage' | 'no-controller' | 'custom-controller' | 'kube-system'
+  pod?: string
+  detail: string
+}
+
+export interface NodeCheck {
+  name: string
+  hourlyCost: number
+  gone: boolean
+  blockers: NodeBlocker[]
+  tenants: { namespace: string; pods: number; cpu: number; memoryGiB: number }[]
+  requestedShare: number
+}
+
+export interface RealizedSavings {
+  // none: nothing recorded (up, or down before the check existed); settling: autoscalers
+  // still have time; checked: the verdict.
+  state: 'none' | 'settling' | 'checked'
+  scaledDownAt?: string
+  settleMinutes: number
+  estimatedHourly: number
+  realizedHourly: number
+  currency: string
+  gone: number
+  blocked: number
+  nodes: NodeCheck[]
 }
 
 // LabelSelector is Kubernetes' label selector, as spec.namespaceSelector stores it.

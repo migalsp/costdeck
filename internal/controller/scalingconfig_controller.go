@@ -110,6 +110,7 @@ func (r *ScalingConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	exclusionsOf := func(string) []string { return exclusions }
 	namespaces := []string{config.Spec.TargetNamespace}
 	reconcileGitOps(ctx, r.Engine, &config.Status.Conditions, config.Generation, namespaces, exclusionsOf, config.Spec.PauseGitOps, targetActive)
+	recordScaleDown(ctx, r.Engine, r.Pricing, &config.Status.ScheduleStatus, namespaces, exclusionsOf, targetActive, previousPhase == scaling.PhaseScaledDown)
 	newReplicas, ready, err := r.Engine.ScaleWithServices(ctx, config.Spec.TargetNamespace, targetActive, config.Spec.Sequence, exclusions, config.Spec.Hibernate, config.Status.OriginalReplicas, timeoutPassed)
 	if err != nil {
 		l.Error(err, "failed to execute scaling")

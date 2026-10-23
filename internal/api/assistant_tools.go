@@ -104,6 +104,17 @@ func (s *Server) toolRegistry() []ai.Tool {
 			},
 		},
 		{
+			Name: "realized_savings",
+			Description: "Whether a schedule's last scale-down saved money: the nodes its workloads ran on, which of them " +
+				"autoscalers removed (and what that saves per hour against the estimate), and for each node still there " +
+				"what keeps it: PodDisruptionBudgets, do-not-disrupt or safe-to-evict annotations, local storage, bare " +
+				"pods, or other namespaces still using it.",
+			Parameters: obj(map[string]any{"target": target, "name": str("ScalingGroup name or namespace")}, "target", "name"),
+			Run: func(ctx context.Context, args map[string]any) (string, error) {
+				return s.toolRealized(ctx, args["target"].(string), args["name"].(string))
+			},
+		},
+		{
 			Name:        "list_calendars",
 			Description: "The shared holiday calendars schedules can use, with the days still to come.",
 			Parameters:  obj(map[string]any{}),

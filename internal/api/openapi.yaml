@@ -864,6 +864,48 @@ paths:
               schema: { type: array, items: { type: object } }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
+  /api/scaling/groups/{name}/realized:
+    get:
+      x-role: viewer
+      tags: [Scaling]
+      summary: Realized savings of a group's scale-down
+      description: >-
+        Whether the last scale-down lowered the bill: the nodes the scaled workloads ran on when
+        it began (with what they cost then), which of them autoscalers have removed, and for
+        each node still there what keeps it (PodDisruptionBudgets that allow no disruption,
+        karpenter.sh/do-not-disrupt, cluster-autoscaler.kubernetes.io/safe-to-evict "false",
+        local storage, pods no controller would recreate, kube-system pods without a budget,
+        node annotations) and what other namespaces still request on it. state is none while
+        nothing is recorded (the target is up, or was already down), settling during the first
+        settleMinutes after the scale-down began, and checked afterwards.
+      parameters:
+        - { name: name, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The check
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RealizedSavings" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { description: No such schedule }
+
+  /api/scaling/configs/{name}/realized:
+    get:
+      x-role: viewer
+      tags: [Scaling]
+      summary: Realized savings of a namespace schedule's scale-down
+      description: The same check as for a group, for a ScalingConfig.
+      parameters:
+        - { name: name, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The check
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RealizedSavings" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { description: No such schedule }
+
   /api/costing:
     post:
       x-role: viewer
@@ -2243,6 +2285,35 @@ components:
         region: { type: string }
         name: { type: string, description: Display name. }
 
+    RealizedSavings:
+      type: object
+      properties:
+        state: { type: string, enum: [none, settling, checked] }
+        scaledDownAt: { type: string, format: date-time }
+        settleMinutes: { type: integer }
+        estimatedHourly: { type: number, description: What the stopped workloads' requests cost per hour. }
+        realizedHourly: { type: number, description: What the removed nodes cost per hour. }
+        currency: { type: string }
+        gone: { type: integer }
+        blocked: { type: integer }
+        nodes:
+          type: array
+          items:
+            type: object
+            properties:
+              name: { type: string }
+              hourlyCost: { type: number }
+              gone: { type: boolean }
+              blockers:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    reason: { type: string, enum: [node, pdb, do-not-disrupt, safe-to-evict, local-storage, no-controller, custom-controller, kube-system] }
+                    pod: { type: string }
+                    detail: { type: string }
+              tenants: { type: array, items: { type: object } }
+              requestedShare: { type: number }
     HibernateRule:
       type: object
       description: >-

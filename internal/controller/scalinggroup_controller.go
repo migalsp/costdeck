@@ -117,6 +117,7 @@ func (r *ScalingGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	// 3. Define stages from group.Spec.Sequence, skipping namespaces an older group owns.
 	stages := r.getScalingStages(group, targetActive, plan.ConflictingNamespaces)
 	namespaces, exclusionsOf := r.gitOpsBeforeStages(ctx, group, stages, targetActive)
+	recordScaleDown(ctx, r.Engine, r.Pricing, &group.Status.ScheduleStatus, namespaces, exclusionsOf, targetActive, group.Status.Phase == scaling.PhaseScaledDown)
 
 	// A transition starts whenever the group is not already moving towards the target
 	// state. It begins at the first stage; while it runs, status.currentStage and

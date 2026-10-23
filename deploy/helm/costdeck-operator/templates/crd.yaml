@@ -1597,6 +1597,30 @@ spec:
                 description: Phase is the current state of the config (ScaledUp, ScalingDown,
                   ScaledDown)
                 type: string
+              scaleDownAt:
+                description: ScaleDownAt is when that scale-down began.
+                format: date-time
+                type: string
+              scaleDownNodes:
+                description: |-
+                  ScaleDownNodes are the nodes the scaled workloads ran on when the last scale-down
+                  began, with what they cost then, so the realized-savings check can tell later whether
+                  they went away. Cleared once the target is up again.
+                items:
+                  description: ScaleDownNode is a node a scale-down could free.
+                  properties:
+                    hourlyCost:
+                      description: HourlyCost is what the node cost per hour when
+                        the scale-down began, e.g. "0.1920".
+                      type: string
+                    name:
+                      type: string
+                  required:
+                  - name
+                  type: object
+                maxItems: 200
+                type: array
+                x-kubernetes-list-type: atomic
             type: object
         required:
         - spec
@@ -2207,6 +2231,30 @@ spec:
                 items:
                   type: string
                 type: array
+              scaleDownAt:
+                description: ScaleDownAt is when that scale-down began.
+                format: date-time
+                type: string
+              scaleDownNodes:
+                description: |-
+                  ScaleDownNodes are the nodes the scaled workloads ran on when the last scale-down
+                  began, with what they cost then, so the realized-savings check can tell later whether
+                  they went away. Cleared once the target is up again.
+                items:
+                  description: ScaleDownNode is a node a scale-down could free.
+                  properties:
+                    hourlyCost:
+                      description: HourlyCost is what the node cost per hour when
+                        the scale-down began, e.g. "0.1920".
+                      type: string
+                    name:
+                      type: string
+                  required:
+                  - name
+                  type: object
+                maxItems: 200
+                type: array
+                x-kubernetes-list-type: atomic
               selectedNamespaces:
                 description: |-
                   SelectedNamespaces are the namespaces spec.namespaceSelector matched at the last
