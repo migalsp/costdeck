@@ -128,6 +128,13 @@ type ScalingGroupSpec struct {
 	// what CostDeck paused itself is resumed. Needs gitops.pause in the Helm chart.
 	// +optional
 	PauseGitOps bool `json:"pauseGitOps,omitempty"`
+
+	// SleepPage points the namespaces' Gateway API HTTPRoutes at Cost Deck's sleep page while
+	// the schedule keeps them down, and back once they are up: whoever opens an application
+	// sees that it is asleep and a link to wake it, not a gateway error. Needs
+	// sleepPage.enabled in the Helm chart.
+	// +optional
+	SleepPage bool `json:"sleepPage,omitempty"`
 }
 
 // Activation modes for ScalingGroupSpec.Activation.

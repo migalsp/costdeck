@@ -426,6 +426,13 @@ spec:
                   ClusterName defines an optional identifier for this cluster.
                   Used in multi-cluster environments to distinguish bot commands.
                 type: string
+              dashboardUrl:
+                description: |-
+                  DashboardURL is the address people open Cost Deck at, e.g.
+                  https://costdeck.example.com. The sleep page links to it to wake a namespace.
+                maxLength: 512
+                pattern: ^https?://[^\s]+$
+                type: string
               features:
                 description: Features holds core CostDeck feature toggles
                 properties:

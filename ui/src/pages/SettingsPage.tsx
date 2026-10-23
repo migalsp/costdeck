@@ -124,6 +124,7 @@ interface EntraSettings {
 }
 
 interface SettingsData {
+  dashboardUrl?: string
   providers: {
     aws?: AWSSettings
     azure?: AzureSettings
@@ -733,6 +734,7 @@ export default function SettingsPage({ section: requested }: { section?: string 
   const [disableLocalLogin, setDisableLocalLogin] = useState(false)
   const [entraEnabled, setEntraEnabled] = useState(false)
   const [oidc, setOIDC] = useState<OIDCForm>(emptyOIDC)
+  const [dashboardUrl, setDashboardUrl] = useState('')
   const [entraTenant, setEntraTenant] = useState('')
   const [entraClient, setEntraClient] = useState('')
   const [entraSecret, setEntraSecret] = useState('')
@@ -810,6 +812,7 @@ export default function SettingsPage({ section: requested }: { section?: string 
         }
         if (data.auth) {
           setDisableLocalLogin(data.auth.disableLocalLogin)
+          setDashboardUrl(data.dashboardUrl || '')
           const o = data.auth.oidc
           if (o) {
             setOIDC({
@@ -945,7 +948,7 @@ export default function SettingsPage({ section: requested }: { section?: string 
         metrics: { integrations: { victoriaMetrics: full.integrations.victoriaMetrics } },
         mcp: { integrations: { mcp: full.integrations.mcp } },
         pricing: { features: full.features, pricing: full.pricing },
-        sso: { auth: full.auth },
+        sso: { auth: full.auth, dashboardUrl: dashboardUrl.trim() },
         calendars: { calendars },
       }
       const res = await fetch('/api/settings', {
@@ -1964,6 +1967,13 @@ export default function SettingsPage({ section: requested }: { section?: string 
           </div>
 
           <OIDCSettings value={oidc} onChange={setOIDC} />
+
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+            <label htmlFor="dashboard-url" className="text-sm font-bold text-slate-700 block">Dashboard address</label>
+            <p className="text-xs text-slate-500 mt-0.5 mb-2">The address people open Cost Deck at. The sleep page a schedule shows while an application is down links here to wake it.</p>
+            <input id="dashboard-url" value={dashboardUrl} onChange={e => setDashboardUrl(e.target.value)} placeholder="https://costdeck.example.com"
+              className="w-full md:w-96 px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm font-mono" />
+          </div>
 
           <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
             <label className="flex items-start gap-3 cursor-pointer">

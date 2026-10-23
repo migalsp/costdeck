@@ -161,6 +161,8 @@ export interface ScalingGroupSpec {
   dryRun?: boolean
   // pauseGitOps pauses Flux and Argo CD while the schedule keeps the workloads down.
   pauseGitOps?: boolean
+  // sleepPage points the namespaces' HTTPRoutes at Cost Deck's sleep page while down.
+  sleepPage?: boolean
   // hibernate stops operator-run services in every namespace of the group.
   hibernate?: HibernateRule[]
 }
@@ -206,6 +208,7 @@ export interface ScalingConfigSpec {
   exclusions?: string[]
   dryRun?: boolean
   pauseGitOps?: boolean
+  sleepPage?: boolean
   hibernate?: HibernateRule[]
 }
 

@@ -286,6 +286,13 @@ spec:
                   type: string
                 type: array
                 x-kubernetes-list-type: atomic
+              sleepPage:
+                description: |-
+                  SleepPage points the namespaces' Gateway API HTTPRoutes at Cost Deck's sleep page while
+                  the schedule keeps them down, and back once they are up: whoever opens an application
+                  sees that it is asleep and a link to wake it, not a gateway error. Needs
+                  sleepPage.enabled in the Helm chart.
+                type: boolean
               targetNamespace:
                 description: TargetNamespace is the namespace this config applies
                   to

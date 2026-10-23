@@ -1027,6 +1027,36 @@ paths:
                 $ref: "#/components/schemas/FinOpsOverview"
         "401": { $ref: "#/components/responses/Unauthorized" }
 
+  /api/wake/{ns}:
+    get:
+      x-role: viewer
+      tags: [Scaling]
+      summary: State of a sleeping namespace
+      description: >-
+        What the dashboard's wake page shows: the schedule that scales the namespace, its desired
+        state, phase and mode, when a manual start ends, whether its HTTPRoutes show the sleep
+        page, and their hostnames (the only hosts the page sends a browser back to). Waking is a
+        manual start on the schedule (POST /api/scaling/{groups|configs}/{name}/manual).
+      parameters:
+        - { name: ns, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The namespace's state
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  namespace: { type: string }
+                  schedule: { type: object, properties: { kind: { type: string, enum: [group, config] }, name: { type: string } } }
+                  desiredState: { type: string }
+                  phase: { type: string }
+                  mode: { type: string }
+                  overrideExpiresAt: { type: string, format: date-time }
+                  sleeping: { type: boolean }
+                  hostnames: { type: array, items: { type: string } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
   /api/finops/ai:
     get:
       x-role: viewer
@@ -2158,6 +2188,12 @@ components:
                 Suspend the Flux Kustomizations and HelmReleases and turn off self-heal of the Argo
                 CD Applications that manage the workloads while they are down, and resume them
                 afterwards. Needs gitops.pause in the Helm chart.
+            sleepPage:
+              type: boolean
+              description: >-
+                Point the namespaces' Gateway API HTTPRoutes at Cost Deck's sleep page while the
+                schedule keeps them down, and back once they are up. Needs sleepPage.enabled in the
+                Helm chart.
             hibernate:
               type: array
               description: >-
@@ -2253,6 +2289,12 @@ components:
                 Suspend the Flux Kustomizations and HelmReleases and turn off self-heal of the Argo
                 CD Applications that manage the workloads while they are down, and resume them
                 afterwards. Needs gitops.pause in the Helm chart.
+            sleepPage:
+              type: boolean
+              description: >-
+                Point the namespaces' Gateway API HTTPRoutes at Cost Deck's sleep page while the
+                schedule keeps them down, and back once they are up. Needs sleepPage.enabled in the
+                Helm chart.
             hibernate:
               type: array
               description: >-

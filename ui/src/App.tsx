@@ -5,6 +5,7 @@ import NamespaceInsights from './pages/NamespaceInsights'
 import Overview from './pages/Overview'
 import StoragePage from './pages/StoragePage'
 import AICostsPage from './pages/AICostsPage'
+import WakePage from './pages/WakePage'
 import BudgetsPage from './pages/BudgetsPage'
 import NamespaceDetails from './pages/NamespaceDetails'
 import OperatorHealth from './pages/OperatorHealth'
@@ -67,7 +68,7 @@ function NavItem({ icon, label, to, active }: { icon: ReactNode; label: string; 
   )
 }
 
-type Page = 'overview' | 'namespaces' | 'cluster' | 'storage' | 'ai' | 'health' | 'budgets' | 'scaling' | 'reports' | 'docs' | 'settings'
+type Page = 'overview' | 'namespaces' | 'cluster' | 'storage' | 'ai' | 'wake' | 'health' | 'budgets' | 'scaling' | 'reports' | 'docs' | 'settings'
 
 // Every page has one path. Namespace details live under the page they were opened from,
 // /namespaces/<ns> or /scaling/<ns>, so Back leads to that list; the docs take a guide
@@ -78,6 +79,7 @@ const pages: Record<Page, { path: string; title: string; sub?: boolean }> = {
   cluster: { path: '/cluster', title: 'Cluster Node Map' },
   storage: { path: '/storage', title: 'Storage & Network' },
   ai: { path: '/ai', title: 'AI Costs' },
+  wake: { path: '/wake', title: 'Wake', sub: true },
   health: { path: '/health', title: 'Cost Deck Health' },
   budgets: { path: '/budgets', title: 'Budgets & Alerts' },
   scaling: { path: '/scaling', title: 'Scaling Schedules', sub: true },
@@ -271,6 +273,8 @@ function App() {
         {page === 'cluster' && <ClusterDashboard />}
         {page === 'storage' && <StoragePage />}
         {page === 'ai' && <AICostsPage />}
+        {page === 'wake' && sub && <WakePage namespace={sub} />}
+        {page === 'wake' && !sub && <NotFound title="Wake" subtitle="Open the wake link a sleeping application shows, or start a namespace from Scaling Schedules." />}
         {page === 'budgets' && <BudgetsPage />}
         {page === 'health' && <OperatorHealth />}
         {page === 'docs' && <Documentation guide={sub} />}

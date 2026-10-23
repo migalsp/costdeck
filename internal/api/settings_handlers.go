@@ -8,6 +8,7 @@ import (
 	"io"
 	"maps"
 	"net/http"
+	"net/url"
 	"path"
 	"regexp"
 	"slices"
@@ -36,6 +37,8 @@ import (
 // SettingsResponse is the full settings response returned to the UI.
 // Credentials are always masked.
 type SettingsResponse struct {
+	// DashboardURL is the address people open Cost Deck at.
+	DashboardURL string                       `json:"dashboardUrl,omitempty"`
 	Providers    ProvidersSettingsResponse    `json:"providers"`
 	Integrations IntegrationsSettingsResponse `json:"integrations"`
 	Features     *FeaturesSettingsResponse    `json:"features,omitempty"`
@@ -189,6 +192,7 @@ type VictoriaMetricsSettingsResponse struct {
 // SettingsUpdateRequest is the payload for updating settings.
 // Credentials are provided here in plaintext and then stored in K8s Secrets.
 type SettingsUpdateRequest struct {
+	DashboardURL *string                    `json:"dashboardUrl,omitempty"`
 	Providers    *ProvidersUpdateRequest    `json:"providers,omitempty"`
 	Integrations *IntegrationsUpdateRequest `json:"integrations,omitempty"`
 	Features     *FeaturesUpdateRequest     `json:"features,omitempty"`
@@ -511,6 +515,7 @@ func (s *Server) buildSettingsResponse(ctx context.Context, cfg *finopsv1.CostDe
 
 	// Sign-in
 	resp.Auth.DisableLocalLogin = cfg.Spec.Auth.DisableLocalLogin
+	resp.DashboardURL = cfg.Spec.DashboardURL
 	if e := cfg.Spec.Auth.Entra; e != nil {
 		resp.Auth.Entra = &EntraSettingsResponse{
 			Enabled:          e.Enabled,
@@ -550,7 +555,7 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 
 	appliers := []func(context.Context, *finopsv1.CostDeckConfig, *SettingsUpdateRequest) error{
 		s.applyAWSSettings, s.applyAzureSettings, s.applyGCPSettings, s.applyAISettings,
-		s.applyWebexSettings, s.applyVictoriaMetricsSettings, applyMCPSettings, applyFeatureSettings, applyPricingSettings, applyReportSettings, applyBudgetSettings, applyBillingSettings, applyCalendarSettings, s.applyAuthSettings,
+		s.applyWebexSettings, s.applyVictoriaMetricsSettings, applyMCPSettings, applyFeatureSettings, applyPricingSettings, applyReportSettings, applyBudgetSettings, applyBillingSettings, applyCalendarSettings, s.applyAuthSettings, applyDashboardURL,
 	}
 
 	var cfg *finopsv1.CostDeckConfig
@@ -1092,6 +1097,22 @@ func (s *Server) applyAuthSettings(ctx context.Context, cfg *finopsv1.CostDeckCo
 	}
 	return s.storeCredentials(ctx, "costdeck-entra-credentials",
 		map[string][]byte{auth.SecretKeyClientSecret: []byte(er.ClientSecret)}, &e.ClientSecretRef)
+}
+
+// applyDashboardURL sets the address people open Cost Deck at; an empty one clears it.
+func applyDashboardURL(_ context.Context, cfg *finopsv1.CostDeckConfig, req *SettingsUpdateRequest) error {
+	if req.DashboardURL == nil {
+		return nil
+	}
+	v := strings.TrimRight(strings.TrimSpace(*req.DashboardURL), "/")
+	if v != "" {
+		u, err := url.Parse(v)
+		if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+			return badRequestf("the dashboard URL must be an http(s) address such as https://costdeck.example.com")
+		}
+	}
+	cfg.Spec.DashboardURL = v
+	return nil
 }
 
 // roleMapping validates a group-to-role mapping.

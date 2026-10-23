@@ -101,6 +101,11 @@
       "description": "Pause Flux and Argo CD for schedules with spec.pauseGitOps (needs cluster-wide read and patch on their objects).",
       "properties": { "pause": { "type": "boolean" } }
     },
+    "sleepPage": {
+      "type": "object",
+      "description": "Show a sleep page on the Gateway API HTTPRoutes of namespaces a schedule keeps down (needs read and patch on HTTPRoutes cluster-wide).",
+      "properties": { "enabled": { "type": "boolean" } }
+    },
     "hibernation": {
       "type": "object",
       "description": "Stop operator-run services (databases, Kafka Connect) for schedules with hibernate rules (needs cluster-wide read and patch on their resources).",

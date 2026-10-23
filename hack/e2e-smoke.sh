@@ -22,6 +22,7 @@
 #   98 the assistant's monthly token budget            (disposable clusters only)
 #   99 a schedule suggested from a week of usage        (disposable clusters only)
 #  990 single sign-on with a real Keycloak               (disposable clusters only)
+#  991 the sleep page on Gateway API HTTPRoutes           (disposable clusters only)
 #
 # Run it against a disposable cluster (Kind in CI, `make test-e2e` locally): it installs
 # CRDs, metrics-server and changes settings. IMAGE must already be loadable by the cluster
@@ -81,6 +82,7 @@ if [[ -z "${SKIP_INSTALL:-}" ]]; then
     --set image.repository="${IMAGE%:*}" --set image.tag="${IMAGE##*:}" --set image.pullPolicy=Never \
     --set gitops.pause=true \
     --set hibernation.enabled=true \
+    --set sleepPage.enabled=true \
     --wait --timeout 3m
   if ! kubectl get apiservice v1beta1.metrics.k8s.io >/dev/null 2>&1; then
     log "Installing metrics-server $METRICS_SERVER_VERSION"

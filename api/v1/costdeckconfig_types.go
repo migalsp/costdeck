@@ -690,6 +690,13 @@ type CostDeckConfigSpec struct {
 	// +optional
 	ClusterName string `json:"clusterName,omitempty"`
 
+	// DashboardURL is the address people open Cost Deck at, e.g.
+	// https://costdeck.example.com. The sleep page links to it to wake a namespace.
+	// +kubebuilder:validation:Pattern=`^https?://[^\s]+$`
+	// +kubebuilder:validation:MaxLength=512
+	// +optional
+	DashboardURL string `json:"dashboardUrl,omitempty"`
+
 	// Providers holds cloud provider configurations
 	// +optional
 	Providers ProvidersConfig `json:"providers,omitempty"`

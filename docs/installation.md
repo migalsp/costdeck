@@ -516,6 +516,29 @@ hibernation:
 
 Only what Cost Deck stopped is started again (it marks it with `costdeck.io/hibernated`).
 
+### Sleep page
+
+With **Show a sleep page while down** (`spec.sleepPage`), once a schedule has brought its
+namespaces down, Cost Deck points their Gateway API HTTPRoutes at its own page. Whoever
+opens the application then sees that it is asleep, when it starts again, and a link to wake
+it, instead of a gateway error. The routes get their backends and filters back once the
+namespaces are up again, so nothing of Cost Deck is in the path of the traffic while they
+run.
+
+- **Waking.** The link opens the dashboard's `/wake/<namespace>` page (set **Settings →
+  Single sign-on → Dashboard address**). Someone with the operator role starts the
+  namespace there for 1, 4 or 8 hours, a manual start that ends by itself. The sleep page
+  checks every 20 seconds and shows the application once it is back. A person wakes it,
+  not every request, so bots and health checks do not keep it up.
+- **How the routes are changed.** Each rule's backends and filters are kept in the
+  `costdeck.io/sleeping` annotation. Meanwhile the rule points at the `<release>-api`
+  Service with a header naming the namespace. A ReferenceGrant `costdeck-sleep-page` in the
+  operator namespace opens that Service to the sleeping routes.
+- **Permissions.** Install with `--set sleepPage.enabled=true`, which grants read and patch
+  on HTTPRoutes cluster-wide and ReferenceGrants in the operator namespace.
+- **Ingress controllers.** Ingress-based routing is not covered. ingress-nginx, the usual
+  one, was retired in March 2026, and Gateway API is its recommended successor.
+
 ### Realized savings
 
 The saving a schedule shows is what the stopped workloads request. The bill drops only
@@ -620,6 +643,7 @@ helm upgrade costdeck-operator oci://ghcr.io/migalsp/costdeck/charts/costdeck-op
 | `gitops.pause` | `false` | Lets schedules with `spec.pauseGitOps` pause Flux and Argo CD (cluster-wide read and patch on their objects) |
 | `hibernation.enabled` | `false` | Lets hibernate rules stop CloudNativePG and Zalando Postgres clusters and Strimzi Connect, MirrorMaker 2 and Bridge (cluster-wide read and patch on them) |
 | `hibernation.extraRules` | `[]` | `apiGroups` and `resources` of other operators' kinds that hibernate rules stop |
+| `sleepPage.enabled` | `false` | Lets schedules with `spec.sleepPage` point their HTTPRoutes at the sleep page (read and patch on HTTPRoutes, ReferenceGrants in the release namespace) |
 
 `values.schema.json` rejects malformed values at install time.
 

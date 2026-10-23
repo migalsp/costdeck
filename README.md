@@ -75,6 +75,8 @@ them back on time. There is no external service: one operator in your cluster do
 - **AI costs.** What applications pay LLM APIs by team and model (LiteLLM spend, or
   OpenTelemetry GenAI token counts at your model prices), and what the models you serve
   with vLLM cost per million tokens.
+- **A sleep page while down.** A sleeping environment's Gateway API routes show a page that
+  says it is asleep and links to waking it for an hour or two, instead of a gateway error.
 - **Savings that reach the bill.** After a scale-down, each schedule shows which nodes the
   autoscaler removed and what keeps the others: a PodDisruptionBudget, `do-not-disrupt`,
   `safe-to-evict: "false"`, local storage, or other namespaces still using them.

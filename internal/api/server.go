@@ -162,7 +162,7 @@ func (s *Server) Handler() (http.Handler, error) {
 	if s.Auth != nil {
 		h = s.Auth.Middleware(h)
 	}
-	return securityHeaders(h), nil
+	return securityHeaders(s.sleepPages(h)), nil
 }
 
 // routes registers every API endpoint with the minimum role it requires. Method-qualified
@@ -233,6 +233,7 @@ func (s *Server) routes() *http.ServeMux {
 	viewer("GET /api/scaling/groups/{name}/events", s.handleScalingGroupEvents)
 	viewer("GET /api/scaling/groups/{name}/realized", s.handleGroupRealized)
 	viewer("GET /api/finops/ai", s.handleAICosts)
+	viewer("GET /api/wake/{ns}", s.handleWakeStatus)
 	viewer("GET /api/scaling/configs", s.listScalingConfigs)
 	admin("POST /api/scaling/configs", s.createScalingConfig)
 	viewer("GET /api/scaling/configs/{name}", s.getScalingConfig)

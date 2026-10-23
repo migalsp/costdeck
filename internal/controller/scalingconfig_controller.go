@@ -120,6 +120,7 @@ func (r *ScalingConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	if targetActive && ready {
 		resumeGitOps(ctx, r.Engine, namespaces, exclusionsOf)
 	}
+	reconcileSleepPage(ctx, r.Engine, &config.Status.Conditions, config.Generation, namespaces, config.Spec.SleepPage, targetActive, ready)
 
 	// 4. Update Status
 	config.Status.OriginalReplicas = newReplicas

@@ -542,6 +542,14 @@ spec:
         ],
       },
       {
+        id: 'sleep-page',
+        title: 'A sleep page while down',
+        blocks: [
+          { p: 'With **Show a sleep page while down** in the schedule editor, once the namespaces are down Cost Deck points their Gateway API HTTPRoutes at its own page: whoever opens the application sees that it is asleep, when it starts again, and a link to wake it, instead of a gateway error. The routes get their backends back once the namespaces are up, so Cost Deck is never in the way of the traffic while they run.' },
+          { p: 'The link opens **Wake** in the dashboard (set the dashboard address under Settings → Single sign-on), where someone with the operator role starts the namespace for 1, 4 or 8 hours. The sleep page checks every 20 seconds and shows the application once it is back. A person wakes it, so bots and health checks do not keep it up. It needs `sleepPage.enabled=true` in the Helm chart.' },
+        ],
+      },
+      {
         id: 'realized',
         title: 'Realized savings',
         blocks: [

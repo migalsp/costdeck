@@ -191,6 +191,7 @@ func (r *ScalingGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if targetActive && allReady {
 		resumeGitOps(ctx, r.Engine, namespaces, exclusionsOf)
 	}
+	reconcileSleepPage(ctx, r.Engine, &group.Status.Conditions, group.Generation, namespaces, group.Spec.SleepPage, targetActive, allReady)
 	// A settled group keeps no stage state, so its status stays unchanged between reconciles.
 	group.Status.CurrentStage, group.Status.SkippedNamespaces = 0, skippedNamespaces
 	if !allReady {

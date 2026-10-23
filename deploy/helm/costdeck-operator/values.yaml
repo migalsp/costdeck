@@ -110,6 +110,12 @@ hibernation:
   enabled: false
   extraRules: []
 
+# Lets schedules with spec.sleepPage point their namespaces' Gateway API HTTPRoutes at
+# Cost Deck's sleep page while they are down: read and patch on HTTPRoutes cluster-wide,
+# and a ReferenceGrant in this namespace that opens the API Service to those routes.
+sleepPage:
+  enabled: false
+
 # Created automatically when replicaCount > 1 (a PDB on a single replica would block node
 # drains); set enabled to force it.
 podDisruptionBudget:

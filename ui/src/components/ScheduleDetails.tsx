@@ -47,6 +47,7 @@ export default function ScheduleDetails(p: Props) {
   const [confirmDelete, setConfirmDelete] = useState(false)
 
   const gitOps = status?.conditions?.find(c => c.type === 'GitOps')
+  const sleepPage = status?.conditions?.find(c => c.type === 'SleepPage')
   const line = statusLine({ phase: status?.phase, status, dependsOn: spec.dependsOn, activeUntil: spec.activeUntil, generation: obj.metadata.generation })
   const manual = status?.mode === 'ManualUp' || status?.mode === 'ManualDown' || (spec.active !== undefined && spec.active !== null)
   const up = status?.desiredState ? status.desiredState === 'Up' : status?.phase === 'ScaledUp'
@@ -101,6 +102,12 @@ export default function ScheduleDetails(p: Props) {
           )}
 
           {!up && <RealizedSavings kind={p.target.kind} name={obj.metadata.name} />}
+
+          {sleepPage && (
+            <div className={`rounded-xl border px-4 py-3 text-sm ${sleepPage.reason === 'Forbidden' || sleepPage.reason === 'Failed' ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-slate-200 bg-slate-50 text-slate-600'}`} data-testid="sleep-note">
+              <b>Sleep page:</b> {sleepPage.message}
+            </div>
+          )}
 
           {gitOps && (
             <div className={`rounded-xl border px-4 py-3 text-sm ${gitOps.reason === 'Paused' ? 'border-slate-200 bg-slate-50 text-slate-600' : 'border-amber-200 bg-amber-50 text-amber-800'}`} data-testid="gitops-note">
