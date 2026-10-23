@@ -356,6 +356,43 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /api/namespaces/{ns}/schedule-suggestion:
+    get:
+      x-role: viewer
+      tags: [Namespaces]
+      summary: Suggest a schedule from usage
+      description: >-
+        Working hours read from the namespace's CPU usage over the last week (VictoriaMetrics):
+        the hours it was busy, relative to its own idle level, plus an hour on either side,
+        merged into weekly windows in the given time zone. reason is pattern (schedules
+        suggested), steady (busy at almost every hour), idle (no activity) or insufficient
+        (less than a day of history). monthlySaving is what the schedule would keep down at
+        the namespace's current cost.
+      parameters:
+        - { name: ns, in: path, required: true, schema: { type: string } }
+        - { name: timezone, in: query, schema: { type: string, default: UTC }, example: Europe/Berlin }
+      responses:
+        "200":
+          description: The suggestion
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  namespace: { type: string }
+                  reason: { type: string, enum: [pattern, steady, idle, insufficient] }
+                  schedules: { type: array, items: { $ref: "#/components/schemas/ScalingSchedule" } }
+                  upShare: { type: number }
+                  busy: { type: array, description: "7 days (Sunday first) of 24 booleans: hours with activity." }
+                  up: { type: array, description: "7 days of 24 booleans: hours the suggested schedules keep up." }
+                  days: { type: integer }
+                  timezone: { type: string }
+                  monthlySaving: { type: number }
+                  currency: { type: string }
+                  source: { type: string, enum: [victoriametrics, costdeck] }
+        "400": { description: Unknown time zone }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
   /api/namespaces/{ns}/history:
     get:
       x-role: viewer

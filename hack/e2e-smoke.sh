@@ -20,6 +20,7 @@
 #   96 GPU cost and idle GPUs from DCGM               (disposable clusters only)
 #   97 LLM API spend and self-hosted model costs        (disposable clusters only)
 #   98 the assistant's monthly token budget            (disposable clusters only)
+#   99 a schedule suggested from a week of usage        (disposable clusters only)
 #
 # Run it against a disposable cluster (Kind in CI, `make test-e2e` locally): it installs
 # CRDs, metrics-server and changes settings. IMAGE must already be loadable by the cluster

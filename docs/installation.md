@@ -407,6 +407,9 @@ claude mcp add --transport http costdeck https://costdeck.example.com/mcp \
   keeps it up while running. An **on-demand** schedule has no hours of its own.
 - **Overrides**: Start now and Scale down now ignore the schedule until the next scheduled
   change, for a chosen time, or until you click **Follow schedule**.
+- **Suggest from usage** (schedule editor, one namespace picked): the hours the namespace
+  was busy over the last week, read from VictoriaMetrics, with an hour of margin on either
+  side, become its windows; the editor shows the share of the week and the saving.
 - **Workload rules** (on the namespace page): workloads that never scale down, and the
   order workloads start in, in stages that start top to bottom and stop bottom to top;
   workloads in no stage start last and stop first. A workload goes to the stage of its

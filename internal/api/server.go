@@ -197,6 +197,7 @@ func (s *Server) routes() *http.ServeMux {
 	// Namespace insights and right-sizing
 	viewer("GET /api/namespaces", s.handleNamespaces)
 	viewer("GET /api/namespaces/{ns}/history", s.serveHistory)
+	viewer("GET /api/namespaces/{ns}/schedule-suggestion", s.handleScheduleSuggestion)
 	viewer("GET /api/namespaces/{ns}/pods", s.servePods)
 	viewer("GET /api/namespaces/{ns}/workloads", s.serveWorkloads)
 	operator("PUT /api/namespaces/{ns}/workloads/{name}", s.serveWorkloadAction)

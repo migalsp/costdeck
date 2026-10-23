@@ -53,6 +53,8 @@ them back on time. There is no external service: one operator in your cluster do
 - **Shared platforms on demand.** A schedule can depend on another one. An on-demand
   platform (databases, Kafka, logging) starts only while an environment that needs it is
   up, and environments wait until it is fully up.
+- **Schedules suggested from usage.** One click reads a week of a namespace's CPU usage and
+  fills in the hours it is busy, with the saving.
 - **Overrides that end on their own.** "Start now" or "Scale down now" holds until the next
   scheduled change, or for a time you choose, then the schedule takes over again.
 - **Holidays and release weekends.** Dated exceptions and shared holiday calendars keep a

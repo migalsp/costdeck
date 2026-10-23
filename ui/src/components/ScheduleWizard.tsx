@@ -10,6 +10,7 @@ import { usePolling } from '../lib/usePolling'
 import ExceptionsEditor from './ExceptionsEditor'
 import HibernateEditor from './HibernateEditor'
 import SchedulePreview from './SchedulePreview'
+import ScheduleSuggestion from './ScheduleSuggestion'
 import ScheduleEditor from './ScheduleEditor'
 import StartOrderEditor, { type StartOrder } from './StartOrderEditor'
 import { Button, Modal, Tabs } from './ui'
@@ -240,6 +241,9 @@ export default function ScheduleWizard(props: Props) {
 
       <section>
         <h3 className="text-sm font-semibold text-slate-800 mb-2">When should they run?</h3>
+        {selected.length === 1 && (
+          <ScheduleSuggestion namespace={selected[0]} timezone={plan.timezone} onApply={schedules => setPlan(planFromSpec({ schedules }))} />
+        )}
         <ScheduleEditor plan={plan} onChange={setPlan} allowOnDemand={isGroup} />
         {editing && overrideActive && scheduleChanged && (
           <p className="mt-2 text-xs font-medium text-amber-700">Saving ends the current manual override, so the new schedule applies straight away.</p>

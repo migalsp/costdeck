@@ -80,6 +80,17 @@ func (s *Server) toolRegistry() []ai.Tool {
 			Run:        func(ctx context.Context, _ map[string]any) (string, error) { return s.toolCostOverview(ctx) },
 		},
 		{
+			Name: "suggest_schedule",
+			Description: "Working hours for a namespace, read from its CPU usage over the last week: the weekly windows it " +
+				"was busy in (with an hour of margin), the share of the week they cover and what a schedule with them would " +
+				"save. Says so when the namespace is busy around the clock, idle, or has too little history.",
+			Parameters: obj(map[string]any{"namespace": str("Namespace"), "timezone": str("IANA time zone for the windows, e.g. Europe/Berlin; default UTC")}, "namespace"),
+			Run: func(ctx context.Context, args map[string]any) (string, error) {
+				tz, _ := args["timezone"].(string)
+				return s.toolSuggestSchedule(ctx, args["namespace"].(string), tz)
+			},
+		},
+		{
 			Name: "get_ai_costs",
 			Description: "LLM costs: what applications pay LLM APIs per month by team and by model (LiteLLM spend, or " +
 				"OpenTelemetry GenAI token counts at the model prices in Settings), models without a price, and what each " +

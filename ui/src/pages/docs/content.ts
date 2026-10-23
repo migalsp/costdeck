@@ -517,6 +517,14 @@ spec:
         ],
       },
       {
+        id: 'suggest',
+        title: 'A schedule suggested from usage',
+        blocks: [
+          { p: 'With one namespace picked, **Suggest from usage** in the schedule editor reads its CPU usage over the last week from VictoriaMetrics and fills in the hours it was busy, in the schedule\'s time zone, with an hour of margin on either side. Busy means well above the namespace\'s own idle level, so a short nightly job counts too. The editor says what share of the week the schedule keeps it up and what it would save; check the hours and save.' },
+          { p: 'It suggests nothing when the namespace is busy at almost every hour (a schedule would cut into use), did nothing all week, or has less than a day of history; without VictoriaMetrics Cost Deck keeps only the last hour. The assistant and MCP answer the same through `suggest_schedule`.' },
+        ],
+      },
+      {
         id: 'services',
         title: 'Databases and other operator-run services',
         blocks: [
@@ -1251,6 +1259,7 @@ claude mcp add --transport http costdeck https://costdeck.example.com/mcp \\
                 ['realized_savings', 'Which nodes a scale-down freed, and what keeps the others'],
                 ['get_gpu_usage', 'What the GPUs cost, who holds them, how busy they are, and the GPU advice'],
                 ['get_ai_costs', 'LLM API spend by team and model, and what self-hosted models cost per million tokens'],
+                ['suggest_schedule', 'Working hours for a namespace, read from a week of its CPU usage'],
                 ['list_namespaces, get_namespace_status', 'Usage and cost per namespace'],
                 ['get_cost_overview', 'Run rate, efficiency, month to date, savings and the ranked opportunities'],
                 ['get_rightsizing_recommendations', 'What can be reduced in a namespace'],
