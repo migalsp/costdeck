@@ -226,6 +226,25 @@ flags:
 - GPUs that several workloads could share through MIG or time-slicing (below 50%);
 - a cheaper model with enough memory for what the workload holds.
 
+### AI costs
+
+**AI Costs** (`GET /api/finops/ai`) shows what the cluster's applications pay LLM APIs,
+per team and model, and what the models it serves itself cost per million tokens. The
+token counts of the last seven days come from VictoriaMetrics, extrapolated to a month:
+
+- **LiteLLM** (`callbacks: ["prometheus"]`) reports its spend and tokens per LiteLLM team
+  (`litellm_spend_metric`, `litellm_input_tokens_metric`, `litellm_output_tokens_metric`).
+- **OpenTelemetry GenAI** metrics from your applications: the `gen_ai.client.token.usage`
+  histogram, or the `gen_ai.client.inference.usage.input_tokens` and `output_tokens`
+  counters that replace it. They are charged to the team of the namespace
+  (`k8s.namespace.name` through a collector, else the scrape's `namespace`) at the model
+  prices you set under **Settings → Prices** (`spec.pricing.llmModels`, per million input
+  and output tokens; globs such as `claude-sonnet-*` work). Models without a price are
+  listed so you can add one.
+- **vLLM** (`vllm:prompt_tokens`, `vllm:generation_tokens`): the run rate of the
+  namespace serving a model, GPUs included, divided by the tokens it served gives the cost
+  per million tokens.
+
 ## Reconciling with the cloud bill
 
 **Settings → Cloud bill** reads what the cloud charged for

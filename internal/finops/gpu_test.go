@@ -50,7 +50,7 @@ func gpuCluster(t *testing.T, gpuPods map[string]string) client.Client {
 }
 
 func TestGPUCostInTheSnapshot(t *testing.T) {
-	rates := pricing.Rates{CPUCoreHour: 0.033, MemoryGBHour: 0.00375, Currency: "USD"}
+	rates := pricing.Rates{CPUCoreHour: 0.033, MemoryGBHour: 0.00375, Currency: usd}
 	c := gpuCluster(t, map[string]string{"train": "2"})
 	s, err := Build(context.Background(), c, rates, Options{Namespace: "costdeck", Now: time.Now()})
 	if err != nil {
@@ -152,7 +152,7 @@ func TestGPUNodesInTheNodeView(t *testing.T) {
 		Spec: corev1.PodSpec{NodeName: "gpu", Containers: []corev1.Container{{Name: "c", Resources: corev1.ResourceRequirements{
 			Requests: corev1.ResourceList{corev1.ResourceCPU: q("100m"), pricing.ResourceNvidiaGPU: q("1")}, Limits: corev1.ResourceList{pricing.ResourceNvidiaGPU: q("1")}}}}},
 		Status: corev1.PodStatus{Phase: corev1.PodRunning}}
-	rates := pricing.Rates{CPUCoreHour: 0.033, MemoryGBHour: 0.00375, Currency: "USD"}
+	rates := pricing.Rates{CPUCoreHour: 0.033, MemoryGBHour: 0.00375, Currency: usd}
 	rep := BuildNodes([]corev1.Node{node("a", ""), node("b", ""), node("gpu", "2")}, []corev1.Pod{pod}, nil, rates, time.Now())
 	var gpu NodeView
 	for _, n := range rep.Nodes {

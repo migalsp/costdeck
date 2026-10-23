@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { Scaling, Server, LineChart, Activity, BookOpen, FileText, LogOut, Settings, UserCircle2, LayoutDashboard, HardDrive, Target, KeyRound } from 'lucide-react'
+import { Scaling, Server, LineChart, Activity, BookOpen, FileText, LogOut, Settings, UserCircle2, LayoutDashboard, HardDrive, Target, KeyRound, Sparkles } from 'lucide-react'
 import type { ReactNode } from 'react'
 import NamespaceInsights from './pages/NamespaceInsights'
 import Overview from './pages/Overview'
 import StoragePage from './pages/StoragePage'
+import AICostsPage from './pages/AICostsPage'
 import BudgetsPage from './pages/BudgetsPage'
 import NamespaceDetails from './pages/NamespaceDetails'
 import OperatorHealth from './pages/OperatorHealth'
@@ -66,7 +67,7 @@ function NavItem({ icon, label, to, active }: { icon: ReactNode; label: string; 
   )
 }
 
-type Page = 'overview' | 'namespaces' | 'cluster' | 'storage' | 'health' | 'budgets' | 'scaling' | 'reports' | 'docs' | 'settings'
+type Page = 'overview' | 'namespaces' | 'cluster' | 'storage' | 'ai' | 'health' | 'budgets' | 'scaling' | 'reports' | 'docs' | 'settings'
 
 // Every page has one path. Namespace details live under the page they were opened from,
 // /namespaces/<ns> or /scaling/<ns>, so Back leads to that list; the docs take a guide
@@ -76,6 +77,7 @@ const pages: Record<Page, { path: string; title: string; sub?: boolean }> = {
   namespaces: { path: '/namespaces', title: 'Namespace Insights', sub: true },
   cluster: { path: '/cluster', title: 'Cluster Node Map' },
   storage: { path: '/storage', title: 'Storage & Network' },
+  ai: { path: '/ai', title: 'AI Costs' },
   health: { path: '/health', title: 'Cost Deck Health' },
   budgets: { path: '/budgets', title: 'Budgets & Alerts' },
   scaling: { path: '/scaling', title: 'Scaling Schedules', sub: true },
@@ -195,6 +197,7 @@ function App() {
             <NavItem icon={<LineChart size={18} />} label="Namespace Insights" to="/namespaces" active={page === 'namespaces'} />
             <NavItem icon={<Server size={18} />} label="Cluster Node Map" to="/cluster" active={page === 'cluster'} />
             <NavItem icon={<HardDrive size={18} />} label="Storage & Network" to="/storage" active={page === 'storage'} />
+            <NavItem icon={<Sparkles size={18} />} label="AI Costs" to="/ai" active={page === 'ai'} />
             <NavItem icon={<Activity size={18} />} label="Cost Deck Health" to="/health" active={page === 'health'} />
           </NavGroup>
           <NavGroup title="Management">
@@ -267,6 +270,7 @@ function App() {
         )}
         {page === 'cluster' && <ClusterDashboard />}
         {page === 'storage' && <StoragePage />}
+        {page === 'ai' && <AICostsPage />}
         {page === 'budgets' && <BudgetsPage />}
         {page === 'health' && <OperatorHealth />}
         {page === 'docs' && <Documentation guide={sub} />}

@@ -51,6 +51,7 @@ type Provider struct {
 	history   map[time.Duration]cachedHistory
 
 	gpu gpuCache
+	llm llmCache
 }
 
 type cachedHistory struct {

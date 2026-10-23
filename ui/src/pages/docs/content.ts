@@ -714,6 +714,7 @@ curl -H "Authorization: Bearer $TOKEN" "$COSTDECK/api/discovery/azure/vm"`,
           { p: 'The AWS and Azure estimates are the per-core and per-GiB prices that their general-purpose instances work out at (m6i and r6i, Dsv5 and Esv5); the others are the reference rates OpenCost and Kubecost use. Without a cloud price list, network volumes are estimated at $0.08 a GiB-month, like a general-purpose cloud SSD.' },
           { p: 'Every cost figure says which basis it uses, and Settings → Prices shows the rates in effect. Spot, reservations and savings plans are not applied, so treat the numbers as list prices.' },
           { p: '**GPUs** are priced apart, so a GPU node does not make every other pod look expensive. With cloud list prices a GPU costs its node\'s price less the node\'s CPU and memory, divided by its GPUs; otherwise an estimate for its model (from the `nvidia.com/gpu.product` label): T4 $0.33, L4 $0.61, A10G $0.81, L40S $1.61, A100 $1.81 (80 GB $2.50), H100 $5.13 an hour, AWS us-east-1 prices less CPU and memory. A custom GPU rate under Settings → Prices applies to every GPU. A namespace pays for the GPUs its pods request, MIG devices and time-sliced shares as their fraction of a GPU.' },
+          { p: '**AI Costs** shows what applications pay LLM APIs, by team and model, from the last seven days of token counts in VictoriaMetrics: LiteLLM\'s own spend per LiteLLM team, and OpenTelemetry GenAI token metrics (`gen_ai.client.token.usage`, or the newer input and output token counters) charged to the team of their namespace at the model prices under Settings → Prices. Models without a price are listed. For models served with vLLM, the namespace\'s run rate, GPUs included, divided by the tokens it served gives the cost per million tokens. The assistant and MCP answer through `get_ai_costs`.' },
           { p: 'With VictoriaMetrics scraping NVIDIA\'s DCGM exporter in Kubernetes mode, the overview and the namespace table show how busy each namespace\'s GPUs were over the last day, and the advice names idle GPUs, GPUs several workloads could share through MIG or time-slicing, and cheaper models with enough memory. The assistant and MCP answer through `get_gpu_usage`.' },
           {
             ways: {
@@ -1248,6 +1249,7 @@ claude mcp add --transport http costdeck https://costdeck.example.com/mcp \\
                 ['preview_schedule', 'What a schedule would scale, when, and what it saves, without changing anything'],
                 ['realized_savings', 'Which nodes a scale-down freed, and what keeps the others'],
                 ['get_gpu_usage', 'What the GPUs cost, who holds them, how busy they are, and the GPU advice'],
+                ['get_ai_costs', 'LLM API spend by team and model, and what self-hosted models cost per million tokens'],
                 ['list_namespaces, get_namespace_status', 'Usage and cost per namespace'],
                 ['get_cost_overview', 'Run rate, efficiency, month to date, savings and the ranked opportunities'],
                 ['get_rightsizing_recommendations', 'What can be reduced in a namespace'],

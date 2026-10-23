@@ -70,6 +70,9 @@ them back on time. There is no external service: one operator in your cluster do
   or an estimate per model) and charged to the namespaces that request them. With NVIDIA's
   DCGM exporter in VictoriaMetrics, Cost Deck finds idle GPUs, GPUs workloads could share
   through MIG or time-slicing, and cheaper models with enough memory.
+- **AI costs.** What applications pay LLM APIs by team and model (LiteLLM spend, or
+  OpenTelemetry GenAI token counts at your model prices), and what the models you serve
+  with vLLM cost per million tokens.
 - **Savings that reach the bill.** After a scale-down, each schedule shows which nodes the
   autoscaler removed and what keeps the others: a PodDisruptionBudget, `do-not-disrupt`,
   `safe-to-evict: "false"`, local storage, or other namespaces still using them.

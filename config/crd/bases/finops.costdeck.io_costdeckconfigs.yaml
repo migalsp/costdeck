@@ -480,6 +480,36 @@ spec:
                       model.
                     pattern: ^[0-9]+(\.[0-9]+)?$
                     type: string
+                  llmModels:
+                    description: |-
+                      LLMModels price the LLM tokens applications report through OpenTelemetry, per
+                      million tokens. LiteLLM reports what its tokens cost itself.
+                    items:
+                      description: LLMModelPrice is what a model's tokens cost.
+                      properties:
+                        inputPer1M:
+                          description: InputPer1M and OutputPer1M are the price of
+                            a million input and output tokens.
+                          pattern: ^[0-9]+(\.[0-9]+)?$
+                          type: string
+                        model:
+                          description: |-
+                            Model as the metrics name it (gen_ai.request.model), e.g. "gpt-4o"; globs such as
+                            "claude-sonnet-*" work. The first matching entry wins.
+                          maxLength: 200
+                          minLength: 1
+                          type: string
+                        outputPer1M:
+                          pattern: ^[0-9]+(\.[0-9]+)?$
+                          type: string
+                      required:
+                      - inputPer1M
+                      - model
+                      - outputPer1M
+                      type: object
+                    maxItems: 100
+                    type: array
+                    x-kubernetes-list-type: atomic
                   loadBalancerMonth:
                     description: |-
                       LoadBalancerMonth is the price of one LoadBalancer Service for a month, before

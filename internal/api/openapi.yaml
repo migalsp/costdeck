@@ -958,6 +958,50 @@ paths:
                 $ref: "#/components/schemas/FinOpsOverview"
         "401": { $ref: "#/components/responses/Unauthorized" }
 
+  /api/finops/ai:
+    get:
+      x-role: viewer
+      tags: [Costing]
+      summary: LLM and self-hosted model costs
+      description: >-
+        What applications pay LLM APIs per month, by team and by model, from the last seven
+        days of token counts in VictoriaMetrics: LiteLLM's own spend (per LiteLLM team), and
+        OpenTelemetry GenAI token metrics priced with spec.pricing.llmModels (per team of the
+        namespace). Models without a price are listed in api.unpriced. selfHosted shares the
+        run rate of each namespace serving models through vLLM out over its models by tokens,
+        giving a cost per million tokens. available is false without VictoriaMetrics.
+      responses:
+        "200":
+          description: The AI costs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  available: { type: boolean }
+                  error: { type: string }
+                  currency: { type: string }
+                  windowDays: { type: integer }
+                  api:
+                    type: object
+                    properties:
+                      monthly: { type: number }
+                      sources: { type: array, items: { type: string, enum: [litellm, opentelemetry] } }
+                      teams: { type: array, items: { type: object } }
+                      models: { type: array, items: { type: object } }
+                      unpriced: { type: array, items: { type: string } }
+                  selfHosted:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        namespace: { type: string }
+                        model: { type: string }
+                        tokensPerHour: { type: number }
+                        monthlyCost: { type: number }
+                        costPer1M: { type: number }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
   /api/finops/nodes:
     get:
       x-role: viewer

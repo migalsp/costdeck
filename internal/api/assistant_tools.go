@@ -80,6 +80,14 @@ func (s *Server) toolRegistry() []ai.Tool {
 			Run:        func(ctx context.Context, _ map[string]any) (string, error) { return s.toolCostOverview(ctx) },
 		},
 		{
+			Name: "get_ai_costs",
+			Description: "LLM costs: what applications pay LLM APIs per month by team and by model (LiteLLM spend, or " +
+				"OpenTelemetry GenAI token counts at the model prices in Settings), models without a price, and what each " +
+				"self-hosted model served by vLLM costs per million tokens at its namespace's run rate.",
+			Parameters: obj(map[string]any{}),
+			Run:        func(ctx context.Context, _ map[string]any) (string, error) { return s.toolAICosts(ctx) },
+		},
+		{
 			Name: "get_gpu_usage",
 			Description: "GPUs: how many the cluster has and pods request, what they cost per month, which namespaces hold " +
 				"them, how busy they were (DCGM, when connected), and the GPU advice: idle GPUs, GPUs several workloads " +

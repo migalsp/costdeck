@@ -7,8 +7,10 @@ import {
 import { AWSLogo, AzureLogo, GCPLogo, WebexLogo } from '../components/ProviderLogos'
 import ApiTokens from '../components/ApiTokens'
 import CalendarsEditor from '../components/settings/CalendarsEditor'
+import ModelPricesEditor from '../components/settings/ModelPricesEditor'
+import { llmModelProblem } from '../lib/llm'
 import { calendarProblem } from '../lib/exceptions'
-import type { HolidayCalendar } from '../lib/types'
+import type { HolidayCalendar, LLMModelPrice } from '../lib/types'
 import UsersSettings from '../components/settings/UsersSettings'
 import { usePolling } from '../lib/usePolling'
 import { navigate, segment, useLeaveGuard } from '../lib/router'
@@ -125,6 +127,7 @@ interface SettingsData {
     storageGiBMonth?: string
     loadBalancerMonth?: string
     gpuHour?: string
+    llmModels?: LLMModelPrice[] | null
     currency?: string
     effective: { cpuCoreHour: number; memoryGiBHour: number; gpuHour?: number; currency: string; basis: string }
   }
@@ -675,6 +678,7 @@ export default function SettingsPage({ section: requested }: { section?: string 
   const [priceStorage, setPriceStorage] = useState('')
   const [priceLB, setPriceLB] = useState('')
   const [priceGPU, setPriceGPU] = useState('')
+  const [llmModels, setLLMModels] = useState<LLMModelPrice[]>([])
   const [aiApiKey, setAiApiKey] = useState('')
   const [aiSkipSslVerify, setAiSkipSslVerify] = useState(false)
   const [aiModels, setAiModels] = useState<string[]>([])
@@ -775,6 +779,7 @@ export default function SettingsPage({ section: requested }: { section?: string 
           setPriceStorage(data.pricing.storageGiBMonth || '')
           setPriceLB(data.pricing.loadBalancerMonth || '')
           setPriceGPU(data.pricing.gpuHour || '')
+          setLLMModels(data.pricing.llmModels || [])
         }
         if (data.auth) {
           setDisableLocalLogin(data.auth.disableLocalLogin)
@@ -802,7 +807,7 @@ export default function SettingsPage({ section: requested }: { section?: string 
   usePolling(fetchSettings, null)
 
   const handleSave = async (sec: SavedSection) => {
-    const invalid = sec === 'calendars' ? calendarProblem(calendars) : null
+    const invalid = sec === 'calendars' ? calendarProblem(calendars) : sec === 'pricing' ? llmModelProblem(llmModels) : null
     if (invalid) {
       setSaveMessage({ section: sec, text: `Not saved: ${invalid}`, ok: false })
       return
@@ -874,6 +879,7 @@ export default function SettingsPage({ section: requested }: { section?: string 
           storageGiBMonth: priceStorage,
           loadBalancerMonth: priceLB,
           gpuHour: priceGPU,
+          llmModels: llmModels.map(m => ({ model: m.model.trim(), inputPer1M: m.inputPer1M.trim(), outputPer1M: m.outputPer1M.trim() })),
           currency: priceCurrency,
         },
         auth: {
@@ -1998,6 +2004,11 @@ export default function SettingsPage({ section: requested }: { section?: string 
                   <input id="price-gpu" value={priceGPU} onChange={e => setPriceGPU(e.target.value)} placeholder="0.81" className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm font-mono" />
                 </div>
               </div>
+              <p className="text-sm text-slate-500 mt-4 mb-3">
+                LLM tokens that applications report through OpenTelemetry (<code>gen_ai.request.model</code>) are priced per model here, per million tokens.
+                LiteLLM reports what its tokens cost itself. See <b>AI Costs</b>.
+              </p>
+              <ModelPricesEditor models={llmModels} onChange={m => { setLLMModels(m); setDirty(d => ({ ...d, pricing: true })) }} />
             </div>
           </div>
         </div>

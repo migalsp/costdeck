@@ -428,3 +428,41 @@ export async function saveSettings(body: unknown): Promise<void> {
   const res = await fetch('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
   if (!res.ok) throw new Error(await apiError(res))
 }
+
+// ─── AI costs (GET /api/finops/ai) ──────────────────────────────────────────
+
+export interface AITeam {
+  team: string
+  source: 'litellm' | 'opentelemetry'
+  monthly: number
+  inputTokens: number
+  outputTokens: number
+  namespaces?: string[]
+}
+
+export interface AIModel { model: string; monthly: number; inputTokens: number; outputTokens: number; priced: boolean }
+
+export interface SelfHostedModel { namespace: string; model: string; tokensPerHour: number; monthlyCost: number; costPer1M?: number }
+
+export interface AICosts {
+  available: boolean
+  error?: string
+  currency: string
+  windowDays: number
+  api: { monthly: number; sources: ('litellm' | 'opentelemetry')[]; teams: AITeam[]; models: AIModel[]; unpriced: string[] }
+  selfHosted: SelfHostedModel[]
+}
+
+export async function fetchAICosts(): Promise<AICosts> {
+  const res = await fetch('/api/finops/ai')
+  if (!res.ok) throw new Error(await apiError(res))
+  return res.json()
+}
+
+// tokens shortens a token count: 1.2M, 340k.
+export function tokens(n: number): string {
+  if (n >= 1e9) return `${(n / 1e9).toFixed(1)}B`
+  if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`
+  if (n >= 1e3) return `${Math.round(n / 1e3)}k`
+  return String(Math.round(n))
+}

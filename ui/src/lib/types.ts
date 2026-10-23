@@ -304,3 +304,6 @@ export interface SchedulePreview {
   problems: string[]
   warnings: string[]
 }
+
+// LLMModelPrice is what a model's tokens cost per million (CostDeckConfig spec.pricing.llmModels).
+export interface LLMModelPrice { model: string; inputPer1M: string; outputPer1M: string }

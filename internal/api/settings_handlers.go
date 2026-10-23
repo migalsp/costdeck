@@ -8,6 +8,7 @@ import (
 	"io"
 	"maps"
 	"net/http"
+	"path"
 	"regexp"
 	"slices"
 	"strings"
@@ -49,13 +50,14 @@ type SettingsResponse struct {
 
 // PricingSettingsResponse shows the configured custom rates and the rates in effect.
 type PricingSettingsResponse struct {
-	CPUCoreHour       string        `json:"cpuCoreHour,omitempty"`
-	MemoryGBHour      string        `json:"memoryGiBHour,omitempty"`
-	StorageGiBMonth   string        `json:"storageGiBMonth,omitempty"`
-	LoadBalancerMonth string        `json:"loadBalancerMonth,omitempty"`
-	GPUHour           string        `json:"gpuHour,omitempty"`
-	Currency          string        `json:"currency,omitempty"`
-	Effective         pricing.Rates `json:"effective"`
+	CPUCoreHour       string                   `json:"cpuCoreHour,omitempty"`
+	MemoryGBHour      string                   `json:"memoryGiBHour,omitempty"`
+	StorageGiBMonth   string                   `json:"storageGiBMonth,omitempty"`
+	LoadBalancerMonth string                   `json:"loadBalancerMonth,omitempty"`
+	GPUHour           string                   `json:"gpuHour,omitempty"`
+	LLMModels         []finopsv1.LLMModelPrice `json:"llmModels"`
+	Currency          string                   `json:"currency,omitempty"`
+	Effective         pricing.Rates            `json:"effective"`
 }
 
 // AuthSettingsResponse describes sign-in settings. The client secret is never returned.
@@ -192,12 +194,13 @@ type ReportsUpdateRequest struct {
 
 // PricingUpdateRequest sets custom rates; empty strings clear them.
 type PricingUpdateRequest struct {
-	CPUCoreHour       *string `json:"cpuCoreHour,omitempty"`
-	MemoryGBHour      *string `json:"memoryGiBHour,omitempty"`
-	StorageGiBMonth   *string `json:"storageGiBMonth,omitempty"`
-	LoadBalancerMonth *string `json:"loadBalancerMonth,omitempty"`
-	GPUHour           *string `json:"gpuHour,omitempty"`
-	Currency          *string `json:"currency,omitempty"`
+	CPUCoreHour       *string                   `json:"cpuCoreHour,omitempty"`
+	MemoryGBHour      *string                   `json:"memoryGiBHour,omitempty"`
+	StorageGiBMonth   *string                   `json:"storageGiBMonth,omitempty"`
+	LoadBalancerMonth *string                   `json:"loadBalancerMonth,omitempty"`
+	GPUHour           *string                   `json:"gpuHour,omitempty"`
+	LLMModels         *[]finopsv1.LLMModelPrice `json:"llmModels,omitempty"`
+	Currency          *string                   `json:"currency,omitempty"`
 }
 
 // AuthUpdateRequest changes sign-in settings. Nil fields stay unchanged.
@@ -440,6 +443,7 @@ func (s *Server) buildSettingsResponse(ctx context.Context, cfg *finopsv1.CostDe
 		StorageGiBMonth:   cfg.Spec.Pricing.StorageGiBMonth,
 		LoadBalancerMonth: cfg.Spec.Pricing.LoadBalancerMonth,
 		GPUHour:           cfg.Spec.Pricing.GPUHour,
+		LLMModels:         cfg.Spec.Pricing.LLMModels,
 		Currency:          cfg.Spec.Pricing.Currency,
 		Effective:         s.costRates(ctx),
 	}
@@ -750,6 +754,34 @@ func applyMCPSettings(_ context.Context, cfg *finopsv1.CostDeckConfig, req *Sett
 
 var decimalRate = regexp.MustCompile(`^[0-9]+(\.[0-9]+)?$`)
 
+// validateLLMModels checks the model prices of a settings update: a model name or glob
+// each, once, with two plain decimal prices.
+func validateLLMModels(models []finopsv1.LLMModelPrice) ([]finopsv1.LLMModelPrice, error) {
+	seen := map[string]bool{}
+	out := make([]finopsv1.LLMModelPrice, 0, len(models))
+	for _, m := range models {
+		m.Model, m.InputPer1M, m.OutputPer1M = strings.TrimSpace(m.Model), strings.TrimSpace(m.InputPer1M), strings.TrimSpace(m.OutputPer1M)
+		if _, err := path.Match(m.Model, ""); m.Model == "" || len(m.Model) > 200 || err != nil {
+			return nil, badRequestf("model %q must be a model name or a glob such as gpt-4o*", m.Model)
+		}
+		if seen[m.Model] {
+			return nil, badRequestf("model %q is priced twice", m.Model)
+		}
+		seen[m.Model] = true
+		if !decimalRate.MatchString(m.InputPer1M) || !decimalRate.MatchString(m.OutputPer1M) {
+			return nil, badRequestf("model %q: prices per million tokens must be plain decimal numbers such as 2.50", m.Model)
+		}
+		out = append(out, m)
+	}
+	if len(out) > 100 {
+		return nil, badRequestf("at most 100 model prices")
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+	return out, nil
+}
+
 func applyPricingSettings(_ context.Context, cfg *finopsv1.CostDeckConfig, req *SettingsUpdateRequest) error {
 	p := req.Pricing
 	if p == nil {
@@ -771,6 +803,13 @@ func applyPricingSettings(_ context.Context, cfg *finopsv1.CostDeckConfig, req *
 			return badRequestf("rates must be plain decimal numbers such as 0.031, got %q", v)
 		}
 		*f.dst = v
+	}
+	if p.LLMModels != nil {
+		models, err := validateLLMModels(*p.LLMModels)
+		if err != nil {
+			return err
+		}
+		cfg.Spec.Pricing.LLMModels = models
 	}
 	if p.Currency != nil {
 		c := strings.ToUpper(strings.TrimSpace(*p.Currency))

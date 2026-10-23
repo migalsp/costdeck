@@ -384,6 +384,27 @@ type PricingConfig struct {
 	// +kubebuilder:validation:Pattern=`^[0-9]+(\.[0-9]+)?$`
 	// +optional
 	GPUHour string `json:"gpuHour,omitempty"`
+
+	// LLMModels price the LLM tokens applications report through OpenTelemetry, per
+	// million tokens. LiteLLM reports what its tokens cost itself.
+	// +kubebuilder:validation:MaxItems=100
+	// +listType=atomic
+	// +optional
+	LLMModels []LLMModelPrice `json:"llmModels,omitempty"`
+}
+
+// LLMModelPrice is what a model's tokens cost.
+type LLMModelPrice struct {
+	// Model as the metrics name it (gen_ai.request.model), e.g. "gpt-4o"; globs such as
+	// "claude-sonnet-*" work. The first matching entry wins.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=200
+	Model string `json:"model"`
+	// InputPer1M and OutputPer1M are the price of a million input and output tokens.
+	// +kubebuilder:validation:Pattern=`^[0-9]+(\.[0-9]+)?$`
+	InputPer1M string `json:"inputPer1M"`
+	// +kubebuilder:validation:Pattern=`^[0-9]+(\.[0-9]+)?$`
+	OutputPer1M string `json:"outputPer1M"`
 }
 
 // ReportsConfig schedules the reports CostDeck sends by itself.

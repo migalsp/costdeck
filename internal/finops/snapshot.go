@@ -30,6 +30,8 @@ type Snapshot struct {
 	Infra      Infra
 	// InfraError says why volumes and load balancers could not be read, if they could not.
 	InfraError string
+	// Labels are the labels of every namespace, tracked or not.
+	Labels map[string]map[string]string
 }
 
 // Options says where Build reads from.
@@ -173,6 +175,7 @@ func Build(ctx context.Context, c client.Reader, rates pricing.Rates, opts Optio
 	for _, ns := range namespaces.Items {
 		labels[ns.Name] = ns.Labels
 	}
+	snap.Labels = labels
 	var pods corev1.PodList
 	if err := c.List(ctx, &pods); err != nil {
 		return snap, err
