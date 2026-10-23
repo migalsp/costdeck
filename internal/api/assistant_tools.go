@@ -80,6 +80,14 @@ func (s *Server) toolRegistry() []ai.Tool {
 			Run:        func(ctx context.Context, _ map[string]any) (string, error) { return s.toolCostOverview(ctx) },
 		},
 		{
+			Name: "get_gpu_usage",
+			Description: "GPUs: how many the cluster has and pods request, what they cost per month, which namespaces hold " +
+				"them, how busy they were (DCGM, when connected), and the GPU advice: idle GPUs, GPUs several workloads " +
+				"could share through MIG or time-slicing, and cheaper GPU models with enough memory.",
+			Parameters: obj(map[string]any{}),
+			Run:        func(ctx context.Context, _ map[string]any) (string, error) { return s.toolGPUUsage(ctx) },
+		},
+		{
 			Name:        "list_scaling_groups",
 			Description: "All ScalingGroups with their mode, desired state, phase, readiness, next scheduled change and dependencies.",
 			Parameters:  obj(map[string]any{}),

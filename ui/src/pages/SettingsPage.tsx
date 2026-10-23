@@ -124,8 +124,9 @@ interface SettingsData {
     memoryGiBHour?: string
     storageGiBMonth?: string
     loadBalancerMonth?: string
+    gpuHour?: string
     currency?: string
-    effective: { cpuCoreHour: number; memoryGiBHour: number; currency: string; basis: string }
+    effective: { cpuCoreHour: number; memoryGiBHour: number; gpuHour?: number; currency: string; basis: string }
   }
   billing?: { enabled?: boolean }
   calendars?: HolidayCalendar[]
@@ -673,6 +674,7 @@ export default function SettingsPage({ section: requested }: { section?: string 
   const [priceCurrency, setPriceCurrency] = useState('')
   const [priceStorage, setPriceStorage] = useState('')
   const [priceLB, setPriceLB] = useState('')
+  const [priceGPU, setPriceGPU] = useState('')
   const [aiApiKey, setAiApiKey] = useState('')
   const [aiSkipSslVerify, setAiSkipSslVerify] = useState(false)
   const [aiModels, setAiModels] = useState<string[]>([])
@@ -772,6 +774,7 @@ export default function SettingsPage({ section: requested }: { section?: string 
           setPriceCurrency(data.pricing.currency || '')
           setPriceStorage(data.pricing.storageGiBMonth || '')
           setPriceLB(data.pricing.loadBalancerMonth || '')
+          setPriceGPU(data.pricing.gpuHour || '')
         }
         if (data.auth) {
           setDisableLocalLogin(data.auth.disableLocalLogin)
@@ -870,6 +873,7 @@ export default function SettingsPage({ section: requested }: { section?: string 
           memoryGiBHour: priceMem,
           storageGiBMonth: priceStorage,
           loadBalancerMonth: priceLB,
+          gpuHour: priceGPU,
           currency: priceCurrency,
         },
         auth: {
@@ -1981,6 +1985,17 @@ export default function SettingsPage({ section: requested }: { section?: string 
                 <div>
                   <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1 block">Per load balancer-month</label>
                   <input value={priceLB} onChange={e => setPriceLB(e.target.value)} placeholder="18" className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm font-mono" />
+                </div>
+              </div>
+              <p className="text-sm text-slate-500 mt-4 mb-3">
+                GPUs are priced apart from CPU and memory: a GPU costs its share of the node's list price, or an estimate for its model (an A10G about 0.81 USD an hour).
+                A rate here applies to every GPU.
+                {!!settings?.pricing?.effective.gpuHour && <> In effect now: {settings.pricing.effective.gpuHour.toFixed(2)} {settings.pricing.effective.currency} a GPU-hour on average.</>}
+              </p>
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label htmlFor="price-gpu" className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1 block">Per GPU-hour</label>
+                  <input id="price-gpu" value={priceGPU} onChange={e => setPriceGPU(e.target.value)} placeholder="0.81" className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm font-mono" />
                 </div>
               </div>
             </div>

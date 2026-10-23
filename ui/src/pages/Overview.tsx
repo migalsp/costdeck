@@ -52,6 +52,9 @@ function group(rows: NamespaceRow[], keyOf: (r: NamespaceRow) => string): BarIte
   return [...out.values()].filter(g => g.total > 0).sort((a, b) => b.total - a.total)
 }
 
+// gpus counts GPUs, which time-slicing and MIG can split into fractions.
+const gpus = (n: number) => `${Number.isInteger(n) ? n : n.toFixed(2)} GPU${n === 1 ? '' : 's'}`
+
 export default function Overview({ onSelectNamespace, onNavigate }: Props) {
   const [data, setData] = useState<OverviewData | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -99,8 +102,9 @@ export default function Overview({ onSelectNamespace, onNavigate }: Props) {
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
         <KpiTile label="Monthly run rate" value={<>{formatMoney(m.total, cur)}<span className="text-sm font-medium text-slate-400">/mo</span></>}
           delta={<Delta value={weekChange(data.history.days, 'bill')} goodWhen="down" label="vs last week" />}
-          sub={<>Nodes {formatMoney(m.provisioned, cur)}{m.storage > 0 && <> · storage {formatMoney(m.storage, cur)}</>}{m.network > 0 && <> · load balancers {formatMoney(m.network, cur)}</>}
-            <span className="block">{data.cluster.nodes} node{data.cluster.nodes === 1 ? '' : 's'}{data.cluster.spotNodes ? ` (${data.cluster.spotNodes} spot)` : ''}</span></>} />
+          sub={<>Nodes {formatMoney(m.provisioned, cur)}{m.gpu > 0 && <> (GPUs {formatMoney(m.gpu, cur)})</>}{m.storage > 0 && <> · storage {formatMoney(m.storage, cur)}</>}{m.network > 0 && <> · load balancers {formatMoney(m.network, cur)}</>}
+            <span className="block">{data.cluster.nodes} node{data.cluster.nodes === 1 ? '' : 's'}{data.cluster.spotNodes ? ` (${data.cluster.spotNodes} spot)` : ''}
+              {data.cluster.gpus > 0 && ` · ${gpus(data.cluster.gpus)}, ${gpus(data.cluster.gpuRequested)} requested`}</span></>} />
         <KpiTile label={`This month (${new Date(`${mtd.month}-01T00:00:00Z`).toLocaleDateString(undefined, { month: 'long', timeZone: 'UTC' })})`}
           value={mtd.hours > 0 ? formatMoney(mtd.cost, cur) : '—'}
           sub={mtd.hours > 0
@@ -121,7 +125,8 @@ export default function Overview({ onSelectNamespace, onNavigate }: Props) {
         <Card className="p-5 lg:col-span-2">
           <h2 className="text-base font-semibold text-slate-800">Where the money goes</h2>
           <p className="text-xs text-slate-500 mb-4">The node bill, split into what pods use, what they request but leave idle, and what nobody requests.
-            {(m.storage > 0 || m.network > 0) && <> Volumes ({formatMoney(m.storage, cur)}) and load balancers ({formatMoney(m.network, cur)}) are billed on top: <button className="font-semibold text-brand-700 hover:text-brand-800" onClick={() => onNavigate('storage')}>Storage &amp; Network</button>.</>}</p>
+            {(m.storage > 0 || m.network > 0) && <> Volumes ({formatMoney(m.storage, cur)}) and load balancers ({formatMoney(m.network, cur)}) are billed on top: <button className="font-semibold text-brand-700 hover:text-brand-800" onClick={() => onNavigate('storage')}>Storage &amp; Network</button>.</>}
+            {m.gpu > 0 && <span data-testid="gpu-note"> GPUs are {formatMoney(m.gpu, cur)} of the node bill{m.idleGpu > 0 && <>; {formatMoney(m.idleGpu, cur)} of the requested ones sat idle over the last day</>}.</span>}</p>
           <CostFunnel monthly={m} currency={cur}
             cpu={{ capacity: data.cluster.cpuCores, requested: data.cluster.cpuRequested, used: data.cluster.cpuUsed }}
             memory={{ capacity: data.cluster.memoryGiB, requested: data.cluster.memoryRequestedGiB, used: data.cluster.memoryUsedGiB }} />

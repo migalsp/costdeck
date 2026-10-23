@@ -31,12 +31,15 @@ export interface NamespaceRow {
   cost7d?: number
   costPrev7d?: number
   trend?: number[]
+  // gpu is set when the namespace's pods request GPUs; utilization (0–1, last day) and
+  // memoryUsedGiB (peak, last week) come from DCGM.
+  gpu?: { requested: number; models: string[]; monthlyCost: number; utilization?: number; memoryUsedGiB?: number }
 }
 
 export interface Opportunity {
   kind: 'rightsizing' | 'schedule' | 'idle-capacity' | 'cost-increase' | 'missing-requests'
     | 'consolidation' | 'node-shape' | 'pending-pods' | 'node-not-ready' | 'node-pressure' | 'no-spot' | 'node-type'
-    | 'unused-volumes' | 'orphaned-volumes' | 'idle-load-balancers'
+    | 'unused-volumes' | 'orphaned-volumes' | 'idle-load-balancers' | 'idle-gpu' | 'share-gpu' | 'gpu-model'
   namespace?: string
   title: string
   detail: string
@@ -58,15 +61,18 @@ export interface HistoryDay {
 export interface Overview {
   generatedAt: string
   currency: string
-  rates: { cpuCoreHour: number; memoryGiBHour: number; currency: string; basis: string }
+  rates: { cpuCoreHour: number; memoryGiBHour: number; gpuHour?: number; currency: string; basis: string }
   cluster: {
     nodes: number; spotNodes: number; cpuCores: number; memoryGiB: number
     cpuRequested: number; memoryRequestedGiB: number; cpuUsed: number; memoryUsedGiB: number
     provisionedHourly: number; requestedHourly: number; usedHourly: number
+    gpus: number; gpuRequested: number; gpuHourly: number
   }
   monthly: {
     provisioned: number; requested: number; used: number; unallocated: number; overprovisioned: number
     storage: number; network: number; total: number; unusedStorage: number; idleNetwork: number
+    // gpu is part of provisioned; idleGpu what DCGM reports unused of the requested GPUs.
+    gpu: number; idleGpu: number
   }
   savings: { schedulesMonthly: number; rightsizingMonthly: number; rightsizingPending: number; scheduleCandidatesMonthly: number }
   monthToDate: { month: string; cost: number; saved: number; hours: number; forecast: number; partial: boolean }
@@ -161,6 +167,11 @@ export interface NodeView {
   consolidationCandidate?: boolean
   daemonSetCpu: number
   daemonSetMemoryGiB: number
+  // GPUs: physical count, the share pods request, the model and what one costs per hour.
+  gpus?: number
+  gpuRequested?: number
+  gpuModel?: string
+  gpuHourly?: number
 }
 
 export interface PoolSummary {
@@ -180,6 +191,7 @@ export interface NodesReport {
   summary: {
     nodes: number; ready: number; spot: number; unschedulable: number; pendingPods: number; pods: number; maxPods: number
     cpu: NodeResource; memoryGiB: NodeResource; monthlyCost: number; monthlyUnrequested: number
+    gpus: number; gpuRequested: number
   }
   pools: PoolSummary[]
   nodes: NodeView[]

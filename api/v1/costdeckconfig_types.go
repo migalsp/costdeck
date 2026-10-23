@@ -377,6 +377,13 @@ type PricingConfig struct {
 	// +kubebuilder:validation:Pattern=`^[0-9]+(\.[0-9]+)?$`
 	// +optional
 	LoadBalancerMonth string `json:"loadBalancerMonth,omitempty"`
+
+	// GPUHour is the price of one GPU for one hour, e.g. "0.81", for every GPU model.
+	// Without it a GPU costs its share of the node's list price, or an estimate for its
+	// model.
+	// +kubebuilder:validation:Pattern=`^[0-9]+(\.[0-9]+)?$`
+	// +optional
+	GPUHour string `json:"gpuHour,omitempty"`
 }
 
 // ReportsConfig schedules the reports CostDeck sends by itself.

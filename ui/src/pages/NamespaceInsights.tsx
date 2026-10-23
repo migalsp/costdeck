@@ -311,6 +311,9 @@ function NamespaceTableRow({ row, currency, onOpen }: { row: Row; currency: stri
         <div className="mt-1 flex flex-wrap gap-1">
           <Badge tone={ns.environment === 'production' ? 'info' : 'neutral'}>{environmentLabel[ns.environment]}</Badge>
           {ns.team && <Badge>{ns.team}</Badge>}
+          {ns.gpu && <Badge tone="brand" title={`${ns.gpu.models.join(', ') || 'GPU'}: ${formatMoney(ns.gpu.monthlyCost, currency)}/mo${ns.gpu.utilization !== undefined ? `, busy ${Math.round(ns.gpu.utilization * 100)}% of the last day` : ''}`}>
+            GPU ×{Number.isInteger(ns.gpu.requested) ? ns.gpu.requested : ns.gpu.requested.toFixed(2)}{ns.gpu.utilization !== undefined && ` · ${Math.round(ns.gpu.utilization * 100)}%`}
+          </Badge>}
           <span className="text-[11px] text-slate-400 self-center">{ns.pods} pod{ns.pods === 1 ? '' : 's'}</span>
         </div>
         {ns.insights.some(i => i !== 'Optimized') && (

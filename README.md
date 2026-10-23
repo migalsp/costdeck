@@ -66,6 +66,10 @@ them back on time. There is no external service: one operator in your cluster do
 - **Databases with their namespace.** CloudNativePG and Zalando Postgres clusters, Strimzi
   Kafka Connect, MirrorMaker 2 and Bridge, or any operator's resource with a replica field,
   stop after the namespace's workloads and start before them.
+- **GPUs.** GPUs are priced apart from CPU and memory (their share of the node's list price,
+  or an estimate per model) and charged to the namespaces that request them. With NVIDIA's
+  DCGM exporter in VictoriaMetrics, Cost Deck finds idle GPUs, GPUs workloads could share
+  through MIG or time-slicing, and cheaper models with enough memory.
 - **Savings that reach the bill.** After a scale-down, each schedule shows which nodes the
   autoscaler removed and what keeps the others: a PodDisruptionBudget, `do-not-disrupt`,
   `safe-to-evict: "false"`, local storage, or other namespaces still using them.

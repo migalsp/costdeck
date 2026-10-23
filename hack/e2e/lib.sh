@@ -124,3 +124,47 @@ EOF
 CLOSED_SCHEDULE='[{startDay: 0, startTime: "03:00", endDay: 0, endTime: "03:01", timezone: "Pacific/Kiritimati"}]'
 # shellcheck disable=SC2034
 CLOSED_SCHEDULE_JSON='[{"startDay":0,"startTime":"03:00","endDay":0,"endTime":"03:01","timezone":"Pacific/Kiritimati"}]'
+
+# start_victoriametrics runs a VictoriaMetrics in smoke-vm (once), forwards it to
+# localhost:$VM_PORT for importing synthetic series, and points Cost Deck at it with the
+# given retention in days. The settings are switched off again on exit.
+VM_PORT=${VM_PORT:-18428}
+start_victoriametrics() {
+  local retention=${1:-7}
+  if ! curl -sf "localhost:$VM_PORT/health" >/dev/null 2>&1; then
+    new_namespace smoke-vm
+    kubectl apply -f - >/dev/null <<'YAML' || fail "applying VictoriaMetrics"
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: vm, namespace: smoke-vm}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: vm}}
+  template:
+    metadata: {labels: {app: vm}}
+    spec:
+      containers:
+        - name: vm
+          image: quay.io/victoriametrics/victoria-metrics:v1.108.1
+          args: ["-retentionPeriod=60d"]
+          readinessProbe: {httpGet: {path: /health, port: 8428}, periodSeconds: 2}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: vm, namespace: smoke-vm}
+spec: {selector: {app: vm}, ports: [{port: 8428}]}
+YAML
+    kubectl rollout status deploy/vm -n smoke-vm --timeout=180s >/dev/null
+    kubectl port-forward -n smoke-vm svc/vm "$VM_PORT:8428" >/dev/null 2>&1 &
+    PF_PIDS="$PF_PIDS $!"
+    wait_for "VictoriaMetrics reachable" curl -sf "localhost:$VM_PORT/health"
+  fi
+  local body='{"integrations":{"victoriaMetrics":{"enabled":true,"endpoint":"http://vm.smoke-vm.svc:8428","retentionDays":'"$retention"'}}}'
+  track_call PUT /api/settings '{"integrations":{"victoriaMetrics":{"enabled":false}}}'
+  api PUT /api/settings "$body" >/dev/null || fail "enabling VictoriaMetrics"
+}
+
+# track_cleanup <command>: a shell command that undoes a change outside the smoke-*
+# namespaces (a node's status, say), run on exit.
+CLEANUP_COMMANDS=()
+track_cleanup() { CLEANUP_COMMANDS+=("$1"); }

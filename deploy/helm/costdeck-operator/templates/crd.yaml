@@ -475,6 +475,13 @@ spec:
                       Defaults to USD.
                     pattern: ^[A-Za-z]{3}$
                     type: string
+                  gpuHour:
+                    description: |-
+                      GPUHour is the price of one GPU for one hour, e.g. "0.81", for every GPU model.
+                      Without it a GPU costs its share of the node's list price, or an estimate for its
+                      model.
+                    pattern: ^[0-9]+(\.[0-9]+)?$
+                    type: string
                   loadBalancerMonth:
                     description: |-
                       LoadBalancerMonth is the price of one LoadBalancer Service for a month, before

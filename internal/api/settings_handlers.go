@@ -53,6 +53,7 @@ type PricingSettingsResponse struct {
 	MemoryGBHour      string        `json:"memoryGiBHour,omitempty"`
 	StorageGiBMonth   string        `json:"storageGiBMonth,omitempty"`
 	LoadBalancerMonth string        `json:"loadBalancerMonth,omitempty"`
+	GPUHour           string        `json:"gpuHour,omitempty"`
 	Currency          string        `json:"currency,omitempty"`
 	Effective         pricing.Rates `json:"effective"`
 }
@@ -195,6 +196,7 @@ type PricingUpdateRequest struct {
 	MemoryGBHour      *string `json:"memoryGiBHour,omitempty"`
 	StorageGiBMonth   *string `json:"storageGiBMonth,omitempty"`
 	LoadBalancerMonth *string `json:"loadBalancerMonth,omitempty"`
+	GPUHour           *string `json:"gpuHour,omitempty"`
 	Currency          *string `json:"currency,omitempty"`
 }
 
@@ -437,6 +439,7 @@ func (s *Server) buildSettingsResponse(ctx context.Context, cfg *finopsv1.CostDe
 		MemoryGBHour:      cfg.Spec.Pricing.MemoryGBHour,
 		StorageGiBMonth:   cfg.Spec.Pricing.StorageGiBMonth,
 		LoadBalancerMonth: cfg.Spec.Pricing.LoadBalancerMonth,
+		GPUHour:           cfg.Spec.Pricing.GPUHour,
 		Currency:          cfg.Spec.Pricing.Currency,
 		Effective:         s.costRates(ctx),
 	}
@@ -758,6 +761,7 @@ func applyPricingSettings(_ context.Context, cfg *finopsv1.CostDeckConfig, req *
 	}{
 		{p.CPUCoreHour, &cfg.Spec.Pricing.CPUCoreHour}, {p.MemoryGBHour, &cfg.Spec.Pricing.MemoryGBHour},
 		{p.StorageGiBMonth, &cfg.Spec.Pricing.StorageGiBMonth}, {p.LoadBalancerMonth, &cfg.Spec.Pricing.LoadBalancerMonth},
+		{p.GPUHour, &cfg.Spec.Pricing.GPUHour},
 	} {
 		if f.src == nil {
 			continue

@@ -17,6 +17,7 @@
 #   93 pausing Flux and Argo CD while a schedule keeps workloads down
 #   94 stopping operator-run services (databases, Kafka Connect) with their namespace
 #   95 realized savings: the nodes a scale-down should free, and what keeps them
+#   96 GPU cost and idle GPUs from DCGM               (disposable clusters only)
 #
 # Run it against a disposable cluster (Kind in CI, `make test-e2e` locally): it installs
 # CRDs, metrics-server and changes settings. IMAGE must already be loadable by the cluster
@@ -45,6 +46,9 @@ source "$HERE/e2e/lib.sh"
 cleanup() {
   set +e
   # ${a[@]+"${a[@]}"}: an empty array is not "unbound" under set -u, even in bash 3.2.
+  for cmd in ${CLEANUP_COMMANDS[@]+"${CLEANUP_COMMANDS[@]}"}; do
+    eval "$cmd" >/dev/null 2>&1
+  done
   for call in ${CLEANUP_CALLS[@]+"${CLEANUP_CALLS[@]}"}; do
     # shellcheck disable=SC2086 # method, path and body are separate words on purpose
     api $call >/dev/null 2>&1

@@ -49,6 +49,8 @@ type Provider struct {
 
 	historyMu sync.Mutex
 	history   map[time.Duration]cachedHistory
+
+	gpu gpuCache
 }
 
 type cachedHistory struct {

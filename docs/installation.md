@@ -195,6 +195,37 @@ the last hour only, and right-sizing advice based on a single reading.
   network volumes are estimated at $0.08 a GiB-month, like a general-purpose cloud SSD, and
   load balancers at nothing.
 
+### GPUs
+
+GPUs are priced apart from CPU and memory, so a GPU node does not make every other pod
+look expensive:
+
+- **With cloud list prices**, a GPU costs its node's price less the node's CPU and memory
+  at the cluster's rates, divided by its GPUs. The CPU and memory rates come from the nodes
+  without GPUs.
+- **Otherwise** a GPU is estimated by its model, from the `nvidia.com/gpu.product` label
+  GPU feature discovery sets: T4 $0.33, L4 $0.61, A10G $0.81, L40S $1.61, A100 $1.81
+  (80 GB $2.50), V100 $2.57, H100 $5.13, H200 $6.16, B200 $12.49 an hour. These are AWS
+  on-demand prices in us-east-1 (October 2026) less CPU and memory. An unknown model is
+  priced like an A10G.
+- **A custom GPU rate** (Settings → Prices, `spec.pricing.gpuHour`) applies to every GPU.
+
+A namespace pays for the GPUs its pods request (`nvidia.com/gpu`, `amd.com/gpu`, MIG
+devices `nvidia.com/mig-<n>g.<mem>gb` as n sevenths of a GPU, time-sliced or MPS shares as
+1/replicas). That cost is part of its compute cost everywhere: overview, budgets, digests,
+schedule candidates.
+
+With VictoriaMetrics scraping NVIDIA's [DCGM exporter](https://github.com/NVIDIA/dcgm-exporter)
+in Kubernetes mode, Cost Deck reads how busy each namespace's GPUs were over the last day
+(`DCGM_FI_DEV_GPU_UTIL`) and the most memory they held over the last week
+(`DCGM_FI_DEV_FB_USED`). It accepts the pod namespace as `namespace`, `pod_namespace`, or
+`exported_namespace` when a ServiceMonitor does not honour the exporter's labels. It then
+flags:
+
+- GPUs that are nearly idle (below 10%);
+- GPUs that several workloads could share through MIG or time-slicing (below 50%);
+- a cheaper model with enough memory for what the workload holds.
+
 ## Reconciling with the cloud bill
 
 **Settings → Cloud bill** reads what the cloud charged for
