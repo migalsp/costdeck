@@ -350,7 +350,7 @@ func (b *Bot) status(ctx context.Context, cmd command) (string, error) {
 		if len(g.Status.RequiredBy) > 0 {
 			fmt.Fprintf(&sb, "Kept up for: %s\n", strings.Join(g.Status.RequiredBy, ", "))
 		}
-		for _, ns := range g.Spec.Namespaces {
+		for _, ns := range g.Members() {
 			fmt.Fprintf(&sb, "- `%s`\n", ns)
 		}
 		return sb.String(), nil

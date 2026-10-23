@@ -84,9 +84,17 @@ export interface ScheduleStatus {
   currency?: string
 }
 
+// LabelSelector is Kubernetes' label selector, as spec.namespaceSelector stores it.
+export interface LabelSelector {
+  matchLabels?: Record<string, string>
+  matchExpressions?: { key: string; operator: 'In' | 'NotIn' | 'Exists' | 'DoesNotExist'; values?: string[] }[]
+}
+
 export interface ScalingGroupSpec {
   category: string
-  namespaces: string[]
+  // Namespaces listed by name; groupNamespaces() adds those the selector matched.
+  namespaces?: string[]
+  namespaceSelector?: LabelSelector
   active?: boolean
   activeUntil?: string
   schedules?: ScalingSchedule[]
@@ -127,6 +135,8 @@ export interface ScalingGroup {
     skippedNamespaces?: string[]
     requiredBy?: string[]
     conflictingNamespaces?: string[]
+    // Namespaces spec.namespaceSelector matched at the last reconcile.
+    selectedNamespaces?: string[]
     conditions?: Condition[]
   }
 }

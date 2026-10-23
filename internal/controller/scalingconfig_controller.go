@@ -133,7 +133,7 @@ func (r *ScalingConfigReconciler) isManagedByGroup(ctx context.Context, ns strin
 		return false, "", err
 	}
 	for _, g := range groups.Items {
-		if slices.Contains(g.Spec.Namespaces, ns) {
+		if slices.Contains(g.Members(), ns) {
 			return true, g.Name, nil
 		}
 	}

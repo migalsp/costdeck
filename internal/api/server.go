@@ -219,6 +219,7 @@ func (s *Server) routes() *http.ServeMux {
 	admin("DELETE /api/reports/{id}", s.handleDeleteReport)
 
 	// Scaling
+	viewer("GET /api/namespace-selector", s.handleSelectNamespaces)
 	viewer("GET /api/scaling/groups", s.listScalingGroups)
 	admin("POST /api/scaling/groups", s.createScalingGroup)
 	viewer("GET /api/scaling/groups/{name}", s.getScalingGroup)

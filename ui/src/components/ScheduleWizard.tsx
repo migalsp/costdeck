@@ -1,15 +1,16 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Search, Check, CalendarClock, CalendarOff, ListOrdered, SlidersHorizontal } from 'lucide-react'
 import { apiError, errorMessage, getJSON } from '../lib/api'
 import { toast } from '../lib/toast'
 import { exceptionProblem } from '../lib/exceptions'
 import { planFromSpec, planProblem, specFromPlan, type SchedulePlan } from '../lib/schedule'
-import type { ExternalTarget, HolidayCalendar, ScalingConfig, ScalingGroup, ScalingGroupSpec, ScalingSpec, ScheduleException } from '../lib/types'
+import type { ExternalTarget, HolidayCalendar, LabelSelector, ScalingConfig, ScalingGroup, ScalingGroupSpec, ScalingSpec, ScheduleException } from '../lib/types'
 import { usePolling } from '../lib/usePolling'
 import ExceptionsEditor from './ExceptionsEditor'
 import ScheduleEditor from './ScheduleEditor'
 import StartOrderEditor, { type StartOrder } from './StartOrderEditor'
 import { Button, Modal, Tabs } from './ui'
+import { formatSelector, groupNamespaces } from '../lib/selector'
 
 const K8S_NAME = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/
 
@@ -60,6 +61,9 @@ export default function ScheduleWizard(props: Props) {
   const [name, setName] = useState(existing?.metadata.name || '')
   const [nameTouched, setNameTouched] = useState(editing)
   const [filter, setFilter] = useState('')
+  const [selectorText, setSelectorText] = useState(formatSelector(existingGroup?.spec.namespaceSelector))
+  // What the server made of selectorText: the selector to store and what it matches now.
+  const [match, setMatch] = useState<{ text: string; selector?: LabelSelector; namespaces?: string[]; error?: string } | null>(null)
   const [tab, setTab] = useState<WizardTab>(props.initialTab || 'schedule')
   const [order, setOrder] = useState<StartOrder>({ sequence: existingGroup?.spec.sequence, externalTargets: existingGroup?.spec.externalTargets })
   const [dependsOn, setDependsOn] = useState<string[]>(existingGroup?.spec.dependsOn || [])
@@ -76,10 +80,22 @@ export default function ScheduleWizard(props: Props) {
     getJSON<{ calendars?: HolidayCalendar[] }>('/api/settings').then(d => setAvailable(d.calendars || [])).catch(() => setAvailable([]))
   }, null)
 
-  const finalName = nameTouched ? sanitize(name) : sanitize(suggestName(selected))
+  const selectorQuery = selectorText.trim()
+  const shownMatch = match && match.text === selectorQuery ? match : null
+  useEffect(() => {
+    if (!selectorQuery) return
+    const t = setTimeout(() => {
+      getJSON<{ selector: LabelSelector; namespaces: string[] }>(`/api/namespace-selector?selector=${encodeURIComponent(selectorQuery)}`)
+        .then(r => setMatch({ text: selectorQuery, ...r }))
+        .catch(e => setMatch({ text: selectorQuery, error: errorMessage(e) }))
+    }, 300)
+    return () => clearTimeout(t)
+  }, [selectorQuery])
+
+  const finalName = nameTouched ? sanitize(name) : sanitize(suggestName(selected) || selectorQuery)
   const ownerOf = useMemo(() => {
     const m = new Map<string, string>()
-    for (const g of groups) if (g.metadata.name !== existing?.metadata.name) for (const ns of g.spec.namespaces) m.set(ns, g.metadata.name)
+    for (const g of groups) if (g.metadata.name !== existing?.metadata.name) for (const ns of groupNamespaces(g)) m.set(ns, g.metadata.name)
     return m
   }, [groups, existing])
   const categories = Array.from(new Set(groups.map(g => g.spec.category).filter(Boolean)))
@@ -88,7 +104,9 @@ export default function ScheduleWizard(props: Props) {
 
   const exceptionIssue = exceptions.map(exceptionProblem).find(Boolean)
   const problem = planProblem(plan)
-    || (selected.length === 0 ? 'Pick at least one namespace.' : null)
+    || (selected.length === 0 && !selectorQuery ? 'Pick at least one namespace, or match them by label.' : null)
+    || (selectorQuery && shownMatch?.error ? `Label selector: ${shownMatch.error}` : null)
+    || (selectorQuery && !shownMatch ? 'Checking the label selector…' : null)
     || (!K8S_NAME.test(finalName) ? 'Name must use lowercase letters, digits and dashes.' : null)
     || (exceptionIssue ? `Exceptions: ${exceptionIssue}` : null)
 
@@ -106,6 +124,7 @@ export default function ScheduleWizard(props: Props) {
           ...schedule,
           category: category.trim() || base.category || 'General',
           namespaces: selected,
+          namespaceSelector: selectorQuery ? shownMatch?.selector : undefined,
           // Only keep stage entries that still belong to the schedule.
           sequence: order.sequence?.map(s => s.split(/\s+/).filter(i => selected.includes(i) || i.startsWith('ext:')).join(' ')).filter(Boolean),
           externalTargets: order.externalTargets,
@@ -179,6 +198,22 @@ export default function ScheduleWizard(props: Props) {
               })}
             </div>
             <p className="text-xs text-slate-400 mt-1">{selected.length} selected</p>
+            <label className="block mt-4">
+              <span className="text-sm font-semibold text-slate-800">And every namespace labelled</span>
+              <span className="block text-xs text-slate-500 mb-1">
+                For example <code>env=preview</code> or <code>team in (shop,pay),!legacy</code>. Namespaces join as they are created or labelled; one labelled <code>costdeck.io/schedule=off</code> stays out.
+              </span>
+              <input aria-label="Label selector" value={selectorText} onChange={e => setSelectorText(e.target.value)} placeholder="env=preview"
+                className="w-full md:w-96 px-3 py-2 text-sm font-mono bg-white border border-slate-200 rounded-lg outline-none focus:border-brand-500" />
+            </label>
+            {selectorQuery && shownMatch?.error && <p className="text-xs font-medium text-rose-600 mt-1">{shownMatch.error}</p>}
+            {selectorQuery && shownMatch?.namespaces && (
+              <p className="text-xs text-slate-500 mt-1" data-testid="selector-matches">
+                {shownMatch.namespaces.length
+                  ? <>Matches now: {shownMatch.namespaces.map(ns => ownerOf.get(ns) ? `${ns} (in ${ownerOf.get(ns)})` : ns).join(', ')}</>
+                  : 'Matches no namespace yet.'}
+              </p>
+            )}
           </>
         ) : (
           <p className="text-sm font-medium text-slate-700">{selected[0]}</p>
@@ -272,7 +307,7 @@ export default function ScheduleWizard(props: Props) {
       }
       footer={
         <>
-          <span className="flex-1 text-xs font-medium text-rose-600">{error || (problem && selected.length > 0 ? problem : '')}</span>
+          <span className="flex-1 text-xs font-medium text-rose-600">{error || (problem && (selected.length > 0 || selectorQuery) ? problem : '')}</span>
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
           <Button variant="primary" onClick={save} disabled={!!problem || saving}>
             {saving ? 'Saving…' : editing ? 'Save changes' : 'Create schedule'}

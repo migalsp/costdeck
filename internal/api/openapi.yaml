@@ -528,6 +528,30 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /api/namespace-selector:
+    get:
+      x-role: viewer
+      tags: [Scaling]
+      summary: Preview a namespace selector
+      description: >-
+        Parses a label selector in kubectl's syntax and returns it as a ScalingGroup stores it
+        in spec.namespaceSelector, with the namespaces it matches now. Namespaces labelled
+        costdeck.io/schedule=off and the operator's own are never matched.
+      parameters:
+        - { name: selector, in: query, required: true, schema: { type: string }, example: "env=preview,team in (shop,payments),!legacy" }
+      responses:
+        "200":
+          description: The parsed selector and its matches
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  selector: { type: object, description: "A Kubernetes LabelSelector (matchLabels, matchExpressions)." }
+                  namespaces: { type: array, items: { type: string } }
+        "400": { description: The selector cannot be parsed }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
   /api/scaling/groups:
     get:
       x-role: viewer
@@ -1868,7 +1892,7 @@ components:
             name: { type: string, description: "Lowercase letters, digits and dashes." }
         spec:
           type: object
-          required: [category, namespaces]
+          required: [category]
           properties:
             category:
               type: string
@@ -1876,6 +1900,16 @@ components:
             namespaces:
               type: array
               items: { type: string }
+              description: Namespaces listed by name. Optional when namespaceSelector is set.
+            namespaceSelector:
+              type: object
+              description: >-
+                A Kubernetes LabelSelector. Every namespace it matches joins the group (the matches
+                are in status.selectedNamespaces), except the operator's own and those labelled
+                costdeck.io/schedule=off. A group that lists a namespace by name wins over one that
+                selects it; otherwise the older group wins. When a namespace stops matching, the
+                group restores what it scaled down there.
+              example: { matchLabels: { env: preview } }
             schedules:
               type: array
               description: When the namespaces run. Windows are OR-ed; outside all of them everything is scaled down.

@@ -453,7 +453,7 @@ func (s *Server) toolListGroups(ctx context.Context) (string, error) {
 			"name": g.Name, "category": g.Spec.Category, "mode": g.Status.Mode, "desired": g.Status.DesiredState,
 			"phase": g.Status.Phase, "ready": fmt.Sprintf("%d/%d", g.Status.NamespacesReady, g.Status.NamespacesTotal), "exception": g.Status.Exception,
 			"nextChange": describeTransition(g.Status.NextTransition), "dependsOn": g.Spec.DependsOn,
-			"requiredBy": g.Status.RequiredBy, "namespaces": len(g.Spec.Namespaces),
+			"requiredBy": g.Status.RequiredBy, "namespaces": len(g.Members()),
 		})
 	}
 	return toJSON(out)
@@ -469,7 +469,7 @@ func (s *Server) toolGetGroup(ctx context.Context, name string) (string, error) 
 		conds[c.Type] = fmt.Sprintf("%s (%s): %s", c.Status, c.Reason, c.Message)
 	}
 	return toJSON(map[string]any{
-		"name": g.Name, "namespaces": g.Spec.Namespaces, "sequence": g.Spec.Sequence, "schedules": g.Spec.Schedules,
+		"name": g.Name, "namespaces": g.Members(), "namespaceSelector": g.Spec.NamespaceSelector, "sequence": g.Spec.Sequence, "schedules": g.Spec.Schedules,
 		"activation": g.Spec.Activation, "dependsOn": g.Spec.DependsOn, "override": g.Spec.Active,
 		"overrideUntil": g.Spec.ActiveUntil, "exceptions": g.Spec.Exceptions, "calendars": g.Spec.Calendars, "status": map[string]any{
 			"mode": g.Status.Mode, "desired": g.Status.DesiredState, "phase": g.Status.Phase,
@@ -590,7 +590,7 @@ func (s *Server) toolNamespaceStatus(ctx context.Context, ns string) (string, er
 	var groups finopsv1.ScalingGroupList
 	if err := s.Client.List(ctx, &groups, client.InNamespace(config.OperatorNamespace())); err == nil {
 		for _, g := range groups.Items {
-			if slices.Contains(g.Spec.Namespaces, ns) {
+			if slices.Contains(g.Members(), ns) {
 				result["scaledByGroup"] = g.Name
 			}
 		}

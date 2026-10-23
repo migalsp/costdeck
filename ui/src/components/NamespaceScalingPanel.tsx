@@ -11,6 +11,7 @@ import OverrideDialog, { type OverrideUntil } from './OverrideDialog'
 import WorkloadRulesDialog from './WorkloadRulesDialog'
 import ScheduleWizard from './ScheduleWizard'
 import WeekTimeline from './WeekTimeline'
+import { groupNamespaces } from '../lib/selector'
 
 type Controller =
   | { type: 'group'; name: string; spec: ScalingSpec; status: ScalingGroup['status']; size: number }
@@ -45,10 +46,10 @@ export default function NamespaceScalingPanel({ namespace }: { namespace: string
   }
   usePolling(load, 10000, namespace)
 
-  const group = groups.find(g => g.spec.namespaces.includes(namespace))
+  const group = groups.find(g => groupNamespaces(g).includes(namespace))
   const config = configs.find(c => c.spec.targetNamespace === namespace)
   const controller: Controller | null = group
-    ? { type: 'group', name: group.metadata.name, spec: group.spec, status: group.status, size: group.spec.namespaces.length }
+    ? { type: 'group', name: group.metadata.name, spec: group.spec, status: group.status, size: groupNamespaces(group).length }
     : config && ((config.spec.schedules?.length || 0) > 0 || config.spec.active !== undefined)
       ? { type: 'config', name: config.metadata.name, spec: config.spec, status: config.status, size: 1 }
       : null

@@ -1166,6 +1166,11 @@ func (in *ScalingGroupSpec) DeepCopyInto(out *ScalingGroupSpec) {
 		*out = make([]string, len(*in))
 		copy(*out, *in)
 	}
+	if in.NamespaceSelector != nil {
+		in, out := &in.NamespaceSelector, &out.NamespaceSelector
+		*out = new(metav1.LabelSelector)
+		(*in).DeepCopyInto(*out)
+	}
 	if in.Active != nil {
 		in, out := &in.Active, &out.Active
 		*out = new(bool)
@@ -1247,6 +1252,11 @@ func (in *ScalingGroupStatus) DeepCopyInto(out *ScalingGroupStatus) {
 	}
 	if in.RequiredBy != nil {
 		in, out := &in.RequiredBy, &out.RequiredBy
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
+	if in.SelectedNamespaces != nil {
+		in, out := &in.SelectedNamespaces, &out.SelectedNamespaces
 		*out = make([]string, len(*in))
 		copy(*out, *in)
 	}

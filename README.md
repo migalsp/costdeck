@@ -57,6 +57,8 @@ them back on time. There is no external service: one operator in your cluster do
   scheduled change, or for a time you choose, then the schedule takes over again.
 - **Holidays and release weekends.** Dated exceptions and shared holiday calendars keep a
   schedule down (or up) on given days without editing its hours.
+- **Namespaces by label.** A schedule can take every namespace with a label, so preview
+  environments join as they are created and leave when the label goes.
 - **Cloud resources too.** Namespaces start stage by stage and stop in reverse, and the
   stages can include AWS Aurora and EC2, Azure VMs and PostgreSQL/MySQL flexible servers,
   and Google Cloud Compute Engine and Cloud SQL. CronJobs are suspended and KEDA
@@ -168,7 +170,7 @@ make test-e2e    # Kind cluster + Helm install + the regression scenarios in hac
 
 The end-to-end suite runs in CI on every pull request. Every scenario in `hack/e2e`
 covers behaviour users depend on (scheduling, dependencies, stage timeouts, workload
-rules, holiday exceptions, auth, API, VictoriaMetrics history, MCP), so a change that breaks one fails the
+rules, holiday exceptions, namespace selectors, auth, API, VictoriaMetrics history, MCP), so a change that breaks one fails the
 build. A feature or fix that changes behaviour adds or extends a scenario. To run it
 against an existing test cluster instead of a new Kind cluster:
 

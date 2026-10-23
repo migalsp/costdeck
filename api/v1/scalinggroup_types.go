@@ -21,15 +21,26 @@ import (
 )
 
 // ScalingGroupSpec defines the desired state of ScalingGroup
+// +kubebuilder:validation:XValidation:rule="(has(self.namespaces) && size(self.namespaces) > 0) || has(self.namespaceSelector)",message="list namespaces or set a namespaceSelector"
 type ScalingGroupSpec struct {
 	// Category is the group classification (e.g. Solution, Platform)
 	// +kubebuilder:validation:Required
 	Category string `json:"category"`
 
 	// Namespaces is the list of namespaces managed by this group
-	// +kubebuilder:validation:MinItems=1
+	// +optional
 	// +listType=set
 	Namespaces []string `json:"namespaces"`
+
+	// NamespaceSelector adds every namespace whose labels match, such as the preview
+	// environments of a pull request, so they join the group as they are created. A
+	// namespace labelled costdeck.io/schedule=off is never selected, nor is the operator's
+	// own. Where groups claim the same namespace, one that lists it by name wins over one
+	// that selects it, and otherwise the older group. When a namespace stops matching, the
+	// group brings back what it scaled down there. status.selectedNamespaces shows the
+	// matches.
+	// +optional
+	NamespaceSelector *metav1.LabelSelector `json:"namespaceSelector,omitempty"`
 
 	// Active is a manual override. While it is set the schedule is ignored completely:
 	// true forces the group up, false forces it down. Remove the field (null) to return
@@ -198,6 +209,12 @@ type ScalingGroupStatus struct {
 	// RequiredBy lists the dependent groups that currently keep this group up.
 	// +optional
 	RequiredBy []string `json:"requiredBy,omitempty"`
+
+	// SelectedNamespaces are the namespaces spec.namespaceSelector matched at the last
+	// reconcile.
+	// +optional
+	// +listType=atomic
+	SelectedNamespaces []string `json:"selectedNamespaces,omitempty"`
 
 	// ConflictingNamespaces lists namespaces this group skips because an older
 	// ScalingGroup already manages them. A namespace is never scaled by two groups.

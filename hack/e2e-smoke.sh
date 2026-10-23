@@ -12,6 +12,7 @@
 #   70 usage history from VictoriaMetrics            (disposable clusters only)
 #   80 the MCP endpoint                               (disposable clusters only)
 #   90 date exceptions and holiday calendars (calendars on disposable clusters only)
+#   91 namespaces joining and leaving a schedule by label
 #
 # Run it against a disposable cluster (Kind in CI, `make test-e2e` locally): it installs
 # CRDs, metrics-server and changes settings. IMAGE must already be loadable by the cluster

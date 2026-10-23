@@ -119,7 +119,7 @@ func (e *Engine) PlanGroups(now time.Time, groups []finopsv1.ScalingGroup, calen
 				}
 			}
 		}
-		for _, ns := range g.Spec.Namespaces {
+		for _, ns := range g.Members() {
 			if owner := owners[ns]; owner != name {
 				plan.ConflictingNamespaces = append(plan.ConflictingNamespaces, ns)
 				if plan.NamespaceOwners == nil {
@@ -150,8 +150,9 @@ func (e *Engine) ownDecision(now time.Time, g *finopsv1.ScalingGroup, calendars 
 	return d, problems
 }
 
-// namespaceOwners assigns every namespace to the oldest group that lists it (ties broken
-// by name), so a namespace shared by mistake is scaled by exactly one group.
+// namespaceOwners assigns every namespace to exactly one group, so a namespace shared by
+// mistake is scaled once: a group that lists it by name wins over one whose selector
+// matched it, and among equals the oldest group (ties broken by name).
 func namespaceOwners(groups []finopsv1.ScalingGroup) map[string]string {
 	ordered := make([]*finopsv1.ScalingGroup, len(groups))
 	for i := range groups {
@@ -165,11 +166,19 @@ func namespaceOwners(groups []finopsv1.ScalingGroup) map[string]string {
 		return ordered[i].Name < ordered[j].Name
 	})
 	owners := make(map[string]string)
-	for _, g := range ordered {
-		for _, ns := range g.Spec.Namespaces {
+	claim := func(g *finopsv1.ScalingGroup, namespaces []string) {
+		for _, ns := range namespaces {
 			if _, taken := owners[ns]; !taken {
 				owners[ns] = g.Name
 			}
+		}
+	}
+	for _, g := range ordered {
+		claim(g, g.Spec.Namespaces)
+	}
+	for _, g := range ordered {
+		if g.Spec.NamespaceSelector != nil {
+			claim(g, g.Status.SelectedNamespaces)
 		}
 	}
 	return owners

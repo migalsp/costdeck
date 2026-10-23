@@ -10,6 +10,7 @@ import ScheduleStatusLine from './ScheduleStatus'
 import WeekTimeline from './WeekTimeline'
 import type { WizardTab } from './ScheduleWizard'
 import { Badge, Button, Modal, Tabs } from './ui'
+import { groupNamespaces } from '../lib/selector'
 
 export type DetailsTab = 'overview' | 'activity'
 
@@ -39,7 +40,7 @@ export default function ScheduleDetails(p: Props) {
   const obj = p.target.kind === 'group' ? p.target.group : p.target.config
   const spec: ScalingSpec = obj.spec
   const status = obj.status
-  const namespaces = p.target.kind === 'group' ? p.target.group.spec.namespaces : [p.target.config.spec.targetNamespace]
+  const namespaces = p.target.kind === 'group' ? groupNamespaces(p.target.group) : [p.target.config.spec.targetNamespace]
   const name = p.target.kind === 'group' ? obj.metadata.name : p.target.config.spec.targetNamespace
   const [confirmDelete, setConfirmDelete] = useState(false)
 

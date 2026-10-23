@@ -202,7 +202,7 @@ func Build(ctx context.Context, c client.Reader, rates pricing.Rates, opts Optio
 	}
 	for _, g := range groups.Items {
 		snap.Schedules = append(snap.Schedules, Schedule{
-			Kind: "group", Name: g.Name, Namespaces: g.Spec.Namespaces,
+			Kind: "group", Name: g.Name, Namespaces: g.Members(),
 			DesiredState: g.Status.DesiredState, Mode: g.Status.Mode, Phase: g.Status.Phase,
 			SavedHourly: parseMoney(g.Status.EstimatedHourlySavings),
 		})

@@ -49,6 +49,12 @@ func (s *Server) timetableOf(ctx context.Context, obj client.Object) scaling.Tim
 // validateSchedule rejects exceptions and calendar names that would not apply, so a typo
 // is caught when saving instead of surfacing later in a status condition.
 func (s *Server) validateSchedule(ctx context.Context, obj client.Object) error {
+	if g, ok := obj.(*finopsv1.ScalingGroup); ok && g.Spec.NamespaceSelector != nil {
+		// Matching against no namespaces checks the selector itself.
+		if _, err := scaling.SelectNamespaces(g.Spec.NamespaceSelector, nil, ""); err != nil {
+			return err
+		}
+	}
 	schedules, own, names := scheduleOf(obj)
 	if _, problems := scaling.ResolveExceptions(own, names, s.calendars(ctx), scaling.ExceptionZone(schedules)); len(problems) > 0 {
 		return errors.New(strings.Join(problems, "; "))

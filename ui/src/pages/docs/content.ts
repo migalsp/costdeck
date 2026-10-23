@@ -265,6 +265,39 @@ kubectl patch scalinggroup dev -n costdeck --type merge \\
         ],
       },
       {
+        id: 'labels',
+        title: 'Namespaces by label',
+        blocks: [
+          { p: 'Preview environments come and go with every pull request. Instead of adding each one by hand, give the schedule a label selector under **And every namespace labelled**, for example `env=preview`. Every namespace with matching labels joins the schedule as soon as it is created or labelled, and the editor shows what matches right now.' },
+          {
+            list: [
+              'The syntax is kubectl\'s: `env=preview`, `team in (shop,payments)`, `!legacy`, combined with commas.',
+              'A namespace labelled `costdeck.io/schedule=off` is never selected, nor are Cost Deck\'s own namespace and Kubernetes\' `kube-*` namespaces. A selector without any label to match is refused: it would take the whole cluster.',
+              'When a namespace stops matching (its label changes, or it opts out), the schedule brings back what it had scaled down there and leaves it alone afterwards.',
+              'A schedule that lists a namespace by name wins over one that selects it by label; otherwise the older schedule wins, as for names.',
+            ],
+          },
+          {
+            ways: {
+              kubectl: `kubectl apply -f - <<'YAML'
+apiVersion: finops.costdeck.io/v1
+kind: ScalingGroup
+metadata: {name: previews, namespace: costdeck}
+spec:
+  category: Environments
+  namespaceSelector:
+    matchLabels: {env: preview}
+  schedules:
+    - {days: [1,2,3,4,5], startTime: "08:00", endTime: "19:00", timezone: Europe/Berlin}
+YAML
+
+# Keep one preview running whatever the schedule says
+kubectl label namespace pr-1234 costdeck.io/schedule=off`,
+            },
+          },
+        ],
+      },
+      {
         id: 'exceptions',
         title: 'Holidays and other exceptions',
         blocks: [

@@ -16,6 +16,7 @@ import { cloudLabel } from '../lib/cloud'
 import { useAuth } from '../lib/auth'
 import OverrideDialog, { type OverrideUntil } from '../components/OverrideDialog'
 import { Button, SectionTitle } from '../components/ui'
+import { groupNamespaces } from '../lib/selector'
 
 type Target = { type: 'group' | 'config'; name: string }
 
@@ -152,7 +153,7 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
     }
   };
 
-  const grouped = new Set(groups.flatMap(g => g.spec.namespaces));
+  const grouped = new Set(groups.flatMap(groupNamespaces));
   // A config whose namespace belongs to a group only fine-tunes workloads for that group;
   // a config on its own is a single-namespace schedule.
   const standaloneConfigs = policies.filter(p => !grouped.has(p.spec.targetNamespace));
@@ -171,7 +172,7 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
     <ScheduleCard
       key={group.metadata.name}
       name={group.metadata.name}
-      namespaces={group.spec.namespaces}
+      namespaces={groupNamespaces(group)}
       spec={group.spec}
       generation={group.metadata.generation}
       status={group.status}
