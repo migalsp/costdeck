@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { Scaling, Server, LineChart, Activity, BookOpen, FileText, LogOut, Settings, UserCircle2, LayoutDashboard, HardDrive, Target, KeyRound, Sparkles } from 'lucide-react'
+import { Scaling, Server, LineChart, Activity, BookOpen, FileText, LogOut, Settings, UserCircle2, LayoutDashboard, HardDrive, Target, KeyRound, Sparkles, Globe2 } from 'lucide-react'
 import type { ReactNode } from 'react'
 import NamespaceInsights from './pages/NamespaceInsights'
 import Overview from './pages/Overview'
@@ -15,6 +15,7 @@ import LoginPage from './pages/LoginPage'
 import Documentation from './pages/Documentation'
 import SettingsPage from './pages/SettingsPage'
 import ReportsPage from './pages/ReportsPage'
+import ClustersPage from './pages/ClustersPage'
 import AIChatWidget from './components/AIChatModal'
 import AuthCallback from './pages/AuthCallback'
 import ChangePasswordDialog from './components/ChangePasswordDialog'
@@ -68,13 +69,14 @@ function NavItem({ icon, label, to, active }: { icon: ReactNode; label: string; 
   )
 }
 
-type Page = 'overview' | 'namespaces' | 'cluster' | 'storage' | 'ai' | 'wake' | 'health' | 'budgets' | 'scaling' | 'reports' | 'docs' | 'settings'
+type Page = 'overview' | 'clusters' | 'namespaces' | 'cluster' | 'storage' | 'ai' | 'wake' | 'health' | 'budgets' | 'scaling' | 'reports' | 'docs' | 'settings'
 
 // Every page has one path. Namespace details live under the page they were opened from,
 // /namespaces/<ns> or /scaling/<ns>, so Back leads to that list; the docs take a guide
 // and the settings a section as their second segment.
 const pages: Record<Page, { path: string; title: string; sub?: boolean }> = {
   overview: { path: '/', title: 'Cost Overview' },
+  clusters: { path: '/clusters', title: 'Clusters' },
   namespaces: { path: '/namespaces', title: 'Namespace Insights', sub: true },
   cluster: { path: '/cluster', title: 'Cluster Node Map' },
   storage: { path: '/storage', title: 'Storage & Network' },
@@ -196,6 +198,7 @@ function App() {
         <nav className="flex-1 px-4 mt-2 space-y-6 overflow-y-auto">
           <NavGroup title="Analytics">
             <NavItem icon={<LayoutDashboard size={18} />} label="Cost Overview" to="/" active={page === 'overview'} />
+            <NavItem icon={<Globe2 size={18} />} label="Clusters" to="/clusters" active={page === 'clusters'} />
             <NavItem icon={<LineChart size={18} />} label="Namespace Insights" to="/namespaces" active={page === 'namespaces'} />
             <NavItem icon={<Server size={18} />} label="Cluster Node Map" to="/cluster" active={page === 'cluster'} />
             <NavItem icon={<HardDrive size={18} />} label="Storage & Network" to="/storage" active={page === 'storage'} />
@@ -271,6 +274,7 @@ function App() {
           )
         )}
         {page === 'cluster' && <ClusterDashboard />}
+        {page === 'clusters' && <ClustersPage />}
         {page === 'storage' && <StoragePage />}
         {page === 'ai' && <AICostsPage />}
         {page === 'wake' && sub && <WakePage namespace={sub} />}

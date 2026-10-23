@@ -1178,6 +1178,54 @@ paths:
         "400": { description: A bad by, period or dates }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
+  /api/finops/summary:
+    get:
+      x-role: viewer
+      tags: [FinOps]
+      summary: This cluster at a glance
+      description: >-
+        Nodes, monthly cost, what schedules save and what more could be saved, month to date,
+        forecast and schedules: what another Cost Deck reads to show this cluster on its Clusters
+        page, with a viewer API token.
+      responses:
+        "200":
+          description: The summary
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ClusterSummary" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/clusters:
+    get:
+      x-role: viewer
+      tags: [FinOps]
+      summary: Every installation side by side
+      description: >-
+        This installation's summary and those of the installations in spec.clusters, read with
+        their viewer API tokens (an installation too old to serve a summary is read from its
+        overview), each cached for a minute; a cluster that could not be read says why. Totals add
+        up the clusters per currency.
+      responses:
+        "200":
+          description: The clusters and their totals
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  clusters:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name: { type: string }
+                        url: { type: string }
+                        local: { type: boolean }
+                        error: { type: string }
+                        summary: { $ref: "#/components/schemas/ClusterSummary" }
+                  totals: { type: array, items: { type: object } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
   /api/finops/allocation.csv:
     get:
       x-role: viewer
@@ -1738,7 +1786,7 @@ paths:
         resources discovery finds. For slack, teams and email it sends a test message, with
         the body shaped like integrations.notifications of the settings update.
       parameters:
-        - { name: provider, in: path, required: true, schema: { type: string, enum: [aws, azure, gcp, ai, entra, oidc, webex, slack, teams, email, victoriametrics] } }
+        - { name: provider, in: path, required: true, schema: { type: string, enum: [aws, azure, gcp, ai, entra, oidc, webex, slack, teams, email, cluster, victoriametrics] } }
       requestBody:
         content:
           application/json:
@@ -2045,6 +2093,24 @@ components:
             $ref: "#/components/schemas/Error"
 
   schemas:
+    ClusterSummary:
+      type: object
+      properties:
+        name: { type: string }
+        generatedAt: { type: string, format: date-time }
+        currency: { type: string }
+        nodes: { type: integer }
+        namespaces: { type: integer }
+        monthlyCost: { type: number }
+        monthlyRequested: { type: number }
+        monthlyUsed: { type: number }
+        monthlyUnallocated: { type: number }
+        schedulesSaving: { type: number }
+        savingsAvailable: { type: number }
+        monthToDate: { type: number }
+        forecast: { type: number }
+        schedules: { type: integer }
+        schedulesDown: { type: integer }
     Error:
       type: object
       properties:

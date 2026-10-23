@@ -847,6 +847,35 @@ type CostDeckConfigSpec struct {
 	// chargeback: capacity no pod requests, and namespaces everyone shares.
 	// +optional
 	Allocation AllocationConfig `json:"allocation,omitempty"`
+
+	// Clusters are other Cost Deck installations this one shows next to its own on the
+	// Clusters page, read with a viewer API token of each.
+	// +kubebuilder:validation:MaxItems=50
+	// +listType=map
+	// +listMapKey=name
+	// +optional
+	Clusters []RemoteCluster `json:"clusters,omitempty"`
+}
+
+// RemoteCluster is another Cost Deck installation.
+type RemoteCluster struct {
+	// Name is how the Clusters page calls it.
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=63
+	Name string `json:"name"`
+
+	// URL is where its dashboard answers, such as https://costdeck.eu.example.com.
+	// +kubebuilder:validation:Pattern=`^https?://[^\s]+$`
+	URL string `json:"url"`
+
+	// SecretRef names the Secret holding a viewer API token of that installation under
+	// the cluster's name.
+	// +optional
+	SecretRef string `json:"secretRef,omitempty"`
+
+	// SkipTLSVerify accepts its certificate without checking it.
+	// +optional
+	SkipTLSVerify bool `json:"skipTlsVerify,omitempty"`
 }
 
 // AllocationConfig decides how cost that belongs to no team is charged: capacity no pod

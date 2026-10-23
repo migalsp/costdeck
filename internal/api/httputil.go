@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -66,4 +67,10 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, v any) error {
 		return nil
 	}
 	return err
+}
+
+// httpURL parses an http or https URL with a host, as settings store them.
+func httpURL(raw string) (*url.URL, bool) {
+	u, err := url.Parse(raw)
+	return u, err == nil && (u.Scheme == "https" || u.Scheme == "http") && u.Host != ""
 }

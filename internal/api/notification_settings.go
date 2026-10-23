@@ -318,7 +318,7 @@ func clusterLabel(cfg *finopsv1.CostDeckConfig) string {
 	if cfg.Spec.ClusterName != "" {
 		return "cluster " + cfg.Spec.ClusterName
 	}
-	return "this cluster"
+	return thisCluster
 }
 
 // secretValue reads one key of a Secret in the operator namespace, "" when missing.

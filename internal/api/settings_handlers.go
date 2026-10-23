@@ -8,7 +8,6 @@ import (
 	"io"
 	"maps"
 	"net/http"
-	"net/url"
 	"path"
 	"regexp"
 	"slices"
@@ -41,6 +40,7 @@ type SettingsResponse struct {
 	DashboardURL string                       `json:"dashboardUrl,omitempty"`
 	NamespaceTTL NamespaceTTLSettings         `json:"namespaceTTL"`
 	Allocation   AllocationSettings           `json:"allocation"`
+	Clusters     []ClusterSettings            `json:"clusters"`
 	Providers    ProvidersSettingsResponse    `json:"providers"`
 	Integrations IntegrationsSettingsResponse `json:"integrations"`
 	Features     *FeaturesSettingsResponse    `json:"features,omitempty"`
@@ -198,6 +198,7 @@ type SettingsUpdateRequest struct {
 	DashboardURL *string                    `json:"dashboardUrl,omitempty"`
 	NamespaceTTL *NamespaceTTLUpdateRequest `json:"namespaceTTL,omitempty"`
 	Allocation   *AllocationUpdateRequest   `json:"allocation,omitempty"`
+	Clusters     *[]ClusterUpdate           `json:"clusters,omitempty"`
 	Providers    *ProvidersUpdateRequest    `json:"providers,omitempty"`
 	Integrations *IntegrationsUpdateRequest `json:"integrations,omitempty"`
 	Features     *FeaturesUpdateRequest     `json:"features,omitempty"`
@@ -526,6 +527,7 @@ func (s *Server) buildSettingsResponse(ctx context.Context, cfg *finopsv1.CostDe
 	resp.DashboardURL = cfg.Spec.DashboardURL
 	resp.NamespaceTTL = namespaceTTLSettings(cfg.Spec.NamespaceTTL)
 	resp.Allocation = allocationSettings(cfg.Spec.Allocation)
+	resp.Clusters = clusterSettings(cfg.Spec.Clusters)
 	if e := cfg.Spec.Auth.Entra; e != nil {
 		resp.Auth.Entra = &EntraSettingsResponse{
 			Enabled:          e.Enabled,
@@ -565,7 +567,7 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 
 	appliers := []func(context.Context, *finopsv1.CostDeckConfig, *SettingsUpdateRequest) error{
 		s.applyAWSSettings, s.applyAzureSettings, s.applyGCPSettings, s.applyAISettings,
-		s.applyWebexSettings, s.applyNotificationSettings, s.applyVictoriaMetricsSettings, applyMCPSettings, applyFeatureSettings, applyPricingSettings, applyReportSettings, applyBudgetSettings, applyBillingSettings, applyCalendarSettings, s.applyAuthSettings, applyDashboardURL, applyNamespaceTTLSettings, applyAllocationSettings,
+		s.applyWebexSettings, s.applyNotificationSettings, s.applyVictoriaMetricsSettings, applyMCPSettings, applyFeatureSettings, applyPricingSettings, applyReportSettings, applyBudgetSettings, applyBillingSettings, applyCalendarSettings, s.applyAuthSettings, applyDashboardURL, applyNamespaceTTLSettings, applyAllocationSettings, s.applyClusterSettings,
 	}
 
 	var cfg *finopsv1.CostDeckConfig
@@ -1116,8 +1118,7 @@ func applyDashboardURL(_ context.Context, cfg *finopsv1.CostDeckConfig, req *Set
 	}
 	v := strings.TrimRight(strings.TrimSpace(*req.DashboardURL), "/")
 	if v != "" {
-		u, err := url.Parse(v)
-		if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+		if _, ok := httpURL(v); !ok {
 			return badRequestf("the dashboard URL must be an http(s) address such as https://costdeck.example.com")
 		}
 	}
@@ -1231,6 +1232,8 @@ func (s *Server) handleTestProvider(w http.ResponseWriter, r *http.Request) {
 		s.testWebex(w, ctx, r)
 	case channelSlack, channelTeams, channelEmail:
 		s.testNotificationChannel(w, r, cfg, providerName)
+	case "cluster":
+		s.testCluster(w, r)
 	case "entra":
 		s.testEntra(w, ctx, cfg, r)
 	case "oidc":

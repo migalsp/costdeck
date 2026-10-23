@@ -459,6 +459,40 @@ spec:
                   ClusterName defines an optional identifier for this cluster.
                   Used in multi-cluster environments to distinguish bot commands.
                 type: string
+              clusters:
+                description: |-
+                  Clusters are other Cost Deck installations this one shows next to its own on the
+                  Clusters page, read with a viewer API token of each.
+                items:
+                  description: RemoteCluster is another Cost Deck installation.
+                  properties:
+                    name:
+                      description: Name is how the Clusters page calls it.
+                      maxLength: 63
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                    secretRef:
+                      description: |-
+                        SecretRef names the Secret holding a viewer API token of that installation under
+                        the cluster's name.
+                      type: string
+                    skipTlsVerify:
+                      description: SkipTLSVerify accepts its certificate without checking
+                        it.
+                      type: boolean
+                    url:
+                      description: URL is where its dashboard answers, such as https://costdeck.eu.example.com.
+                      pattern: ^https?://[^\s]+$
+                      type: string
+                  required:
+                  - name
+                  - url
+                  type: object
+                maxItems: 50
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
               dashboardUrl:
                 description: |-
                   DashboardURL is the address people open Cost Deck at, e.g.

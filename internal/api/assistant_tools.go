@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"slices"
 	"sort"
@@ -89,6 +91,21 @@ func (s *Server) toolRegistry() []ai.Tool {
 			Run: func(ctx context.Context, args map[string]any) (string, error) {
 				tz, _ := args["timezone"].(string)
 				return s.toolSuggestSchedule(ctx, args["namespace"].(string), tz)
+			},
+		},
+		{
+			Name: "get_clusters",
+			Description: "Every Cost Deck installation this one shows on its Clusters page, itself first: nodes, monthly cost, " +
+				"what schedules save and what more could be saved, month to date and forecast, schedules and how many are down, " +
+				"or why a cluster could not be read. Totals per currency.",
+			Parameters: obj(map[string]any{}),
+			Run: func(ctx context.Context, _ map[string]any) (string, error) {
+				rec := httptest.NewRecorder()
+				s.handleClusters(rec, httptest.NewRequest(http.MethodGet, "/api/clusters", nil).WithContext(ctx))
+				if rec.Code != http.StatusOK {
+					return "", fmt.Errorf("clusters: %s", strings.TrimSpace(rec.Body.String()))
+				}
+				return rec.Body.String(), nil
 			},
 		},
 		{

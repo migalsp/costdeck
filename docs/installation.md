@@ -273,6 +273,24 @@ token counts of the last seven days come from VictoriaMetrics, extrapolated to a
   namespace serving a model, GPUs included, divided by the tokens it served gives the cost
   per million tokens.
 
+## Several clusters
+
+Every Cost Deck installation serves a summary of its cluster (`GET /api/finops/summary`):
+nodes, monthly cost, what schedules save and what more could be saved, month to date,
+forecast and schedules. One installation can show the others next to its own on the
+**Clusters** page:
+
+1. On each other installation, create a **viewer** API token (Settings → API tokens).
+2. On the one you open, add them under **Settings → Clusters**: a name, the dashboard URL
+   and the token. **Test connection** checks them before you save.
+
+Each cluster is read at most once a minute. A cluster that cannot be read says why
+(unreachable, token refused). Totals add up the clusters per currency. Tokens are stored
+in the Secret `costdeck-cluster-tokens` and never shown again. Outbound requests refuse
+link-local and cloud metadata addresses. An installation too old to serve a summary is read
+from its overview. The same list is `GET /api/clusters`, and `get_clusters` for the
+assistant and MCP clients.
+
 ## Cost allocation (showback and chargeback)
 
 **Reports → Cost allocation** charges a period's cost (this month, last month, the last 7

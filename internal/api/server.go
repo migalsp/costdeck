@@ -68,8 +68,10 @@ type Server struct {
 	ledger   *finops.Ledger
 	ledgerAt time.Time
 
-	// HTTPClient sends test notifications; nil uses one that refuses metadata addresses.
+	// HTTPClient sends test notifications and reads other clusters; nil uses one that
+	// refuses metadata addresses.
 	HTTPClient *http.Client
+	remotes    remoteCache
 	// Poster delivers cost digests; nil means every configured notification channel.
 	Poster finops.Poster
 
@@ -236,6 +238,8 @@ func (s *Server) routes() *http.ServeMux {
 	viewer("GET /api/scaling/groups/{name}/realized", s.handleGroupRealized)
 	viewer("GET /api/finops/ai", s.handleAICosts)
 	viewer("GET /api/finops/allocation", s.handleAllocation)
+	viewer("GET /api/finops/summary", s.handleSummary)
+	viewer("GET /api/clusters", s.handleClusters)
 	viewer("GET /api/finops/allocation.csv", s.handleAllocationCSV)
 	viewer("GET /api/wake/{ns}", s.handleWakeStatus)
 	viewer("GET /api/namespace-ttl", s.handleNamespaceTTL)

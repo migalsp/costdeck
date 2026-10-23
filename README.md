@@ -96,6 +96,8 @@ them back on time. There is no external service: one operator in your cluster do
   usage when VictoriaMetrics is connected), and per node pool the instance type and count
   that fit the requests, arm64 alternatives and spot capacity for non-production
   workloads. Cost Deck never edits your requests or nodes.
+- **Several clusters.** One installation shows the others side by side, read with a viewer
+  API token each: cost, savings, this month so far and totals.
 - **Showback and chargeback.** A period's cost by team, environment, namespace or any label
   such as `cost-center`, with shared namespaces and idle capacity charged by your policy,
   adding up to the bill, as a table and a CSV for finance.

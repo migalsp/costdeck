@@ -1054,6 +1054,20 @@ costdeck_budget_forecast_ratio > 1`, label: 'Alert from your own monitoring' },
     summary: 'The cost digest everyone reads, sent on a schedule, and AI-written reports for each audience.',
     topics: [
       {
+        id: 'clusters',
+        title: 'Several clusters side by side',
+        blocks: [
+          {
+            steps: [
+              'On each other Cost Deck installation, create a **viewer** API token under Settings → API tokens.',
+              'On the installation you open, add each one under **Settings → Clusters**: a name, its dashboard URL and the token. **Test connection**, then **Save**.',
+              'Open **Clusters**: every cluster with its cost, what schedules save, what more could be saved and this month so far, with totals.',
+            ],
+          },
+          { p: 'Each cluster is read at most once a minute; one that cannot be read says why. Tokens are kept in a Secret and never shown again.' },
+        ],
+      },
+      {
         id: 'allocation',
         title: 'Cost allocation: showback and chargeback',
         blocks: [

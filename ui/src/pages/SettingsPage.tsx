@@ -1,6 +1,6 @@
 import { useState, useCallback, type ReactNode } from 'react'
 import {
-  Cloud, Bot, MessageSquare, Plus, Trash2, RefreshCw, PieChart,
+  Cloud, Bot, MessageSquare, Plus, Trash2, RefreshCw, PieChart, Globe2,
   CheckCircle2, XCircle, AlertTriangle, ChevronDown,
   ChevronUp, Sparkles, ExternalLink, Activity, Plug, Shield, Info, Users as UsersIcon, KeyRound, Coins, Receipt, CalendarDays
 } from 'lucide-react'
@@ -12,6 +12,8 @@ import OIDCSettings from '../components/settings/OIDCSettings'
 import NotificationChannels from '../components/settings/NotificationChannels'
 import PreviewCleanup from '../components/settings/PreviewCleanup'
 import AllocationSettings from '../components/settings/AllocationSettings'
+import ClustersSettings from '../components/settings/ClustersSettings'
+import { clustersForm, clustersProblem, clustersRequest, type ClusterForm, type ClusterSettings } from '../lib/clusters'
 import { allocationForm, allocationProblem, allocationRequest, type AllocationForm, type AllocationSettings as AllocationData } from '../lib/allocation'
 import { cleanupForm, cleanupProblem, cleanupRequest, type CleanupForm, type TTLSettings } from '../lib/cleanup'
 import { SecretInput } from '../components/settings/fields'
@@ -168,14 +170,15 @@ interface SettingsData {
   calendars?: HolidayCalendar[]
   namespaceTTL?: TTLSettings
   allocation?: AllocationData
+  clusters?: ClusterSettings[]
 }
 
 // ─── Navigation ─────────────────────────────────────────────────────────────
 
-type Section = 'users' | 'sso' | 'tokens' | 'pricing' | 'allocation' | 'billing' | 'metrics' | 'calendars' | 'cleanup' | 'clouds' | 'notifications' | 'ai' | 'mcp'
+type Section = 'users' | 'sso' | 'tokens' | 'pricing' | 'allocation' | 'billing' | 'metrics' | 'calendars' | 'cleanup' | 'clouds' | 'clusters' | 'notifications' | 'ai' | 'mcp'
 // Sections whose form is saved with their Save button; the others act at once.
-type SavedSection = 'sso' | 'pricing' | 'allocation' | 'metrics' | 'calendars' | 'cleanup' | 'clouds' | 'notifications' | 'ai' | 'mcp'
-const savedSections: Section[] = ['sso', 'pricing', 'allocation', 'metrics', 'calendars', 'cleanup', 'clouds', 'notifications', 'ai', 'mcp']
+type SavedSection = 'sso' | 'pricing' | 'allocation' | 'metrics' | 'calendars' | 'cleanup' | 'clouds' | 'clusters' | 'notifications' | 'ai' | 'mcp'
+const savedSections: Section[] = ['sso', 'pricing', 'allocation', 'metrics', 'calendars', 'cleanup', 'clouds', 'clusters', 'notifications', 'ai', 'mcp']
 const isSaved = (s: Section): s is SavedSection => savedSections.includes(s)
 
 const navGroups: { title: string; items: { id: Section; label: string; icon: ReactNode }[] }[] = [
@@ -196,6 +199,7 @@ const navGroups: { title: string; items: { id: Section; label: string; icon: Rea
   ] },
   { title: 'Integrations', items: [
     { id: 'clouds', label: 'Cloud accounts', icon: <Cloud size={16} /> },
+    { id: 'clusters', label: 'Clusters', icon: <Globe2 size={16} /> },
     { id: 'notifications', label: 'Notifications', icon: <MessageSquare size={16} /> },
     { id: 'ai', label: 'AI assistant', icon: <Bot size={16} /> },
     { id: 'mcp', label: 'MCP server', icon: <Plug size={16} /> },
@@ -240,6 +244,7 @@ function navStatus(st: SettingsData | null): Partial<Record<Section, NavStatus>>
     calendars: { text: st.calendars?.length ? String(st.calendars.length) : 'None', on: !!st.calendars?.length },
     cleanup: { text: !st.namespaceTTL?.enabled ? 'Off' : st.namespaceTTL.dryRun ? 'Dry run' : 'On', on: !!st.namespaceTTL?.enabled },
     clouds: { text: clouds.length ? clouds.join(', ') : 'None', on: clouds.length > 0 },
+    clusters: { text: st.clusters?.length ? String(st.clusters.length + 1) : 'One', on: !!st.clusters?.length },
     notifications: onOff(st.integrations.messenger?.webex?.enabled || channels?.slack.enabled || channels?.teams.enabled || channels?.email.enabled),
     ai: onOff(st.integrations.ai?.enabled),
     mcp: onOff(st.integrations.mcp?.enabled),
@@ -730,6 +735,7 @@ export default function SettingsPage({ section: requested }: { section?: string 
   const [channels, setChannels] = useState<ChannelsForm>(() => channelsForm())
   const [cleanup, setCleanup] = useState<CleanupForm>(() => cleanupForm())
   const [allocation, setAllocation] = useState<AllocationForm>(() => allocationForm())
+  const [clusters, setClusters] = useState<ClusterForm[]>([])
   const [dashboardUrl, setDashboardUrl] = useState('')
   const [entraTenant, setEntraTenant] = useState('')
   const [entraClient, setEntraClient] = useState('')
@@ -809,6 +815,7 @@ export default function SettingsPage({ section: requested }: { section?: string 
         setChannels(channelsForm(data.integrations?.notifications))
         setCleanup(cleanupForm(data.namespaceTTL))
         setAllocation(allocationForm(data.allocation))
+        setClusters(clustersForm(data.clusters))
         if (data.auth) {
           setDisableLocalLogin(data.auth.disableLocalLogin)
           setDashboardUrl(data.dashboardUrl || '')
@@ -847,7 +854,7 @@ export default function SettingsPage({ section: requested }: { section?: string 
   const handleSave = async (sec: SavedSection) => {
     const invalid = sec === 'calendars' ? calendarProblem(calendars) : sec === 'pricing' ? llmModelProblem(llmModels) : sec === 'sso' ? oidcProblem(oidc)
       : sec === 'notifications' ? channelsProblem(channels) : sec === 'cleanup' ? cleanupProblem(cleanup, settings?.namespaceTTL)
-      : sec === 'allocation' ? allocationProblem(allocation) : null
+      : sec === 'allocation' ? allocationProblem(allocation) : sec === 'clusters' ? clustersProblem(clusters) : null
     if (invalid) {
       setSaveMessage({ section: sec, text: `Not saved: ${invalid}`, ok: false })
       return
@@ -953,6 +960,7 @@ export default function SettingsPage({ section: requested }: { section?: string 
         calendars: { calendars },
         cleanup: { namespaceTTL: cleanupRequest(cleanup) },
         allocation: { allocation: allocationRequest(allocation) },
+        clusters: { clusters: clustersRequest(clusters) },
       }
       const res = await fetch('/api/settings', {
         method: 'PUT',
@@ -979,6 +987,7 @@ export default function SettingsPage({ section: requested }: { section?: string 
         if (sec === 'notifications') setChannels(channelsForm(data.integrations?.notifications))
         if (sec === 'cleanup') setCleanup(cleanupForm(data.namespaceTTL))
         if (sec === 'allocation') setAllocation(allocationForm(data.allocation))
+        if (sec === 'clusters') setClusters(clustersForm(data.clusters))
         setDirty(d => ({ ...d, [sec]: false }))
         setSaveMessage({ section: sec, text: 'Saved', ok: true })
         setTimeout(() => setSaveMessage(m => (m?.section === sec && m.ok ? null : m)), 3000)
@@ -1690,6 +1699,18 @@ export default function SettingsPage({ section: requested }: { section?: string 
             action={saveAction('cleanup')}
           />
           <PreviewCleanup value={cleanup} onChange={setCleanup} saved={settings?.namespaceTTL} />
+        </div>
+      )}
+
+      {section === 'clusters' && (
+        <div className="space-y-4 animate-rise">
+          <SectionHeader
+            icon={<Globe2 className="text-brand-500" size={20} />}
+            title="Clusters"
+            subtitle="Other Cost Deck installations the Clusters page shows next to this one"
+            action={saveAction('clusters')}
+          />
+          <ClustersSettings value={clusters} onChange={c => { setClusters(c); setDirty(d => ({ ...d, clusters: true })) }} />
         </div>
       )}
 
