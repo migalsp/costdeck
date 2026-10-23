@@ -2,7 +2,7 @@ import { useState, useCallback, type ReactNode } from 'react'
 import {
   Cloud, Bot, MessageSquare, Plus, Trash2, RefreshCw, PieChart, Globe2, Wand2,
   CheckCircle2, XCircle, AlertTriangle, ChevronDown,
-  ChevronUp, Sparkles, ExternalLink, Activity, Plug, Shield, Info, Users as UsersIcon, KeyRound, Coins, Receipt, CalendarDays
+  ChevronUp, Sparkles, Activity, Plug, Shield, X, Users as UsersIcon, KeyRound, Coins, Receipt, CalendarDays
 } from 'lucide-react'
 import { AWSLogo, AzureLogo, GCPLogo, WebexLogo } from '../components/ProviderLogos'
 import ApiTokens from '../components/ApiTokens'
@@ -18,7 +18,7 @@ import { rightsizingForm, rightsizingProblem, rightsizingRequest, type Rightsizi
 import { clustersForm, clustersProblem, clustersRequest, type ClusterForm, type ClusterSettings } from '../lib/clusters'
 import { allocationForm, allocationProblem, allocationRequest, type AllocationForm, type AllocationSettings as AllocationData } from '../lib/allocation'
 import { cleanupForm, cleanupProblem, cleanupRequest, type CleanupForm, type TTLSettings } from '../lib/cleanup'
-import { SecretInput } from '../components/settings/fields'
+import { CardIcon, checkClass, Configured, Optional, SecretInput, Segmented, SettingsCard, TestButton, Toggle, hintClass, inputClass, labelClass } from '../components/settings/fields'
 import { channelsForm, channelsProblem, channelsRequest, type ChannelsForm, type NotificationsSettings } from '../lib/notifications'
 import { emptyOIDC, oidcProblem, oidcRequest, type OIDCForm } from '../lib/oidc'
 import { llmModelProblem } from '../lib/llm'
@@ -196,7 +196,7 @@ const navGroups: { title: string; items: { id: Section; label: string; icon: Rea
     { id: 'billing', label: 'Cloud bill', icon: <Receipt size={16} /> },
     { id: 'metrics', label: 'Usage metrics', icon: <Activity size={16} /> },
   ] },
-  { title: 'Scheduling', items: [
+  { title: 'Automation', items: [
     { id: 'calendars', label: 'Holiday calendars', icon: <CalendarDays size={16} /> },
     { id: 'cleanup', label: 'Preview cleanup', icon: <Trash2 size={16} /> },
     { id: 'rightsizing', label: 'Right-sizing', icon: <Wand2 size={16} /> },
@@ -303,6 +303,8 @@ interface BillingSettings {
   }
 }
 
+const billingClouds = [['aws', 'AWS'], ['azure', 'Azure'], ['gcp', 'Google Cloud']] as const
+
 const billingHelp: Record<BillingCloud, string> = {
   aws: 'Reads the amortized EC2 cost from Cost Explorer (needs ce:GetCostAndUsage). Activate the tag as a cost allocation tag in the billing console first.',
   azure: 'Reads the amortized virtual machine cost of the AKS node resource group from Cost Management (Cost Management Reader on that group).',
@@ -326,7 +328,7 @@ function BillingSection({ onSaved }: { onSaved: (enabled: boolean) => void }) {
   if (!b) return null
   const st = b.status
   const set = (patch: Partial<BillingSettings>) => setB({ ...b, ...patch })
-  const field = 'w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm font-mono'
+  const field = `${inputClass} font-mono`
 
   const save = async () => {
     setBusy(true)
@@ -365,7 +367,7 @@ function BillingSection({ onSaved }: { onSaved: (enabled: boolean) => void }) {
 
   return (
     <div>
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-4">
         <div>
           <h4 className="font-bold text-slate-800">Reconcile with the cloud bill</h4>
           <p className="text-sm text-slate-500 mt-1">
@@ -373,37 +375,27 @@ function BillingSection({ onSaved }: { onSaved: (enabled: boolean) => void }) {
             Reserved Instances, committed use discounts and spot prices show in every figure. Checked every six hours; the bill lags by two days.
           </p>
         </div>
-        <label className="relative inline-flex items-center cursor-pointer ml-4">
-          <input type="checkbox" checked={!!b.enabled} onChange={e => set({ enabled: e.target.checked })} className="sr-only peer" />
-          <div className={`w-11 h-6 rounded-full transition-colors ${b.enabled ? 'bg-brand-600' : 'bg-slate-300'}`}>
-            <div className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-md transition-transform ${b.enabled ? 'translate-x-5' : 'translate-x-0'}`} />
-          </div>
-        </label>
+        <Toggle checked={!!b.enabled} onChange={v => set({ enabled: v })} label="Enable Reconcile with the cloud bill" />
       </div>
-      <div className="mt-4 flex gap-1">
-        {(['aws', 'azure', 'gcp'] as BillingCloud[]).map(c => (
-          <button key={c} type="button" onClick={() => setCloud(c)}
-            className={`px-3 py-1.5 rounded-lg text-sm font-semibold border ${cloud === c ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'}`}>
-            {c === 'aws' ? 'AWS' : c === 'azure' ? 'Azure' : 'Google Cloud'}
-          </button>
-        ))}
+      <div className="mt-4">
+        <Segmented label="Cloud" value={cloud} onChange={setCloud} options={billingClouds} />
       </div>
-      <p className="mt-2 text-xs text-slate-500">{billingHelp[cloud]} It uses the credentials of the {cloud === 'aws' ? 'AWS' : cloud === 'azure' ? 'Azure' : 'Google Cloud'} provider above, or the pod identity.</p>
+      <p className="mt-2 text-xs text-slate-500">{billingHelp[cloud]} It uses the {billingClouds.find(([c]) => c === cloud)![1]} credentials under <b>Cloud accounts</b>, or the pod identity.</p>
       <div className="mt-3 grid grid-cols-2 gap-3">
         {cloud === 'aws' && <>
-          <div><label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1 block">Tag key</label>
+          <div><label className={labelClass}>Tag key</label>
             <input className={field} value={b.aws?.tagKey || 'aws:eks:cluster-name'} onChange={e => set({ aws: { tagValue: b.aws?.tagValue || '', tagKey: e.target.value } })} /></div>
-          <div><label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1 block">Tag value (cluster name)</label>
+          <div><label className={labelClass}>Tag value (cluster name)</label>
             <input className={field} value={b.aws?.tagValue || ''} placeholder="prod-eu" onChange={e => set({ aws: { tagKey: b.aws?.tagKey, tagValue: e.target.value } })} /></div>
         </>}
         {cloud === 'azure' && (
-          <div className="col-span-2"><label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1 block">Node resource group</label>
+          <div className="col-span-2"><label className={labelClass}>Node resource group</label>
             <input className={field} value={b.azure?.resourceGroup || ''} placeholder="MC_rg-prod_aks-prod_westeurope" onChange={e => set({ azure: { resourceGroup: e.target.value } })} /></div>
         )}
         {cloud === 'gcp' && <>
-          <div><label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1 block">Billing export table</label>
+          <div><label className={labelClass}>Billing export table</label>
             <input className={field} value={b.gcp?.table || ''} placeholder="billing-project.billing.gcp_billing_export_resource_v1_XXXX" onChange={e => set({ gcp: { clusterName: b.gcp?.clusterName || '', table: e.target.value } })} /></div>
-          <div><label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1 block">GKE cluster name</label>
+          <div><label className={labelClass}>GKE cluster name</label>
             <input className={field} value={b.gcp?.clusterName || ''} placeholder="prod-eu" onChange={e => set({ gcp: { table: b.gcp?.table || '', clusterName: e.target.value } })} /></div>
         </>}
       </div>
@@ -482,14 +474,14 @@ const TagEditor = ({ tags, onChange }: { tags: Record<string, string>; onChange:
           value={newKey}
           onChange={e => setNewKey(e.target.value)}
           placeholder="Tag key"
-          className="flex-1 px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-mono focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-400 transition-all"
+          className={`${inputClass} flex-1 font-mono`}
           onKeyDown={e => e.key === 'Enter' && addTag()}
         />
         <input
           value={newValue}
           onChange={e => setNewValue(e.target.value)}
           placeholder="Tag value"
-          className="flex-1 px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-mono focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-400 transition-all"
+          className={`${inputClass} flex-1 font-mono`}
           onKeyDown={e => e.key === 'Enter' && addTag()}
         />
         <button
@@ -544,33 +536,14 @@ const ResourceTypePicker = ({ options, value, onChange }: {
 )
 
 const FieldLabel = ({ children, done }: { children: React.ReactNode; done?: boolean }) => (
-  <label className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5 block">
-    {children}
-    {done && <span className="ml-2 text-emerald-600 normal-case font-medium">✓ Configured</span>}
-  </label>
+  <label className={labelClass}>{children}{done && <Configured />}</label>
 )
 
-const textInput = 'w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-400'
+type TestResult = { provider: string; connected: boolean; error?: string; message?: string } | null
 
-const ConnectionTestRow = ({ provider, testing, result, onTest }: {
-  provider: string
-  testing: string | null
-  result: { provider: string; connected: boolean; error?: string; message?: string } | null
-  onTest: (provider: string) => void
-}) => (
-  <div className="flex flex-wrap items-center gap-3">
-    <Button size="sm" onClick={() => onTest(provider)} disabled={testing === provider}
-      icon={testing === provider ? <RefreshCw size={14} className="animate-spin" /> : <ExternalLink size={14} />}>
-      Test connection
-    </Button>
-    {result?.provider === provider && (
-      <span className={`text-xs font-medium flex items-center gap-1 ${result.connected ? 'text-emerald-700' : 'text-rose-600'}`}>
-        {result.connected ? <CheckCircle2 size={14} /> : <XCircle size={14} />}
-        {result.connected ? result.message || 'Connection successful' : result.error || 'Connection failed'}
-      </span>
-    )}
-  </div>
-)
+// outcome is what TestButton shows for one provider's last connection test.
+const outcome = (result: TestResult, provider: string, connected = 'Connection successful') =>
+  result?.provider === provider ? { ok: result.connected, text: result.connected ? result.message || connected : result.error || 'Connection failed' } : null
 
 const ProviderCard = ({
   name, logo, children, enabled, onToggle, comingSoon, expanded, onExpand, status
@@ -594,25 +567,14 @@ const ProviderCard = ({
             {!comingSoon && status && <StatusBadge connected={status.connected} error={status.error} />}
           </div>
           {status?.discoveredResources !== undefined && status.connected && (
-            <span className="text-[10px] text-slate-400 font-medium">{status.discoveredResources} resources discovered</span>
+            <span className="text-xs text-slate-400">{status.discoveredResources} resources discovered</span>
           )}
         </div>
       </div>
       <div className="flex items-center gap-3">
-        <label className="relative inline-flex items-center cursor-pointer" onClick={e => e.stopPropagation()}>
-          <input
-            type="checkbox"
-            checked={enabled}
-            onChange={e => onToggle(e.target.checked)}
-            className="sr-only peer"
-            disabled={comingSoon}
-          />
-          <div className={`w-11 h-6 rounded-full peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-brand-500/20 transition-colors ${enabled ? 'bg-brand-600' : 'bg-slate-300'
-            } ${comingSoon ? 'opacity-50 cursor-not-allowed' : ''}`}>
-            <div className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-md transition-transform ${enabled ? 'translate-x-5' : 'translate-x-0'
-              }`} />
-          </div>
-        </label>
+        <span className="contents" onClick={e => e.stopPropagation()}>
+          <Toggle checked={enabled} onChange={onToggle} label={`Enable ${name}`} disabled={comingSoon} />
+        </span>
         {expanded ? <ChevronUp size={18} className="text-slate-400" /> : <ChevronDown size={18} className="text-slate-400" />}
       </div>
     </div>
@@ -655,7 +617,7 @@ export default function SettingsPage({ section: requested }: { section?: string 
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState<string | null>(null)
-  const [testResult, setTestResult] = useState<{ provider: string; connected: boolean; error?: string; message?: string } | null>(null)
+  const [testResult, setTestResult] = useState<TestResult>(null)
   const [saveMessage, setSaveMessage] = useState<{ section: Section; text: string; ok: boolean } | null>(null)
   const [expandedProvider, setExpandedProvider] = useState<string | null>('aws')
   const section = requested && allSections.includes(requested as Section) ? requested as Section : lastSection()
@@ -1096,12 +1058,6 @@ export default function SettingsPage({ section: requested }: { section?: string 
     }
   }
 
-  const toggleResourceType = (type: string) => {
-    setAwsResourceTypes(prev =>
-      prev.includes(type) ? prev.filter(t => t !== type) : [...prev, type]
-    )
-  }
-
   if (loading) {
     return (
       <div className="flex h-full items-center justify-center">
@@ -1117,6 +1073,7 @@ export default function SettingsPage({ section: requested }: { section?: string 
     'sa-east-1', 'ca-central-1',
   ]
 
+  const webexStatus = settings?.integrations?.messenger?.webex?.status
   const saveAction = (sec: SavedSection) => (
     <div className="flex items-center gap-3 shrink-0">
       {saveMessage?.section === sec
@@ -1172,102 +1129,34 @@ export default function SettingsPage({ section: requested }: { section?: string 
             status={settings?.providers.aws?.status}
           >
             <div className="space-y-5">
-              {/* Region */}
               <div>
-                <label className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5 block">Region</label>
-                <select
-                  value={awsRegion}
-                  onChange={e => setAwsRegion(e.target.value)}
-                  className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-400 transition-all appearance-none cursor-pointer"
-                >
+                <FieldLabel>Region</FieldLabel>
+                <select value={awsRegion} onChange={e => setAwsRegion(e.target.value)} className={`${inputClass} sm:w-96`}>
                   {awsRegions.map(r => <option key={r} value={r}>{r}</option>)}
                 </select>
               </div>
-
-              {/* Credentials */}
               <div>
-                <label className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5 block">
-                  Credentials
-                  {settings?.providers.aws?.hasCredentials && (
-                    <span className="ml-2 text-emerald-500 normal-case font-medium">✓ Configured</span>
-                  )}
-                </label>
-                <div className="space-y-2">
-                  <SecretInput
-                    value={awsAccessKey}
-                    onChange={setAwsAccessKey}
-                    placeholder={settings?.providers.aws?.hasCredentials ? '••••••••••••••••••••' : 'AWS Access Key ID'}
-                  />
-                  <SecretInput
-                    value={awsSecretKey}
-                    onChange={setAwsSecretKey}
-                    placeholder={settings?.providers.aws?.hasCredentials ? '••••••••••••••••••••' : 'AWS Secret Access Key'}
-                  />
+                <FieldLabel done={settings?.providers.aws?.hasCredentials}>Access key</FieldLabel>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <SecretInput value={awsAccessKey} onChange={setAwsAccessKey} label="AWS access key ID"
+                    placeholder={settings?.providers.aws?.hasCredentials ? '••••••••••••••••' : 'Access key ID'} />
+                  <SecretInput value={awsSecretKey} onChange={setAwsSecretKey} label="AWS secret access key"
+                    placeholder={settings?.providers.aws?.hasCredentials ? '••••••••••••••••' : 'Secret access key'} />
                 </div>
-                <p className="text-[10px] text-slate-400 mt-1.5">
-                  Leave empty to keep existing credentials. Credentials are stored in a Kubernetes Secret.
-                </p>
+                <p className={hintClass}>Leave empty to keep the stored key, or to use the pod identity (IRSA or EKS Pod Identity). Keys are stored in a Kubernetes Secret.</p>
               </div>
-
-              {/* Test Connection */}
-              <div className="flex items-center gap-3">
-                <button
-                  onClick={() => handleTestConnection('aws')}
-                  disabled={testing === 'aws'}
-                  className="flex items-center gap-2 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-bold transition-all disabled:opacity-50"
-                >
-                  {testing === 'aws' ? <RefreshCw size={14} className="animate-spin" /> : <ExternalLink size={14} />}
-                  Test Connection
-                </button>
-                {testResult?.provider === 'aws' && (
-                  <span className={`text-xs font-bold flex items-center gap-1 ${testResult.connected ? 'text-emerald-600' : 'text-rose-500'}`}>
-                    {testResult.connected ? <CheckCircle2 size={14} /> : <XCircle size={14} />}
-                    {testResult.connected ? testResult.message || 'Connection successful' : testResult.error || 'Connection failed'}
-                  </span>
-                )}
-              </div>
-
-              {/* Discovery Tags */}
+              <TestButton onTest={() => handleTestConnection('aws')} testing={testing === 'aws'} result={outcome(testResult, 'aws')} />
               <div>
-                <label className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5 block">
-                  Discovery Tags
-                </label>
-                <p className="text-[10px] text-slate-400 mb-2">
-                  Only AWS resources matching ALL these tags will be discovered and available for scaling
-                </p>
+                <FieldLabel>Discovery tags</FieldLabel>
+                <p className="text-xs text-slate-400 mb-2">Only resources carrying all of these tags are offered for scheduling.</p>
                 <TagEditor tags={awsTags} onChange={setAwsTags} />
               </div>
-
-              {/* Resource Types */}
               <div>
-                <label className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2 block">
-                  Resource Types
-                </label>
-                <div className="flex gap-3">
-                  {[
-                    { id: 'aurora', label: 'Aurora Clusters', desc: 'Start/stop RDS Aurora clusters' },
-                    { id: 'ec2', label: 'EC2 Instances', desc: 'Start/stop EC2 instances' },
-                  ].map(rt => (
-                    <label
-                      key={rt.id}
-                      className={`flex-1 flex items-start gap-3 p-4 rounded-xl border cursor-pointer transition-all ${awsResourceTypes.includes(rt.id)
-                          ? 'border-emerald-300 bg-emerald-50/50 ring-1 ring-emerald-200'
-                          : 'border-slate-200 hover:border-slate-300'
-                        }`}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={awsResourceTypes.includes(rt.id)}
-                        onChange={() => toggleResourceType(rt.id)}
-                        className="mt-0.5 accent-brand-600"
-                      />
-                      <div>
-                        <span className="text-sm font-bold text-slate-700">{rt.label}</span>
-                        <p className="text-[10px] text-slate-400 mt-0.5">{rt.desc}</p>
-                      </div>
-                    </label>
-                  ))}
-                </div>
+                <FieldLabel>Resource types</FieldLabel>
+                <ResourceTypePicker value={awsResourceTypes} onChange={setAwsResourceTypes} options={[
+                  { id: 'aurora', label: 'Aurora clusters', desc: 'Start and stop RDS Aurora clusters' },
+                  { id: 'ec2', label: 'EC2 instances', desc: 'Start and stop EC2 instances' },
+                ]} />
               </div>
             </div>
           </ProviderCard>
@@ -1286,17 +1175,17 @@ export default function SettingsPage({ section: requested }: { section?: string 
               <div className="grid gap-4 sm:grid-cols-2">
                 <div>
                   <FieldLabel>Subscription ID</FieldLabel>
-                  <input value={azureSubscription} onChange={e => setAzureSubscription(e.target.value.trim())} placeholder="00000000-0000-0000-0000-000000000000" className={`${textInput} font-mono`} />
+                  <input value={azureSubscription} onChange={e => setAzureSubscription(e.target.value.trim())} placeholder="00000000-0000-0000-0000-000000000000" className={`${inputClass} font-mono`} />
                 </div>
                 <div>
                   <FieldLabel>Tenant ID</FieldLabel>
-                  <input value={azureTenant} onChange={e => setAzureTenant(e.target.value.trim())} placeholder="Directory (tenant) ID" className={`${textInput} font-mono`} />
+                  <input value={azureTenant} onChange={e => setAzureTenant(e.target.value.trim())} placeholder="Directory (tenant) ID" className={`${inputClass} font-mono`} />
                 </div>
               </div>
               <div>
                 <FieldLabel done={settings?.providers.azure?.hasCredentials}>Service principal</FieldLabel>
                 <div className="grid gap-2 sm:grid-cols-2">
-                  <input value={azureClientId} onChange={e => setAzureClientId(e.target.value.trim())} placeholder="Application (client) ID" className={`${textInput} font-mono`} />
+                  <input value={azureClientId} onChange={e => setAzureClientId(e.target.value.trim())} placeholder="Application (client) ID" className={`${inputClass} font-mono`} />
                   <SecretInput value={azureClientSecret} onChange={setAzureClientSecret}
                     placeholder={settings?.providers.azure?.hasCredentials ? '••••••••••••••••' : 'Client secret'} />
                 </div>
@@ -1305,7 +1194,7 @@ export default function SettingsPage({ section: requested }: { section?: string 
                   The identity needs <code>Microsoft.Compute/virtualMachines/start|deallocate</code> and the flexible servers' <code>start|stop</code> actions; Virtual Machine Contributor covers VMs.
                 </p>
               </div>
-              <ConnectionTestRow provider="azure" testing={testing} result={testResult} onTest={handleTestConnection} />
+              <TestButton onTest={() => handleTestConnection('azure')} testing={testing === 'azure'} result={outcome(testResult, 'azure')} />
               <div>
                 <FieldLabel>Discovery tags</FieldLabel>
                 <p className="text-xs text-slate-400 mb-2">Only resources carrying all of these tags are offered for scheduling.</p>
@@ -1335,18 +1224,18 @@ export default function SettingsPage({ section: requested }: { section?: string 
             <div className="space-y-5">
               <div>
                 <FieldLabel>Project ID</FieldLabel>
-                <input value={gcpProject} onChange={e => setGcpProject(e.target.value.trim())} placeholder="Defaults to the service account's project" className={`${textInput} font-mono sm:w-96`} />
+                <input value={gcpProject} onChange={e => setGcpProject(e.target.value.trim())} placeholder="Defaults to the service account's project" className={`${inputClass} font-mono sm:w-96`} />
               </div>
               <div>
                 <FieldLabel done={settings?.providers.gcp?.hasCredentials}>Service account key</FieldLabel>
                 <textarea value={gcpKey} onChange={e => setGcpKey(e.target.value)} rows={4} spellCheck={false}
                   placeholder={settings?.providers.gcp?.hasCredentials ? 'Stored. Paste a new key to replace it.' : 'Paste the JSON key of a service account'}
-                  className={`${textInput} font-mono text-xs`} />
+                  className={`${inputClass} font-mono text-xs`} />
                 <p className="text-xs text-slate-400 mt-1.5">
                   Leave empty to keep the stored key, or to use GKE workload identity. The account needs <code>roles/compute.instanceAdmin.v1</code> and <code>roles/cloudsql.editor</code> (or narrower custom roles).
                 </p>
               </div>
-              <ConnectionTestRow provider="gcp" testing={testing} result={testResult} onTest={handleTestConnection} />
+              <TestButton onTest={() => handleTestConnection('gcp')} testing={testing === 'gcp'} result={outcome(testResult, 'gcp')} />
               <div>
                 <FieldLabel>Discovery labels</FieldLabel>
                 <p className="text-xs text-slate-400 mb-2">Only resources carrying all of these labels are offered for scheduling.</p>
@@ -1374,172 +1263,69 @@ export default function SettingsPage({ section: requested }: { section?: string 
             action={saveAction('metrics')}
           />
 
-          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
-            <div className="flex items-center justify-between mb-6">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-brand-50 flex items-center justify-center">
-                  <Activity className="text-brand-600" size={20} />
-                </div>
-                <div>
-                  <span className="font-bold text-slate-800">VictoriaMetrics</span>
-                  <p className="text-[10px] text-slate-400">PromQL-compatible metrics backend</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-3">
-                {vmEnabled && settings?.integrations.victoriaMetrics?.status && (
-                  <span title={settings.integrations.victoriaMetrics.status.error || ''}>
-                    <StatusBadge
-                      connected={settings.integrations.victoriaMetrics.status.connected}
-                      error={settings.integrations.victoriaMetrics.status.error}
-                    />
-                  </span>
-                )}
-                <label className="relative inline-flex items-center cursor-pointer">
-                  <input type="checkbox" checked={vmEnabled} onChange={e => setVmEnabled(e.target.checked)} className="sr-only peer" />
-                  <div className={`w-11 h-6 rounded-full ${vmEnabled ? 'bg-brand-600' : 'bg-slate-300'}`}>
-                    <div className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-md transition-transform ${vmEnabled ? 'translate-x-5' : 'translate-x-0'}`} />
-                  </div>
-                </label>
-              </div>
-            </div>
-
-            <div className={`space-y-5 ${!vmEnabled ? 'opacity-50 pointer-events-none' : ''}`}>
-              {/* Info banner */}
-              <div className="flex items-start gap-3 p-4 bg-slate-50 rounded-xl border border-slate-200">
-                <Info size={16} className="text-slate-400 mt-0.5 flex-shrink-0" />
-                <div className="text-xs text-slate-600">
-                  <p className="font-bold mb-1">Metrics Source Override</p>
-                  <p>When enabled, namespace insights, pod usage and right-sizing advice come from VictoriaMetrics instead of the Kubernetes Metrics Server. Changes apply immediately — no operator restart. If VictoriaMetrics is unreachable, CostDeck falls back to metrics-server and reports why.</p>
-                </div>
-              </div>
-
-              {/* Endpoint */}
-              <div>
-                <label className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5 block">Endpoint URL</label>
-                <input
-                  value={vmEndpoint}
-                  onChange={e => setVmEndpoint(e.target.value)}
-                  placeholder="http://vmselect.monitoring.svc:8481/select/0/prometheus"
-                  className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-400 transition-all"
-                />
-                <p className="text-[10px] text-slate-400 mt-1">Single node: http://vmsingle.monitoring.svc:8428 • Cluster: http://vmselect.monitoring.svc:8481/select/0/prometheus • Prometheus also works</p>
-              </div>
-
-              {/* Label selector */}
-              <div>
-                <label className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5 block">Cluster label selector <span className="normal-case font-normal text-slate-400">(optional)</span></label>
-                <input
-                  value={vmLabelSelector}
-                  onChange={e => setVmLabelSelector(e.target.value)}
-                  placeholder='cluster="prod-eu"'
-                  className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-400 transition-all"
-                />
-                <p className="text-[10px] text-slate-400 mt-1">Required when one VictoriaMetrics stores several clusters — otherwise namespaces with the same name are summed across clusters.</p>
-              </div>
-
-              {/* Retention Days */}
-              <div>
-                <label className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5 block">Lookback window (days)</label>
-                <div className="flex items-center gap-3">
-                  <input
-                    type="number"
-                    min={1}
-                    max={90}
-                    value={vmRetentionDays}
-                    onChange={e => setVmRetentionDays(parseInt(e.target.value) || 7)}
-                    className="w-24 px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm text-center focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-400 transition-all"
-                  />
-                  <span className="text-xs text-slate-400">days of history in the namespace usage charts and behind right-sizing advice (advice uses at most 14)</span>
-                </div>
-              </div>
-
-              {/* Auth Mode */}
-              <div>
-                <label className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2 block">Authentication</label>
-                <div className="flex gap-2 mb-3">
-                  <button
-                    onClick={() => setVmAuthMode('bearer')}
-                    className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${vmAuthMode === 'bearer'
-                        ? 'bg-brand-600 text-white shadow-sm'
-                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                      }`}
-                  >
-                    Bearer Token
-                  </button>
-                  <button
-                    onClick={() => setVmAuthMode('basic')}
-                    className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${vmAuthMode === 'basic'
-                        ? 'bg-brand-600 text-white shadow-sm'
-                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                      }`}
-                  >
-                    Basic Auth
-                  </button>
-                </div>
-                {vmAuthMode === 'bearer' ? (
-                  <SecretInput value={vmBearerToken} onChange={setVmBearerToken} placeholder="Enter Bearer Token" />
-                ) : (
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="text-[10px] font-bold text-slate-400 mb-1 block">Username</label>
-                      <input
-                        value={vmUsername}
-                        onChange={e => setVmUsername(e.target.value)}
-                        placeholder="Username"
-                        className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-400 transition-all"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[10px] font-bold text-slate-400 mb-1 block">Password</label>
-                      <SecretInput value={vmPassword} onChange={setVmPassword} placeholder="Password" />
-                    </div>
-                  </div>
-                )}
-                <p className="text-[10px] text-slate-400 mt-1.5">Optional. Leave empty if your VictoriaMetrics does not require authentication.</p>
-              </div>
-
-              {/* TLS */}
-              <div>
-                <label className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5 block">TLS</label>
-                <textarea
-                  value={vmCaCert}
-                  onChange={e => setVmCaCert(e.target.value)}
-                  rows={3}
-                  placeholder="-----BEGIN CERTIFICATE----- (optional custom CA, PEM)"
-                  className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-mono focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-400 transition-all"
-                />
-                <label className="flex items-center gap-2 mt-2 text-xs font-bold text-slate-500 cursor-pointer">
-                  <input type="checkbox" checked={vmSkipSsl} onChange={e => setVmSkipSsl(e.target.checked)} className="accent-brand-600" />
-                  Skip TLS verification (insecure — prefer a custom CA)
-                </label>
-              </div>
-
-              {/* Test Connection */}
-              <div className="flex items-center gap-3">
-                <button
-                  onClick={() => handleTestConnection('victoriametrics')}
-                  disabled={testing === 'victoriametrics' || !vmEndpoint}
-                  className="flex items-center gap-2 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-bold transition-all disabled:opacity-50"
-                >
-                  {testing === 'victoriametrics' ? <RefreshCw size={14} className="animate-spin" /> : <ExternalLink size={14} />}
-                  Test Connection
-                </button>
-                {testResult?.provider === 'victoriametrics' && (
-                  <span className={`text-xs font-bold flex items-center gap-1 ${testResult.connected ? 'text-emerald-600' : 'text-rose-500'}`}>
-                    {testResult.connected ? <CheckCircle2 size={14} /> : <XCircle size={14} />}
-                    {testResult.connected ? 'Connected — container metrics found' : testResult.error || 'Connection failed'}
-                  </span>
-                )}
-              </div>
-            </div>
-
-            {vmEnabled && vmEndpoint && (
-              <div className="flex items-center gap-3 mt-6 pt-4 border-t border-slate-100 justify-center text-brand-600">
-                <Activity size={16} />
-                <span className="text-xs font-medium">Namespace insights will use VictoriaMetrics at {vmEndpoint}</span>
-              </div>
+          <SettingsCard
+            logo={<CardIcon><Activity size={20} /></CardIcon>}
+            title="VictoriaMetrics"
+            subtitle="Usage history for namespace charts, right-sizing advice and schedule suggestions. Off: metrics-server, which keeps only the last hour."
+            status={vmEnabled && settings?.integrations.victoriaMetrics?.status && (
+              <span title={settings.integrations.victoriaMetrics.status.error || ''}>
+                <StatusBadge connected={settings.integrations.victoriaMetrics.status.connected} error={settings.integrations.victoriaMetrics.status.error} />
+              </span>
             )}
-          </div>
+            enabled={vmEnabled}
+            onToggle={setVmEnabled}
+            footer={vmEndpoint && <>Changes apply at once, with no restart. While VictoriaMetrics cannot be reached, Cost Deck falls back to metrics-server and says why.</>}
+          >
+            <div>
+              <label className={labelClass} htmlFor="vm-endpoint">Endpoint URL</label>
+              <input id="vm-endpoint" value={vmEndpoint} onChange={e => setVmEndpoint(e.target.value)}
+                placeholder="http://vmselect.monitoring.svc:8481/select/0/prometheus" className={`${inputClass} font-mono`} />
+              <p className={hintClass}>Single node: <code>http://vmsingle.monitoring.svc:8428</code>; cluster: <code>http://vmselect.monitoring.svc:8481/select/0/prometheus</code>. Prometheus works too.</p>
+            </div>
+
+            <div>
+              <label className={labelClass} htmlFor="vm-selector">Cluster label selector <Optional>(optional)</Optional></label>
+              <input id="vm-selector" value={vmLabelSelector} onChange={e => setVmLabelSelector(e.target.value)} placeholder='cluster="prod-eu"' className={`${inputClass} font-mono`} />
+              <p className={hintClass}>Needed when one VictoriaMetrics stores several clusters; otherwise namespaces with the same name are added up across them.</p>
+            </div>
+
+            <div>
+              <label className={labelClass} htmlFor="vm-days">Lookback window</label>
+              <div className="flex items-center gap-3">
+                <input id="vm-days" type="number" min={1} max={90} value={vmRetentionDays} onChange={e => setVmRetentionDays(parseInt(e.target.value) || 7)} className={`${inputClass} !w-24 text-center`} />
+                <span className="text-xs text-slate-400">days of history in the usage charts and behind right-sizing advice (advice uses at most 14)</span>
+              </div>
+            </div>
+
+            <div>
+              <label className={labelClass}>Authentication <Optional>(optional)</Optional></label>
+              <div className="mb-3">
+                <Segmented label="Authentication" value={vmAuthMode} onChange={setVmAuthMode} options={[['bearer', 'Bearer token'], ['basic', 'Basic auth']]} />
+              </div>
+              {vmAuthMode === 'bearer' ? (
+                <SecretInput value={vmBearerToken} onChange={setVmBearerToken} label="Bearer token" placeholder="Bearer token" />
+              ) : (
+                <div className="grid grid-cols-2 gap-3">
+                  <input value={vmUsername} onChange={e => setVmUsername(e.target.value)} aria-label="Username" placeholder="Username" className={inputClass} />
+                  <SecretInput value={vmPassword} onChange={setVmPassword} label="Password" placeholder="Password" />
+                </div>
+              )}
+              <p className={hintClass}>Leave empty when VictoriaMetrics needs no authentication.</p>
+            </div>
+
+            <div>
+              <label className={labelClass} htmlFor="vm-ca">Custom CA <Optional>(optional, PEM)</Optional></label>
+              <textarea id="vm-ca" value={vmCaCert} onChange={e => setVmCaCert(e.target.value)} rows={3}
+                placeholder="-----BEGIN CERTIFICATE-----" className={`${inputClass} font-mono text-xs`} />
+              <label className={`${checkClass} mt-2`}>
+                <input type="checkbox" checked={vmSkipSsl} onChange={e => setVmSkipSsl(e.target.checked)} className="accent-brand-600" />
+                Skip TLS verification (insecure; prefer a custom CA)
+              </label>
+            </div>
+
+            <TestButton onTest={() => handleTestConnection('victoriametrics')} testing={testing === 'victoriametrics'} disabled={!vmEndpoint}
+              result={outcome(testResult, 'victoriametrics', 'Connected: container metrics found')} />
+          </SettingsCard>
         </div>
       )}
 
@@ -1553,28 +1339,17 @@ export default function SettingsPage({ section: requested }: { section?: string 
             action={saveAction('ai')}
           />
 
-          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
-            <div className="flex items-center justify-between mb-6">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-brand-500/10 flex items-center justify-center">
-                  <Sparkles className="text-brand-500" size={20} />
-                </div>
-                <div>
-                  <span className="font-bold text-slate-800">AI-Powered Insights</span>
-                </div>
-              </div>
-              <label className="relative inline-flex items-center cursor-pointer">
-                <input type="checkbox" checked={aiEnabled} onChange={e => setAiEnabled(e.target.checked)} className="sr-only peer" />
-                <div className={`w-11 h-6 rounded-full ${aiEnabled ? 'bg-brand-500' : 'bg-slate-300'}`}>
-                  <div className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-md transition-transform ${aiEnabled ? 'translate-x-5' : 'translate-x-0'}`} />
-                </div>
-              </label>
-            </div>
-
-            <div className={`space-y-4 ${!aiEnabled ? 'opacity-50 pointer-events-none' : ''}`}>
+          <SettingsCard
+            logo={<CardIcon><Sparkles size={20} /></CardIcon>}
+            title="AI assistant"
+            subtitle="The chat, AI reports and explanations of cost changes"
+            enabled={aiEnabled}
+            onToggle={setAiEnabled}
+            footer={<>The assistant reads live cluster data through tools; changes it proposes run only after a user with the operator role confirms them.</>}
+          >
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5 block">Provider</label>
+                  <label className={labelClass}>Provider</label>
                   <select
                     value={aiProvider}
                     onChange={e => {
@@ -1582,7 +1357,7 @@ export default function SettingsPage({ section: requested }: { section?: string 
                       setAiModel('')
                       setAiModels([])
                     }}
-                    className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm appearance-none focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-400 transition-all"
+                    className={inputClass}
                   >
                     <option value="anthropic">Anthropic (Claude)</option>
                     <option value="openai">OpenAI</option>
@@ -1594,7 +1369,7 @@ export default function SettingsPage({ section: requested }: { section?: string 
                   <label className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5 flex items-center justify-between">
                     <span>Model</span>
                     <button type="button" onClick={loadAIModels} disabled={aiModelsLoading}
-                      className="normal-case tracking-normal text-[10px] font-bold text-brand-600 hover:text-brand-800 disabled:opacity-50">
+                      className="normal-case tracking-normal text-xs font-semibold text-brand-600 hover:text-brand-800 disabled:opacity-50">
                       {aiModelsLoading ? 'Loading…' : 'Load available models'}
                     </button>
                   </label>
@@ -1603,45 +1378,45 @@ export default function SettingsPage({ section: requested }: { section?: string 
                     value={aiModel}
                     onChange={e => setAiModel(e.target.value)}
                     placeholder={DEFAULT_MODEL[aiProvider] ? `${DEFAULT_MODEL[aiProvider]} (default)` : 'e.g. llama3.1'}
-                    className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-400 transition-all"
+                    className={`${inputClass} font-mono`}
                   />
                   <datalist id="ai-model-options">
                     {(aiModels.length > 0 ? aiModels : MODEL_SUGGESTIONS[aiProvider] || []).map(m => <option key={m} value={m} />)}
                   </datalist>
-                  {aiModelsError && <p className="text-[10px] text-rose-500 mt-1">{aiModelsError}</p>}
-                  {aiModels.length > 0 && <p className="text-[10px] text-slate-400 mt-1">{aiModels.length} models available to this key</p>}
+                  {aiModelsError && <p className="mt-1.5 text-xs text-rose-600">{aiModelsError}</p>}
+                  {aiModels.length > 0 && <p className={hintClass}>{aiModels.length} models available to this key</p>}
                 </div>
               </div>
 
               <div>
-                <label className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1 block">API Key</label>
-                <p className="text-[10px] text-slate-400 mb-1.5">{aiProvider === 'local' ? 'Leave blank if the endpoint needs no authentication.' : 'Stored in a Kubernetes Secret; leave empty to keep the current key.'}</p>
-                <SecretInput value={aiApiKey} onChange={setAiApiKey} placeholder={settings?.integrations.ai?.hasCredentials ? '••••••••••••••••••••' : 'Enter API key'} />
+                <label className={labelClass}>API key {settings?.integrations.ai?.hasCredentials && <Configured />}</label>
+                <SecretInput value={aiApiKey} onChange={setAiApiKey} label="API key" placeholder={settings?.integrations.ai?.hasCredentials ? '•••••••• (leave empty to keep it)' : 'API key'} />
+                <p className={hintClass}>{aiProvider === 'local' ? 'Leave empty if the endpoint needs no authentication.' : 'Stored in a Kubernetes Secret and never returned to the browser.'}</p>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1 block">
-                    API base URL <span className="text-[10px] normal-case text-slate-400 font-normal">({aiProvider === 'local' ? 'required' : 'optional — gateways and proxies'})</span>
+                  <label className={labelClass}>
+                    API base URL <Optional>({aiProvider === 'local' ? 'required' : 'optional: gateways and proxies'})</Optional>
                   </label>
                   <input
                     value={aiBaseUrl}
                     onChange={e => setAiBaseUrl(e.target.value)}
                     placeholder={aiProvider === 'local' ? 'http://ollama.ai.svc:11434/v1' : aiProvider === 'anthropic' ? 'https://api.anthropic.com' : aiProvider === 'gemini' ? 'https://generativelanguage.googleapis.com/v1beta' : 'https://api.openai.com/v1'}
-                    className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-400 transition-all"
+                    className={`${inputClass} font-mono`}
                   />
                 </div>
-                <label className="flex items-center gap-2 mt-6 text-xs font-bold text-slate-500 cursor-pointer">
-                  <input type="checkbox" checked={aiSkipSslVerify} onChange={e => setAiSkipSslVerify(e.target.checked)} className="accent-brand-500" />
+                <label className={`${checkClass} mt-6`}>
+                  <input type="checkbox" checked={aiSkipSslVerify} onChange={e => setAiSkipSslVerify(e.target.checked)} className="accent-brand-600" />
                   Skip TLS verification (insecure)
                 </label>
               </div>
 
-              <div className="mt-4" data-testid="ai-budget">
-                <label htmlFor="ai-budget" className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1 block">Monthly token budget</label>
+              <div data-testid="ai-budget">
+                <label htmlFor="ai-budget" className={labelClass}>Monthly token budget</label>
                 <div className="flex flex-wrap items-center gap-3">
                   <input id="ai-budget" type="number" min={0} step={10000} value={aiBudget} onChange={e => setAiBudget(e.target.value)} placeholder="no limit"
-                    className="w-40 px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm font-mono" />
+                    className={`${inputClass} font-mono !w-40`} />
                   {settings?.integrations.ai?.usage && (
                     <span className="text-xs text-slate-500">
                       {(() => {
@@ -1655,35 +1430,11 @@ export default function SettingsPage({ section: requested }: { section?: string 
                     </span>
                   )}
                 </div>
-                <p className="text-xs text-slate-400 mt-1">The assistant and AI reports refuse new requests once the month's tokens are used up. Empty means no limit.</p>
+                <p className={hintClass}>The assistant and AI reports refuse new requests once the month's tokens are used up. Empty means no limit.</p>
               </div>
 
-              {/* Test Connection */}
-              <div className="flex items-center gap-3 mt-4">
-                <button
-                  onClick={() => handleTestConnection('ai')}
-                  disabled={testing === 'ai'}
-                  className="flex items-center gap-2 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-bold transition-all disabled:opacity-50"
-                >
-                  {testing === 'ai' ? <RefreshCw size={14} className="animate-spin" /> : <ExternalLink size={14} />}
-                  Test Connection
-                </button>
-                {testResult?.provider === 'ai' && (
-                  <span className={`text-xs font-bold flex items-center gap-1 ${testResult.connected ? 'text-emerald-600' : 'text-rose-500'}`}>
-                    {testResult.connected ? <CheckCircle2 size={14} /> : <XCircle size={14} />}
-                    {testResult.connected ? testResult.message || 'Connection successful' : testResult.error || 'Connection failed'}
-                  </span>
-                )}
-              </div>
-            </div>
-
-            {aiEnabled && (
-              <div className="flex items-center gap-3 mt-6 pt-4 border-t border-slate-100 justify-center text-brand-500">
-                <Sparkles size={16} />
-                <span className="text-xs font-medium">The assistant reads live cluster data through tools; changes it proposes run only after a user with the operator role confirms them.</span>
-              </div>
-            )}
-          </div>
+              <TestButton onTest={() => handleTestConnection('ai')} testing={testing === 'ai'} result={outcome(testResult, 'ai')} />
+          </SettingsCard>
         </div>
       )}
 
@@ -1745,106 +1496,44 @@ export default function SettingsPage({ section: requested }: { section?: string 
             action={saveAction('notifications')}
           />
 
-          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
-            <div className="flex items-center justify-between mb-6">
-              <div className="flex items-center gap-3">
-                <WebexLogo />
-                <div>
-                  <span className="font-bold text-slate-800">Cisco Webex</span>
-                  {webexEnabled && settings?.integrations?.messenger?.webex?.status && (
-                    <p className="text-[10px] text-slate-400 mt-0.5">
-                      {settings.integrations.messenger.webex.status.connected
-                        ? settings.integrations.messenger.webex.status.message
-                        : settings.integrations.messenger.webex.status.error}
-                    </p>
-                  )}
-                </div>
-                {webexEnabled && settings?.integrations?.messenger?.webex?.status && (
-                  <StatusBadge
-                    connected={settings.integrations.messenger.webex.status.connected}
-                    error={settings.integrations.messenger.webex.status.error}
-                  />
-                )}
-              </div>
-              <label className="relative inline-flex items-center cursor-pointer">
-                <input type="checkbox" checked={webexEnabled} onChange={e => setWebexEnabled(e.target.checked)} className="sr-only peer" />
-                <div className={`w-11 h-6 rounded-full ${webexEnabled ? 'bg-brand-500' : 'bg-slate-300'}`}>
-                  <div className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-md transition-transform ${webexEnabled ? 'translate-x-5' : 'translate-x-0'}`} />
-                </div>
-              </label>
+          <SettingsCard
+            logo={<WebexLogo />}
+            title="Cisco Webex"
+            subtitle={webexEnabled && webexStatus ? (webexStatus.connected ? webexStatus.message : webexStatus.error) : 'A chat bot that answers questions and scales from a space'}
+            status={webexEnabled && webexStatus && <StatusBadge connected={webexStatus.connected} error={webexStatus.error} />}
+            enabled={webexEnabled}
+            onToggle={setWebexEnabled}
+            footer={<>Mention the bot with <code>help</code>, <code>list</code>, <code>scale group &lt;name&gt; up [for 4h]</code> or <code>resume group &lt;name&gt;</code>.</>}
+          >
+            <div>
+              <label className={labelClass}>Bot token {settings?.integrations?.messenger?.webex?.hasCredentials && <Configured />}</label>
+              <SecretInput value={webexBotToken} onChange={setWebexBotToken} label="Webex bot token"
+                placeholder={settings?.integrations?.messenger?.webex?.hasCredentials ? '•••••••• (leave empty to keep it)' : 'The access token of a Webex bot'} />
             </div>
 
-            <div className={`space-y-4 ${!webexEnabled ? 'opacity-50 pointer-events-none' : ''}`}>
-              <div>
-                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5 block">
-                  Bot Token
-                  {settings?.integrations?.messenger?.webex?.hasCredentials && (
-                    <span className="ml-2 text-emerald-500 normal-case font-medium text-xs">✓ Configured</span>
-                  )}
-                </label>
-                <SecretInput
-                  value={webexBotToken}
-                  onChange={setWebexBotToken}
-                  placeholder={settings?.integrations?.messenger?.webex?.hasCredentials ? '••••••••••••••••••••' : 'Enter Webex Bot Token'}
-                />
-              </div>
-
-              <div>
-                <label className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5 block">Space ID <span className="normal-case font-normal text-slate-400">(needed to scale from chat)</span></label>
-                <input
-                  value={webexRoomId}
-                  onChange={e => setWebexRoomId(e.target.value)}
-                  placeholder="The space whose members may scale"
-                  className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm"
-                />
-                <p className="mt-1 text-[11px] text-slate-400">
-                  Scaling commands are accepted only in this space, so its members are who may scale. Without it the bot answers <code>list</code> and <code>status</code> but changes nothing: anyone on Webex can message a bot directly.
-                </p>
-              </div>
-
-              <label className="flex items-start gap-3 p-3 rounded-xl border border-slate-200 bg-slate-50 cursor-pointer">
-                <input type="checkbox" checked={webexNotify} onChange={e => setWebexNotify(e.target.checked)} className="mt-0.5 accent-brand-600" />
-                <span>
-                  <span className="block text-sm font-bold text-slate-700">Announce scaling transitions</span>
-                  <span className="block text-[11px] text-slate-400">Post to the space above whenever a group or namespace finishes scaling up or down, with who triggered it and the estimated savings.</span>
-                </span>
-              </label>
-
-              <div>
-                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5 block">
-                  Webhook secret <span className="normal-case font-normal text-slate-400">(optional — switches from polling to signed webhooks)</span>
-                </label>
-                <SecretInput value={webexWebhookSecret} onChange={setWebexWebhookSecret} placeholder="Secret used when registering the webhook" />
-                <p className="text-[10px] text-slate-400 mt-1.5">
-                  Register a webhook for <code>messages:created</code> pointing to <code>https://&lt;costdeck-host&gt;/api/webex/webhook</code> with this secret. Without it, CostDeck polls Webex every 10 seconds.
-                </p>
-              </div>
-
-              <div className="flex items-center gap-3">
-                <button
-                  onClick={() => handleTestConnection('webex')}
-                  disabled={testing === 'webex'}
-                  className="flex items-center gap-2 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-bold transition-all disabled:opacity-50"
-                >
-                  {testing === 'webex' ? <RefreshCw size={14} className="animate-spin" /> : <ExternalLink size={14} />}
-                  Test Connection
-                </button>
-                {testResult?.provider === 'webex' && (
-                  <span className={`text-xs font-bold flex items-center gap-1 ${testResult.connected ? 'text-emerald-600' : 'text-rose-500'}`}>
-                    {testResult.connected ? <CheckCircle2 size={14} /> : <XCircle size={14} />}
-                    {testResult.connected ? testResult.message : testResult.error || 'Connection failed'}
-                  </span>
-                )}
-              </div>
+            <div>
+              <label className={labelClass} htmlFor="webex-space">Space ID <Optional>(needed to scale from chat)</Optional></label>
+              <input id="webex-space" value={webexRoomId} onChange={e => setWebexRoomId(e.target.value)} placeholder="The space whose members may scale" className={`${inputClass} font-mono`} />
+              <p className={hintClass}>
+                Scaling commands are accepted only in this space, so its members are who may scale. Without it the bot answers <code>list</code> and <code>status</code> but changes nothing: anyone on Webex can message a bot directly.
+              </p>
             </div>
 
-            {webexEnabled && (
-              <div className="flex items-center gap-3 mt-6 pt-4 border-t border-slate-100 justify-center text-emerald-500">
-                <MessageSquare size={16} />
-                <span className="text-xs font-medium">Mention the bot with <code>help</code>, <code>list</code>, <code>scale group &lt;name&gt; up [for 4h]</code> or <code>resume group &lt;name&gt;</code>.</span>
-              </div>
-            )}
-          </div>
+            <label className={checkClass}>
+              <input type="checkbox" checked={webexNotify} onChange={e => setWebexNotify(e.target.checked)} className="accent-brand-600" />
+              Announce scaling changes in this space, with who made them and the estimated savings
+            </label>
+
+            <div>
+              <label className={labelClass}>Webhook secret <Optional>(optional: signed webhooks instead of polling)</Optional></label>
+              <SecretInput value={webexWebhookSecret} onChange={setWebexWebhookSecret} label="Webex webhook secret" placeholder="The secret the webhook was registered with" />
+              <p className={hintClass}>
+                Register a webhook for <code>messages:created</code> pointing to <code>https://&lt;costdeck-host&gt;/api/webex/webhook</code> with this secret. Without it, Cost Deck polls Webex every 10 seconds.
+              </p>
+            </div>
+
+            <TestButton onTest={() => handleTestConnection('webex')} testing={testing === 'webex'} result={outcome(testResult, 'webex')} />
+          </SettingsCard>
 
           <NotificationChannels value={channels} onChange={setChannels} />
         </div>
@@ -1860,29 +1549,17 @@ export default function SettingsPage({ section: requested }: { section?: string 
             action={saveAction('mcp')}
           />
 
-          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
-            <div className="flex items-center justify-between mb-6">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-brand-50 flex items-center justify-center">
-                  <Plug className="text-brand-600" size={20} />
-                </div>
-                <div>
-                  <span className="font-bold text-slate-800">MCP Server</span>
-                </div>
-              </div>
-              <label className="relative inline-flex items-center cursor-pointer">
-                <input type="checkbox" checked={mcpEnabled} onChange={e => setMcpEnabled(e.target.checked)} className="sr-only peer" />
-                <div className={`w-11 h-6 rounded-full ${mcpEnabled ? 'bg-brand-600' : 'bg-slate-300'}`}>
-                  <div className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-md transition-transform ${mcpEnabled ? 'translate-x-5' : 'translate-x-0'}`} />
-                </div>
-              </label>
-            </div>
-
-            <div className={`space-y-4 ${!mcpEnabled ? 'opacity-50 pointer-events-none' : ''}`}>
+          <SettingsCard
+            logo={<CardIcon><Plug size={20} /></CardIcon>}
+            title="MCP server"
+            subtitle="Lets AI clients such as Claude Code or Cursor read cost data, and with an operator token scale and right-size"
+            enabled={mcpEnabled}
+            onToggle={setMcpEnabled}
+          >
               <div>
-                <label className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5 block">Endpoint</label>
-                <code className="block px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-mono">{window.location.origin}/mcp</code>
-                <p className="text-[10px] text-slate-400 mt-1.5">Streamable HTTP on the dashboard's own host — no extra port or ingress. Clients authenticate with an API token (Access &amp; SSO → API tokens). Viewer tokens see read-only tools; operator tokens can also scale and right-size.</p>
+                <label className={labelClass}>Endpoint</label>
+                <code className="block px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-mono">{window.location.origin}/mcp</code>
+                <p className={hintClass}>Streamable HTTP on the dashboard's own address, so no extra port or ingress. Clients sign in with an API token (<b>Settings → API tokens</b>): viewer tokens see read-only tools, operator tokens can also scale and right-size.</p>
               </div>
 
               <div className="bg-brand-50 border border-brand-100 rounded-xl p-4 space-y-3">
@@ -1903,8 +1580,7 @@ export default function SettingsPage({ section: requested }: { section?: string 
   --header "Authorization: Bearer cdk_..."`}</pre>
                 </div>
               </div>
-            </div>
-          </div>
+          </SettingsCard>
         </div>
       )}
 
@@ -1918,143 +1594,109 @@ export default function SettingsPage({ section: requested }: { section?: string 
             action={saveAction('sso')}
           />
 
-          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 space-y-5">
-            <div className="flex items-center justify-between">
-              <div>
-                <span className="font-bold text-slate-800">Microsoft Entra ID</span>
-                <p className="text-[10px] text-slate-400">OpenID Connect · authorization code flow with PKCE</p>
-              </div>
-              <label className="relative inline-flex items-center cursor-pointer">
-                <input type="checkbox" checked={entraEnabled} onChange={e => setEntraEnabled(e.target.checked)} className="sr-only peer" />
-                <div className={`w-11 h-6 rounded-full ${entraEnabled ? 'bg-brand-600' : 'bg-slate-300'}`}>
-                  <div className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-md transition-transform ${entraEnabled ? 'translate-x-5' : 'translate-x-0'}`} />
-                </div>
-              </label>
+          <SettingsCard
+            logo={<CardIcon><Shield size={20} /></CardIcon>}
+            title="Microsoft Entra ID"
+            subtitle="OpenID Connect, authorization code flow with PKCE"
+            enabled={entraEnabled}
+            onToggle={setEntraEnabled}
+          >
+            <div className="p-4 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-600 space-y-1.5">
+              <p className="font-semibold">Redirect URI to add to the app registration in the Azure portal, one of:</p>
+              <p><code className="bg-white px-1.5 py-0.5 rounded">{window.location.origin}/api/auth/entra/callback</code> (web platform, recommended)</p>
+              <p><code className="bg-white px-1.5 py-0.5 rounded">{window.location.origin}/auth/callback</code> (single-page application)</p>
+              <p className="text-slate-500">Add the optional <b>groups</b> claim (Token configuration → Security groups) or define app roles named admin, operator and viewer.</p>
             </div>
 
-            <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-600 space-y-1.5">
-              <p className="font-bold">App registration redirect URI (add one of them in the Azure portal):</p>
-              <p><code className="bg-white px-1.5 py-0.5 rounded">{window.location.origin}/api/auth/entra/callback</code> — web platform, recommended</p>
-              <p><code className="bg-white px-1.5 py-0.5 rounded">{window.location.origin}/auth/callback</code> — single-page application</p>
-              <p className="text-slate-500">Add the optional <b>groups</b> claim (Token configuration → Security groups) or define app roles named admin / operator / viewer.</p>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <label className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5 block">Directory (tenant) ID</label>
-                <input value={entraTenant} onChange={e => setEntraTenant(e.target.value)} placeholder="00000000-0000-0000-0000-000000000000"
-                  className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-mono" />
+                <label className={labelClass} htmlFor="entra-tenant">Directory (tenant) ID</label>
+                <input id="entra-tenant" value={entraTenant} onChange={e => setEntraTenant(e.target.value)} placeholder="00000000-0000-0000-0000-000000000000" className={`${inputClass} font-mono`} />
               </div>
               <div>
-                <label className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5 block">Application (client) ID</label>
-                <input value={entraClient} onChange={e => setEntraClient(e.target.value)} placeholder="00000000-0000-0000-0000-000000000000"
-                  className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-mono" />
+                <label className={labelClass} htmlFor="entra-client">Application (client) ID</label>
+                <input id="entra-client" value={entraClient} onChange={e => setEntraClient(e.target.value)} placeholder="00000000-0000-0000-0000-000000000000" className={`${inputClass} font-mono`} />
               </div>
             </div>
 
             <div>
-              <label className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5 block">
-                Client secret
-                {settings?.auth?.entra?.hasClientSecret && <span className="ml-2 text-emerald-500 normal-case font-medium">✓ Configured</span>}
-              </label>
-              <SecretInput value={entraSecret} onChange={setEntraSecret}
-                placeholder={settings?.auth?.entra?.hasClientSecret ? '••••••••••••••••••••' : 'Client secret value'} />
-              <p className="text-[10px] text-slate-400 mt-1.5">Stored in a Kubernetes Secret and never returned to the browser.</p>
+              <label className={labelClass}>Client secret {settings?.auth?.entra?.hasClientSecret && <Configured />}</label>
+              <SecretInput value={entraSecret} onChange={setEntraSecret} label="Entra client secret"
+                placeholder={settings?.auth?.entra?.hasClientSecret ? '•••••••• (leave empty to keep it)' : 'Client secret value'} />
+              <p className={hintClass}>Stored in a Kubernetes Secret and never returned to the browser.</p>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <label className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5 block">Redirect URI <span className="normal-case font-normal text-slate-400">(optional)</span></label>
-                <input value={entraRedirect} onChange={e => setEntraRedirect(e.target.value)} placeholder={`${window.location.origin}/api/auth/entra/callback`}
-                  className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-mono" />
+                <label className={labelClass} htmlFor="entra-redirect">Redirect URI <Optional>(optional)</Optional></label>
+                <input id="entra-redirect" value={entraRedirect} onChange={e => setEntraRedirect(e.target.value)} placeholder={`${window.location.origin}/api/auth/entra/callback`} className={`${inputClass} font-mono`} />
               </div>
               <div>
-                <label className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5 block">Authority <span className="normal-case font-normal text-slate-400">(sovereign clouds)</span></label>
-                <input value={entraAuthority} onChange={e => setEntraAuthority(e.target.value)} placeholder="https://login.microsoftonline.com"
-                  className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-mono" />
+                <label className={labelClass} htmlFor="entra-authority">Authority <Optional>(sovereign clouds)</Optional></label>
+                <input id="entra-authority" value={entraAuthority} onChange={e => setEntraAuthority(e.target.value)} placeholder="https://login.microsoftonline.com" className={`${inputClass} font-mono`} />
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-4 items-start">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-end">
               <div>
-                <label className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5 block">Default role</label>
-                <select value={entraDefaultRole} onChange={e => setEntraDefaultRole(e.target.value)}
-                  className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm">
-                  <option value="viewer">Viewer — read only</option>
-                  <option value="operator">Operator — scale and override schedules</option>
-                  <option value="admin">Admin — full access</option>
+                <label className={labelClass} htmlFor="entra-role">Role without a match</label>
+                <select id="entra-role" value={entraDefaultRole} onChange={e => setEntraDefaultRole(e.target.value)} className={inputClass}>
+                  <option value="viewer">Viewer: read only</option>
+                  <option value="operator">Operator: scale and override schedules</option>
+                  <option value="admin">Admin: full access</option>
                 </select>
               </div>
-              <label className="flex items-start gap-3 p-3 rounded-xl border border-slate-200 bg-slate-50 cursor-pointer mt-6">
-                <input type="checkbox" checked={entraAutoProvision} onChange={e => setEntraAutoProvision(e.target.checked)} className="mt-0.5 accent-brand-600" />
-                <span>
-                  <span className="block text-sm font-bold text-slate-700">Auto-provision users</span>
-                  <span className="block text-[11px] text-slate-400">Anyone in the tenant may sign in with the default role. Off: only mapped groups.</span>
-                </span>
+              <label className={`${checkClass} pb-2`}>
+                <input type="checkbox" checked={entraAutoProvision} onChange={e => setEntraAutoProvision(e.target.checked)} className="accent-brand-600" />
+                Let anyone in the tenant use Cost Deck
               </label>
             </div>
 
             <div>
-              <label className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2 block">Group → role mapping</label>
+              <label className={labelClass}>Group → role mapping</label>
               <div className="space-y-2">
                 {entraMapping.map((m, i) => (
-                  <div key={i} className="flex gap-2">
-                    <input value={m.group} placeholder="Entra group object ID"
+                  <div key={i} className="flex items-center gap-2">
+                    <input value={m.group} placeholder="Entra group object ID" aria-label="Group"
                       onChange={e => setEntraMapping(prev => prev.map((x, j) => j === i ? { ...x, group: e.target.value } : x))}
-                      className="flex-1 px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-mono" />
-                    <select value={m.role}
+                      className={`${inputClass} flex-1 font-mono`} />
+                    <select value={m.role} aria-label="Role"
                       onChange={e => setEntraMapping(prev => prev.map((x, j) => j === i ? { ...x, role: e.target.value } : x))}
-                      className="w-36 px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs">
+                      className={`${inputClass} !w-36`}>
                       <option value="viewer">viewer</option>
                       <option value="operator">operator</option>
                       <option value="admin">admin</option>
                     </select>
-                    <button onClick={() => setEntraMapping(prev => prev.filter((_, j) => j !== i))}
-                      className="px-2 text-slate-300 hover:text-rose-500"><Trash2 size={14} /></button>
+                    <button type="button" title="Remove mapping" onClick={() => setEntraMapping(prev => prev.filter((_, j) => j !== i))}
+                      className="p-1 text-slate-400 hover:text-rose-600"><X size={14} /></button>
                   </div>
                 ))}
-                <button onClick={() => setEntraMapping(prev => [...prev, { group: '', role: 'operator' }])}
-                  className="px-3 py-2 bg-slate-100 hover:bg-slate-200 rounded-lg text-xs font-bold text-slate-600 flex items-center gap-1">
-                  <Plus size={12} /> Add mapping
-                </button>
               </div>
-              <p className="text-[10px] text-slate-400 mt-1.5">The most privileged match wins. App roles named admin, operator or viewer are honoured without a mapping.</p>
+              <Button size="sm" variant="secondary" icon={<Plus size={13} />} className="mt-2" onClick={() => setEntraMapping(prev => [...prev, { group: '', role: 'operator' }])}>Add a group</Button>
+              <p className={hintClass}>The most privileged match wins. App roles named admin, operator or viewer count without a mapping.</p>
             </div>
 
-            <label className="flex items-center gap-2 text-xs font-bold text-slate-500 cursor-pointer">
-              <input type="checkbox" checked={entraSkipSsl} onChange={e => setEntraSkipSsl(e.target.checked)} />
-              Skip TLS verification (only behind SSL-inspecting proxies)
+            <label className={checkClass}>
+              <input type="checkbox" checked={entraSkipSsl} onChange={e => setEntraSkipSsl(e.target.checked)} className="accent-brand-600" />
+              Skip TLS verification (only behind TLS-inspecting proxies)
             </label>
 
-            <div className="flex items-center gap-3">
-              <button onClick={() => handleTestConnection('entra')} disabled={testing === 'entra' || !entraTenant || !entraClient}
-                className="flex items-center gap-2 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-bold transition-all disabled:opacity-50">
-                {testing === 'entra' ? <RefreshCw size={14} className="animate-spin" /> : <ExternalLink size={14} />}
-                Test Connection
-              </button>
-              {testResult?.provider === 'entra' && (
-                <span className={`text-xs font-bold flex items-center gap-1 ${testResult.connected ? 'text-emerald-600' : 'text-rose-500'}`}>
-                  {testResult.connected ? <CheckCircle2 size={14} /> : <XCircle size={14} />}
-                  {testResult.connected ? testResult.message : testResult.error || 'Connection failed'}
-                </span>
-              )}
-            </div>
-          </div>
+            <TestButton onTest={() => handleTestConnection('entra')} testing={testing === 'entra'} disabled={!entraTenant || !entraClient} result={outcome(testResult, 'entra')} />
+          </SettingsCard>
 
           <OIDCSettings value={oidc} onChange={setOIDC} />
 
-          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
-            <label htmlFor="dashboard-url" className="text-sm font-bold text-slate-700 block">Dashboard address</label>
-            <p className="text-xs text-slate-500 mt-0.5 mb-2">The address people open Cost Deck at. The sleep page a schedule shows while an application is down links here to wake it.</p>
-            <input id="dashboard-url" value={dashboardUrl} onChange={e => setDashboardUrl(e.target.value)} placeholder="https://costdeck.example.com"
-              className="w-full md:w-96 px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm font-mono" />
-          </div>
-
-          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 space-y-5">
+            <div>
+              <label htmlFor="dashboard-url" className={labelClass}>Dashboard address</label>
+              <input id="dashboard-url" value={dashboardUrl} onChange={e => setDashboardUrl(e.target.value)} placeholder="https://costdeck.example.com"
+                className={`${inputClass} font-mono md:w-96`} />
+              <p className={hintClass}>The address people open Cost Deck at. The sleep page a schedule shows while an application is down links here to wake it.</p>
+            </div>
             <label className="flex items-start gap-3 cursor-pointer">
               <input type="checkbox" checked={disableLocalLogin} onChange={e => setDisableLocalLogin(e.target.checked)} className="mt-1 accent-brand-600" />
               <span>
-                <span className="block text-sm font-bold text-slate-700">Single sign-on only</span>
+                <span className="block text-sm font-semibold text-slate-700">Single sign-on only</span>
                 <span className="block text-xs text-slate-500">Hides the password form, and local users can no longer sign in. Only takes effect while Microsoft or OpenID Connect sign-in is enabled, so nobody is locked out; the built-in admin keeps working through the API as break-glass access.</span>
               </span>
             </label>
@@ -2094,7 +1736,7 @@ export default function SettingsPage({ section: requested }: { section?: string 
               </div>
             )}
 
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-4">
               <div>
                 <h4 className="font-bold text-slate-800">Cloud list prices</h4>
                 <p className="text-sm text-slate-500 mt-1">
@@ -2103,12 +1745,7 @@ export default function SettingsPage({ section: requested }: { section?: string 
                   Spot, reservations and savings plans are not applied. Google Cloud clusters keep the estimate.
                 </p>
               </div>
-              <label className="relative inline-flex items-center cursor-pointer ml-4">
-                <input type="checkbox" checked={cloudPricingApi} onChange={e => setCloudPricingApi(e.target.checked)} className="sr-only peer" />
-                <div className={`w-11 h-6 rounded-full peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-brand-500/20 transition-colors ${cloudPricingApi ? 'bg-brand-600' : 'bg-slate-300'}`}>
-                  <div className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-md transition-transform ${cloudPricingApi ? 'translate-x-5' : 'translate-x-0'}`} />
-                </div>
-              </label>
+              <Toggle checked={cloudPricingApi} onChange={setCloudPricingApi} label="Enable Cloud list prices" />
             </div>
 
             <div>
@@ -2116,27 +1753,27 @@ export default function SettingsPage({ section: requested }: { section?: string 
               <p className="text-sm text-slate-500 mt-1 mb-3">For on-premises clusters or negotiated prices. When both rates are set they override every other source.</p>
               <div className="grid grid-cols-3 gap-3">
                 <div>
-                  <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1 block">Per core-hour</label>
-                  <input value={priceCpu} onChange={e => setPriceCpu(e.target.value)} placeholder="0.031" className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm font-mono" />
+                  <label className={labelClass}>Per core-hour</label>
+                  <input value={priceCpu} onChange={e => setPriceCpu(e.target.value)} placeholder="0.031" className={`${inputClass} font-mono`} />
                 </div>
                 <div>
-                  <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1 block">Per GiB-hour</label>
-                  <input value={priceMem} onChange={e => setPriceMem(e.target.value)} placeholder="0.0042" className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm font-mono" />
+                  <label className={labelClass}>Per GiB-hour</label>
+                  <input value={priceMem} onChange={e => setPriceMem(e.target.value)} placeholder="0.0042" className={`${inputClass} font-mono`} />
                 </div>
                 <div>
-                  <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1 block">Currency</label>
-                  <input value={priceCurrency} onChange={e => setPriceCurrency(e.target.value)} placeholder="USD" maxLength={3} className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm font-mono uppercase" />
+                  <label className={labelClass}>Currency</label>
+                  <input value={priceCurrency} onChange={e => setPriceCurrency(e.target.value)} placeholder="USD" maxLength={3} className={`${inputClass} font-mono uppercase`} />
                 </div>
               </div>
               <p className="text-sm text-slate-500 mt-4 mb-3">Volumes and load balancers are priced at the cloud's list price. Without a cloud price list, network volumes are estimated at 0.08 USD a GiB-month and load balancers at nothing. Set your own here, and always when the currency is not USD.</p>
               <div className="grid grid-cols-3 gap-3">
                 <div>
-                  <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1 block">Per GiB-month of volume</label>
-                  <input value={priceStorage} onChange={e => setPriceStorage(e.target.value)} placeholder="0.08" className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm font-mono" />
+                  <label className={labelClass}>Per GiB-month of volume</label>
+                  <input value={priceStorage} onChange={e => setPriceStorage(e.target.value)} placeholder="0.08" className={`${inputClass} font-mono`} />
                 </div>
                 <div>
-                  <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1 block">Per load balancer-month</label>
-                  <input value={priceLB} onChange={e => setPriceLB(e.target.value)} placeholder="18" className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm font-mono" />
+                  <label className={labelClass}>Per load balancer-month</label>
+                  <input value={priceLB} onChange={e => setPriceLB(e.target.value)} placeholder="18" className={`${inputClass} font-mono`} />
                 </div>
               </div>
               <p className="text-sm text-slate-500 mt-4 mb-3">
@@ -2146,8 +1783,8 @@ export default function SettingsPage({ section: requested }: { section?: string 
               </p>
               <div className="grid grid-cols-3 gap-3">
                 <div>
-                  <label htmlFor="price-gpu" className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1 block">Per GPU-hour</label>
-                  <input id="price-gpu" value={priceGPU} onChange={e => setPriceGPU(e.target.value)} placeholder="0.81" className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm font-mono" />
+                  <label htmlFor="price-gpu" className={labelClass}>Per GPU-hour</label>
+                  <input id="price-gpu" value={priceGPU} onChange={e => setPriceGPU(e.target.value)} placeholder="0.81" className={`${inputClass} font-mono`} />
                 </div>
               </div>
               <p className="text-sm text-slate-500 mt-4 mb-3">

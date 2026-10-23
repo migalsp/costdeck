@@ -48,8 +48,7 @@ export default function AllocationCard({ canAdmin }: { canAdmin: boolean }) {
     <Card className="p-5">
       <div className="flex flex-wrap items-center gap-3 mb-4">
         <div className="min-w-0">
-          <h2 className="text-base font-semibold text-slate-800">Cost allocation</h2>
-          <p className="text-xs text-slate-500">What each group cost from the cost history, with shared and idle cost charged by your policy. The rows add up to the bill.</p>
+          <p className="text-sm text-slate-500">What each group cost from the cost history, with shared and idle cost charged by your policy. The rows add up to the bill.</p>
         </div>
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <Tabs value={period} onChange={setPeriod} tabs={allocationPeriods} />

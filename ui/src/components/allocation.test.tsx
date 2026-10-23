@@ -42,6 +42,8 @@ describe('Cost allocation', () => {
     const user = userEvent.setup()
     expect(await screen.findByText('payments')).toBeTruthy()
     expect(screen.getByText('shop-dev, shop-prod')).toBeTruthy()
+    // The Reports page titles the section; the card does not repeat it.
+    expect(screen.queryByRole('heading', { name: 'Cost allocation' })).toBeNull()
     expect(screen.getByText(/Unallocated capacity/).parentElement!.textContent).toMatch(/€300/)
     expect(screen.getByText(/Total, 23 days from 2026-10-01 to 2026-10-23/).parentElement!.textContent).toMatch(/€1,150/)
     expect(screen.getByRole('link', { name: 'Change the policy' }).getAttribute('href')).toBe('/settings/allocation')

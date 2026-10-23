@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { json, mockFetch, on } from './test/fetch'
 
@@ -63,6 +63,22 @@ describe('page addresses', () => {
     await renderAt('/')
     expect(screen.getByRole('link', { name: 'Cluster Node Map' }).getAttribute('href')).toBe('/cluster')
     expect(screen.getByRole('link', { name: 'Cost Overview' }).getAttribute('href')).toBe('/')
+  })
+  it('keeps every page reachable on a short screen', async () => {
+    await renderAt('/')
+    const nav = screen.getByRole('navigation', { name: 'Pages' })
+    // A flex child only scrolls when it may shrink below its content: without min-h-0 the
+    // links ran under the account controls and Settings could not be reached.
+    expect(nav.className).toMatch(/\bmin-h-0\b/)
+    expect(nav.className).toMatch(/\boverflow-y-auto\b/)
+    expect(within(nav).getAllByRole('link').map(a => a.textContent)).toEqual([
+      'Cost Overview', 'Clusters', 'Namespace Insights', 'Cluster Node Map', 'Storage & Network', 'AI Costs',
+      'Scaling Schedules', 'Budgets & Alerts', 'Reports', 'Health', 'Documentation', 'Settings',
+    ])
+    // The account controls are one row of buttons, outside the scrolling links.
+    const sidebar = screen.getByRole('complementary', { name: 'Sidebar' })
+    expect(within(nav).queryByRole('button', { name: 'Sign out' })).toBeNull()
+    expect(within(sidebar).getByRole('button', { name: 'Sign out' })).toBeTruthy()
   })
 })
 

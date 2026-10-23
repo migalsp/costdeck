@@ -1,11 +1,12 @@
 import { useState } from 'react'
-import { CheckCircle2, ExternalLink, Plus, RefreshCw, X, XCircle } from 'lucide-react'
+import { KeyRound, Plus, X } from 'lucide-react'
 import { apiError, errorMessage } from '../../lib/api'
 import { keycloakDefaults, oidcProblem, oidcRequest, type OIDCForm } from '../../lib/oidc'
 import { Button } from '../ui'
+import { CardIcon, SettingsCard, TestButton, checkClass, hintClass, inputClass, labelClass } from './fields'
 
-const input = 'w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm font-mono'
-const label = 'text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1 block'
+const input = `${inputClass} font-mono`
+const label = labelClass
 
 export default function OIDCSettings({ value, onChange }: { value: OIDCForm; onChange: (f: OIDCForm) => void }) {
   const [test, setTest] = useState<{ ok: boolean; text: string } | null>(null)
@@ -31,30 +32,22 @@ export default function OIDCSettings({ value, onChange }: { value: OIDCForm; onC
       <label htmlFor={`oidc-${key}`} className={label}>{text}</label>
       <input id={`oidc-${key}`} type={extra?.type || 'text'} value={value[key] as string} placeholder={placeholder}
         onChange={e => set({ [key]: e.target.value } as Partial<OIDCForm>)} className={input} />
-      {extra?.hint && <p className="text-[11px] text-slate-400 mt-1">{extra.hint}</p>}
+      {extra?.hint && <p className={hintClass}>{extra.hint}</p>}
     </div>
   )
 
   return (
-    <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 space-y-5" data-testid="oidc-settings">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <span className="font-bold text-slate-800">OpenID Connect</span>
-          <p className="text-[10px] text-slate-400">Keycloak, Okta, Auth0, Dex… · authorization code flow with PKCE</p>
-        </div>
-        <div className="flex items-center gap-3">
-          <Button size="sm" variant="secondary" onClick={() => onChange(keycloakDefaults(value))}>Keycloak defaults</Button>
-          <label className="relative inline-flex items-center cursor-pointer">
-            <input type="checkbox" aria-label="Enable OpenID Connect sign-in" checked={value.enabled} onChange={e => set({ enabled: e.target.checked })} className="sr-only peer" />
-            <div className={`w-11 h-6 rounded-full ${value.enabled ? 'bg-brand-600' : 'bg-slate-300'}`}>
-              <div className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-md transition-transform ${value.enabled ? 'translate-x-5' : 'translate-x-0'}`} />
-            </div>
-          </label>
-        </div>
-      </div>
-
-      <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-600 space-y-1.5">
-        <p className="font-bold">Redirect URI to register with the provider:</p>
+    <div data-testid="oidc-settings">
+    <SettingsCard
+      logo={<CardIcon><KeyRound size={20} /></CardIcon>}
+      title="OpenID Connect"
+      subtitle="Keycloak, Okta, Auth0, Dex…: authorization code flow with PKCE"
+      status={value.enabled && <Button size="sm" variant="secondary" onClick={() => onChange(keycloakDefaults(value))}>Keycloak defaults</Button>}
+      enabled={value.enabled}
+      onToggle={v => set({ enabled: v })}
+    >
+      <div className="p-4 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-600 space-y-1.5">
+        <p className="font-semibold">Redirect URI to register with the provider:</p>
         <p><code className="bg-white px-1.5 py-0.5 rounded">{window.location.origin}/api/auth/oidc/callback</code></p>
         <p>In Keycloak: a confidential OpenID Connect client with the standard flow, and a <i>Group Membership</i> mapper that adds <code>groups</code> to the ID token.</p>
       </div>
@@ -75,11 +68,11 @@ export default function OIDCSettings({ value, onChange }: { value: OIDCForm; onC
           </select>
         </div>
         <div className="flex flex-col gap-2 justify-center">
-          <label className="flex items-center gap-2 text-sm text-slate-600">
+          <label className={checkClass}>
             <input type="checkbox" checked={value.autoProvision} onChange={e => set({ autoProvision: e.target.checked })} className="accent-brand-600" />
             Let anyone the provider signs in use Cost Deck
           </label>
-          <label className="flex items-center gap-2 text-sm text-slate-600">
+          <label className={checkClass}>
             <input type="checkbox" checked={value.skipSslVerify} onChange={e => set({ skipSslVerify: e.target.checked })} className="accent-brand-600" />
             Skip TLS verification (insecure)
           </label>
@@ -104,16 +97,8 @@ export default function OIDCSettings({ value, onChange }: { value: OIDCForm; onC
       </div>
 
       {problem && <p className="text-xs font-medium text-rose-600">{problem}</p>}
-      <div className="flex items-center gap-3">
-        <button onClick={runTest} disabled={testing} className="flex items-center gap-2 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-bold disabled:opacity-50">
-          {testing ? <RefreshCw size={14} className="animate-spin" /> : <ExternalLink size={14} />} Test Connection
-        </button>
-        {test && (
-          <span className={`text-xs font-bold flex items-center gap-1 ${test.ok ? 'text-emerald-600' : 'text-rose-500'}`}>
-            {test.ok ? <CheckCircle2 size={14} /> : <XCircle size={14} />}{test.text}
-          </span>
-        )}
-      </div>
+      <TestButton onTest={runTest} testing={testing} result={test} />
+    </SettingsCard>
     </div>
   )
 }

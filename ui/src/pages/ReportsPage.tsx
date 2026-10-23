@@ -113,8 +113,8 @@ function ScheduleCard({ index, onSaved }: { index: ReportsIndex; onSaved: () => 
   }
 
   const describe = index.schedule.enabled
-    ? `${index.schedule.frequency === 'monthly' ? 'On the 1st of every month' : 'Every Monday'} at ${index.schedule.time || '09:00'} ${index.schedule.timezone || 'UTC'}, to the Webex space.`
-    : 'Not scheduled. Turn it on to post the digest to the Webex space every week or month.'
+    ? `${index.schedule.frequency === 'monthly' ? 'On the 1st of every month' : 'Every Monday'} at ${index.schedule.time || '09:00'} ${index.schedule.timezone || 'UTC'}, to the channels set up under Settings → Notifications.`
+    : 'Not scheduled. Turn it on to send the digest every week or month to the channels set up under Settings → Notifications.'
   return (
     <Card className="p-5">
       <div className="flex items-center gap-2">

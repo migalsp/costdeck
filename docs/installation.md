@@ -136,8 +136,9 @@ Local users change their own password from the menu under their name.
    - **Redirect URL**: optional, derived from the request host when empty.
    - **Group → role mapping**: Entra group object IDs mapped to roles. The most privileged
      match wins.
-   - **Default role**: given to users who match no mapping.
-   - **Auto-provision**: off means only users matched by a group or app role may sign in.
+   - **Role without a match**: given to users who match no mapping.
+   - **Let anyone in the tenant use Cost Deck**: off means only users matched by a group
+     or app role may sign in.
    - **Authority host**: only for sovereign clouds.
    - **Skip TLS verification**: only for a TLS-inspecting proxy; never on the open internet.
 

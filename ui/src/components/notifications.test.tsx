@@ -99,5 +99,8 @@ describe('Notification channels', () => {
     render(<AuthContext.Provider value={{ sub: 'user:ops', name: 'ops', role: 'operator', provider: 'local' }}><ReportsPage /></AuthContext.Provider>)
     await userEvent.setup().click(await screen.findByRole('button', { name: 'Send to Slack and email now' }))
     await waitFor(() => expect(success).toHaveBeenCalledWith('Sent the digest to Slack, email and saved it in the history'))
+    // The digest goes wherever notifications are set up, not only to Webex.
+    expect(screen.getByText(/^Not scheduled\. Turn it on to send the digest every week or month to the channels set up under Settings → Notifications\.$/)).toBeTruthy()
+    expect(screen.queryByText(/Webex space/)).toBeNull()
   })
 })

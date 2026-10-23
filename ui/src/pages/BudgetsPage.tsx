@@ -130,7 +130,7 @@ function BudgetEditor({ initial, existing, scopes, onClose, onSave }: {
   }
   const field = 'w-full px-3 py-2 text-sm bg-white border border-slate-200 rounded-lg outline-none focus:border-brand-500'
   return (
-    <Modal title={initial ? `Budget ${initial.name}` : 'New budget'} subtitle="A monthly limit with alerts to the Webex space" size="md" onClose={onClose}
+    <Modal title={initial ? `Budget ${initial.name}` : 'New budget'} subtitle="A monthly limit, with alerts to the channels set up under Settings → Notifications" size="md" onClose={onClose}
       footer={<>
         {initial && (confirmDelete
           ? <Button variant="danger" onClick={() => submit(others, `Deleted the budget ${initial.name}`)} disabled={saving}>Delete for good</Button>

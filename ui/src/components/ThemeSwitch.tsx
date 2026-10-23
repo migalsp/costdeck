@@ -11,7 +11,7 @@ const options: { id: Theme; label: string; icon: typeof Sun }[] = [
 export default function ThemeSwitch() {
   const theme = useTheme()
   return (
-    <div className="flex items-center justify-between gap-3 mb-4 px-1">
+    <div className="flex items-center justify-between gap-3 px-1">
       <span className="text-[10px] font-semibold uppercase tracking-widest text-slate-500">Theme</span>
       <div role="radiogroup" aria-label="Theme" className="flex gap-0.5 rounded-lg bg-white/5 p-0.5">
         {options.map(({ id, label, icon: Icon }) => (

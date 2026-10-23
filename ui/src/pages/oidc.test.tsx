@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { json, mockFetch, on } from '../test/fetch'
 import LoginPage from './LoginPage'
@@ -20,14 +20,15 @@ describe('OpenID Connect sign-in', () => {
     const fetch = mockFetch(on('GET', '/api/settings', () => json(settings)), on('PUT', '/api/settings', () => json(settings)))
     render(<SettingsPage section="sso" />)
     const user = userEvent.setup()
-    await user.click(await screen.findByRole('button', { name: 'Keycloak defaults' }))
+    await user.click(await screen.findByRole('switch', { name: 'Enable OpenID Connect' }))
+    await user.click(screen.getByRole('button', { name: 'Keycloak defaults' }))
     await user.type(screen.getByLabelText('Issuer URL'), 'https://keycloak.example.com/realms/costdeck')
     await user.type(screen.getByLabelText('Client ID'), 'costdeck')
     await user.type(screen.getByLabelText('Client secret'), 's3cr3t')
-    await user.click(screen.getByLabelText('Enable OpenID Connect sign-in'))
-    await user.click(screen.getByRole('button', { name: 'Add a group' }))
-    await user.type(screen.getByLabelText('Group'), '/costdeck-admins')
-    await user.selectOptions(screen.getByLabelText('Role'), 'admin')
+    const card = within(screen.getByTestId('oidc-settings'))
+    await user.click(card.getByRole('button', { name: 'Add a group' }))
+    await user.type(card.getByLabelText('Group'), '/costdeck-admins')
+    await user.selectOptions(card.getByLabelText('Role'), 'admin')
     await user.click(screen.getByRole('button', { name: 'Save' }))
     await screen.findByText('Saved')
     const put = fetch.mock.calls.find(([, init]) => init?.method === 'PUT')!
