@@ -177,7 +177,11 @@ YAML
 # shellcheck disable=SC2034
 HOOK_URL="http://hook.smoke-hooks.svc:8080/cgi-bin/hook"
 start_webhook_receiver() {
-  kubectl get deploy hook -n smoke-hooks >/dev/null 2>&1 && return 0
+  # One left by an earlier run may be on its way out with its namespace.
+  if [[ "$(kubectl get namespace smoke-hooks -o jsonpath='{.status.phase}' 2>/dev/null)" == Active ]] &&
+    kubectl get deploy hook -n smoke-hooks >/dev/null 2>&1; then
+    return 0
+  fi
   new_namespace smoke-hooks
   kubectl apply -f - >/dev/null <<YAML || fail "applying the webhook receiver"
 apiVersion: v1

@@ -253,6 +253,23 @@ func (s *Server) toolRegistry() []ai.Tool {
 			}, "target", "name", "exception"),
 		},
 		{
+			Name: "apply_rightsizing",
+			Description: "Apply a workload's right-sizing advice: its pod requests are set to the recommended ones, which rolls its pods; " +
+				"they are put back if the new pods are OOMKilled or restart. Needs applying turned on under Settings → Right-sizing, and " +
+				"refuses workloads a GitOps tool manages. Requires the user's confirmation.",
+			Mutating: true,
+			Parameters: obj(map[string]any{"namespace": str("Kubernetes namespace"), "kind": str("Deployment, StatefulSet or Rollout"),
+				"name": str("Workload name")}, "namespace", "kind", "name"),
+		},
+		{
+			Name: "propose_rightsizing",
+			Description: "Open a pull request with a workload's right-sizing advice in the GitOps repository set up under Settings → " +
+				"Right-sizing. Requires the user's confirmation.",
+			Mutating: true,
+			Parameters: obj(map[string]any{"namespace": str("Kubernetes namespace"), "kind": str("Deployment, StatefulSet or Rollout"),
+				"name": str("Workload name")}, "namespace", "kind", "name"),
+		},
+		{
 			Name:        "revert_optimization",
 			Description: "Restore the requests and limits a namespace had before it was right-sized. Requires the user's confirmation.",
 			Mutating:    true,
@@ -336,6 +353,19 @@ func (s *Server) executeMutatingTool(ctx context.Context, name string, args map[
 			}
 			return kept, fmt.Sprintf("removed %d exception(s) matching %q", len(own)-len(kept), which), nil
 		})
+	case "apply_rightsizing":
+		rec, err := s.applyRightsizing(ctx, arg("namespace"), workloadRef{Kind: arg("kind"), Name: arg("name")}, assistantActor(ctx))
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("Applied the advice to %s %s/%s in %d container(s); its new pods are watched and the old requests come back if one fails.",
+			rec.Kind, arg("namespace"), rec.Name, len(rec.Containers)), nil
+	case "propose_rightsizing":
+		rec, err := s.proposeRightsizing(ctx, arg("namespace"), workloadRef{Kind: arg("kind"), Name: arg("name")}, assistantActor(ctx))
+		if err != nil {
+			return "", err
+		}
+		return "Opened a pull request: " + rec.PullRequest, nil
 	case "revert_optimization":
 		if err := s.revertNamespace(ctx, arg("namespace")); err != nil {
 			return "", err
@@ -735,3 +765,11 @@ func clampZero(q resource.Quantity) resource.Quantity {
 }
 
 func round2(f float64) float64 { return float64(int64(f*100+0.5)) / 100 }
+
+// assistantActor is who confirmed an assistant's action.
+func assistantActor(ctx context.Context) string {
+	if id := auth.FromContext(ctx); id != nil {
+		return id.Name
+	}
+	return "the assistant"
+}

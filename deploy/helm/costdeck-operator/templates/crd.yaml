@@ -991,6 +991,66 @@ spec:
                         type: string
                     type: object
                 type: object
+              rightsizing:
+                description: |-
+                  Rightsizing lets operators act on right-sizing advice: apply it to workloads, or
+                  open a pull request with it in a GitOps repository. Both are off by default.
+                properties:
+                  apply:
+                    description: |-
+                      Apply lets operators apply advice to a workload from the dashboard: its pod requests
+                      are patched, which rolls its pods. Workloads a GitOps tool manages are left to pull
+                      requests.
+                    type: boolean
+                  git:
+                    description: |-
+                      Git opens pull requests with the advice in the repository the workloads are
+                      deployed from.
+                    properties:
+                      apiUrl:
+                        description: |-
+                          APIURL is the API's address: https://api.github.com, https://gitlab.com/api/v4, or
+                          a Gitea's https://gitea.example.com/api/v1. Defaults by provider (not for Gitea).
+                        type: string
+                      baseBranch:
+                        description: BaseBranch is where pull requests go. Defaults
+                          to main.
+                        type: string
+                      path:
+                        description: Path limits the search for a workload's manifest
+                          to a directory, such as deploy/.
+                        type: string
+                      provider:
+                        description: Provider is github, gitlab or gitea.
+                        enum:
+                        - github
+                        - gitlab
+                        - gitea
+                        type: string
+                      repository:
+                        description: Repository is owner/name on GitHub and Gitea,
+                          or the project path on GitLab.
+                        maxLength: 255
+                        type: string
+                      secretRef:
+                        description: |-
+                          SecretRef names the Secret holding an access token that can push branches and open
+                          pull requests, under TOKEN.
+                        type: string
+                    required:
+                    - provider
+                    - repository
+                    type: object
+                  guardMinutes:
+                    description: |-
+                      GuardMinutes is how long after a change Cost Deck watches the workload's new pods
+                      and puts the old requests back if one is OOMKilled, restarts or crash-loops.
+                      Defaults to 30.
+                    format: int32
+                    maximum: 1440
+                    minimum: 5
+                    type: integer
+                type: object
             type: object
           status:
             description: status defines the observed state
@@ -1482,6 +1542,58 @@ spec:
                   description: WorkloadOptimization stores optimization details for
                     a specific workload
                   properties:
+                    appliedAt:
+                      description: AppliedAt and AppliedBy say when and by whom the
+                        advice was applied or proposed.
+                      format: date-time
+                      type: string
+                    appliedBy:
+                      type: string
+                    containers:
+                      description: |-
+                        Containers holds the values of every container a change touched; Original and
+                        Optimized describe the first container of records made before it existed.
+                      items:
+                        description: ContainerOptimization is one container's requests
+                          and limits before and after a change.
+                        properties:
+                          name:
+                            type: string
+                          optimized:
+                            description: ResourceValues stores CPU and Memory requests
+                              and limits
+                            properties:
+                              cpuLimit:
+                                type: string
+                              cpuRequest:
+                                type: string
+                              memoryLimit:
+                                type: string
+                              memoryRequest:
+                                type: string
+                            type: object
+                          original:
+                            description: ResourceValues stores CPU and Memory requests
+                              and limits
+                            properties:
+                              cpuLimit:
+                                type: string
+                              cpuRequest:
+                                type: string
+                              memoryLimit:
+                                type: string
+                              memoryRequest:
+                                type: string
+                            type: object
+                        required:
+                        - name
+                        - optimized
+                        - original
+                        type: object
+                      type: array
+                      x-kubernetes-list-map-keys:
+                      - name
+                      x-kubernetes-list-type: map
                     kind:
                       description: Kind of the workload
                       type: string
@@ -1512,6 +1624,23 @@ spec:
                         memoryRequest:
                           type: string
                       type: object
+                    pullRequest:
+                      description: PullRequest is the pull request that proposes the
+                        change.
+                      type: string
+                    reason:
+                      description: Reason says why a change was put back.
+                      type: string
+                    state:
+                      description: |-
+                        State is applied (its new pods are watched), kept (the watch passed), reverted, or
+                        proposed (a pull request is open).
+                      enum:
+                      - applied
+                      - kept
+                      - reverted
+                      - proposed
+                      type: string
                   required:
                   - kind
                   - name

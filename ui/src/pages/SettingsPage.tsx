@@ -1,6 +1,6 @@
 import { useState, useCallback, type ReactNode } from 'react'
 import {
-  Cloud, Bot, MessageSquare, Plus, Trash2, RefreshCw, PieChart, Globe2,
+  Cloud, Bot, MessageSquare, Plus, Trash2, RefreshCw, PieChart, Globe2, Wand2,
   CheckCircle2, XCircle, AlertTriangle, ChevronDown,
   ChevronUp, Sparkles, ExternalLink, Activity, Plug, Shield, Info, Users as UsersIcon, KeyRound, Coins, Receipt, CalendarDays
 } from 'lucide-react'
@@ -13,6 +13,8 @@ import NotificationChannels from '../components/settings/NotificationChannels'
 import PreviewCleanup from '../components/settings/PreviewCleanup'
 import AllocationSettings from '../components/settings/AllocationSettings'
 import ClustersSettings from '../components/settings/ClustersSettings'
+import RightsizingSettings from '../components/settings/RightsizingSettings'
+import { rightsizingForm, rightsizingProblem, rightsizingRequest, type RightsizingForm, type RightsizingSettings as RightsizingData } from '../lib/rightsizing'
 import { clustersForm, clustersProblem, clustersRequest, type ClusterForm, type ClusterSettings } from '../lib/clusters'
 import { allocationForm, allocationProblem, allocationRequest, type AllocationForm, type AllocationSettings as AllocationData } from '../lib/allocation'
 import { cleanupForm, cleanupProblem, cleanupRequest, type CleanupForm, type TTLSettings } from '../lib/cleanup'
@@ -171,14 +173,15 @@ interface SettingsData {
   namespaceTTL?: TTLSettings
   allocation?: AllocationData
   clusters?: ClusterSettings[]
+  rightsizing?: RightsizingData
 }
 
 // ─── Navigation ─────────────────────────────────────────────────────────────
 
-type Section = 'users' | 'sso' | 'tokens' | 'pricing' | 'allocation' | 'billing' | 'metrics' | 'calendars' | 'cleanup' | 'clouds' | 'clusters' | 'notifications' | 'ai' | 'mcp'
+type Section = 'users' | 'sso' | 'tokens' | 'pricing' | 'allocation' | 'rightsizing' | 'billing' | 'metrics' | 'calendars' | 'cleanup' | 'clouds' | 'clusters' | 'notifications' | 'ai' | 'mcp'
 // Sections whose form is saved with their Save button; the others act at once.
-type SavedSection = 'sso' | 'pricing' | 'allocation' | 'metrics' | 'calendars' | 'cleanup' | 'clouds' | 'clusters' | 'notifications' | 'ai' | 'mcp'
-const savedSections: Section[] = ['sso', 'pricing', 'allocation', 'metrics', 'calendars', 'cleanup', 'clouds', 'clusters', 'notifications', 'ai', 'mcp']
+type SavedSection = 'sso' | 'pricing' | 'allocation' | 'rightsizing' | 'metrics' | 'calendars' | 'cleanup' | 'clouds' | 'clusters' | 'notifications' | 'ai' | 'mcp'
+const savedSections: Section[] = ['sso', 'pricing', 'allocation', 'rightsizing', 'metrics', 'calendars', 'cleanup', 'clouds', 'clusters', 'notifications', 'ai', 'mcp']
 const isSaved = (s: Section): s is SavedSection => savedSections.includes(s)
 
 const navGroups: { title: string; items: { id: Section; label: string; icon: ReactNode }[] }[] = [
@@ -196,6 +199,7 @@ const navGroups: { title: string; items: { id: Section; label: string; icon: Rea
   { title: 'Scheduling', items: [
     { id: 'calendars', label: 'Holiday calendars', icon: <CalendarDays size={16} /> },
     { id: 'cleanup', label: 'Preview cleanup', icon: <Trash2 size={16} /> },
+    { id: 'rightsizing', label: 'Right-sizing', icon: <Wand2 size={16} /> },
   ] },
   { title: 'Integrations', items: [
     { id: 'clouds', label: 'Cloud accounts', icon: <Cloud size={16} /> },
@@ -242,6 +246,7 @@ function navStatus(st: SettingsData | null): Partial<Record<Section, NavStatus>>
     billing: onOff(st.billing?.enabled),
     metrics: { text: st.integrations.victoriaMetrics?.enabled ? 'VictoriaMetrics' : 'metrics-server' },
     calendars: { text: st.calendars?.length ? String(st.calendars.length) : 'None', on: !!st.calendars?.length },
+    rightsizing: { text: st.rightsizing?.apply ? (st.rightsizing.git ? 'Apply, PRs' : 'Apply') : st.rightsizing?.git ? 'PRs' : 'Advice', on: !!st.rightsizing?.apply || !!st.rightsizing?.git },
     cleanup: { text: !st.namespaceTTL?.enabled ? 'Off' : st.namespaceTTL.dryRun ? 'Dry run' : 'On', on: !!st.namespaceTTL?.enabled },
     clouds: { text: clouds.length ? clouds.join(', ') : 'None', on: clouds.length > 0 },
     clusters: { text: st.clusters?.length ? String(st.clusters.length + 1) : 'One', on: !!st.clusters?.length },
@@ -736,6 +741,7 @@ export default function SettingsPage({ section: requested }: { section?: string 
   const [cleanup, setCleanup] = useState<CleanupForm>(() => cleanupForm())
   const [allocation, setAllocation] = useState<AllocationForm>(() => allocationForm())
   const [clusters, setClusters] = useState<ClusterForm[]>([])
+  const [rightsizing, setRightsizing] = useState<RightsizingForm>(() => rightsizingForm())
   const [dashboardUrl, setDashboardUrl] = useState('')
   const [entraTenant, setEntraTenant] = useState('')
   const [entraClient, setEntraClient] = useState('')
@@ -816,6 +822,7 @@ export default function SettingsPage({ section: requested }: { section?: string 
         setCleanup(cleanupForm(data.namespaceTTL))
         setAllocation(allocationForm(data.allocation))
         setClusters(clustersForm(data.clusters))
+        setRightsizing(rightsizingForm(data.rightsizing))
         if (data.auth) {
           setDisableLocalLogin(data.auth.disableLocalLogin)
           setDashboardUrl(data.dashboardUrl || '')
@@ -854,7 +861,8 @@ export default function SettingsPage({ section: requested }: { section?: string 
   const handleSave = async (sec: SavedSection) => {
     const invalid = sec === 'calendars' ? calendarProblem(calendars) : sec === 'pricing' ? llmModelProblem(llmModels) : sec === 'sso' ? oidcProblem(oidc)
       : sec === 'notifications' ? channelsProblem(channels) : sec === 'cleanup' ? cleanupProblem(cleanup, settings?.namespaceTTL)
-      : sec === 'allocation' ? allocationProblem(allocation) : sec === 'clusters' ? clustersProblem(clusters) : null
+      : sec === 'allocation' ? allocationProblem(allocation) : sec === 'clusters' ? clustersProblem(clusters)
+      : sec === 'rightsizing' ? rightsizingProblem(rightsizing) : null
     if (invalid) {
       setSaveMessage({ section: sec, text: `Not saved: ${invalid}`, ok: false })
       return
@@ -961,6 +969,7 @@ export default function SettingsPage({ section: requested }: { section?: string 
         cleanup: { namespaceTTL: cleanupRequest(cleanup) },
         allocation: { allocation: allocationRequest(allocation) },
         clusters: { clusters: clustersRequest(clusters) },
+        rightsizing: { rightsizing: rightsizingRequest(rightsizing) },
       }
       const res = await fetch('/api/settings', {
         method: 'PUT',
@@ -988,6 +997,7 @@ export default function SettingsPage({ section: requested }: { section?: string 
         if (sec === 'cleanup') setCleanup(cleanupForm(data.namespaceTTL))
         if (sec === 'allocation') setAllocation(allocationForm(data.allocation))
         if (sec === 'clusters') setClusters(clustersForm(data.clusters))
+        if (sec === 'rightsizing') setRightsizing(rightsizingForm(data.rightsizing))
         setDirty(d => ({ ...d, [sec]: false }))
         setSaveMessage({ section: sec, text: 'Saved', ok: true })
         setTimeout(() => setSaveMessage(m => (m?.section === sec && m.ok ? null : m)), 3000)
@@ -1687,6 +1697,18 @@ export default function SettingsPage({ section: requested }: { section?: string 
             action={saveAction('allocation')}
           />
           <AllocationSettings value={allocation} onChange={setAllocation} />
+        </div>
+      )}
+
+      {section === 'rightsizing' && (
+        <div className="space-y-4 animate-rise">
+          <SectionHeader
+            icon={<Wand2 className="text-brand-500" size={20} />}
+            title="Right-sizing"
+            subtitle="What operators can do with right-sizing advice besides reading it: apply it, or open a pull request with it"
+            action={saveAction('rightsizing')}
+          />
+          <RightsizingSettings value={rightsizing} onChange={r => { setRightsizing(r); setDirty(d => ({ ...d, rightsizing: true })) }} />
         </div>
       )}
 

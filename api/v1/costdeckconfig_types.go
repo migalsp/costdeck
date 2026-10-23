@@ -855,6 +855,62 @@ type CostDeckConfigSpec struct {
 	// +listMapKey=name
 	// +optional
 	Clusters []RemoteCluster `json:"clusters,omitempty"`
+
+	// Rightsizing lets operators act on right-sizing advice: apply it to workloads, or
+	// open a pull request with it in a GitOps repository. Both are off by default.
+	// +optional
+	Rightsizing RightsizingConfig `json:"rightsizing,omitempty"`
+}
+
+// RightsizingConfig decides what can be done with right-sizing advice besides reading it.
+type RightsizingConfig struct {
+	// Apply lets operators apply advice to a workload from the dashboard: its pod requests
+	// are patched, which rolls its pods. Workloads a GitOps tool manages are left to pull
+	// requests.
+	// +optional
+	Apply bool `json:"apply,omitempty"`
+
+	// GuardMinutes is how long after a change Cost Deck watches the workload's new pods
+	// and puts the old requests back if one is OOMKilled, restarts or crash-loops.
+	// Defaults to 30.
+	// +kubebuilder:validation:Minimum=5
+	// +kubebuilder:validation:Maximum=1440
+	// +optional
+	GuardMinutes int32 `json:"guardMinutes,omitempty"`
+
+	// Git opens pull requests with the advice in the repository the workloads are
+	// deployed from.
+	// +optional
+	Git *GitRepositoryConfig `json:"git,omitempty"`
+}
+
+// GitRepositoryConfig is a GitOps repository Cost Deck opens pull requests in.
+type GitRepositoryConfig struct {
+	// Provider is github, gitlab or gitea.
+	// +kubebuilder:validation:Enum=github;gitlab;gitea
+	Provider string `json:"provider"`
+
+	// Repository is owner/name on GitHub and Gitea, or the project path on GitLab.
+	// +kubebuilder:validation:MaxLength=255
+	Repository string `json:"repository"`
+
+	// APIURL is the API's address: https://api.github.com, https://gitlab.com/api/v4, or
+	// a Gitea's https://gitea.example.com/api/v1. Defaults by provider (not for Gitea).
+	// +optional
+	APIURL string `json:"apiUrl,omitempty"`
+
+	// BaseBranch is where pull requests go. Defaults to main.
+	// +optional
+	BaseBranch string `json:"baseBranch,omitempty"`
+
+	// Path limits the search for a workload's manifest to a directory, such as deploy/.
+	// +optional
+	Path string `json:"path,omitempty"`
+
+	// SecretRef names the Secret holding an access token that can push branches and open
+	// pull requests, under TOKEN.
+	// +optional
+	SecretRef string `json:"secretRef,omitempty"`
 }
 
 // RemoteCluster is another Cost Deck installation.

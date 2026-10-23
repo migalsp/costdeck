@@ -92,10 +92,12 @@ them back on time. There is no external service: one operator in your cluster do
   stages can include AWS Aurora and EC2, Azure VMs and PostgreSQL/MySQL flexible servers,
   and Google Cloud Compute Engine and Cloud SQL. CronJobs are suspended and KEDA
   ScaledObjects paused while a namespace is down.
-- **Right-sizing and node advice.** Read-only advice on which requests can shrink (p95
-  usage when VictoriaMetrics is connected), and per node pool the instance type and count
-  that fit the requests, arm64 alternatives and spot capacity for non-production
-  workloads. Cost Deck never edits your requests or nodes.
+- **Right-sizing and node advice.** Advice on which requests can shrink (p95 usage when
+  VictoriaMetrics is connected), and per node pool the instance type and count that fit
+  the requests, arm64 alternatives and spot capacity for non-production workloads. If you
+  allow it, operators apply the advice (the new pods are watched and the old requests come
+  back if they fail) or open a pull request with it in your GitOps repository. Cost Deck
+  never touches nodes.
 - **Cost in pull requests.** A GitHub Action (or the image in any CI) comments on a pull
   request with what its manifests change will cost a month, at your cluster's rates and
   schedules, and can fail the check above a limit.

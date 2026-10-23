@@ -19,6 +19,10 @@ import (
 // barely moves in minutes, and every dashboard card asks for its namespace.
 const recommendationTTL = 5 * time.Minute
 
+// partialTTL is how long advice is kept while some containers have no usage yet, such as
+// the pods of a namespace that just started: their data comes within a minute or two.
+const partialTTL = 30 * time.Second
+
 type recommendationCache struct {
 	mu      sync.Mutex
 	entries map[string]cachedReport
@@ -27,13 +31,14 @@ type recommendationCache struct {
 type cachedReport struct {
 	report rightsizing.Report
 	at     time.Time
+	ttl    time.Duration
 }
 
 func (c *recommendationCache) get(ns string) (rightsizing.Report, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	e, ok := c.entries[ns]
-	return e.report, ok && time.Since(e.at) < recommendationTTL
+	return e.report, ok && time.Since(e.at) < e.ttl
 }
 
 func (c *recommendationCache) put(ns string, r rightsizing.Report) {
@@ -42,7 +47,47 @@ func (c *recommendationCache) put(ns string, r rightsizing.Report) {
 	if c.entries == nil {
 		c.entries = map[string]cachedReport{}
 	}
-	c.entries[ns] = cachedReport{report: r, at: time.Now()}
+	ttl := recommendationTTL
+	for _, w := range r.Workloads {
+		for _, ca := range w.Containers {
+			if ca.CPU.Action == rightsizing.ActionUnknown || ca.Memory.Action == rightsizing.ActionUnknown {
+				ttl = partialTTL
+			}
+		}
+	}
+	c.entries[ns] = cachedReport{report: r, at: time.Now(), ttl: ttl}
+}
+
+// drop removes the advice of a workload just changed and keeps the rest, which still holds:
+// working everything out again while the workload rolls out would ask for usage the new
+// pods do not have yet.
+func (c *recommendationCache) drop(ns, kind, name string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e, ok := c.entries[ns]
+	if !ok {
+		return
+	}
+	r := e.report
+	kept := make([]rightsizing.WorkloadAdvice, 0, len(r.Workloads))
+	r.MonthlySavings = 0
+	for _, w := range r.Workloads {
+		if w.Kind == kind && w.Name == name {
+			continue
+		}
+		kept = append(kept, w)
+		r.MonthlySavings += w.MonthlySavings
+	}
+	r.Workloads = kept
+	e.report = r
+	c.entries[ns] = e
+}
+
+// forget drops a namespace's advice, which a change of its requests makes stale.
+func (c *recommendationCache) forget(ns string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.entries, ns)
 }
 
 // handleRecommendations serves read-only right-sizing advice for a namespace.

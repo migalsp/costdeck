@@ -41,6 +41,7 @@ type SettingsResponse struct {
 	NamespaceTTL NamespaceTTLSettings         `json:"namespaceTTL"`
 	Allocation   AllocationSettings           `json:"allocation"`
 	Clusters     []ClusterSettings            `json:"clusters"`
+	Rightsizing  RightsizingSettings          `json:"rightsizing"`
 	Providers    ProvidersSettingsResponse    `json:"providers"`
 	Integrations IntegrationsSettingsResponse `json:"integrations"`
 	Features     *FeaturesSettingsResponse    `json:"features,omitempty"`
@@ -199,6 +200,7 @@ type SettingsUpdateRequest struct {
 	NamespaceTTL *NamespaceTTLUpdateRequest `json:"namespaceTTL,omitempty"`
 	Allocation   *AllocationUpdateRequest   `json:"allocation,omitempty"`
 	Clusters     *[]ClusterUpdate           `json:"clusters,omitempty"`
+	Rightsizing  *RightsizingUpdateRequest  `json:"rightsizing,omitempty"`
 	Providers    *ProvidersUpdateRequest    `json:"providers,omitempty"`
 	Integrations *IntegrationsUpdateRequest `json:"integrations,omitempty"`
 	Features     *FeaturesUpdateRequest     `json:"features,omitempty"`
@@ -528,6 +530,7 @@ func (s *Server) buildSettingsResponse(ctx context.Context, cfg *finopsv1.CostDe
 	resp.NamespaceTTL = namespaceTTLSettings(cfg.Spec.NamespaceTTL)
 	resp.Allocation = allocationSettings(cfg.Spec.Allocation)
 	resp.Clusters = clusterSettings(cfg.Spec.Clusters)
+	resp.Rightsizing = rightsizingSettings(cfg.Spec.Rightsizing)
 	if e := cfg.Spec.Auth.Entra; e != nil {
 		resp.Auth.Entra = &EntraSettingsResponse{
 			Enabled:          e.Enabled,
@@ -567,7 +570,7 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 
 	appliers := []func(context.Context, *finopsv1.CostDeckConfig, *SettingsUpdateRequest) error{
 		s.applyAWSSettings, s.applyAzureSettings, s.applyGCPSettings, s.applyAISettings,
-		s.applyWebexSettings, s.applyNotificationSettings, s.applyVictoriaMetricsSettings, applyMCPSettings, applyFeatureSettings, applyPricingSettings, applyReportSettings, applyBudgetSettings, applyBillingSettings, applyCalendarSettings, s.applyAuthSettings, applyDashboardURL, applyNamespaceTTLSettings, applyAllocationSettings, s.applyClusterSettings,
+		s.applyWebexSettings, s.applyNotificationSettings, s.applyVictoriaMetricsSettings, applyMCPSettings, applyFeatureSettings, applyPricingSettings, applyReportSettings, applyBudgetSettings, applyBillingSettings, applyCalendarSettings, s.applyAuthSettings, applyDashboardURL, applyNamespaceTTLSettings, applyAllocationSettings, s.applyClusterSettings, s.applyRightsizingSettings,
 	}
 
 	var cfg *finopsv1.CostDeckConfig
@@ -1234,6 +1237,8 @@ func (s *Server) handleTestProvider(w http.ResponseWriter, r *http.Request) {
 		s.testNotificationChannel(w, r, cfg, providerName)
 	case "cluster":
 		s.testCluster(w, r)
+	case "git":
+		s.testGit(w, r, cfg)
 	case "entra":
 		s.testEntra(w, ctx, cfg, r)
 	case "oidc":

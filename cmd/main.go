@@ -52,6 +52,7 @@ import (
 	"github.com/migalsp/costdeck-operator/internal/finops"
 	"github.com/migalsp/costdeck-operator/internal/metrics"
 	"github.com/migalsp/costdeck-operator/internal/notify"
+	"github.com/migalsp/costdeck-operator/internal/optimize"
 	"github.com/migalsp/costdeck-operator/internal/pricing"
 	"github.com/migalsp/costdeck-operator/internal/webex"
 	// +kubebuilder:scaffold:imports
@@ -209,6 +210,12 @@ func main() {
 	}
 	if err := mgr.Add(alerter); err != nil {
 		setupLog.Error(err, "Failed to add the budget alerter to manager")
+		os.Exit(1)
+	}
+
+	// Right-sized workloads whose new pods fail get their old requests back; the leader watches.
+	if err := mgr.Add(&optimize.Guard{Client: mgr.GetClient(), Notify: dispatcher}); err != nil {
+		setupLog.Error(err, "Failed to add the right-sizing guard to manager")
 		os.Exit(1)
 	}
 

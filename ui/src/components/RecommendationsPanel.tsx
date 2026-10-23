@@ -1,6 +1,10 @@
 import { useState } from 'react'
-import { Lightbulb, ArrowRight, AlertTriangle, Copy, Check, Info } from 'lucide-react'
-import { fetchRecommendations } from '../lib/api'
+import { Lightbulb, ArrowRight, AlertTriangle, Copy, Check, Info, GitPullRequest, ExternalLink, Undo2, Wand2 } from 'lucide-react'
+import { apiError, errorMessage, fetchRecommendations, getJSON } from '../lib/api'
+import { useAuth } from '../lib/auth'
+import { describeState, describeValues, latest, type RightsizingChanges } from '../lib/rightsizing'
+import { toast } from '../lib/toast'
+import { Button } from './ui'
 import { formatMoney } from '../lib/format'
 import type { AdviceAction, ContainerAdvice, Recommendations, ResourceAdvice, WorkloadAdvice } from '../lib/types'
 import { usePolling } from '../lib/usePolling'
@@ -50,17 +54,46 @@ function CopyButton({ text }: { text: string }) {
   )
 }
 
-// RecommendationsPanel shows what a namespace could give back, from observed demand. It is
-// advice only: CostDeck never edits requests, the team applies them through its own pipeline.
+// RecommendationsPanel shows what a namespace could give back, from observed demand. By
+// default it is advice only. When an admin allows it, operators apply the advice to a
+// workload (watched, and put back if its new pods fail) or open a pull request with it.
 export default function RecommendationsPanel({ namespace }: { namespace: string }) {
+  const { can } = useAuth()
   const [report, setReport] = useState<Recommendations | null>(null)
   const [unavailable, setUnavailable] = useState(false)
+  const [changes, setChanges] = useState<RightsizingChanges | null>(null)
+  const [confirming, setConfirming] = useState<string | null>(null)
+  const [busy, setBusy] = useState<string | null>(null)
 
-  usePolling(() => {
-    fetchRecommendations(namespace)
-      .then(r => { setReport(r); setUnavailable(r === null) })
-      .catch(() => setUnavailable(true))
-  }, 5 * 60 * 1000, namespace)
+  const loadAdvice = () => fetchRecommendations(namespace)
+    .then(r => { setReport(r); setUnavailable(r === null) })
+    .catch(() => setUnavailable(true))
+  const loadChanges = () => getJSON<RightsizingChanges>(`/api/rightsizing/changes?namespace=${encodeURIComponent(namespace)}`).then(setChanges).catch(() => setChanges(null))
+  usePolling(loadAdvice, 5 * 60 * 1000, namespace)
+  usePolling(loadChanges, 30 * 1000, namespace)
+
+  // act runs one of the actions on a workload and reports how it went.
+  const act = async (w: WorkloadAdvice, action: 'apply' | 'pull-request' | 'revert') => {
+    const key = `${w.kind}/${w.name}`
+    setBusy(key)
+    setConfirming(null)
+    try {
+      const res = await fetch(`/api/namespaces/${encodeURIComponent(namespace)}/rightsizing/${action}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: w.kind, name: w.name }),
+      })
+      if (!res.ok) throw new Error(await apiError(res))
+      const c = await res.json()
+      toast.success(action === 'apply' ? `Applied the advice to ${w.name}; its new pods are watched`
+        : action === 'revert' ? `Put the old requests of ${w.name} back` : `Opened a pull request for ${w.name}`)
+      if (action === 'pull-request' && c.pullRequest) window.open(c.pullRequest, '_blank', 'noopener')
+      await Promise.all([loadChanges(), loadAdvice()])
+    } catch (e) {
+      toast.error(`${w.name}: ${errorMessage(e)}`)
+    } finally {
+      setBusy(null)
+    }
+  }
+  const canAct = can('operator') && !!changes && (changes.applyEnabled || !!changes.repository)
 
   if (unavailable) {
     return (
@@ -83,7 +116,12 @@ export default function RecommendationsPanel({ namespace }: { namespace: string 
           <div className="p-2 rounded-lg bg-emerald-50 text-emerald-600"><Lightbulb size={20} /></div>
           <div>
             <h3 className="font-bold text-slate-800">What can be reduced</h3>
-            <p className="text-xs text-slate-500 mt-0.5 max-w-3xl">{report.basis} Nothing is changed automatically: apply the values through your deployment pipeline.</p>
+            <p className="text-xs text-slate-500 mt-0.5 max-w-3xl">
+              {report.basis}{' '}
+              {changes?.applyEnabled
+                ? `Apply sets the values on a workload and watches its new pods for ${changes.guardMinutes} minutes, putting the old requests back if one fails.`
+                : changes?.repository ? `Pull request proposes the values in ${changes.repository}.` : 'Nothing is changed automatically: apply the values through your deployment pipeline.'}
+            </p>
             {!report.historical && (
               <p className="text-xs text-amber-600 mt-1">A single reading can miss peaks. Treat these values as a starting point.</p>
             )}
@@ -138,11 +176,55 @@ export default function RecommendationsPanel({ namespace }: { namespace: string 
                     {w.monthlySavings >= 0.01 && w.containers.indexOf(c) === w.containers.findIndex(needsAttention)
                       ? `${formatMoney(w.monthlySavings, report.currency)}/mo` : ''}
                   </td>
-                  <td className="px-3 py-2.5 text-right"><CopyButton text={yamlFor(w, c)} /></td>
+                  <td className="px-3 py-2.5 text-right whitespace-nowrap">
+                    {canAct && w.containers.indexOf(c) === w.containers.findIndex(needsAttention) && (() => {
+                      const key = `${w.kind}/${w.name}`
+                      const ch = latest(changes, w.kind, w.name)
+                      const live = ch && (ch.state === 'applied' || ch.state === 'kept')
+                      if (confirming === key) {
+                        return (
+                          <span className="inline-flex items-center gap-1.5 text-xs text-slate-600">
+                            Pods of {w.name} restart.
+                            <Button size="sm" variant="primary" onClick={() => act(w, 'apply')}>Apply</Button>
+                            <Button size="sm" variant="ghost" onClick={() => setConfirming(null)}>Cancel</Button>
+                          </span>
+                        )
+                      }
+                      return (
+                        <span className="inline-flex items-center gap-1.5 mr-1">
+                          {changes!.applyEnabled && !live && <Button size="sm" onClick={() => setConfirming(key)} disabled={busy === key} icon={<Wand2 size={13} />}>Apply</Button>}
+                          {changes!.repository && <Button size="sm" onClick={() => act(w, 'pull-request')} disabled={busy === key} icon={<GitPullRequest size={13} />}>Pull request</Button>}
+                        </span>
+                      )
+                    })()}
+                    <CopyButton text={yamlFor(w, c)} />
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {(changes?.changes.length || 0) > 0 && (
+        <div className="border-t border-slate-100 px-5 py-4">
+          <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">Changes</h4>
+          <ul className="space-y-2" aria-label="Right-sizing changes">
+            {changes!.changes.map(c => (
+              <li key={`${c.kind}/${c.name}/${c.appliedAt}`} className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm">
+                <span className="font-semibold text-slate-700">{c.kind} {c.name}</span>
+                <span className="text-slate-500">{describeValues(c)}</span>
+                <span className={`text-xs ${c.state === 'reverted' ? 'text-amber-700' : 'text-slate-400'}`}>{describeState(c, changes!.guardMinutes)}</span>
+                <span className="ml-auto inline-flex gap-2">
+                  {c.pullRequest && <a href={c.pullRequest} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-xs font-semibold text-brand-700 hover:underline">Pull request <ExternalLink size={11} /></a>}
+                  {can('operator') && (c.state === 'applied' || c.state === 'kept') && (
+                    <Button size="sm" variant="ghost" icon={<Undo2 size={13} />} disabled={busy === `${c.kind}/${c.name}`}
+                      onClick={() => act({ kind: c.kind, name: c.name } as WorkloadAdvice, 'revert')}>Put back</Button>
+                  )}
+                </span>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
     </div>

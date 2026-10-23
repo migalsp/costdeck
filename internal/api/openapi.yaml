@@ -553,6 +553,61 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /api/namespaces/{ns}/rightsizing/apply:
+    post:
+      x-role: operator
+      tags: [Namespaces]
+      summary: Apply a workload's right-sizing advice
+      description: >-
+        Sets the workload's pod requests to the recommended ones (never above a limit), which
+        rolls its pods, and records the old ones in its NamespaceOptimization. The guard puts
+        them back if a new pod is OOMKilled, restarts or crash-loops within
+        spec.rightsizing.guardMinutes. Needs spec.rightsizing.apply; refuses workloads a GitOps
+        tool manages.
+      parameters: &nsParam
+        - { name: ns, in: path, required: true, schema: { type: string } }
+      requestBody: &workloadBody
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [kind, name], properties: { kind: { type: string, enum: [Deployment, StatefulSet, Rollout] }, name: { type: string } } }
+      responses:
+        "200": { description: The change on record }
+        "400": { description: The advice changes nothing, or the workload cannot be changed }
+        "403": { description: Applying advice is off }
+        "404": { description: No advice for the workload }
+        "409": { description: A GitOps tool manages the workload }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/namespaces/{ns}/rightsizing/revert:
+    post:
+      x-role: operator
+      tags: [Namespaces]
+      summary: Put a workload's old requests back
+      parameters: *nsParam
+      requestBody: *workloadBody
+      responses:
+        "200": { description: The change, now reverted }
+        "404": { description: No change on record for the workload }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/namespaces/{ns}/rightsizing/pull-request:
+    post:
+      x-role: operator
+      tags: [Namespaces]
+      summary: Open a pull request with a workload's advice
+      description: >-
+        Finds the workload's manifest in the repository of spec.rightsizing.git (plain YAML or
+        kustomize; not Helm values), sets its containers' requests, keeping comments, and opens a
+        pull request on GitHub, GitLab or Gitea with the evidence behind the advice.
+      parameters: *nsParam
+      requestBody: *workloadBody
+      responses:
+        "200": { description: The proposal on record, with its pullRequest URL }
+        "400": { description: The advice changes nothing, or no manifest of the workload is in the repository }
+        "403": { description: No repository is set up }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
   /api/namespaces/{ns}/recommendations:
     get:
       x-role: viewer
@@ -1127,6 +1182,18 @@ paths:
         "400": { description: Not a duration, or the namespace is never deleted }
         "403": { description: The operator may not change namespaces }
         "404": { description: Preview cleanup does not select the namespace }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/rightsizing/changes:
+    get:
+      x-role: viewer
+      tags: [FinOps]
+      summary: Right-sizing changes
+      description: Every change applied, proposed or put back, newest first, with who, when, the old and new requests per container, its state and why it was put back.
+      parameters:
+        - { name: namespace, in: query, schema: { type: string } }
+      responses:
+        "200": { description: The changes }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
   /api/finops/allocation:

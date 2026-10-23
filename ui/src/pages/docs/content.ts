@@ -65,7 +65,7 @@ export const guides: Guide[] = [
             list: [
               '**Shows what each namespace costs** and how much of what it reserves it actually uses.',
               '**Scales non-production environments to zero** when nobody needs them, and brings them back on time. Cloud databases and VMs can stop and start with them.',
-              '**Points out requests that are too large**, with the saving and the YAML to fix them. It never changes your workloads\' requests itself.',
+              '**Points out requests that are too large**, with the saving and the YAML to fix them. If an admin allows it, operators apply the advice (watched, and put back if the new pods fail) or open a pull request with it.',
               '**Works where your team works**: this dashboard, the REST API, a Webex bot, an AI assistant and MCP clients such as Claude Code.',
             ],
           },
@@ -815,7 +815,7 @@ spec:
               'Containers that use **more** than they request are flagged too: they compete for capacity they never reserved.',
             ],
           },
-          { tip: 'Cost Deck only advises. It never changes requests or limits; you stay in control of your manifests.' },
+          { tip: 'By default Cost Deck only advises and never changes requests or limits. An admin can let operators apply advice or open pull requests with it (see below).' },
           {
             ways: {
               api: `curl -H "Authorization: Bearer $TOKEN" "$COSTDECK/api/namespaces/dev-backend/recommendations"`,
@@ -873,7 +873,21 @@ spec:
         id: 'legacy',
         title: 'Undo an automatic right-sizing from an earlier version',
         blocks: [
-          { p: 'Cost Deck 1.3 and earlier could rewrite requests automatically. Namespaces changed that way show **Revert optimization**, which restores the values from before the change. Newer versions only advise.' },
+          { p: 'Cost Deck 1.3 and earlier could rewrite requests automatically. Namespaces changed that way show **Revert optimization**, which restores the values from before the change.' },
+        ],
+      },
+      {
+        id: 'apply',
+        title: 'Apply advice, or open a pull request',
+        blocks: [
+          { p: 'By default Cost Deck only advises. Under **Settings → Right-sizing** an admin lets operators act on the advice from a namespace\'s page:' },
+          {
+            list: [
+              '**Apply** sets the workload\'s requests to the recommended ones (never above a limit), which rolls its pods. The new pods are watched for 30 minutes by default; if one is OOMKilled, restarts or crash-loops, the old requests come back and the alert channels are told. **Put back** undoes a change by hand.',
+              '**Pull request** finds the workload\'s manifest in your GitOps repository (GitHub, GitLab or Gitea), sets its requests and opens a pull request with what was used and the saving. Workloads Argo CD or Flux manage can only be changed this way.',
+            ],
+          },
+          { p: 'Every change, applied, proposed or put back, is listed under the advice with who made it and when.' },
         ],
       },
     ],
@@ -1342,7 +1356,10 @@ claude mcp add --transport http costdeck https://costdeck.example.com/mcp \\
                 ['get_cost_overview', 'Run rate, efficiency, month to date, savings and the ranked opportunities'],
                 ['get_rightsizing_recommendations', 'What can be reduced in a namespace'],
                 ['scale_group, scale_namespace', 'Start now, scale down now, or resume the schedule (operator)'],
-                ['revert_optimization', 'Undo an automatic right-sizing from version 1.3 or earlier (operator)'],
+                ['get_cost_allocation', 'A period\'s cost by team, environment, namespace or label, with shared and idle cost'],
+                ['get_clusters', 'Every Cost Deck installation side by side'],
+                ['apply_rightsizing, propose_rightsizing', 'Apply a workload\'s advice, or open a pull request with it (operator)'],
+                ['revert_optimization', 'Put back the requests right-sizing changed in a namespace (operator)'],
               ],
             },
           },

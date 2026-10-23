@@ -743,7 +743,29 @@ The namespace page lists containers whose requests are well above what they use,
 recommended value, the estimated monthly saving and a YAML snippet to apply through your
 own pipeline. With VictoriaMetrics the advice uses p95 CPU and peak memory over up to 14
 days plus 20% headroom; with metrics-server only, a single reading plus 50% headroom.
-Cost Deck does not change requests itself.
+
+By default Cost Deck only advises. Under **Settings → Right-sizing** an admin can let
+operators act on the advice, in two ways:
+
+- **Apply** (`spec.rightsizing.apply`): the workload's requests are set to the recommended
+  ones, never above a limit, which rolls its pods.
+  - The old values are kept per container in the namespace's `NamespaceOptimization`.
+  - For `guardMinutes` (30 by default), Cost Deck watches the new pods. If one is
+    OOMKilled, restarts or crash-loops, the old requests come back and the channels that
+    take alerts are told.
+  - **Put back** undoes a change by hand.
+  - Workloads Argo CD or Flux manage are refused, since they would put the old requests
+    back.
+- **Pull request** (`spec.rightsizing.git`: GitHub, GitLab or Gitea with an access token):
+  - Cost Deck finds the workload's manifest in the repository and sets its containers'
+    requests, keeping comments.
+  - It then opens a pull request with the values, what was used and the saving.
+  - Plain YAML and kustomize work. Requests in a Helm chart's values file cannot be mapped
+    to a workload, so the snippet is the way there.
+
+Every change, applied, proposed or put back, is listed on the namespace page and by
+`GET /api/rightsizing/changes`. The assistant and MCP clients have `apply_rightsizing`
+and `propose_rightsizing`, which ask for confirmation.
 
 ## Prometheus metrics
 
