@@ -23,9 +23,15 @@ import (
 
 const goodFactor = "0.7000"
 
+// billingNow is 08:00 UTC today. The price resolver trusts a reconciliation for
+// billingMaxAge by the real clock, so a fixed date would make these tests expire.
+func billingNow() time.Time {
+	return time.Now().UTC().Truncate(24 * time.Hour).Add(8 * time.Hour)
+}
+
 func billingClient(t *testing.T, days int) client.Client {
 	t.Helper()
-	now := time.Date(2026, 10, 12, 8, 0, 0, 0, time.UTC)
+	now := billingNow()
 	l := &Ledger{Currency: "USD"}
 	for d := days; d >= 1; d-- {
 		l.Days = append(l.Days, Day{Date: DateOf(now.AddDate(0, 0, -d)), Hours: 24, Provisioned: 100, List: 100})
@@ -58,12 +64,14 @@ func fixedBill(per float64, err error) BillReader {
 func TestBillingReconcile(t *testing.T) {
 	t.Setenv("POD_NAMESPACE", "costdeck")
 	ctx := context.Background()
-	now := func() time.Time { return time.Date(2026, 10, 12, 8, 0, 0, 0, time.UTC) }
+	now := billingNow
 	c := billingClient(t, 14)
 
 	b := &BillingReconciler{Client: c, Namespace: "costdeck", Read: fixedBill(70, nil), Now: now}
 	st, err := b.Reconcile(ctx)
-	if err != nil || st.Factor != goodFactor || st.From != "2026-10-04" || st.To != "2026-10-10" || st.Error != "" {
+	// The compared week ends the day before yesterday, whose bill is complete.
+	from, to := DateOf(now().AddDate(0, 0, -8)), DateOf(now().AddDate(0, 0, -2))
+	if err != nil || st.Factor != goodFactor || st.From != from || st.To != to || st.Error != "" {
 		t.Fatalf("reconcile: %+v %v", st, err)
 	}
 	var cfg finopsv1.CostDeckConfig
@@ -97,7 +105,7 @@ func TestBillingNeedsHistory(t *testing.T) {
 	t.Setenv("POD_NAMESPACE", "costdeck")
 	c := billingClient(t, 3) // only two days fall inside the compared week
 	b := &BillingReconciler{Client: c, Namespace: "costdeck", Read: fixedBill(70, nil),
-		Now: func() time.Time { return time.Date(2026, 10, 12, 8, 0, 0, 0, time.UTC) }}
+		Now: billingNow}
 	st, err := b.Reconcile(context.Background())
 	if err != nil || st.Factor != "" || !strings.Contains(st.Error, fmt.Sprintf("needs %d", minBillingDays)) {
 		t.Errorf("too little history: %+v %v", st, err)
