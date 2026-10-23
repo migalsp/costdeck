@@ -560,7 +560,8 @@ paths:
       description: >-
         What a schedule would do, saved or not, without changing anything: the namespaces it
         would take (listed or selected by label, and those another group keeps), the
-        workloads and CronJobs it would stop with the workload rules applied, the timetable
+        workloads, CronJobs and operator-run services (hibernate rules) it would stop with the
+        workload rules applied, the timetable
         for the next 14 days with exceptions, the share of time up over four weeks, and the
         estimated saving at the current rates. name is the schedule being edited, so it does
         not conflict with itself.
@@ -1998,6 +1999,12 @@ components:
                 Suspend the Flux Kustomizations and HelmReleases and turn off self-heal of the Argo
                 CD Applications that manage the workloads while they are down, and resume them
                 afterwards. Needs gitops.pause in the Helm chart.
+            hibernate:
+              type: array
+              description: >-
+                Services operators run in every namespace of the group, such as databases, to stop
+                after the workloads and start before them. Added to each namespace's own rules.
+              items: { $ref: "#/components/schemas/HibernateRule" }
             activation:
               type: string
               enum: [Schedule, OnDemand]
@@ -2087,6 +2094,12 @@ components:
                 Suspend the Flux Kustomizations and HelmReleases and turn off self-heal of the Argo
                 CD Applications that manage the workloads while they are down, and resume them
                 afterwards. Needs gitops.pause in the Helm chart.
+            hibernate:
+              type: array
+              description: >-
+                Services operators run in the namespace, such as databases, to stop after the
+                workloads and start before them. Groups apply them too (workload rules).
+              items: { $ref: "#/components/schemas/HibernateRule" }
             exclusions:
               type: array
               items: { type: string }
@@ -2230,6 +2243,29 @@ components:
         region: { type: string }
         name: { type: string, description: Display name. }
 
+    HibernateRule:
+      type: object
+      description: >-
+        Stops services an operator runs, such as a database: they stop after the namespace's
+        workloads and start before them, and the workloads the operator runs for them are left
+        to it. Only what CostDeck stopped is started again. Needs hibernation.enabled in the
+        Helm chart (hibernation.extraRules for kinds without a preset).
+      properties:
+        preset:
+          type: string
+          enum: [cnpg, zalando-postgres, strimzi]
+          description: >-
+            cnpg hibernates CloudNativePG clusters; zalando-postgres sets numberOfInstances of
+            Zalando postgresql clusters to zero; strimzi scales KafkaConnect, KafkaMirrorMaker2 and
+            KafkaBridge (Kafka clusters themselves cannot be stopped).
+        apiVersion: { type: string, example: redis.example.com/v1, description: "Without a preset: the resources' group/version." }
+        kind: { type: string, example: Redis }
+        replicasField: { type: string, example: spec.size, description: Dotted path of the replica count. }
+        readyField: { type: string, example: status.readyNodes, description: Dotted path of the ready count; without it a resource counts as there once patched. }
+        names:
+          type: array
+          items: { type: string }
+          description: Only resources with these names or globs (pg-*); empty means all in the namespace.
     ScheduleException:
       type: object
       required: [start, state]

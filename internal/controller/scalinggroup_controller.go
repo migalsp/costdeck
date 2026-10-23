@@ -419,18 +419,22 @@ func namespaceOriginals(group *finopsv1.ScalingGroup, ns string) map[string]int3
 	return out
 }
 
-// workloadRules returns the exclusions and workload order of a namespace's own
-// ScalingConfig, which the group applies.
-func (r *ScalingGroupReconciler) workloadRules(ctx context.Context, group *finopsv1.ScalingGroup, ns string) (exclusions, sequence []string) {
+// workloadRules returns the exclusions, workload order and hibernate rules of a namespace's
+// own ScalingConfig, which the group applies, plus the group's own hibernate rules. The
+// exclusions include those the hibernate rules add.
+func (r *ScalingGroupReconciler) workloadRules(ctx context.Context, group *finopsv1.ScalingGroup, ns string) (exclusions, sequence []string, hibernate []finopsv1.HibernateRule) {
+	hibernate = group.Spec.Hibernate
 	configList := &finopsv1.ScalingConfigList{}
 	if err := r.List(ctx, configList, client.InNamespace(group.Namespace)); err == nil {
 		for _, cfg := range configList.Items {
 			if cfg.Spec.TargetNamespace == ns {
-				return cfg.Spec.Exclusions, cfg.Spec.Sequence
+				exclusions, sequence = cfg.Spec.Exclusions, cfg.Spec.Sequence
+				hibernate = append(slices.Clone(hibernate), cfg.Spec.Hibernate...)
+				break
 			}
 		}
 	}
-	return nil, nil
+	return scaling.ExclusionsWith(exclusions, hibernate), sequence, hibernate
 }
 
 // gitOpsBeforeStages pauses GitOps, when the group asks for it, before anything scales down,
@@ -446,7 +450,7 @@ func (r *ScalingGroupReconciler) gitOpsBeforeStages(ctx context.Context, group *
 			}
 		}
 	}
-	exclusionsOf := func(ns string) []string { e, _ := r.workloadRules(ctx, group, ns); return e }
+	exclusionsOf := func(ns string) []string { e, _, _ := r.workloadRules(ctx, group, ns); return e }
 	reconcileGitOps(ctx, r.Engine, &group.Status.Conditions, group.Generation, namespaces, exclusionsOf, group.Spec.PauseGitOps, targetActive)
 	return namespaces, exclusionsOf
 }
@@ -462,8 +466,8 @@ func (r *ScalingGroupReconciler) dryRun(ctx context.Context, group *finopsv1.Sca
 				cloud++
 				continue
 			}
-			exclusions, _ := r.workloadRules(ctx, group, ns)
-			n, err := r.Engine.WouldChange(ctx, ns, decision.Active, exclusions)
+			exclusions, _, hibernate := r.workloadRules(ctx, group, ns)
+			n, err := wouldChange(ctx, r.Engine, ns, decision.Active, exclusions, hibernate)
 			if err != nil {
 				logf.FromContext(ctx).Error(err, "Could not work out the dry run", "namespace", ns)
 				continue
@@ -487,12 +491,12 @@ func (r *ScalingGroupReconciler) dryRun(ctx context.Context, group *finopsv1.Sca
 }
 
 func (r *ScalingGroupReconciler) reconcileK8sTarget(ctx context.Context, group *finopsv1.ScalingGroup, ns string, targetActive bool, timeoutPassed bool) (bool, error) {
-	exclusions, nsSequence := r.workloadRules(ctx, group, ns)
+	exclusions, nsSequence, hibernate := r.workloadRules(ctx, group, ns)
 
 	nsKeyPrefix := ns + "/"
 	nsReplicas := namespaceOriginals(group, ns)
 
-	updatedOriginals, nsReady, err := r.Engine.ScaleTarget(ctx, ns, targetActive, nsSequence, exclusions, nsReplicas, timeoutPassed)
+	updatedOriginals, nsReady, err := r.Engine.ScaleWithServices(ctx, ns, targetActive, nsSequence, exclusions, hibernate, nsReplicas, timeoutPassed)
 	if err != nil {
 		return false, err
 	}
@@ -632,8 +636,12 @@ func (r *ScalingGroupReconciler) release(ctx context.Context, group *finopsv1.Sc
 			continue
 		}
 		// Everything at once: nothing schedules the namespace any more to finish the stages.
-		exclusions, sequence := r.workloadRules(ctx, group, ns)
-		if _, _, err := r.Engine.ScaleTarget(ctx, ns, true, sequence, exclusions, namespaceOriginals(group, ns), true); err != nil {
+		exclusions, sequence, hibernate := r.workloadRules(ctx, group, ns)
+		err := r.Engine.ReleaseServices(ctx, ns, hibernate)
+		if err == nil {
+			_, _, err = r.Engine.ScaleTarget(ctx, ns, true, sequence, exclusions, namespaceOriginals(group, ns), true)
+		}
+		if err != nil {
 			logf.FromContext(ctx).Error(err, "Could not restore a namespace that left the group", "namespace", ns)
 			continue
 		}

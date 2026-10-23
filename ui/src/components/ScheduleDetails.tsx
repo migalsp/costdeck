@@ -3,6 +3,7 @@ import { Activity, ArrowRight, LayoutList, ListOrdered, Link2, Pencil, Play, Rot
 import { formatMoney } from '../lib/format'
 import { describeSpec, statusLine } from '../lib/schedule'
 import { describeException, isPast } from '../lib/exceptions'
+import { describeRule } from '../lib/hibernate'
 import { targetLabel } from '../lib/cloud'
 import type { ScalingConfig, ScalingGroup, ScalingSpec } from '../lib/types'
 import ScheduleActivity from './ScheduleActivity'
@@ -123,6 +124,13 @@ export default function ScheduleDetails(p: Props) {
                   </li>
                 ))}
               </ul>
+            </section>
+          )}
+
+          {!!spec.hibernate?.length && (
+            <section data-testid="hibernate-rules">
+              <h3 className="text-sm font-semibold text-slate-800 mb-1">Services stopped with every namespace</h3>
+              <p className="text-sm text-slate-600">{spec.hibernate.map(describeRule).join(' · ')}: stopped after the workloads, started before them.</p>
             </section>
           )}
 

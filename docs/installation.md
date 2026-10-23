@@ -396,6 +396,37 @@ spec:
 
 For Flux, leave `spec.replicas` out of the manifests in Git, as you would with an HPA.
 
+### Databases and other operator-run services
+
+Scaling the pods of a database an operator runs does not stop it: the operator brings them
+back. Hibernate rules (`spec.hibernate`, *Services to stop* in a namespace's workload rules
+or a group's Advanced tab) ask the operator instead. They stop the services once the
+namespace's workloads are down and start them before the workloads, and leave the
+workloads the operator runs for them alone. Install with `--set hibernation.enabled=true`,
+which grants reading and patching the resources of the presets:
+
+| Preset | Resources | How they stop |
+|---|---|---|
+| `cnpg` | CloudNativePG `Cluster` | declarative hibernation, volumes kept |
+| `zalando-postgres` | Zalando `postgresql` | `numberOfInstances: 0`, earlier count restored |
+| `strimzi` | `KafkaConnect`, `KafkaMirrorMaker2`, `KafkaBridge` | `spec.replicas: 0` |
+
+A Strimzi `Kafka` cluster itself cannot be stopped: Strimzi refuses a cluster without
+brokers and controllers. Zalando's `min_instances` setting raises clusters back unless they
+carry its ignore-limits annotation.
+
+For another operator, give its `apiVersion`, `kind`, `replicasField` and optionally
+`readyField`, and grant access through `hibernation.extraRules`:
+
+```yaml
+hibernation:
+  extraRules:
+    - apiGroups: ["redis.example.com"]
+      resources: ["redisclusters"]
+```
+
+Only what Cost Deck stopped is started again (it marks it with `costdeck.io/hibernated`).
+
 ## Right-sizing advice
 
 The namespace page lists containers whose requests are well above what they use, with a
@@ -478,6 +509,8 @@ helm upgrade costdeck-operator oci://ghcr.io/migalsp/costdeck/charts/costdeck-op
 | `extraArgs`, `extraEnv` | `[]` | e.g. `--zap-log-level=debug` |
 | `nodeSelector`, `tolerations`, `affinity` | empty | |
 | `gitops.pause` | `false` | Lets schedules with `spec.pauseGitOps` pause Flux and Argo CD (cluster-wide read and patch on their objects) |
+| `hibernation.enabled` | `false` | Lets hibernate rules stop CloudNativePG and Zalando Postgres clusters and Strimzi Connect, MirrorMaker 2 and Bridge (cluster-wide read and patch on them) |
+| `hibernation.extraRules` | `[]` | `apiGroups` and `resources` of other operators' kinds that hibernate rules stop |
 
 `values.schema.json` rejects malformed values at install time.
 

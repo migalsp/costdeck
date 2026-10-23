@@ -101,6 +101,25 @@
       "description": "Pause Flux and Argo CD for schedules with spec.pauseGitOps (needs cluster-wide read and patch on their objects).",
       "properties": { "pause": { "type": "boolean" } }
     },
+    "hibernation": {
+      "type": "object",
+      "description": "Stop operator-run services (databases, Kafka Connect) for schedules with hibernate rules (needs cluster-wide read and patch on their resources).",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "extraRules": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["apiGroups", "resources"],
+            "properties": {
+              "apiGroups": { "type": "array", "items": { "type": "string" } },
+              "resources": { "type": "array", "items": { "type": "string" } }
+            },
+            "additionalProperties": false
+          }
+        }
+      }
+    },
     "podDisruptionBudget": {
       "type": "object",
       "properties": {

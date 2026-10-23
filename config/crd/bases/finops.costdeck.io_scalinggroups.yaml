@@ -228,6 +228,62 @@ spec:
                     minimum: 1
                     type: integer
                 type: object
+              hibernate:
+                description: |-
+                  Hibernate stops services that operators run, such as databases, in every namespace of
+                  the group, after its workloads, and starts them before; the rules of a namespace's own
+                  ScalingConfig add to these. Needs hibernation.enabled in the Helm chart.
+                items:
+                  description: |-
+                    HibernateRule stops services an operator runs in a namespace, such as a database, together
+                    with the namespace's workloads: they stop after the workloads and start before them. A
+                    preset covers a known operator; otherwise apiVersion, kind and replicasField describe the
+                    resources. Only what CostDeck stopped is started again.
+                  properties:
+                    apiVersion:
+                      description: |-
+                        APIVersion and Kind of the resources a rule without a preset stops, such as
+                        redis.example.com/v1 Redis.
+                      type: string
+                    kind:
+                      type: string
+                    names:
+                      description: |-
+                        Names limits the rule to resources with these names; globs such as "pg-*" work.
+                        Empty means every matching resource in the namespace.
+                      items:
+                        type: string
+                      type: array
+                      x-kubernetes-list-type: atomic
+                    preset:
+                      description: |-
+                        Preset is a built-in rule: cnpg (CloudNativePG clusters, by declarative hibernation),
+                        zalando-postgres (Zalando postgres-operator clusters, numberOfInstances to zero) or
+                        strimzi (Strimzi KafkaConnect, KafkaMirrorMaker2 and KafkaBridge; Kafka clusters
+                        themselves cannot be stopped).
+                      enum:
+                      - cnpg
+                      - zalando-postgres
+                      - strimzi
+                      type: string
+                    readyField:
+                      description: |-
+                        ReadyField is the dotted path of the ready replica count in the status, such as
+                        status.readyReplicas. Without it a resource counts as stopped or started once patched.
+                      type: string
+                    replicasField:
+                      description: |-
+                        ReplicasField is the dotted path of the replica count, such as spec.replicas: zero to
+                        stop, the earlier count to start.
+                      type: string
+                  type: object
+                  x-kubernetes-validations:
+                  - message: set a preset, or apiVersion, kind and replicasField
+                    rule: has(self.preset) != (has(self.apiVersion) && has(self.kind)
+                      && has(self.replicasField))
+                maxItems: 20
+                type: array
+                x-kubernetes-list-type: atomic
               namespaceSelector:
                 description: |-
                   NamespaceSelector adds every namespace whose labels match, such as the preview

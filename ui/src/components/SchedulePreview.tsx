@@ -78,7 +78,11 @@ export default function SchedulePreview({ kind, name, spec }: { kind: 'group' | 
                   : ns.ownedBy && kind === 'group' ? <span className="text-xs text-amber-700">scaled by {ns.ownedBy}</span>
                   : <span className="text-xs text-slate-500">
                       {w.filter(x => !x.excluded).map(x => `${x.name} ×${x.replicas}${x.gitOps ? ` (${x.gitOps.kind === 'Application' ? 'Argo CD' : 'Flux'} ${x.gitOps.name})` : ''}`).join(', ') || 'no workloads'}
-                      {w.some(x => x.excluded) && ` · kept running: ${w.filter(x => x.excluded).map(x => x.name).join(', ')}`}
+                      {w.some(x => x.excluded && !x.managedBy) && ` · kept running: ${w.filter(x => x.excluded && !x.managedBy).map(x => x.name).join(', ')}`}
+                      {w.some(x => x.managedBy) && ` · left to their operator: ${w.filter(x => x.managedBy).map(x => x.name).join(', ')}`}
+                      {(ns.services || []).length > 0 && <span className="block" data-testid="preview-services">
+                        Then stops {(ns.services || []).map(s => `${s.kind} ${s.name}${s.running ? '' : s.stoppedByCostDeck ? ' (stopped)' : ' (stopped by someone else, left alone)'}`).join(', ')}
+                      </span>}
                       {ns.cronJobs > 0 && ` · ${ns.cronJobs} CronJob${ns.cronJobs === 1 ? '' : 's'} paused`}
                     </span>}
               </li>

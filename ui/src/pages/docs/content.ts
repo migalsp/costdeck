@@ -516,6 +516,23 @@ spec:
           { p: 'For Flux, leave `spec.replicas` out of the manifests, as you would with an HPA, or set `spec.driftDetection.ignore` on the HelmRelease.' },
         ],
       },
+      {
+        id: 'services',
+        title: 'Databases and other operator-run services',
+        blocks: [
+          { p: 'A database an operator runs does not stop when Cost Deck scales its pods: the operator brings them straight back. Under **Services to stop**, in a namespace\'s workload rules or a group\'s Advanced tab (for every namespace in it), Cost Deck asks the operator instead (`spec.hibernate`).' },
+          {
+            list: [
+              '**CloudNativePG**: clusters are hibernated (`cnpg.io/hibernation: on`); their volumes are kept, and they count as stopped once the operator reports them hibernated.',
+              '**Zalando Postgres**: `numberOfInstances` goes to zero and comes back to the earlier count. If the operator sets `min_instances`, exempt the clusters with its ignore-limits annotation, or it raises them again.',
+              '**Strimzi**: KafkaConnect, KafkaMirrorMaker2 and KafkaBridge go to zero replicas. A Kafka cluster itself cannot be stopped: Strimzi refuses a cluster without brokers and controllers.',
+              '**Another operator**: its apiVersion and kind, the replica field (`spec.replicas`), and optionally the ready field (`status.readyReplicas`) to wait for.',
+            ],
+          },
+          { p: 'Services stop once the namespace\'s workloads are down and start before them, so an application never runs without its database; the namespace counts as up only when they are ready. Names (`pg-*`) limit a rule to some resources. The workloads an operator runs for them (its StatefulSets, poolers) are left to it, through an `owner:<Kind>` exclusion the rule adds. Only what Cost Deck stopped (marked `costdeck.io/hibernated`) is started again, and a namespace that leaves a group gets its services back with its workloads.' },
+          { p: 'It needs `hibernation.enabled=true` in the Helm chart, which grants reading and patching those resources, and `hibernation.extraRules` for other operators. The preview lists the services a schedule would stop. Remove a rule only while the namespace is up: a service it stopped stays stopped.' },
+        ],
+      },
     ],
   },
 

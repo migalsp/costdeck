@@ -41,6 +41,17 @@ const (
 	ConditionDryRun = "DryRun"
 )
 
+// wouldChange counts the workloads and hibernated services a schedule would change in a
+// namespace now.
+func wouldChange(ctx context.Context, engine *scaling.Engine, ns string, active bool, exclusions []string, hibernate []finopsv1.HibernateRule) (int, error) {
+	n, err := engine.WouldChange(ctx, ns, active, exclusions)
+	if err != nil {
+		return 0, err
+	}
+	services, err := engine.ServicesToChange(ctx, ns, active, hibernate)
+	return n + services, err
+}
+
 // dryRunMessage says what a schedule would change now, for the DryRun condition.
 func dryRunMessage(kind string, active bool, workloads, namespaces, cloud int, waitingFor []string) string {
 	verb := "scale down"

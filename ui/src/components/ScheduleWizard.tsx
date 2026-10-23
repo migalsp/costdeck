@@ -3,10 +3,12 @@ import { Search, Check, CalendarClock, CalendarOff, Eye, ListOrdered, SlidersHor
 import { apiError, errorMessage, getJSON } from '../lib/api'
 import { toast } from '../lib/toast'
 import { exceptionProblem } from '../lib/exceptions'
+import { hibernateIssue } from '../lib/hibernate'
 import { planFromSpec, planProblem, specFromPlan, type SchedulePlan } from '../lib/schedule'
-import type { ExternalTarget, HolidayCalendar, LabelSelector, ScalingConfig, ScalingGroup, ScalingGroupSpec, ScalingSpec, ScheduleException } from '../lib/types'
+import type { ExternalTarget, HibernateRule, HolidayCalendar, LabelSelector, ScalingConfig, ScalingGroup, ScalingGroupSpec, ScalingSpec, ScheduleException } from '../lib/types'
 import { usePolling } from '../lib/usePolling'
 import ExceptionsEditor from './ExceptionsEditor'
+import HibernateEditor from './HibernateEditor'
 import SchedulePreview from './SchedulePreview'
 import ScheduleEditor from './ScheduleEditor'
 import StartOrderEditor, { type StartOrder } from './StartOrderEditor'
@@ -74,6 +76,8 @@ export default function ScheduleWizard(props: Props) {
   const [exceptions, setExceptions] = useState<ScheduleException[]>(existing?.spec.exceptions || [])
   const [dryRun, setDryRun] = useState(!!existing?.spec.dryRun)
   const [pauseGitOps, setPauseGitOps] = useState(!!existing?.spec.pauseGitOps)
+  const [hibernate, setHibernate] = useState<HibernateRule[]>(existingGroup?.spec.hibernate || [])
+  const hibernateProblem = hibernateIssue(hibernate)
   const [calendarNames, setCalendarNames] = useState<string[]>(existing?.spec.calendars || [])
   const [available, setAvailable] = useState<HolidayCalendar[] | undefined>(undefined)
   const [saving, setSaving] = useState(false)
@@ -112,6 +116,7 @@ export default function ScheduleWizard(props: Props) {
     || (selectorQuery && !shownMatch ? 'Checking the label selector…' : null)
     || (!K8S_NAME.test(finalName) ? 'Name must use lowercase letters, digits and dashes.' : null)
     || (exceptionIssue ? `Exceptions: ${exceptionIssue}` : null)
+    || (hibernateProblem ? `Services to stop, ${hibernateProblem}` : null)
 
   // buildSpec renders the form as the spec to save, which the preview also shows.
   const buildSpec = (): ScalingSpec => {
@@ -134,6 +139,7 @@ export default function ScheduleWizard(props: Props) {
         calendars: calendarNames.length ? calendarNames : undefined,
         dryRun: dryRun || undefined,
         pauseGitOps: pauseGitOps || undefined,
+        hibernate: hibernate.length ? hibernate : undefined,
       }
     } else {
       spec = {
@@ -295,6 +301,11 @@ export default function ScheduleWizard(props: Props) {
         </label>
       </section>
       <section>
+        <h3 className="text-sm font-semibold text-slate-800">Services to stop in every namespace</h3>
+        <p className="text-sm text-slate-500 mb-2">Databases and other services an operator runs, which scaling their pods would not stop: Cost Deck asks the operator instead. A namespace's own workload rules can add more.</p>
+        <HibernateEditor rules={hibernate} onChange={setHibernate} />
+      </section>
+      <section>
         <h3 className="text-sm font-semibold text-slate-800">Section</h3>
         <p className="text-sm text-slate-500 mb-1">Groups schedules on the page, for example Platform or Environments.</p>
         <input value={category} onChange={e => setCategory(e.target.value)} placeholder="General" list="schedule-sections"
@@ -323,7 +334,7 @@ export default function ScheduleWizard(props: Props) {
               { id: 'preview', label: <span className="inline-flex items-center gap-1.5"><Eye size={14} /> Preview</span> },
               ...(isGroup ? [
                 { id: 'order' as const, label: <span className="inline-flex items-center gap-1.5"><ListOrdered size={14} /> Start order{order.sequence?.length ? ` (${order.sequence.length})` : ''}</span> },
-                { id: 'advanced' as const, label: <span className="inline-flex items-center gap-1.5"><SlidersHorizontal size={14} /> Advanced{dependsOn.length || giveUp ? ' ·' : ''}</span> },
+                { id: 'advanced' as const, label: <span className="inline-flex items-center gap-1.5"><SlidersHorizontal size={14} /> Advanced{dependsOn.length || giveUp || hibernate.length ? ' ·' : ''}</span> },
               ] : []),
             ]}
           />

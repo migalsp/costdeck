@@ -17,8 +17,10 @@ type WorkloadPreview struct {
 	Name string `json:"name"`
 	// Replicas it runs with when up: the current count, or the one a scale-up restores.
 	Replicas int32 `json:"replicas"`
-	// Excluded workloads (workload rules) are never scaled down.
-	Excluded bool `json:"excluded,omitempty"`
+	// Excluded workloads (workload rules) are never scaled down; ManagedBy names the kind of
+	// operator resource that stops them instead (a hibernate rule).
+	Excluded  bool   `json:"excluded,omitempty"`
+	ManagedBy string `json:"managedBy,omitempty"`
 	// CPU and Memory are the requests of one replica.
 	CPU    string `json:"cpu"`
 	Memory string `json:"memory"`
@@ -30,6 +32,8 @@ type WorkloadPreview struct {
 type NamespacePreview struct {
 	Workloads []WorkloadPreview `json:"workloads"`
 	CronJobs  int               `json:"cronJobs"`
+	// Services are the operator-run services hibernate rules stop after the workloads.
+	Services []HibernatedService `json:"services,omitempty"`
 	// CPU and Memory are what scaling the namespace down frees: the requests of every
 	// replica of the workloads that are not excluded.
 	CPU    resource.Quantity `json:"-"`
@@ -55,8 +59,8 @@ func (e *Engine) PreviewNamespace(ctx context.Context, ns string, exclusions []s
 		// The count a scale-up gives it, so a workload that is down shows what it returns to.
 		replicas := targetReplicas(true, getReplicas(obj), recordedReplicas(obj, nil))
 		cpu, mem := PodRequests(tmpl.Spec)
-		w := WorkloadPreview{Kind: workloadKind(obj), Name: obj.GetName(), Replicas: replicas, Excluded: isExcluded(obj.GetName(), exclusions),
-			CPU: cpu.String(), Memory: mem.String(), GitOps: GitOpsOwnerOf(obj)}
+		w := WorkloadPreview{Kind: workloadKind(obj), Name: obj.GetName(), Replicas: replicas, Excluded: excludedObject(obj, exclusions),
+			ManagedBy: ownedByKind(obj, exclusions), CPU: cpu.String(), Memory: mem.String(), GitOps: GitOpsOwnerOf(obj)}
 		out.Workloads = append(out.Workloads, w)
 		if !w.Excluded {
 			cpu.Mul(int64(replicas))

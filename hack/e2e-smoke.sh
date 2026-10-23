@@ -15,6 +15,7 @@
 #   91 namespaces joining and leaving a schedule by label
 #   92 schedule preview and dry run
 #   93 pausing Flux and Argo CD while a schedule keeps workloads down
+#   94 stopping operator-run services (databases, Kafka Connect) with their namespace
 #
 # Run it against a disposable cluster (Kind in CI, `make test-e2e` locally): it installs
 # CRDs, metrics-server and changes settings. IMAGE must already be loadable by the cluster
@@ -64,6 +65,7 @@ if [[ -z "${SKIP_INSTALL:-}" ]]; then
   helm upgrade --install "$RELEASE" deploy/helm/costdeck-operator -n "$NS" --create-namespace \
     --set image.repository="${IMAGE%:*}" --set image.tag="${IMAGE##*:}" --set image.pullPolicy=Never \
     --set gitops.pause=true \
+    --set hibernation.enabled=true \
     --wait --timeout 3m
   if ! kubectl get apiservice v1beta1.metrics.k8s.io >/dev/null 2>&1; then
     log "Installing metrics-server $METRICS_SERVER_VERSION"

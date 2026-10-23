@@ -99,6 +99,44 @@ type ScheduleException struct {
 	Timezone string `json:"timezone,omitempty"`
 }
 
+// HibernateRule stops services an operator runs in a namespace, such as a database, together
+// with the namespace's workloads: they stop after the workloads and start before them. A
+// preset covers a known operator; otherwise apiVersion, kind and replicasField describe the
+// resources. Only what CostDeck stopped is started again.
+// +kubebuilder:validation:XValidation:rule="has(self.preset) != (has(self.apiVersion) && has(self.kind) && has(self.replicasField))",message="set a preset, or apiVersion, kind and replicasField"
+type HibernateRule struct {
+	// Preset is a built-in rule: cnpg (CloudNativePG clusters, by declarative hibernation),
+	// zalando-postgres (Zalando postgres-operator clusters, numberOfInstances to zero) or
+	// strimzi (Strimzi KafkaConnect, KafkaMirrorMaker2 and KafkaBridge; Kafka clusters
+	// themselves cannot be stopped).
+	// +kubebuilder:validation:Enum=cnpg;zalando-postgres;strimzi
+	// +optional
+	Preset string `json:"preset,omitempty"`
+
+	// APIVersion and Kind of the resources a rule without a preset stops, such as
+	// redis.example.com/v1 Redis.
+	// +optional
+	APIVersion string `json:"apiVersion,omitempty"`
+	// +optional
+	Kind string `json:"kind,omitempty"`
+
+	// ReplicasField is the dotted path of the replica count, such as spec.replicas: zero to
+	// stop, the earlier count to start.
+	// +optional
+	ReplicasField string `json:"replicasField,omitempty"`
+
+	// ReadyField is the dotted path of the ready replica count in the status, such as
+	// status.readyReplicas. Without it a resource counts as stopped or started once patched.
+	// +optional
+	ReadyField string `json:"readyField,omitempty"`
+
+	// Names limits the rule to resources with these names; globs such as "pg-*" work.
+	// Empty means every matching resource in the namespace.
+	// +optional
+	// +listType=atomic
+	Names []string `json:"names,omitempty"`
+}
+
 // ScheduleStatus explains what drives the desired state of a ScalingGroup or ScalingConfig,
 // so that `kubectl get` answers "why is this up right now, and until when?".
 type ScheduleStatus struct {
@@ -198,11 +236,20 @@ type ScalingConfigSpec struct {
 	Sequence []string `json:"sequence,omitempty"`
 
 	// Exclusions lists workloads that are never scaled down, by name or prefix glob
-	// ("redis-*"). They also apply to the CronJobs CostDeck suspends and the KEDA
+	// ("redis-*"), or by the kind of their controller ("owner:Elasticsearch") for workloads
+	// an operator manages. They also apply to the CronJobs CostDeck suspends and the KEDA
 	// ScaledObjects it pauses while the namespace is down.
 	// +optional
 	// +listType=atomic
 	Exclusions []string `json:"exclusions,omitempty"`
+
+	// Hibernate stops services that operators run in the namespace, such as databases,
+	// after its workloads and starts them before. Their operators' StatefulSets and
+	// Deployments are left to the operators. Needs hibernation.enabled in the Helm chart.
+	// +kubebuilder:validation:MaxItems=20
+	// +optional
+	// +listType=atomic
+	Hibernate []HibernateRule `json:"hibernate,omitempty"`
 
 	// DryRun works out what the schedule would do and reports it (phase DryRun and the
 	// DryRun condition) without scaling anything, to try a schedule before it acts. To the

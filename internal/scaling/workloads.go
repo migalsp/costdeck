@@ -55,12 +55,12 @@ func (e *Engine) listScalableResources(ctx context.Context, ns string, exclusion
 
 	var scalableResources []client.Object
 	for i := range deployments.Items {
-		if !isExcluded(deployments.Items[i].Name, exclusions) {
+		if !excludedObject(&deployments.Items[i], exclusions) {
 			scalableResources = append(scalableResources, &deployments.Items[i])
 		}
 	}
 	for i := range statefulSets.Items {
-		if !isExcluded(statefulSets.Items[i].Name, exclusions) {
+		if !excludedObject(&statefulSets.Items[i], exclusions) {
 			scalableResources = append(scalableResources, &statefulSets.Items[i])
 		}
 	}
@@ -179,6 +179,12 @@ func cleanupOriginals(objs []client.Object, originals map[string]int32) {
 	for _, obj := range objs {
 		delete(originals, originalKey(obj))
 	}
+}
+
+// excludedObject reports whether workload rules exclude an object, by its name or by the
+// kind of its controller (an owner:<Kind> entry).
+func excludedObject(obj client.Object, exclusions []string) bool {
+	return isExcluded(obj.GetName(), exclusions) || ownedByKind(obj, exclusions) != ""
 }
 
 func isExcluded(name string, exclusions []string) bool {

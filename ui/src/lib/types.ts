@@ -90,6 +90,18 @@ export interface LabelSelector {
   matchExpressions?: { key: string; operator: 'In' | 'NotIn' | 'Exists' | 'DoesNotExist'; values?: string[] }[]
 }
 
+// HibernateRule stops a service an operator runs, such as a database, with the namespace:
+// after its workloads, and starts it before them. A preset, or apiVersion, kind and
+// replicasField for another operator.
+export interface HibernateRule {
+  preset?: 'cnpg' | 'zalando-postgres' | 'strimzi'
+  apiVersion?: string
+  kind?: string
+  replicasField?: string
+  readyField?: string
+  names?: string[]
+}
+
 export interface ScalingGroupSpec {
   category: string
   // Namespaces listed by name; groupNamespaces() adds those the selector matched.
@@ -113,6 +125,8 @@ export interface ScalingGroupSpec {
   dryRun?: boolean
   // pauseGitOps pauses Flux and Argo CD while the schedule keeps the workloads down.
   pauseGitOps?: boolean
+  // hibernate stops operator-run services in every namespace of the group.
+  hibernate?: HibernateRule[]
 }
 
 // Condition is a metav1.Condition as the API returns it.
@@ -156,6 +170,7 @@ export interface ScalingConfigSpec {
   exclusions?: string[]
   dryRun?: boolean
   pauseGitOps?: boolean
+  hibernate?: HibernateRule[]
 }
 
 export interface ScalingConfig {
@@ -239,8 +254,10 @@ export interface SchedulePreview {
     source: 'listed' | 'selected'
     ownedBy?: string
     missing?: boolean
-    workloads: { kind: string; name: string; replicas: number; excluded?: boolean; cpu: string; memory: string; gitOps?: { kind: string; name: string; namespace?: string } }[] | null
+    workloads: { kind: string; name: string; replicas: number; excluded?: boolean; managedBy?: string; cpu: string; memory: string; gitOps?: { kind: string; name: string; namespace?: string } }[] | null
     cronJobs: number
+    // services hibernate rules stop after the workloads; running is false when stopped already.
+    services?: { kind: string; name: string; running: boolean; stoppedByCostDeck?: boolean }[]
   }[]
   cloudTargets: ExternalTarget[]
   intervals: { from: string; to: string; active: boolean; reason: string }[]

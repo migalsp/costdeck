@@ -82,13 +82,14 @@ func (r *ScalingConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	exceptions, problems := scaling.ResolveExceptions(config.Spec.Exceptions, config.Spec.Calendars, calendars(ctx, r.Client), scaling.ExceptionZone(config.Spec.Schedules))
 	decision := r.Engine.Decide(time.Now(), scaling.Timetable{Schedules: config.Spec.Schedules, Exceptions: exceptions}, config.Spec.Active, config.Spec.ActiveUntil, config.Annotations)
 	targetActive := decision.Active
+	exclusions := scaling.ExclusionsWith(config.Spec.Exclusions, config.Spec.Hibernate)
 
 	l.Info("Reconciling ScalingConfig", "targetNamespace", config.Spec.TargetNamespace, "targetActive", targetActive, "mode", decision.Mode)
 
 	if config.Spec.DryRun {
 		applyDecision(&config.Status.ScheduleStatus, &config.Status.Conditions, decision, config.Generation, "namespace")
 		setExceptionsCondition(&config.Status.Conditions, problems, config.Generation)
-		n, err := r.Engine.WouldChange(ctx, config.Spec.TargetNamespace, targetActive, config.Spec.Exclusions)
+		n, err := wouldChange(ctx, r.Engine, config.Spec.TargetNamespace, targetActive, exclusions, config.Spec.Hibernate)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
@@ -103,13 +104,13 @@ func (r *ScalingConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	// 2.5 Phase and Timeout Logic
 	previousPhase := config.Status.Phase
-	timeoutPassed := r.updateStatusPhase(ctx, config, targetActive)
+	timeoutPassed := r.updateStatusPhase(ctx, config, targetActive, exclusions)
 
 	// 3. Execute Scaling if needed; GitOps is paused first, so it cannot race the scale-down.
-	exclusionsOf := func(string) []string { return config.Spec.Exclusions }
+	exclusionsOf := func(string) []string { return exclusions }
 	namespaces := []string{config.Spec.TargetNamespace}
 	reconcileGitOps(ctx, r.Engine, &config.Status.Conditions, config.Generation, namespaces, exclusionsOf, config.Spec.PauseGitOps, targetActive)
-	newReplicas, ready, err := r.Engine.ScaleTarget(ctx, config.Spec.TargetNamespace, targetActive, config.Spec.Sequence, config.Spec.Exclusions, config.Status.OriginalReplicas, timeoutPassed)
+	newReplicas, ready, err := r.Engine.ScaleWithServices(ctx, config.Spec.TargetNamespace, targetActive, config.Spec.Sequence, exclusions, config.Spec.Hibernate, config.Status.OriginalReplicas, timeoutPassed)
 	if err != nil {
 		l.Error(err, "failed to execute scaling")
 		return ctrl.Result{RequeueAfter: time.Minute}, err
@@ -172,7 +173,7 @@ func (r *ScalingConfigReconciler) markAsOverridden(ctx context.Context, config *
 	meta.SetStatusCondition(&config.Status.Conditions, metav1.Condition{
 		Type: ConditionReady, Status: metav1.ConditionFalse, Reason: PhaseOverriddenByGroup,
 		ObservedGeneration: config.Generation,
-		Message: fmt.Sprintf("Namespace %s is managed by ScalingGroup %s; this config only contributes its sequence and exclusions.",
+		Message: fmt.Sprintf("Namespace %s is managed by ScalingGroup %s; this config only contributes its sequence, exclusions and hibernate rules.",
 			config.Spec.TargetNamespace, groupName),
 	})
 	if err := updateStatus(ctx, r.Client, config, before, &config.Status); err != nil {
@@ -181,10 +182,10 @@ func (r *ScalingConfigReconciler) markAsOverridden(ctx context.Context, config *
 	return ctrl.Result{RequeueAfter: 5 * time.Minute}, nil
 }
 
-func (r *ScalingConfigReconciler) updateStatusPhase(ctx context.Context, config *finopsv1.ScalingConfig, targetActive bool) bool {
+func (r *ScalingConfigReconciler) updateStatusPhase(ctx context.Context, config *finopsv1.ScalingConfig, targetActive bool, exclusions []string) bool {
 	l := logf.FromContext(ctx)
 	currentPhase := config.Status.Phase
-	computedPhase := r.Engine.ComputePhase(ctx, config.Spec.TargetNamespace, targetActive, config.Spec.Exclusions)
+	computedPhase := r.Engine.ComputePhase(ctx, config.Spec.TargetNamespace, targetActive, exclusions)
 
 	if currentPhase != computedPhase {
 		config.Status.Phase = computedPhase

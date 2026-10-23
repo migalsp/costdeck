@@ -60,6 +60,14 @@ type ScalingGroupSpec struct {
 	// +listType=atomic
 	Schedules []ScalingSchedule `json:"schedules,omitempty"`
 
+	// Hibernate stops services that operators run, such as databases, in every namespace of
+	// the group, after its workloads, and starts them before; the rules of a namespace's own
+	// ScalingConfig add to these. Needs hibernation.enabled in the Helm chart.
+	// +kubebuilder:validation:MaxItems=20
+	// +optional
+	// +listType=atomic
+	Hibernate []HibernateRule `json:"hibernate,omitempty"`
+
 	// Exceptions override the schedules on given dates (holidays, release weekends).
 	// +kubebuilder:validation:MaxItems=100
 	// +optional

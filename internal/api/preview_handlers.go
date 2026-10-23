@@ -44,6 +44,7 @@ type previewRequest struct {
 		Exclusions        []string                     `json:"exclusions,omitempty"`
 		ExternalTargets   []finopsv1.ExternalTarget    `json:"externalTargets,omitempty"`
 		PauseGitOps       bool                         `json:"pauseGitOps,omitempty"`
+		Hibernate         []finopsv1.HibernateRule     `json:"hibernate,omitempty"`
 	} `json:"spec"`
 }
 
@@ -186,13 +187,13 @@ func (s *Server) previewSchedule(ctx context.Context, req previewRequest, now ti
 			resp.Warnings = append(resp.Warnings, fmt.Sprintf("%s is already scaled by %s and will be left to it.", np.Name, np.OwnedBy))
 			continue
 		}
-		exclusions := sp.Exclusions
-		if req.Kind == targetGroup {
-			exclusions = s.workloadRules(ctx, np.Name)
-		}
+		exclusions, hibernate := s.previewRules(ctx, req, np.Name)
 		pv, err := engine.PreviewNamespace(ctx, np.Name, exclusions)
 		if err != nil && !apierrors.IsNotFound(err) {
 			return nil, err
+		}
+		if pv.Services, err = engine.Services(ctx, np.Name, hibernate); err != nil {
+			resp.Warnings = append(resp.Warnings, fmt.Sprintf("Could not list the services to stop in %s: %s", np.Name, hibernateError(err)))
 		}
 		np.NamespacePreview = pv
 		if owners := gitOpsOwners(pv); len(owners) > 0 && !sp.PauseGitOps {
@@ -222,19 +223,39 @@ func gitOpsOwners(pv scaling.NamespacePreview) []string {
 	return out
 }
 
-// workloadRules returns the exclusions a namespace's own ScalingConfig sets, which a group
-// applies too.
-func (s *Server) workloadRules(ctx context.Context, ns string) []string {
+// previewRules returns the exclusions and hibernate rules a schedule applies in a namespace:
+// a group adds its own hibernate rules to the namespace's workload rules.
+func (s *Server) previewRules(ctx context.Context, req previewRequest, ns string) ([]string, []finopsv1.HibernateRule) {
+	exclusions, hibernate := req.Spec.Exclusions, req.Spec.Hibernate
+	if req.Kind == targetGroup {
+		var own []finopsv1.HibernateRule
+		exclusions, own = s.workloadRules(ctx, ns)
+		hibernate = append(slices.Clone(hibernate), own...)
+	}
+	return scaling.ExclusionsWith(exclusions, hibernate), hibernate
+}
+
+// workloadRules returns the exclusions and hibernate rules a namespace's own ScalingConfig
+// sets, which a group applies too.
+func (s *Server) workloadRules(ctx context.Context, ns string) ([]string, []finopsv1.HibernateRule) {
 	var configs finopsv1.ScalingConfigList
 	if err := s.Client.List(ctx, &configs, client.InNamespace(config.OperatorNamespace())); err != nil {
-		return nil
+		return nil, nil
 	}
 	for _, c := range configs.Items {
 		if c.Spec.TargetNamespace == ns {
-			return c.Spec.Exclusions
+			return c.Spec.Exclusions, c.Spec.Hibernate
 		}
 	}
-	return nil
+	return nil, nil
+}
+
+// hibernateError explains why the services a rule covers could not be listed.
+func hibernateError(err error) string {
+	if apierrors.IsForbidden(err) {
+		return "no permission to read them; enable hibernation in the Helm chart (hibernation.enabled, or hibernation.extraRules for other kinds)"
+	}
+	return err.Error()
 }
 
 // toolPreview previews a saved group (target "group") or namespace schedule ("namespace")
@@ -250,7 +271,7 @@ func (s *Server) toolPreview(ctx context.Context, target, name string) (string, 
 		req.Kind, req.Name = targetGroup, g.Name
 		req.Spec.Namespaces, req.Spec.NamespaceSelector, req.Spec.Activation = g.Spec.Namespaces, g.Spec.NamespaceSelector, g.Spec.Activation
 		req.Spec.Schedules, req.Spec.Exceptions, req.Spec.Calendars, req.Spec.ExternalTargets = g.Spec.Schedules, g.Spec.Exceptions, g.Spec.Calendars, g.Spec.ExternalTargets
-		req.Spec.PauseGitOps = g.Spec.PauseGitOps
+		req.Spec.PauseGitOps, req.Spec.Hibernate = g.Spec.PauseGitOps, g.Spec.Hibernate
 	case targetNamespace:
 		c, err := s.configForNamespace(ctx, name)
 		if err != nil {
@@ -259,7 +280,7 @@ func (s *Server) toolPreview(ctx context.Context, target, name string) (string, 
 		req.Kind, req.Name = kindConfig, c.Name
 		req.Spec.TargetNamespace, req.Spec.Exclusions = c.Spec.TargetNamespace, c.Spec.Exclusions
 		req.Spec.Schedules, req.Spec.Exceptions, req.Spec.Calendars = c.Spec.Schedules, c.Spec.Exceptions, c.Spec.Calendars
-		req.Spec.PauseGitOps = c.Spec.PauseGitOps
+		req.Spec.PauseGitOps, req.Spec.Hibernate = c.Spec.PauseGitOps, c.Spec.Hibernate
 	default:
 		return "", fmt.Errorf("target must be group or namespace")
 	}
@@ -269,15 +290,21 @@ func (s *Server) toolPreview(ctx context.Context, target, name string) (string, 
 	}
 	// The model needs the gist: per namespace what stops, and when the state changes.
 	type nsLine struct {
-		Namespace string `json:"namespace"`
-		Workloads int    `json:"workloadsToStop"`
-		Excluded  int    `json:"excluded,omitempty"`
-		CronJobs  int    `json:"cronJobs,omitempty"`
-		Note      string `json:"note,omitempty"`
+		Namespace string   `json:"namespace"`
+		Workloads int      `json:"workloadsToStop"`
+		Excluded  int      `json:"excluded,omitempty"`
+		CronJobs  int      `json:"cronJobs,omitempty"`
+		Services  []string `json:"servicesToStop,omitempty"`
+		Note      string   `json:"note,omitempty"`
 	}
 	lines := make([]nsLine, 0, len(p.Namespaces))
 	for _, np := range p.Namespaces {
 		l := nsLine{Namespace: np.Name, CronJobs: np.CronJobs}
+		for _, sv := range np.Services {
+			if sv.Running {
+				l.Services = append(l.Services, sv.Kind+" "+sv.Name)
+			}
+		}
 		for _, w := range np.Workloads {
 			if w.Excluded {
 				l.Excluded++
