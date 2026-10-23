@@ -77,6 +77,12 @@ track_call() { CLEANUP_CALLS+=("$*"); }
 
 new_namespace() {
   track_namespace "$1"
+  # A namespace an earlier run left terminating must be gone before it is used again:
+  # what is still in it would pass for ready.
+  local deadline=$((SECONDS + 180))
+  while ((SECONDS < deadline)) && [[ "$(kubectl get namespace "$1" -o jsonpath='{.status.phase}' 2>/dev/null)" == Terminating ]]; do
+    sleep 2
+  done
   kubectl create namespace "$1" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 }
 

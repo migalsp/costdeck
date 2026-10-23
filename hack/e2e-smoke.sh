@@ -45,6 +45,11 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 source "$HERE/e2e/lib.sh"
 
 cleanup() {
+  # A run that did not reach the end failed, whatever $? says: bash 3.2 reports 0 to an
+  # EXIT trap after an unbound-variable error, so a scenario that stopped on a shell error
+  # would otherwise pass.
+  local status=$?
+  [[ -n "${SUITE_PASSED:-}" ]] || status=$((status ? status : 1))
   set +e
   # ${a[@]+"${a[@]}"}: an empty array is not "unbound" under set -u, even in bash 3.2.
   for cmd in ${CLEANUP_COMMANDS[@]+"${CLEANUP_COMMANDS[@]}"}; do
@@ -62,6 +67,7 @@ cleanup() {
     wait $PF_PIDS 2>/dev/null
   fi
   [[ -n "${JAR:-}" ]] && rm -f "$JAR"
+  exit "$status"
 }
 trap cleanup EXIT
 
@@ -106,4 +112,5 @@ for scenario in "$HERE"/e2e/[0-9]*.sh; do
   source "$scenario"
 done
 
+SUITE_PASSED=1
 log "All scenarios passed"
