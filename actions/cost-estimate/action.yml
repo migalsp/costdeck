@@ -69,6 +69,10 @@ runs:
         FAIL_ABOVE: ${{ inputs.fail-above }}
       run: |
         set -euo pipefail
+        if ! [[ "$FAIL_ABOVE" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+          echo "::error::fail-above must be a number, such as 50"
+          exit 1
+        fi
         dir=$(mktemp -d)
         cp "$BASE" "$dir/base.yaml"
         cp "$HEAD" "$dir/head.yaml"
@@ -105,6 +109,9 @@ runs:
 
     - if: steps.estimate.outputs.over == 'true'
       shell: bash
+      # Inputs reach the script through the environment, never interpolated into it.
+      env:
+        FAIL_ABOVE: ${{ inputs.fail-above }}
       run: |
-        echo "::error::The change adds more than ${{ inputs.fail-above }} a month (see the estimate)"
+        echo "::error::The change adds more than $FAIL_ABOVE a month (see the estimate)"
         exit 1
