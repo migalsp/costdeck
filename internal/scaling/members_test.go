@@ -99,3 +99,15 @@ func TestOwnershipPrefersListedOverSelected(t *testing.T) {
 		t.Errorf("late-previews = %+v, want pr-1 left to the older selector", p)
 	}
 }
+
+// A dependency in dry run leaves its workloads as they are, so dependents do not wait.
+func TestDryRunDependencyCountsAsUp(t *testing.T) {
+	groups := []finopsv1.ScalingGroup{
+		{ObjectMeta: metav1.ObjectMeta{Name: "platform"}, Spec: finopsv1.ScalingGroupSpec{Namespaces: []string{"p"}, DryRun: true},
+			Status: finopsv1.ScalingGroupStatus{Phase: PhaseDryRun}},
+		{ObjectMeta: metav1.ObjectMeta{Name: "env"}, Spec: finopsv1.ScalingGroupSpec{Namespaces: []string{"e"}, DependsOn: []string{"platform"}}},
+	}
+	if p := (&Engine{}).PlanGroups(time.Now(), groups, nil)["env"]; len(p.WaitingFor) != 0 || p.BlockedOnDependencies() {
+		t.Errorf("env waits for a dependency in dry run: %+v", p)
+	}
+}

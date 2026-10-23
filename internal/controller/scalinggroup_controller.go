@@ -103,6 +103,10 @@ func (r *ScalingGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	group.Status.ConflictingNamespaces = plan.ConflictingNamespaces
 	setDependencyConditions(group, plan)
 	setExceptionsCondition(&group.Status.Conditions, plan.ExceptionProblems, group.Generation)
+	if group.Spec.DryRun {
+		return r.dryRun(ctx, group, before, plan)
+	}
+	setDryRunCondition(&group.Status.Conditions, "", group.Generation)
 
 	// 2.5 A group that wants to come up holds back until its dependencies are ScaledUp.
 	// One that is already up keeps running even if a dependency briefly degrades.
@@ -423,6 +427,41 @@ func (r *ScalingGroupReconciler) workloadRules(ctx context.Context, group *finop
 		}
 	}
 	return nil, nil
+}
+
+// dryRun reports what the group would do now, without scaling or notifying anything.
+func (r *ScalingGroupReconciler) dryRun(ctx context.Context, group *finopsv1.ScalingGroup, before *finopsv1.ScalingGroupStatus, plan scaling.GroupPlan) (ctrl.Result, error) {
+	decision := plan.Decision
+	applyDecision(&group.Status.ScheduleStatus, &group.Status.Conditions, decision, group.Generation, "group")
+	workloads, namespaces, cloud := 0, 0, 0
+	for _, stage := range r.getScalingStages(group, decision.Active, plan.ConflictingNamespaces) {
+		for _, ns := range stage {
+			if strings.HasPrefix(ns, "ext:") {
+				cloud++
+				continue
+			}
+			exclusions, _ := r.workloadRules(ctx, group, ns)
+			n, err := r.Engine.WouldChange(ctx, ns, decision.Active, exclusions)
+			if err != nil {
+				logf.FromContext(ctx).Error(err, "Could not work out the dry run", "namespace", ns)
+				continue
+			}
+			if n > 0 {
+				workloads += n
+				namespaces++
+			}
+		}
+	}
+	var waiting []string
+	if plan.BlockedOnDependencies() {
+		waiting = append(append(waiting, plan.WaitingFor...), plan.MissingDependencies...)
+	}
+	group.Status.Phase, group.Status.CurrentStage, group.Status.SkippedNamespaces = scaling.PhaseDryRun, 0, nil
+	setDryRunCondition(&group.Status.Conditions, dryRunMessage("group", decision.Active, workloads, namespaces, cloud, waiting), group.Generation)
+	if err := updateStatus(ctx, r.Client, group, before, &group.Status); err != nil {
+		return ctrl.Result{}, err
+	}
+	return ctrl.Result{RequeueAfter: settledRequeue(decision, time.Now())}, nil
 }
 
 func (r *ScalingGroupReconciler) reconcileK8sTarget(ctx context.Context, group *finopsv1.ScalingGroup, ns string, targetActive bool, timeoutPassed bool) (bool, error) {

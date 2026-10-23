@@ -114,7 +114,8 @@ func (e *Engine) PlanGroups(now time.Time, groups []finopsv1.ScalingGroup, calen
 				switch {
 				case !ok:
 					plan.MissingDependencies = append(plan.MissingDependencies, dep)
-				case dg.Status.Phase != PhaseScaledUp:
+				case dg.Status.Phase != PhaseScaledUp && dg.Status.Phase != PhaseDryRun:
+					// A dependency in dry run changes nothing, so its workloads are as they were.
 					plan.WaitingFor = append(plan.WaitingFor, dep)
 				}
 			}
@@ -133,9 +134,10 @@ func (e *Engine) PlanGroups(now time.Time, groups []finopsv1.ScalingGroup, calen
 	return plans
 }
 
-// isRunning reports whether a group's workloads are up or coming up.
+// isRunning reports whether a group's workloads are up or coming up. A group in dry run
+// leaves them as they are, which counts as up.
 func isRunning(phase string) bool {
-	return phase == PhaseScaledUp || phase == PhaseScalingUp
+	return phase == PhaseScaledUp || phase == PhaseScalingUp || phase == PhaseDryRun
 }
 
 // ownDecision is the group's desired state before dependents are considered, and the

@@ -109,6 +109,8 @@ export interface ScalingGroupSpec {
   }
   dependsOn?: string[]
   activation?: 'Schedule' | 'OnDemand'
+  // dryRun works out what the schedule would do without scaling anything.
+  dryRun?: boolean
 }
 
 // Condition is a metav1.Condition as the API returns it.
@@ -150,6 +152,7 @@ export interface ScalingConfigSpec {
   calendars?: string[]
   sequence?: string[]
   exclusions?: string[]
+  dryRun?: boolean
 }
 
 export interface ScalingConfig {
@@ -224,4 +227,24 @@ export interface NamespaceFinOps {
     insights?: string[]
     history?: MetricDataPoint[]
   }
+}
+
+// SchedulePreview is POST /api/scaling/preview: what a schedule would do, unchanged.
+export interface SchedulePreview {
+  namespaces: {
+    name: string
+    source: 'listed' | 'selected'
+    ownedBy?: string
+    missing?: boolean
+    workloads: { kind: string; name: string; replicas: number; excluded?: boolean; cpu: string; memory: string }[] | null
+    cronJobs: number
+  }[]
+  cloudTargets: ExternalTarget[]
+  intervals: { from: string; to: string; active: boolean; reason: string }[]
+  upShare: number
+  nextChange?: string
+  onDemand?: boolean
+  savings: { hourly: number; monthly: number; currency: string; basis: string }
+  problems: string[]
+  warnings: string[]
 }

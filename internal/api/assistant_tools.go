@@ -57,7 +57,7 @@ func (s *Server) toolRegistry() []ai.Tool {
 	}
 	duration := str(`How long an up/down override holds: "nextTransition" (until the schedule would change state on its own; the default when there is a schedule), a duration such as "4h", or "forever"`)
 	target := map[string]any{
-		"type": "string", "enum": []string{"group", "namespace"},
+		"type": "string", "enum": []string{targetGroup, targetNamespace},
 		"description": "group: name is a ScalingGroup; namespace: name is a namespace with its own ScalingConfig",
 	}
 	bound := func(what string) map[string]any {
@@ -91,6 +91,16 @@ func (s *Server) toolRegistry() []ai.Tool {
 			Parameters:  obj(map[string]any{"name": str("ScalingGroup name")}, "name"),
 			Run: func(ctx context.Context, args map[string]any) (string, error) {
 				return s.toolGetGroup(ctx, args["name"].(string))
+			},
+		},
+		{
+			Name: "preview_schedule",
+			Description: "What a schedule does, worked out without changing anything: the namespaces and workloads it scales " +
+				"(and those another schedule keeps), its timetable for the next two weeks with exceptions, the share of " +
+				"time it is up, and the estimated monthly saving.",
+			Parameters: obj(map[string]any{"target": target, "name": str("ScalingGroup name or namespace")}, "target", "name"),
+			Run: func(ctx context.Context, args map[string]any) (string, error) {
+				return s.toolPreview(ctx, args["target"].(string), args["name"].(string))
 			},
 		},
 		{
@@ -471,7 +481,7 @@ func (s *Server) toolGetGroup(ctx context.Context, name string) (string, error) 
 	return toJSON(map[string]any{
 		"name": g.Name, "namespaces": g.Members(), "namespaceSelector": g.Spec.NamespaceSelector, "sequence": g.Spec.Sequence, "schedules": g.Spec.Schedules,
 		"activation": g.Spec.Activation, "dependsOn": g.Spec.DependsOn, "override": g.Spec.Active,
-		"overrideUntil": g.Spec.ActiveUntil, "exceptions": g.Spec.Exceptions, "calendars": g.Spec.Calendars, "status": map[string]any{
+		"overrideUntil": g.Spec.ActiveUntil, "dryRun": g.Spec.DryRun, "exceptions": g.Spec.Exceptions, "calendars": g.Spec.Calendars, "status": map[string]any{
 			"mode": g.Status.Mode, "desired": g.Status.DesiredState, "phase": g.Status.Phase,
 			"exception": g.Status.Exception, "exceptionEndsAt": g.Status.ExceptionEndsAt,
 			"readyNamespaces": g.Status.ReadyNamespaces, "skippedNamespaces": g.Status.SkippedNamespaces,

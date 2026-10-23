@@ -37,7 +37,42 @@ const (
 	// ConditionExceptionsApplied is False while an exception or calendar cannot be applied
 	// (a calendar that does not exist, an end before the start). It is absent otherwise.
 	ConditionExceptionsApplied = "ExceptionsApplied"
+	// ConditionDryRun is True while spec.dryRun is set and says what would change.
+	ConditionDryRun = "DryRun"
 )
+
+// dryRunMessage says what a schedule would change now, for the DryRun condition.
+func dryRunMessage(kind string, active bool, workloads, namespaces, cloud int, waitingFor []string) string {
+	verb := "scale down"
+	if active {
+		verb = "start"
+	}
+	var parts []string
+	if workloads > 0 {
+		parts = append(parts, fmt.Sprintf("%s %d workload(s) in %d namespace(s)", verb, workloads, namespaces))
+	}
+	if cloud > 0 {
+		parts = append(parts, fmt.Sprintf("%s %d cloud resource(s)", verb, cloud))
+	}
+	msg := "Nothing to change: everything is already " + map[bool]string{true: "up", false: "down"}[active] + "."
+	if len(parts) > 0 {
+		msg = "Would " + strings.Join(parts, " and ") + " now."
+	}
+	if len(waitingFor) > 0 {
+		msg += " It would first wait for " + strings.Join(waitingFor, ", ") + "."
+	}
+	return msg + fmt.Sprintf(" Nothing is scaled while the %s's spec.dryRun is true.", kind)
+}
+
+// setDryRunCondition records a dry run; with message "" it removes the condition.
+func setDryRunCondition(conds *[]metav1.Condition, message string, generation int64) {
+	if message == "" {
+		meta.RemoveStatusCondition(conds, ConditionDryRun)
+		return
+	}
+	meta.SetStatusCondition(conds, metav1.Condition{Type: ConditionDryRun, Status: metav1.ConditionTrue, Reason: "DryRun", ObservedGeneration: generation, Message: message})
+	meta.SetStatusCondition(conds, metav1.Condition{Type: ConditionReady, Status: metav1.ConditionFalse, Reason: "DryRun", ObservedGeneration: generation, Message: "Nothing is scaled in a dry run."})
+}
 
 // setExceptionsCondition reports exceptions that cannot be applied; the others still do.
 func setExceptionsCondition(conds *[]metav1.Condition, problems []string, generation int64) {

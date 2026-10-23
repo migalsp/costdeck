@@ -248,6 +248,12 @@ export function statusLine({ phase, status, dependsOn, activeUntil, generation }
       return { tone: 'blocked', title: `Waiting for ${(dependsOn || []).join(', ') || 'dependencies'} to start` }
     case 'OverriddenByGroup':
       return { tone: 'down', title: 'Controlled by a group schedule' }
+    case 'DryRun':
+      return {
+        tone: 'manual',
+        title: `Dry run · would be ${status?.desiredState === 'Up' ? 'up' : 'down'}`,
+        detail: status?.conditions?.find(c => c.type === 'DryRun')?.message?.replace(/ Nothing is scaled while .*$/, '') || 'nothing is scaled',
+      }
   }
   const up = status?.desiredState ? status.desiredState === 'Up' : phase === 'ScaledUp'
   const expiry = status?.overrideExpiresAt || activeUntil

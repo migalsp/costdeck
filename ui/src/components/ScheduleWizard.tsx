@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Search, Check, CalendarClock, CalendarOff, ListOrdered, SlidersHorizontal } from 'lucide-react'
+import { Search, Check, CalendarClock, CalendarOff, Eye, ListOrdered, SlidersHorizontal } from 'lucide-react'
 import { apiError, errorMessage, getJSON } from '../lib/api'
 import { toast } from '../lib/toast'
 import { exceptionProblem } from '../lib/exceptions'
@@ -7,6 +7,7 @@ import { planFromSpec, planProblem, specFromPlan, type SchedulePlan } from '../l
 import type { ExternalTarget, HolidayCalendar, LabelSelector, ScalingConfig, ScalingGroup, ScalingGroupSpec, ScalingSpec, ScheduleException } from '../lib/types'
 import { usePolling } from '../lib/usePolling'
 import ExceptionsEditor from './ExceptionsEditor'
+import SchedulePreview from './SchedulePreview'
 import ScheduleEditor from './ScheduleEditor'
 import StartOrderEditor, { type StartOrder } from './StartOrderEditor'
 import { Button, Modal, Tabs } from './ui'
@@ -30,7 +31,7 @@ function suggestName(namespaces: string[]): string {
 const sameSchedule = (a: Pick<ScalingSpec, 'schedules' | 'activation'>, b: Pick<ScalingSpec, 'schedules' | 'activation'>) =>
   JSON.stringify(a.schedules || []) === JSON.stringify(b.schedules || []) && (a.activation || '') === (b.activation || '')
 
-export type WizardTab = 'schedule' | 'exceptions' | 'order' | 'advanced'
+export type WizardTab = 'schedule' | 'exceptions' | 'order' | 'advanced' | 'preview'
 
 type Props = {
   namespaces: string[]
@@ -71,6 +72,7 @@ export default function ScheduleWizard(props: Props) {
   const [giveUp, setGiveUp] = useState(existingGroup?.spec.featureFlags?.skipOnTimeout || false)
   const [giveUpMinutes, setGiveUpMinutes] = useState(existingGroup?.spec.featureFlags?.timeoutMinutes || 10)
   const [exceptions, setExceptions] = useState<ScheduleException[]>(existing?.spec.exceptions || [])
+  const [dryRun, setDryRun] = useState(!!existing?.spec.dryRun)
   const [calendarNames, setCalendarNames] = useState<string[]>(existing?.spec.calendars || [])
   const [available, setAvailable] = useState<HolidayCalendar[] | undefined>(undefined)
   const [saving, setSaving] = useState(false)
@@ -110,45 +112,52 @@ export default function ScheduleWizard(props: Props) {
     || (!K8S_NAME.test(finalName) ? 'Name must use lowercase letters, digits and dashes.' : null)
     || (exceptionIssue ? `Exceptions: ${exceptionIssue}` : null)
 
+  // buildSpec renders the form as the spec to save, which the preview also shows.
+  const buildSpec = (): ScalingSpec => {
+    const schedule = specFromPlan(plan)
+    let spec: ScalingSpec
+    if (props.kind === 'group') {
+      const base: Partial<ScalingGroupSpec> = props.existing?.spec || {}
+      spec = {
+        ...base,
+        ...schedule,
+        category: category.trim() || base.category || 'General',
+        namespaces: selected,
+        namespaceSelector: selectorQuery ? shownMatch?.selector : undefined,
+        // Only keep stage entries that still belong to the schedule.
+        sequence: order.sequence?.map(s => s.split(/\s+/).filter(i => selected.includes(i) || i.startsWith('ext:')).join(' ')).filter(Boolean),
+        externalTargets: order.externalTargets,
+        dependsOn: dependsOn.length ? dependsOn : undefined,
+        featureFlags: giveUp ? { skipOnTimeout: true, timeoutMinutes: giveUpMinutes } : undefined,
+        exceptions: exceptions.length ? exceptions : undefined,
+        calendars: calendarNames.length ? calendarNames : undefined,
+        dryRun: dryRun || undefined,
+      }
+    } else {
+      spec = {
+        ...props.existing.spec, schedules: schedule.schedules,
+        exceptions: exceptions.length ? exceptions : undefined,
+        calendars: calendarNames.length ? calendarNames : undefined,
+        dryRun: dryRun || undefined,
+      }
+    }
+    // A new schedule is meant to take effect, so it ends a manual override.
+    if (scheduleChanged) {
+      delete spec.active
+      delete spec.activeUntil
+    }
+    return spec
+  }
+
   const save = async () => {
     if (problem) return
     setSaving(true)
     setError(null)
     try {
-      const schedule = specFromPlan(plan)
-      let url: string, method: string, spec: ScalingSpec
-      if (props.kind === 'group') {
-        const base: Partial<ScalingGroupSpec> = props.existing?.spec || {}
-        spec = {
-          ...base,
-          ...schedule,
-          category: category.trim() || base.category || 'General',
-          namespaces: selected,
-          namespaceSelector: selectorQuery ? shownMatch?.selector : undefined,
-          // Only keep stage entries that still belong to the schedule.
-          sequence: order.sequence?.map(s => s.split(/\s+/).filter(i => selected.includes(i) || i.startsWith('ext:')).join(' ')).filter(Boolean),
-          externalTargets: order.externalTargets,
-          dependsOn: dependsOn.length ? dependsOn : undefined,
-          featureFlags: giveUp ? { skipOnTimeout: true, timeoutMinutes: giveUpMinutes } : undefined,
-          exceptions: exceptions.length ? exceptions : undefined,
-          calendars: calendarNames.length ? calendarNames : undefined,
-        }
-        url = editing ? `/api/scaling/groups/${existing!.metadata.name}` : '/api/scaling/groups'
-        method = editing ? 'PUT' : 'POST'
-      } else {
-        spec = {
-          ...props.existing.spec, schedules: schedule.schedules,
-          exceptions: exceptions.length ? exceptions : undefined,
-          calendars: calendarNames.length ? calendarNames : undefined,
-        }
-        url = `/api/scaling/configs/${props.existing.metadata.name}`
-        method = 'PUT'
-      }
-      // A new schedule is meant to take effect, so it ends a manual override.
-      if (scheduleChanged) {
-        delete spec.active
-        delete spec.activeUntil
-      }
+      const spec = buildSpec()
+      const url = props.kind === 'config' ? `/api/scaling/configs/${props.existing.metadata.name}`
+        : editing ? `/api/scaling/groups/${existing!.metadata.name}` : '/api/scaling/groups'
+      const method = props.kind === 'group' && !editing ? 'POST' : 'PUT'
       const res = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
@@ -228,6 +237,13 @@ export default function ScheduleWizard(props: Props) {
         )}
       </section>
 
+      <section>
+        <label className="flex items-start gap-2 text-sm text-slate-600">
+          <input type="checkbox" checked={dryRun} onChange={e => setDryRun(e.target.checked)} className="mt-0.5 accent-brand-600" />
+          <span><b className="text-slate-800">Dry run</b>: work out what the schedule would do and show it on its card, but scale nothing. Untick it to let the schedule act.</span>
+        </label>
+      </section>
+
       {isGroup && (
         <section>
           <h3 className="text-sm font-semibold text-slate-800 mb-2">Name</h3>
@@ -297,6 +313,7 @@ export default function ScheduleWizard(props: Props) {
             tabs={[
               { id: 'schedule', label: <span className="inline-flex items-center gap-1.5"><CalendarClock size={14} /> Schedule</span> },
               { id: 'exceptions', label: <span className="inline-flex items-center gap-1.5"><CalendarOff size={14} /> Exceptions{exceptions.length + calendarNames.length ? ` (${exceptions.length + calendarNames.length})` : ''}</span> },
+              { id: 'preview', label: <span className="inline-flex items-center gap-1.5"><Eye size={14} /> Preview</span> },
               ...(isGroup ? [
                 { id: 'order' as const, label: <span className="inline-flex items-center gap-1.5"><ListOrdered size={14} /> Start order{order.sequence?.length ? ` (${order.sequence.length})` : ''}</span> },
                 { id: 'advanced' as const, label: <span className="inline-flex items-center gap-1.5"><SlidersHorizontal size={14} /> Advanced{dependsOn.length || giveUp ? ' ·' : ''}</span> },
@@ -316,6 +333,9 @@ export default function ScheduleWizard(props: Props) {
       }
     >
       {tab === 'schedule' && scheduleTab}
+      {tab === 'preview' && (
+        <SchedulePreview kind={isGroup ? 'group' : 'config'} name={existing?.metadata.name} spec={{ ...buildSpec(), ...(isGroup ? {} : { targetNamespace: selected[0] }) }} />
+      )}
       {tab === 'exceptions' && (
         <ExceptionsEditor exceptions={exceptions} calendars={calendarNames} available={available} timezone={plan.timezone}
           onChange={(e, c) => { setExceptions(e); setCalendarNames(c) }} />

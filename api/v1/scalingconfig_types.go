@@ -203,6 +203,12 @@ type ScalingConfigSpec struct {
 	// +optional
 	// +listType=atomic
 	Exclusions []string `json:"exclusions,omitempty"`
+
+	// DryRun works out what the schedule would do and reports it (phase DryRun and the
+	// DryRun condition) without scaling anything, to try a schedule before it acts. To the
+	// schedules that depend on it, a group in dry run counts as up.
+	// +optional
+	DryRun bool `json:"dryRun,omitempty"`
 }
 
 // ScalingConfigStatus defines the observed state of ScalingConfig.

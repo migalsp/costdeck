@@ -34,6 +34,8 @@ const (
 	PhaseScalingUp   = "ScalingUp"
 	PhaseScaledDown  = "ScaledDown"
 	PhaseScalingDown = "ScalingDown"
+	// PhaseDryRun: spec.dryRun is set; the desired state is worked out but not applied.
+	PhaseDryRun = "DryRun"
 )
 
 func (e *Engine) listScalableResources(ctx context.Context, ns string, exclusions []string) ([]client.Object, error) {

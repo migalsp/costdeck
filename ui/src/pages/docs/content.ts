@@ -217,6 +217,7 @@ kubectl port-forward -n costdeck svc/costdeck-operator-api 8082:8082`,
                 ['Up · needed by dev', 'On demand or otherwise down, but another schedule depends on it.'],
                 ['Up · no schedule set', 'No usable hours, so it stays up to be safe.'],
                 ['Down for Christmas Day / Up for Release', 'A date exception or a holiday calendar day applies. It says until when.'],
+                ['Dry run · would be down', 'The schedule only works out what it would do; nothing is scaled. It says how many workloads would change.'],
                 ['Applying changes…', 'You just saved; Cost Deck has not processed the change yet.'],
               ],
             },
@@ -262,6 +263,24 @@ kubectl patch scalinggroup dev -n costdeck --type merge \\
             },
           },
           { warn: '`active: false` does not mean "follow the schedule": it keeps the namespaces down until the field is removed. To hand control back, set it to `null`.' },
+        ],
+      },
+      {
+        id: 'preview',
+        title: 'Try a schedule before it acts',
+        blocks: [
+          { p: 'The **Preview** tab of the schedule editor shows what the schedule would do before you save it: the namespaces and workloads it would stop (and those a workload rule keeps running or another schedule already owns), the next two weeks hour by hour with exceptions marked, the share of time it is up, and what that saves a month at the current prices.' },
+          { p: 'To watch a schedule on the real cluster without risk, tick **Dry run**. It decides up or down as usual and its card says what it *would* change (*Dry run · would be down: would scale down 12 workloads in 3 namespaces*), but nothing is scaled and nothing is posted to the chat. Untick it when you are happy, and it acts from then on. Schedules that depend on one in dry run treat it as up.' },
+          {
+            ways: {
+              api: `curl -X POST "$COSTDECK/api/scaling/preview" \\
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \\
+  -d '{"kind": "group", "spec": {"namespaceSelector": {"matchLabels": {"env": "preview"}},
+       "schedules": [{"days": [1,2,3,4,5], "startTime": "08:00", "endTime": "19:00", "timezone": "Europe/Berlin"}]}}'`,
+              kubectl: `kubectl patch scalinggroup dev -n costdeck --type merge -p '{"spec":{"dryRun":true}}'
+kubectl get scalinggroup dev -n costdeck -o jsonpath='{.status.conditions[?(@.type=="DryRun")].message}'`,
+            },
+          },
         ],
       },
       {
@@ -1182,6 +1201,7 @@ claude mcp add --transport http costdeck https://costdeck.example.com/mcp \\
                 ['list_namespace_configs', 'Per-namespace configs and workload rules'],
                 ['list_calendars', 'Shared holiday calendars and their days to come'],
                 ['add_schedule_exception, remove_schedule_exception', 'Keep a schedule up or down on given dates (admin)'],
+                ['preview_schedule', 'What a schedule would scale, when, and what it saves, without changing anything'],
                 ['list_namespaces, get_namespace_status', 'Usage and cost per namespace'],
                 ['get_cost_overview', 'Run rate, efficiency, month to date, savings and the ranked opportunities'],
                 ['get_rightsizing_recommendations', 'What can be reduced in a namespace'],

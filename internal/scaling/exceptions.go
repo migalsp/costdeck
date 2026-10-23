@@ -205,3 +205,61 @@ func (tt Timetable) NextChange(t time.Time) *time.Time {
 	}
 	return nil
 }
+
+// Interval is a stretch of time in which a timetable keeps a target in one state, and why:
+// "schedule" or the name of the exception in force.
+type Interval struct {
+	From   time.Time `json:"from"`
+	To     time.Time `json:"to"`
+	Active bool      `json:"active"`
+	Reason string    `json:"reason"`
+}
+
+// maxIntervals bounds Intervals for timetables that change every minute.
+const maxIntervals = 2000
+
+// Intervals splits [from, to) into stretches of one state and one reason, for previews.
+func (tt Timetable) Intervals(from, to time.Time) []Interval {
+	reason := func(t time.Time) string {
+		if ex := tt.exceptionAt(t); ex != nil {
+			return ex.Name
+		}
+		return "schedule"
+	}
+	var out []Interval
+	start := from
+	for start.Before(to) && len(out) < maxIntervals {
+		active, why := tt.ActiveAt(start), reason(start)
+		end := to
+		// The state changes at NextChange; the reason can also change at an exception
+		// boundary that keeps the state (a holiday on a day that is down anyway).
+		if next := tt.NextChange(start); next != nil && next.Before(end) {
+			end = *next
+		}
+		for _, ex := range tt.Exceptions {
+			for _, b := range []time.Time{ex.From, ex.To} {
+				if b.After(start) && b.Before(end) && reason(b) != why {
+					end = b
+				}
+			}
+		}
+		out = append(out, Interval{From: start, To: end, Active: active, Reason: why})
+		start = end
+	}
+	return out
+}
+
+// ActiveShare is the share of [from, to) in which the timetable keeps the target up.
+func (tt Timetable) ActiveShare(from, to time.Time) float64 {
+	total := to.Sub(from)
+	if total <= 0 {
+		return 0
+	}
+	var up time.Duration
+	for _, iv := range tt.Intervals(from, to) {
+		if iv.Active {
+			up += iv.To.Sub(iv.From)
+		}
+	}
+	return float64(up) / float64(total)
+}

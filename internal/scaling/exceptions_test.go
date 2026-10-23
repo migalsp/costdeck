@@ -268,3 +268,47 @@ func TestPlanGroupsAppliesCalendars(t *testing.T) {
 		t.Errorf("a Down day leaves an on-demand group on demand: %+v", d)
 	}
 }
+
+func TestIntervals(t *testing.T) {
+	utc := func(d, h, m int) time.Time { return time.Date(2026, 12, d, h, m, 0, 0, time.UTC) }
+	office := []finopsv1.ScalingSchedule{{Days: []int{1, 2, 3, 4, 5}, StartTime: "08:00", EndTime: "20:00", Timezone: "UTC"}}
+	ex, _ := ResolveExceptions([]finopsv1.ScheduleException{
+		{Name: "Christmas Eve", Start: "2026-12-24", State: "Down"},
+		{Name: "Boxing Day", Start: "2026-12-26", State: "Down"}, // a Saturday: down anyway
+	}, nil, nil, defaultExceptionZone)
+	tt := Timetable{Schedules: office, Exceptions: ex}
+
+	// Wednesday 23rd 12:00 to Monday 28th 12:00.
+	got := tt.Intervals(utc(23, 12, 0), utc(28, 12, 0))
+	want := []Interval{
+		{From: utc(23, 12, 0), To: utc(23, 20, 1), Active: true, Reason: "schedule"},
+		{From: utc(23, 20, 1), To: utc(24, 0, 0), Active: false, Reason: "schedule"},
+		{From: utc(24, 0, 0), To: utc(25, 0, 0), Active: false, Reason: "Christmas Eve"},
+		{From: utc(25, 0, 0), To: utc(25, 8, 0), Active: false, Reason: "schedule"},
+		{From: utc(25, 8, 0), To: utc(25, 20, 1), Active: true, Reason: "schedule"},
+		{From: utc(25, 20, 1), To: utc(26, 0, 0), Active: false, Reason: "schedule"},
+		{From: utc(26, 0, 0), To: utc(27, 0, 0), Active: false, Reason: "Boxing Day"},
+		{From: utc(27, 0, 0), To: utc(28, 8, 0), Active: false, Reason: "schedule"},
+		{From: utc(28, 8, 0), To: utc(28, 12, 0), Active: true, Reason: "schedule"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d intervals:\n%+v", len(got), got)
+	}
+	for i := range want {
+		g, w := got[i], want[i]
+		if !g.From.Equal(w.From) || !g.To.Equal(w.To) || g.Active != w.Active || g.Reason != w.Reason {
+			t.Errorf("interval %d = %+v, want %+v", i, g, w)
+		}
+	}
+
+	if share := (Timetable{}).ActiveShare(utc(1, 0, 0), utc(8, 0, 0)); share != 1 {
+		t.Errorf("no schedule is up all the time, got %v", share)
+	}
+	// Five 12-hour days and a minute (both ends of a window count) out of a week.
+	if share := (Timetable{Schedules: office}).ActiveShare(utc(6, 0, 0), utc(13, 0, 0)); share < 0.357 || share > 0.358 {
+		t.Errorf("office hours share = %v, want about 60h/168h", share)
+	}
+	if got := (Timetable{}).Intervals(utc(1, 0, 0), utc(1, 0, 0)); len(got) != 0 {
+		t.Errorf("an empty range has no intervals: %+v", got)
+	}
+}

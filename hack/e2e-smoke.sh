@@ -13,6 +13,7 @@
 #   80 the MCP endpoint                               (disposable clusters only)
 #   90 date exceptions and holiday calendars (calendars on disposable clusters only)
 #   91 namespaces joining and leaving a schedule by label
+#   92 schedule preview and dry run
 #
 # Run it against a disposable cluster (Kind in CI, `make test-e2e` locally): it installs
 # CRDs, metrics-server and changes settings. IMAGE must already be loadable by the cluster

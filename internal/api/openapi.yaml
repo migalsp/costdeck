@@ -552,6 +552,68 @@ paths:
         "400": { description: The selector cannot be parsed }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
+  /api/scaling/preview:
+    post:
+      x-role: viewer
+      tags: [Scaling]
+      summary: Preview a schedule
+      description: >-
+        What a schedule would do, saved or not, without changing anything: the namespaces it
+        would take (listed or selected by label, and those another group keeps), the
+        workloads and CronJobs it would stop with the workload rules applied, the timetable
+        for the next 14 days with exceptions, the share of time up over four weeks, and the
+        estimated saving at the current rates. name is the schedule being edited, so it does
+        not conflict with itself.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind, spec]
+              properties:
+                kind: { type: string, enum: [group, config] }
+                name: { type: string }
+                spec: { type: object, description: "The spec of a ScalingGroup or ScalingConfig as the editor holds it." }
+            example:
+              kind: group
+              spec:
+                namespaceSelector: { matchLabels: { env: preview } }
+                schedules: [{ days: [1, 2, 3, 4, 5], startTime: "08:00", endTime: "19:00", timezone: Europe/Berlin }]
+                calendars: [de-holidays]
+      responses:
+        "200":
+          description: The preview
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  namespaces: { type: array, items: { type: object } }
+                  cloudTargets: { type: array, items: { $ref: "#/components/schemas/ExternalTarget" } }
+                  intervals:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        from: { type: string, format: date-time }
+                        to: { type: string, format: date-time }
+                        active: { type: boolean }
+                        reason: { type: string, description: "schedule, or the name of the exception in force" }
+                  upShare: { type: number }
+                  nextChange: { type: string, format: date-time }
+                  savings:
+                    type: object
+                    properties:
+                      hourly: { type: number }
+                      monthly: { type: number }
+                      currency: { type: string }
+                      basis: { type: string }
+                  problems: { type: array, items: { type: string } }
+                  warnings: { type: array, items: { type: string } }
+        "400": { description: Invalid request }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
   /api/scaling/groups:
     get:
       x-role: viewer
@@ -1925,6 +1987,11 @@ components:
               type: array
               items: { type: string }
               description: Shared holiday calendars (settings, calendars) whose days apply as exceptions too.
+            dryRun:
+              type: boolean
+              description: >-
+                Work out what the schedule would do and report it (phase DryRun and the DryRun
+                condition) without scaling anything.
             activation:
               type: string
               enum: [Schedule, OnDemand]
@@ -2003,6 +2070,11 @@ components:
               type: array
               items: { type: string }
               description: Shared holiday calendars (settings, calendars) whose days apply as exceptions too.
+            dryRun:
+              type: boolean
+              description: >-
+                Work out what the schedule would do and report it (phase DryRun and the DryRun
+                condition) without scaling anything.
             exclusions:
               type: array
               items: { type: string }

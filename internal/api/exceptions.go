@@ -17,6 +17,14 @@ import (
 	"github.com/migalsp/costdeck-operator/internal/scaling"
 )
 
+// Targets of the schedule tools ("group" or "namespace") and kinds of a preview ("group"
+// or "config").
+const (
+	targetGroup     = "group"
+	targetNamespace = "namespace"
+	kindConfig      = "config"
+)
+
 // calendars returns the shared holiday calendars; none when the config cannot be read.
 func (s *Server) calendars(ctx context.Context) []finopsv1.HolidayCalendar {
 	cfg, err := config.Get(ctx, s.Client)
@@ -118,9 +126,9 @@ func applyCalendarSettings(_ context.Context, cfg *finopsv1.CostDeckConfig, req 
 func (s *Server) changeExceptions(ctx context.Context, target, name string, change func([]finopsv1.ScheduleException) ([]finopsv1.ScheduleException, string, error)) (string, error) {
 	var obj client.Object
 	switch target {
-	case "group":
+	case targetGroup:
 		obj = &finopsv1.ScalingGroup{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: config.OperatorNamespace()}}
-	case "namespace":
+	case targetNamespace:
 		cfg, err := s.configForNamespace(ctx, name)
 		if err != nil {
 			return "", err

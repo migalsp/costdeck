@@ -85,6 +85,22 @@ func (r *ScalingConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	l.Info("Reconciling ScalingConfig", "targetNamespace", config.Spec.TargetNamespace, "targetActive", targetActive, "mode", decision.Mode)
 
+	if config.Spec.DryRun {
+		applyDecision(&config.Status.ScheduleStatus, &config.Status.Conditions, decision, config.Generation, "namespace")
+		setExceptionsCondition(&config.Status.Conditions, problems, config.Generation)
+		n, err := r.Engine.WouldChange(ctx, config.Spec.TargetNamespace, targetActive, config.Spec.Exclusions)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		config.Status.Phase = scaling.PhaseDryRun
+		setDryRunCondition(&config.Status.Conditions, dryRunMessage("schedule", targetActive, n, min(n, 1), 0, nil), config.Generation)
+		if err := updateStatus(ctx, r.Client, config, before, &config.Status); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{RequeueAfter: settledRequeue(decision, time.Now())}, nil
+	}
+	setDryRunCondition(&config.Status.Conditions, "", config.Generation)
+
 	// 2.5 Phase and Timeout Logic
 	previousPhase := config.Status.Phase
 	timeoutPassed := r.updateStatusPhase(ctx, config, targetActive)

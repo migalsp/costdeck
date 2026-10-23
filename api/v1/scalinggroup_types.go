@@ -107,6 +107,12 @@ type ScalingGroupSpec struct {
 	// +kubebuilder:validation:Enum=Schedule;OnDemand
 	// +optional
 	Activation string `json:"activation,omitempty"`
+
+	// DryRun works out what the schedule would do and reports it (phase DryRun and the
+	// DryRun condition) without scaling anything, to try a schedule before it acts. To the
+	// schedules that depend on it, a group in dry run counts as up.
+	// +optional
+	DryRun bool `json:"dryRun,omitempty"`
 }
 
 // Activation modes for ScalingGroupSpec.Activation.
