@@ -34,6 +34,14 @@ type Rates struct {
 	// Factor is the billing reconciliation applied to list prices (billed ÷ list); 0 or 1
 	// when none is. List prices are the rates divided by it.
 	Factor float64 `json:"factor,omitempty"`
+	// GPUHour is what a GPU costs per hour on average over the cluster's GPU nodes; each
+	// node's own price is NodeGPUHour.
+	GPUHour float64 `json:"gpuHour,omitempty"`
+
+	// customGPU is the configured GPU rate; gpuByType the per-GPU share of each GPU
+	// instance type's list price.
+	customGPU float64
+	gpuByType map[string]float64
 }
 
 // ListFactor is what to divide by to get back to list prices.
@@ -60,6 +68,14 @@ func reconcile(rates Rates, cfg *finopsv1.CostDeckConfig) Rates {
 	}
 	rates.CPUCoreHour *= f
 	rates.MemoryGBHour *= f
+	rates.GPUHour *= f
+	if len(rates.gpuByType) > 0 {
+		scaled := make(map[string]float64, len(rates.gpuByType))
+		for t, p := range rates.gpuByType {
+			scaled[t] = p * f
+		}
+		rates.gpuByType = scaled
+	}
 	rates.Factor = f
 	if st.Currency != "" {
 		rates.Currency = st.Currency
@@ -122,8 +138,17 @@ func (r *Resolver) Rates(ctx context.Context) Rates {
 	_ = r.Client.List(ctx, &nodes)
 	cloud := DetectCloud(nodes.Items)
 
+	gpu, gpuErr := strconv.ParseFloat(cfg.Spec.Pricing.GPUHour, 64)
+	withGPU := func(rates Rates) Rates {
+		if gpuErr == nil && gpu > 0 {
+			rates.customGPU, rates.GPUHour = gpu, gpu
+		} else if rates.GPUHour == 0 {
+			rates.GPUHour = averageGPUHour(rates, nodes.Items)
+		}
+		return rates
+	}
 	if custom, ok := customRates(cfg.Spec.Pricing); ok {
-		return custom
+		return withGPU(custom)
 	}
 	fallback := heuristicRates(cloud, cfg.Spec.Pricing.Currency)
 
@@ -133,7 +158,7 @@ func (r *Resolver) Rates(ctx context.Context) Rates {
 		if r.cached != nil && r.cacheKey == key && time.Since(r.cachedAt) < r.ttl() {
 			rates := *r.cached
 			r.mu.Unlock()
-			return reconcile(rates, cfg)
+			return withGPU(reconcile(rates, cfg))
 		}
 		r.mu.Unlock()
 
@@ -141,14 +166,30 @@ func (r *Resolver) Rates(ctx context.Context) Rates {
 		if err != nil {
 			logf.FromContext(ctx).Info("Could not price nodes with the cloud price list, using heuristic rates", "cloud", cloud, "error", err.Error())
 			fallback.Basis += " — " + cloudNames[cloud] + " pricing unavailable: " + err.Error()
-			return reconcile(fallback, cfg)
+			return withGPU(reconcile(fallback, cfg))
 		}
 		r.mu.Lock()
 		r.cached, r.cachedAt, r.cacheKey = &rates, time.Now(), key
 		r.mu.Unlock()
-		return reconcile(rates, cfg)
+		return withGPU(reconcile(rates, cfg))
 	}
-	return reconcile(fallback, cfg)
+	return withGPU(reconcile(fallback, cfg))
+}
+
+// averageGPUHour is the mean GPU price over the cluster's GPUs at the given rates, or 0
+// without GPUs.
+func averageGPUHour(rates Rates, nodes []corev1.Node) float64 {
+	var total, gpus float64
+	for _, n := range nodes {
+		if g := NodeGPUs(n); g > 0 {
+			total += rates.NodeGPUsHourly(n)
+			gpus += g
+		}
+	}
+	if gpus == 0 {
+		return 0
+	}
+	return total / gpus
 }
 
 // pricerFor returns the price list builder for a cloud, or nil when there is none.
@@ -202,6 +243,10 @@ func customRates(p finopsv1.PricingConfig) (Rates, bool) {
 	return Rates{CPUCoreHour: cpu, MemoryGBHour: mem, Currency: currency(p.Currency), Basis: "Custom rates from CostDeckConfig"}, true
 }
 
+// HeuristicRates are the list-price estimates for a cloud (aws, azure, gcp, or local for
+// anything else) in USD, for estimates made without a cluster.
+func HeuristicRates(cloud string) Rates { return heuristicRates(cloud, "") }
+
 func heuristicRates(cloud, cur string) Rates {
 	h, ok := heuristics[cloud]
 	if !ok {
@@ -247,7 +292,10 @@ func nodeFingerprint(nodes []corev1.Node) string {
 
 // nodeRates prices every node at its list price and splits the total into a per-core and
 // a per-GiB rate. The split keeps the heuristic CPU:memory price ratio and scales it so
-// that the rates reproduce the cluster's real hourly bill.
+// that the rates reproduce the real hourly bill of the nodes without GPUs. A GPU node's
+// price less its CPU and memory at those rates is its GPUs' share, kept per instance type,
+// so GPUs neither inflate the price of every core nor go missing from the bill. A cluster
+// of GPU nodes only keeps the heuristic rates for CPU and memory.
 func nodeRates(ctx context.Context, cloud string, build func(context.Context, *finopsv1.CostDeckConfig) (NodePricer, error), cfg *finopsv1.CostDeckConfig, nodes []corev1.Node) (Rates, error) {
 	pricer, err := build(ctx, cfg)
 	if err != nil {
@@ -258,6 +306,7 @@ func nodeRates(ctx context.Context, cloud string, build func(context.Context, *f
 	var billed, modelled float64
 	spot := 0
 	types := map[string]bool{}
+	var gpuNodes []corev1.Node
 	for _, n := range nodes {
 		region := n.Labels[corev1.LabelTopologyRegion]
 		instanceType := n.Labels[corev1.LabelInstanceTypeStable]
@@ -276,15 +325,30 @@ func nodeRates(ctx context.Context, cloud string, build func(context.Context, *f
 			spot++
 		}
 		types[instanceType] = true
+		if IsGPUNode(n) {
+			gpuNodes = append(gpuNodes, n)
+			continue
+		}
 		cpu := n.Status.Capacity.Cpu().AsApproximateFloat64()
 		memGiB := n.Status.Capacity.Memory().AsApproximateFloat64() / (1 << 30)
 		billed += price
 		modelled += cpu*base[0] + memGiB*base[1]
 	}
-	if billed == 0 || modelled == 0 {
+	if len(types) == 0 {
 		return Rates{}, fmt.Errorf("no node carries instance-type and region labels")
 	}
-	scale := billed / modelled
+	scale := 1.0
+	if billed > 0 && modelled > 0 {
+		scale = billed / modelled
+	}
+	gpuByType := map[string]float64{}
+	for _, n := range gpuNodes {
+		t := n.Labels[corev1.LabelInstanceTypeStable]
+		cpu := n.Status.Capacity.Cpu().AsApproximateFloat64()
+		memGiB := n.Status.Capacity.Memory().AsApproximateFloat64() / (1 << 30)
+		share := prices[n.Labels[corev1.LabelTopologyRegion]+"/"+t] - (cpu*base[0]+memGiB*base[1])*scale
+		gpuByType[t] = max(0, share) / NodeGPUs(n)
+	}
 	names := make([]string, 0, len(types))
 	for t := range types {
 		names = append(names, t)
@@ -293,7 +357,12 @@ func nodeRates(ctx context.Context, cloud string, build func(context.Context, *f
 	if spot > 0 {
 		basis += fmt.Sprintf("; %d spot node(s) priced at the regular rate", spot)
 	}
-	return Rates{CPUCoreHour: base[0] * scale, MemoryGBHour: base[1] * scale, Currency: "USD", Basis: basis}, nil
+	if len(gpuNodes) > 0 {
+		basis += fmt.Sprintf("; GPUs priced apart on %d node(s)", len(gpuNodes))
+	}
+	rates := Rates{CPUCoreHour: base[0] * scale, MemoryGBHour: base[1] * scale, Currency: "USD", Basis: basis, gpuByType: gpuByType}
+	rates.GPUHour = averageGPUHour(rates, nodes)
+	return rates, nil
 }
 
 // IsSpot reports whether a node runs on spot or low-priority capacity.

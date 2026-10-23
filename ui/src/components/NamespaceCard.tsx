@@ -13,8 +13,9 @@ import {
 } from 'recharts'
 import { AlertTriangle, CheckCircle, Database, Cpu, Lightbulb, RotateCcw } from 'lucide-react'
 import InfoTooltip from './InfoTooltip'
-import { Badge } from './ui'
-import { fetchNamespaceCost, fetchRecommendations } from '../lib/api'
+import { Badge, Button } from './ui'
+import { apiError, errorMessage, fetchNamespaceCost, fetchRecommendations, getJSON } from '../lib/api'
+import { toast } from '../lib/toast'
 import { formatMoney } from '../lib/format'
 import type { CostEstimate, OptimizationStatus, Recommendations } from '../lib/types'
 import { usePolling } from '../lib/usePolling'
@@ -50,12 +51,12 @@ export default function NamespaceCard({ namespace, insights = [], range = '1h', 
   const [optimization, setOptimization] = useState<OptimizationStatus | null>(null)
   const [loading, setLoading] = useState(true)
   const [reverting, setReverting] = useState(false)
+  const [confirmRevert, setConfirmRevert] = useState(false)
   const [advice, setAdvice] = useState<Recommendations | null>(null)
   const [namespaceCost, setNamespaceCost] = useState<CostEstimate | null>(null)
 
   const fetchOptimization = () => {
-    fetch(`/api/namespaces/${namespace}/optimization`)
-      .then(res => res.json())
+    getJSON<OptimizationStatus>(`/api/namespaces/${namespace}/optimization`)
       .then(data => setOptimization(data))
       .catch(err => console.error("Failed to fetch optimization", err))
   }
@@ -103,18 +104,19 @@ export default function NamespaceCard({ namespace, insights = [], range = '1h', 
     fetchRecommendations(namespace).then(setAdvice).catch(() => setAdvice(null))
   }, 30000, namespace)
 
+  // The card opens the namespace on click; its buttons keep their clicks to themselves.
   const handleRevert = async (e: React.MouseEvent) => {
     e.stopPropagation()
-    if (!window.confirm(`Revert optimization for ${namespace}? This will restore the original resource values.`)) return
-
+    setConfirmRevert(false)
     setReverting(true)
     try {
       const res = await fetch(`/api/namespaces/${namespace}/revert`, { method: 'POST' })
-      if (!res.ok) throw new Error('Revert failed')
+      if (!res.ok) throw new Error(await apiError(res))
+      toast.success(`Restored the original requests and limits in ${namespace}`)
       fetchOptimization()
       fetchData()
     } catch (err) {
-      alert("Failed to revert: " + err)
+      toast.error(`Could not revert ${namespace}: ${errorMessage(err)}`)
     } finally {
       setReverting(false)
     }
@@ -191,34 +193,34 @@ export default function NamespaceCard({ namespace, insights = [], range = '1h', 
             ) : (
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={history} margin={{ top: 10, right: 0, left: -20, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                  <XAxis dataKey="time" tick={{fontSize: 10, fill: '#94a3b8'}} tickLine={false} axisLine={false} minTickGap={20} />
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--color-slate-200)" />
+                  <XAxis dataKey="time" tick={{fontSize: 10, fill: 'var(--color-slate-400)'}} tickLine={false} axisLine={false} minTickGap={20} />
                   <YAxis 
-                    tick={{fontSize: 10, fill: '#94a3b8'}} 
+                    tick={{fontSize: 10, fill: 'var(--color-slate-400)'}} 
                     tickLine={false} 
                     axisLine={false} 
                     domain={[0, 'auto']}
                     tickFormatter={(val) => val < 1 ? val.toFixed(3) : val.toFixed(2)}
                   />
                   <Tooltip 
-                    contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                    contentStyle={{ borderRadius: '8px', border: 'none', backgroundColor: 'var(--color-white)', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
                     itemStyle={{ fontSize: '12px', fontWeight: 500 }}
                     formatter={(value) => [`${Number(value ?? 0).toFixed(3)} Cores`, 'Usage']}
                   />
                   {/* Real Usage (Blue) */}
-                  <Area isAnimationActive={false} type="monotone" dataKey="cpuUsage" name="Usage" stroke="#047857" fillOpacity={1} fill="url(#colorCpuUsage)" />
+                  <Area isAnimationActive={false} type="monotone" dataKey="cpuUsage" name="Usage" stroke="var(--color-emerald-700)" fillOpacity={1} fill="url(#colorCpuUsage)" />
                   {/* Requests (Green Line) and Limit (Red Line) */}
                   {latest.cpuReq > 0 && (
-                    <ReferenceLine y={latest.cpuReq} stroke="#64748b" strokeDasharray="3 3" label={{position: 'insideTopLeft', value: `Req: ${latest.cpuReq.toFixed(2)}`, fill: '#64748b', fontSize: 10}} />
+                    <ReferenceLine y={latest.cpuReq} stroke="var(--color-slate-500)" strokeDasharray="3 3" label={{position: 'insideTopLeft', value: `Req: ${latest.cpuReq.toFixed(2)}`, fill: 'var(--color-slate-500)', fontSize: 10}} />
                   )}
                   {latest.cpuLim > 0 && (
-                    <ReferenceLine y={latest.cpuLim} stroke="#94a3b8" strokeDasharray="1 4" label={{position: 'insideTopLeft', value: `Lim: ${latest.cpuLim.toFixed(2)}`, fill: '#94a3b8', fontSize: 10}} />
+                    <ReferenceLine y={latest.cpuLim} stroke="var(--color-slate-400)" strokeDasharray="1 4" label={{position: 'insideTopLeft', value: `Lim: ${latest.cpuLim.toFixed(2)}`, fill: 'var(--color-slate-400)', fontSize: 10}} />
                   )}
                   
                   <defs>
                     <linearGradient id="colorCpuUsage" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#047857" stopOpacity={0.2}/>
-                      <stop offset="95%" stopColor="#047857" stopOpacity={0}/>
+                      <stop offset="5%" stopColor="var(--color-emerald-700)" stopOpacity={0.2}/>
+                      <stop offset="95%" stopColor="var(--color-emerald-700)" stopOpacity={0}/>
                     </linearGradient>
                   </defs>
                 </AreaChart>
@@ -251,28 +253,28 @@ export default function NamespaceCard({ namespace, insights = [], range = '1h', 
             ) : (
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={history} margin={{ top: 10, right: 0, left: -10, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                  <XAxis dataKey="time" tick={{fontSize: 10, fill: '#94a3b8'}} tickLine={false} axisLine={false} minTickGap={20} />
-                  <YAxis tick={{fontSize: 10, fill: '#94a3b8'}} tickLine={false} axisLine={false} domain={[0, 'auto']} />
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--color-slate-200)" />
+                  <XAxis dataKey="time" tick={{fontSize: 10, fill: 'var(--color-slate-400)'}} tickLine={false} axisLine={false} minTickGap={20} />
+                  <YAxis tick={{fontSize: 10, fill: 'var(--color-slate-400)'}} tickLine={false} axisLine={false} domain={[0, 'auto']} />
                   <Tooltip 
-                    contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                    contentStyle={{ borderRadius: '8px', border: 'none', backgroundColor: 'var(--color-white)', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
                     itemStyle={{ fontSize: '12px', fontWeight: 500 }}
                     formatter={(value) => [`${Number(value ?? 0).toFixed(1)} MiB`, 'Usage']}
                   />
                   {/* Real Usage (Blue) */}
-                  <Area isAnimationActive={false} type="monotone" dataKey="memUsage" name="Usage (MiB)" stroke="#047857" fillOpacity={1} fill="url(#colorMemUsage)" />
+                  <Area isAnimationActive={false} type="monotone" dataKey="memUsage" name="Usage (MiB)" stroke="var(--color-emerald-700)" fillOpacity={1} fill="url(#colorMemUsage)" />
                   {/* Requests (Green Line) and Limit (Red Line) */}
                   {latest.memReq > 0 && (
-                    <ReferenceLine y={latest.memReq} stroke="#64748b" strokeDasharray="3 3" label={{position: 'insideTopLeft', value: `Req: ${latest.memReq}`, fill: '#64748b', fontSize: 10}} />
+                    <ReferenceLine y={latest.memReq} stroke="var(--color-slate-500)" strokeDasharray="3 3" label={{position: 'insideTopLeft', value: `Req: ${latest.memReq}`, fill: 'var(--color-slate-500)', fontSize: 10}} />
                   )}
                   {latest.memLim > 0 && (
-                    <ReferenceLine y={latest.memLim} stroke="#94a3b8" strokeDasharray="1 4" label={{position: 'insideTopLeft', value: `Lim: ${latest.memLim}`, fill: '#94a3b8', fontSize: 10}} />
+                    <ReferenceLine y={latest.memLim} stroke="var(--color-slate-400)" strokeDasharray="1 4" label={{position: 'insideTopLeft', value: `Lim: ${latest.memLim}`, fill: 'var(--color-slate-400)', fontSize: 10}} />
                   )}
                   
                   <defs>
                     <linearGradient id="colorMemUsage" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#047857" stopOpacity={0.2}/>
-                      <stop offset="95%" stopColor="#047857" stopOpacity={0}/>
+                      <stop offset="5%" stopColor="var(--color-emerald-700)" stopOpacity={0.2}/>
+                      <stop offset="95%" stopColor="var(--color-emerald-700)" stopOpacity={0}/>
                     </linearGradient>
                   </defs>
                 </AreaChart>
@@ -310,9 +312,15 @@ export default function NamespaceCard({ namespace, insights = [], range = '1h', 
             </span>
           )}
           {/* Optimizations applied by earlier versions can still be undone. */}
-          {can('operator') && optimization?.active && (
+          {can('operator') && optimization?.active && (confirmRevert ? (
+            <span className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
+              <span className="font-semibold text-amber-800">Restore the original requests and limits?</span>
+              <Button size="sm" variant="warning" icon={<RotateCcw size={14} />} onClick={handleRevert}>Revert</Button>
+              <Button size="sm" variant="ghost" onClick={() => setConfirmRevert(false)}>Cancel</Button>
+            </span>
+          ) : (
             <button
-              onClick={handleRevert}
+              onClick={e => { e.stopPropagation(); setConfirmRevert(true) }}
               disabled={reverting}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 text-amber-600 border border-amber-200 rounded-lg hover:bg-amber-100 transition-colors font-bold uppercase tracking-tight disabled:opacity-60"
               title="Restore the requests and limits from before the earlier automatic optimization"
@@ -324,7 +332,7 @@ export default function NamespaceCard({ namespace, insights = [], range = '1h', 
               )}
               {reverting ? 'Reverting...' : 'Revert optimization'}
             </button>
-          )}
+          ))}
         </div>
       </div>
     </div>

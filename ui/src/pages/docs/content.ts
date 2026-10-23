@@ -65,7 +65,7 @@ export const guides: Guide[] = [
             list: [
               '**Shows what each namespace costs** and how much of what it reserves it actually uses.',
               '**Scales non-production environments to zero** when nobody needs them, and brings them back on time. Cloud databases and VMs can stop and start with them.',
-              '**Points out requests that are too large**, with the saving and the YAML to fix them. It never changes your workloads\' requests itself.',
+              '**Points out requests that are too large**, with the saving and the YAML to fix them. If an admin allows it, operators apply the advice (watched, and put back if the new pods fail) or open a pull request with it.',
               '**Works where your team works**: this dashboard, the REST API, a Webex bot, an AI assistant and MCP clients such as Claude Code.',
             ],
           },
@@ -121,17 +121,20 @@ kubectl port-forward -n costdeck svc/costdeck-operator-api 8082:8082`,
               head: ['Page', 'What it is for'],
               rows: [
                 ['Cost Overview', 'The start page: what the cluster costs, how much of it is used, what the schedules save, and what to do next.'],
+                ['Clusters', 'Other Cost Deck installations side by side: cost, savings and namespaces of each cluster.'],
                 ['Namespace Insights', 'Every namespace with its cost, efficiency, schedule and savings: filter, group, export. Open one to see its pods and what can be reduced.'],
                 ['Cluster Node Map', 'What every node costs, how well pods fill it, cheaper node shapes per pool, spot, and nodes that could be emptied.'],
                 ['Storage & Network', 'Persistent volumes and load balancers with their cost, and the ones nothing uses.'],
-                ['Budgets & Alerts', 'Monthly budgets for teams, namespaces and environments, and alerts when they are reached or spending jumps.'],
-                ['Cost Deck Health', 'The operator itself: resource use, connections and logs.'],
+                ['AI Costs', 'What LLM APIs and self-hosted models cost, by team and model.'],
                 ['Scaling Schedules', 'Create schedules, start or stop environments now, and follow progress.'],
-                ['Reports', 'The weekly or monthly cost digest (also posted to Webex) and AI-written reports for leadership, engineers and teams.'],
-                ['Settings', 'Cloud accounts, monitoring, AI, Webex, MCP, sign-in and prices. Admins only.'],
+                ['Budgets & Alerts', 'Monthly budgets for teams, namespaces and environments, and alerts when they are reached or spending jumps.'],
+                ['Reports', 'The weekly or monthly cost digest (also sent to Webex, Slack, Teams or email) and AI-written reports for leadership, engineers and teams.'],
+                ['Health', 'Cost Deck itself: resource use, connections and logs.'],
+                ['Settings', 'Sign-in and access, prices and cost allocation, automation (holiday calendars, preview cleanup, right-sizing) and integrations. Admins only.'],
               ],
             },
           },
+          { p: 'Every page has its own address, such as `/namespaces/shop-dev` or `/docs/schedules#gitops`: a reload stays on it, Back and Forward move between pages, and the address can be bookmarked or sent to a colleague. The switch at the bottom of the sidebar picks the light or the dark theme, or follows the system.' },
         ],
       },
     ],
@@ -147,7 +150,7 @@ kubectl port-forward -n costdeck svc/costdeck-operator-api 8082:8082`,
         id: 'how',
         title: 'What a schedule does',
         blocks: [
-          { p: 'A schedule covers one or more namespaces and, optionally, cloud resources. Outside its hours Cost Deck scales every Deployment and StatefulSet in those namespaces to zero. When the next window starts it restores the replica count each one had.' },
+          { p: 'A schedule covers one or more namespaces and, optionally, cloud resources. Outside its hours Cost Deck scales every Deployment, StatefulSet and Argo Rollout in those namespaces to zero. When the next window starts it restores the replica count each one had.' },
           {
             list: [
               'CronJobs are suspended and KEDA ScaledObjects paused while a namespace is down, and restored afterwards.',
@@ -215,6 +218,8 @@ kubectl port-forward -n costdeck svc/costdeck-operator-api 8082:8082`,
                 ['Kept up manually / Kept down manually', 'Someone clicked Start now or Scale down now. It says until when.'],
                 ['Up · needed by dev', 'On demand or otherwise down, but another schedule depends on it.'],
                 ['Up · no schedule set', 'No usable hours, so it stays up to be safe.'],
+                ['Down for Christmas Day / Up for Release', 'A date exception or a holiday calendar day applies. It says until when.'],
+                ['Dry run · would be down', 'The schedule only works out what it would do; nothing is scaled. It says how many workloads would change.'],
                 ['Applying changes…', 'You just saved; Cost Deck has not processed the change yet.'],
               ],
             },
@@ -260,6 +265,90 @@ kubectl patch scalinggroup dev -n costdeck --type merge \\
             },
           },
           { warn: '`active: false` does not mean "follow the schedule": it keeps the namespaces down until the field is removed. To hand control back, set it to `null`.' },
+        ],
+      },
+      {
+        id: 'preview',
+        title: 'Try a schedule before it acts',
+        blocks: [
+          { p: 'The **Preview** tab of the schedule editor shows what the schedule would do before you save it: the namespaces and workloads it would stop (and those a workload rule keeps running or another schedule already owns), the next two weeks hour by hour with exceptions marked, the share of time it is up, and what that saves a month at the current prices.' },
+          { p: 'To watch a schedule on the real cluster without risk, tick **Dry run**. It decides up or down as usual and its card says what it *would* change (*Dry run · would be down: would scale down 12 workloads in 3 namespaces*), but nothing is scaled and nothing is posted to the chat. Untick it when you are happy, and it acts from then on. Schedules that depend on one in dry run treat it as up.' },
+          {
+            ways: {
+              api: `curl -X POST "$COSTDECK/api/scaling/preview" \\
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \\
+  -d '{"kind": "group", "spec": {"namespaceSelector": {"matchLabels": {"env": "preview"}},
+       "schedules": [{"days": [1,2,3,4,5], "startTime": "08:00", "endTime": "19:00", "timezone": "Europe/Berlin"}]}}'`,
+              kubectl: `kubectl patch scalinggroup dev -n costdeck --type merge -p '{"spec":{"dryRun":true}}'
+kubectl get scalinggroup dev -n costdeck -o jsonpath='{.status.conditions[?(@.type=="DryRun")].message}'`,
+            },
+          },
+        ],
+      },
+      {
+        id: 'labels',
+        title: 'Namespaces by label',
+        blocks: [
+          { p: 'Preview environments come and go with every pull request. Instead of adding each one by hand, give the schedule a label selector under **And every namespace labelled**, for example `env=preview`. Every namespace with matching labels joins the schedule as soon as it is created or labelled, and the editor shows what matches right now.' },
+          {
+            list: [
+              'The syntax is kubectl\'s: `env=preview`, `team in (shop,payments)`, `!legacy`, combined with commas.',
+              'A namespace labelled `costdeck.io/schedule=off` is never selected, nor are Cost Deck\'s own namespace and Kubernetes\' `kube-*` namespaces. A selector without any label to match is refused: it would take the whole cluster.',
+              'When a namespace stops matching (its label changes, or it opts out), the schedule brings back what it had scaled down there and leaves it alone afterwards.',
+              'A schedule that lists a namespace by name wins over one that selects it by label; otherwise the older schedule wins, as for names.',
+            ],
+          },
+          {
+            ways: {
+              kubectl: `kubectl apply -f - <<'YAML'
+apiVersion: finops.costdeck.io/v1
+kind: ScalingGroup
+metadata: {name: previews, namespace: costdeck}
+spec:
+  category: Environments
+  namespaceSelector:
+    matchLabels: {env: preview}
+  schedules:
+    - {days: [1,2,3,4,5], startTime: "08:00", endTime: "19:00", timezone: Europe/Berlin}
+YAML
+
+# Keep one preview running whatever the schedule says
+kubectl label namespace pr-1234 costdeck.io/schedule=off`,
+            },
+          },
+        ],
+      },
+      {
+        id: 'exceptions',
+        title: 'Holidays and other exceptions',
+        blocks: [
+          { p: 'Some days the hours do not fit: nobody works on a public holiday, but a release weekend needs staging. Open the schedule, go to **Exceptions**, and add the dates with **Keep down** or **Keep up**. Whole days, or a time on the first and last day; times are in the schedule\'s timezone.' },
+          {
+            list: [
+              'A **holiday calendar** keeps the public holidays once for every schedule. Create it under **Settings → Holiday calendars**, type the days or import an `.ics` file, and pick it on the Exceptions tab of each schedule that should follow it.',
+              'A manual **Start now** or **Scale down now** still wins over an exception.',
+              'Where dates overlap, the one that starts last applies, so a release weekend inside a holiday break keeps the environment up.',
+              'The card says **Down for Christmas Day** and when the schedule takes over again, and *the next change* counts exceptions, also weeks ahead.',
+              'Cloud databases stay stopped for long breaks too: AWS starts a stopped Aurora cluster again after seven days, and Cost Deck stops it again within a minute.',
+            ],
+          },
+          {
+            ways: {
+              api: `# Keep dev down over Christmas and up for a release on a Saturday
+curl -X PUT "$COSTDECK/api/scaling/groups/dev" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"spec": {"category": "Environments", "namespaces": ["dev-frontend", "dev-backend"],
+       "schedules": [{"days": [1,2,3,4,5], "startTime": "08:00", "endTime": "19:00", "timezone": "Europe/Berlin"}],
+       "calendars": ["de-holidays"],
+       "exceptions": [
+         {"name": "Christmas break", "start": "2026-12-24", "end": "2027-01-01", "state": "Down"},
+         {"name": "Release", "start": "2026-11-07T06:00", "end": "2026-11-07T22:00", "state": "Up"}]}}'`,
+              kubectl: `kubectl patch scalinggroup dev -n costdeck --type merge -p '{"spec":{
+  "exceptions":[{"name":"Christmas break","start":"2026-12-24","end":"2027-01-01","state":"Down"}],
+  "calendars":["de-holidays"]}}'`,
+            },
+          },
+          { tip: 'Ask the assistant: "keep dev up on Saturday from 6 to 22 for the release". It adds the exception after you confirm; changing a schedule needs the admin role.' },
         ],
       },
       {
@@ -405,20 +494,100 @@ spec:
         id: 'gitops',
         title: 'Argo CD and Flux',
         blocks: [
-          { p: 'A GitOps tool that syncs `spec.replicas` from Git scales workloads straight back up. Tell it to ignore the fields Cost Deck manages. For Argo CD:' },
+          { p: 'A GitOps tool that syncs `spec.replicas` from Git scales workloads straight back up. Cost Deck recognises the workloads Argo CD (annotation tracking, its default) and Flux manage, names them in the schedule\'s preview and on its card, and offers two ways out.' },
+          { p: '**Pause GitOps while down.** Tick it in the schedule editor (`spec.pauseGitOps`). Before scaling down, Cost Deck suspends the Flux Kustomizations and HelmReleases and turns off self-heal of the Argo CD applications that manage the workloads, and it resumes them once everything is up again. It needs `gitops.pause=true` in the Helm chart, which grants reading and patching those objects.' },
+          {
+            list: [
+              'Only what Cost Deck paused itself is resumed (it marks it with `costdeck.io/gitops-paused`); something you suspended by hand stays suspended.',
+              'A Kustomization that also applies to namespaces outside the schedule is left running, and so is an application generated by an ApplicationSet, which would undo the change. The card says so; ignore the replicas for those instead.',
+            ],
+          },
+          { p: '**Or tell the tool to ignore what Cost Deck changes.** Cost Deck writes every change under the field manager `costdeck`, so one entry covers them all. For Argo CD:' },
           {
             code: `spec:
   ignoreDifferences:
     - group: apps
       kind: Deployment
-      jsonPointers: [/spec/replicas, /metadata/annotations/costdeck.io~1original-replicas]
+      managedFieldsManagers: [costdeck]
     - group: apps
       kind: StatefulSet
-      jsonPointers: [/spec/replicas, /metadata/annotations/costdeck.io~1original-replicas]
+      managedFieldsManagers: [costdeck]
   syncPolicy:
     syncOptions: [RespectIgnoreDifferences=true]`,
           },
-          { p: 'For Flux, leave `spec.replicas` out of the manifests, as you would with an HPA.' },
+          { p: 'For Flux, leave `spec.replicas` out of the manifests, as you would with an HPA, or set `spec.driftDetection.ignore` on the HelmRelease.' },
+        ],
+      },
+      {
+        id: 'suggest',
+        title: 'A schedule suggested from usage',
+        blocks: [
+          { p: 'With one namespace picked, **Suggest from usage** in the schedule editor reads its CPU usage over the last week from VictoriaMetrics and fills in the hours it was busy, in the schedule\'s time zone, with an hour of margin on either side. Busy means well above the namespace\'s own idle level, so a short nightly job counts too. The editor says what share of the week the schedule keeps it up and what it would save; check the hours and save.' },
+          { p: 'It suggests nothing when the namespace is busy at almost every hour (a schedule would cut into use), did nothing all week, or has less than a day of history; without VictoriaMetrics Cost Deck keeps only the last hour. The assistant and MCP answer the same through `suggest_schedule`.' },
+        ],
+      },
+      {
+        id: 'services',
+        title: 'Databases and other operator-run services',
+        blocks: [
+          { p: 'A database an operator runs does not stop when Cost Deck scales its pods: the operator brings them straight back. Under **Services to stop**, in a namespace\'s workload rules or a group\'s Advanced tab (for every namespace in it), Cost Deck asks the operator instead (`spec.hibernate`).' },
+          {
+            list: [
+              '**CloudNativePG**: clusters are hibernated (`cnpg.io/hibernation: on`); their volumes are kept, and they count as stopped once the operator reports them hibernated.',
+              '**Zalando Postgres**: `numberOfInstances` goes to zero and comes back to the earlier count. If the operator sets `min_instances`, exempt the clusters with its ignore-limits annotation, or it raises them again.',
+              '**Strimzi**: KafkaConnect, KafkaMirrorMaker2 and KafkaBridge go to zero replicas. A Kafka cluster itself cannot be stopped: Strimzi refuses a cluster without brokers and controllers.',
+              '**Another operator**: its apiVersion and kind, the replica field (`spec.replicas`), and optionally the ready field (`status.readyReplicas`) to wait for.',
+            ],
+          },
+          { p: 'Services stop once the namespace\'s workloads are down and start before them, so an application never runs without its database; the namespace counts as up only when they are ready. Names (`pg-*`) limit a rule to some resources. The workloads an operator runs for them (its StatefulSets, poolers) are left to it, through an `owner:<Kind>` exclusion the rule adds. Only what Cost Deck stopped (marked `costdeck.io/hibernated`) is started again, and a namespace that leaves a group gets its services back with its workloads.' },
+          { p: 'It needs `hibernation.enabled=true` in the Helm chart, which grants reading and patching those resources, and `hibernation.extraRules` for other operators. The preview lists the services a schedule would stop. Remove a rule only while the namespace is up: a service it stopped stays stopped.' },
+        ],
+      },
+      {
+        id: 'sleep-page',
+        title: 'A sleep page while down',
+        blocks: [
+          { p: 'With **Show a sleep page while down** in the schedule editor, once the namespaces are down Cost Deck points their Gateway API HTTPRoutes at its own page: whoever opens the application sees that it is asleep, when it starts again, and a link to wake it, instead of a gateway error. The routes get their backends back once the namespaces are up, so Cost Deck is never in the way of the traffic while they run.' },
+          { p: 'The link opens **Wake** in the dashboard (set the dashboard address under Settings → Single sign-on), where someone with the operator role starts the namespace for 1, 4 or 8 hours. The sleep page checks every 20 seconds and shows the application once it is back. A person wakes it, so bots and health checks do not keep it up. It needs `sleepPage.enabled=true` in the Helm chart.' },
+        ],
+      },
+      {
+        id: 'idle',
+        title: 'Sleep when unused',
+        blocks: [
+          { p: '**Sleep when unused for** in the schedule editor scales the namespaces down inside the schedule\'s hours once no request reached them for that long, and keeps them down until the schedule next starts them (at most a week) or someone starts them by hand. The card then says **Asleep, unused**.' },
+          { p: 'Use is measured in VictoriaMetrics: requests from Envoy Gateway, Istio or ingress-nginx, and GPUs busier than 5% (DCGM), so a notebook or a model server nobody calls goes to sleep while a training job does not. Namespaces without those metrics are never treated as unused; the schedule\'s details say so. Manual starts, exceptions and groups that depend on this one keep it up. With the sleep page on, whoever opens the application can wake it.' },
+        ],
+      },
+      {
+        id: 'preview-cleanup',
+        title: 'Delete preview namespaces',
+        blocks: [
+          { p: '**Settings → Preview cleanup** deletes the namespaces a label picks (for example `env=preview`) some time after they were created, so environments left over from finished pull requests stop costing money, volumes and load balancers included.' },
+          { warn: 'It deletes whole namespaces, and a deleted namespace cannot be restored. It is off unless the chart is installed with `namespaceTTL.enabled=true` and you switch it on; turning it on asks for a confirmation, and the first save is a dry run that only lists what would go.' },
+          {
+            list: [
+              'Never deleted: `kube-*`, `default`, Cost Deck\'s own namespace, namespaces a schedule lists by name, and those labelled `costdeck.io/ttl=off`.',
+              'CI can set a namespace\'s own time with the label `costdeck.io/ttl=3d`.',
+              'The channels that take alerts are warned a day before; **Keep 3 more days** moves the time and warns again.',
+            ],
+          },
+        ],
+      },
+      {
+        id: 'realized',
+        title: 'Realized savings',
+        blocks: [
+          { p: 'The saving a schedule shows is what its stopped workloads request. The bill drops only when Cluster Autoscaler or Karpenter removes the nodes they ran on. When a scale-down begins, Cost Deck records those nodes and what they cost, and the card of a schedule that is down shows under **Realized savings** which of them were removed and what that saves against the estimate.' },
+          { p: 'For each node still there it says why:' },
+          {
+            list: [
+              '**Kept by a blocker**: a PodDisruptionBudget that allows no disruption, `karpenter.sh/do-not-disrupt`, `cluster-autoscaler.kubernetes.io/safe-to-evict: "false"`, local storage (`hostPath` or a disk-backed `emptyDir`), a pod no controller would recreate, a pod of another controller, a kube-system pod without a budget, or an opt-out annotation on the node. Cluster Autoscaler honours all of them; Karpenter the budgets and `do-not-disrupt`.',
+              '**Still needed**: pods of other namespaces request at least half of it.',
+              '**Not removed** although it is nearly empty: check that an autoscaler manages its node pool.',
+            ],
+          },
+          { p: 'Autoscalers get 15 minutes before the verdict (Cluster Autoscaler waits 10 by default); until then the card says it is waiting. A schedule that was already down when Cost Deck was upgraded shows nothing until its next scale-down. The assistant and MCP answer the same through `realized_savings`.' },
         ],
       },
     ],
@@ -585,6 +754,9 @@ curl -H "Authorization: Bearer $TOKEN" "$COSTDECK/api/discovery/azure/vm"`,
           },
           { p: 'The AWS and Azure estimates are the per-core and per-GiB prices that their general-purpose instances work out at (m6i and r6i, Dsv5 and Esv5); the others are the reference rates OpenCost and Kubecost use. Without a cloud price list, network volumes are estimated at $0.08 a GiB-month, like a general-purpose cloud SSD.' },
           { p: 'Every cost figure says which basis it uses, and Settings → Prices shows the rates in effect. Spot, reservations and savings plans are not applied, so treat the numbers as list prices.' },
+          { p: '**GPUs** are priced apart, so a GPU node does not make every other pod look expensive. With cloud list prices a GPU costs its node\'s price less the node\'s CPU and memory, divided by its GPUs; otherwise an estimate for its model (from the `nvidia.com/gpu.product` label): T4 $0.33, L4 $0.61, A10G $0.81, L40S $1.61, A100 $1.81 (80 GB $2.50), H100 $5.13 an hour, AWS us-east-1 prices less CPU and memory. A custom GPU rate under Settings → Prices applies to every GPU. A namespace pays for the GPUs its pods request, MIG devices and time-sliced shares as their fraction of a GPU.' },
+          { p: '**AI Costs** shows what applications pay LLM APIs, by team and model, from the last seven days of token counts in VictoriaMetrics: LiteLLM\'s own spend per LiteLLM team, and OpenTelemetry GenAI token metrics (`gen_ai.client.token.usage`, or the newer input and output token counters) charged to the team of their namespace at the model prices under Settings → Prices. Models without a price are listed. For models served with vLLM, the namespace\'s run rate, GPUs included, divided by the tokens it served gives the cost per million tokens. The assistant and MCP answer through `get_ai_costs`.' },
+          { p: 'With VictoriaMetrics scraping NVIDIA\'s DCGM exporter in Kubernetes mode, the overview and the namespace table show how busy each namespace\'s GPUs were over the last day, and the advice names idle GPUs, GPUs several workloads could share through MIG or time-slicing, and cheaper models with enough memory. The assistant and MCP answer through `get_gpu_usage`.' },
           {
             ways: {
               api: `curl -X POST "$COSTDECK/api/costing" \\
@@ -595,6 +767,7 @@ spec:
   pricing:
     cpuCoreHour: "0.031"
     memoryGiBHour: "0.0042"
+    gpuHour: "0.81"
     currency: EUR`,
             },
           },
@@ -644,7 +817,7 @@ spec:
               'Containers that use **more** than they request are flagged too: they compete for capacity they never reserved.',
             ],
           },
-          { tip: 'Cost Deck only advises. It never changes requests or limits; you stay in control of your manifests.' },
+          { tip: 'By default Cost Deck only advises and never changes requests or limits. An admin can let operators apply advice or open pull requests with it (see below).' },
           {
             ways: {
               api: `curl -H "Authorization: Bearer $TOKEN" "$COSTDECK/api/namespaces/dev-backend/recommendations"`,
@@ -702,7 +875,21 @@ spec:
         id: 'legacy',
         title: 'Undo an automatic right-sizing from an earlier version',
         blocks: [
-          { p: 'Cost Deck 1.3 and earlier could rewrite requests automatically. Namespaces changed that way show **Revert optimization**, which restores the values from before the change. Newer versions only advise.' },
+          { p: 'Cost Deck 1.3 and earlier could rewrite requests automatically. Namespaces changed that way show **Revert optimization**, which restores the values from before the change.' },
+        ],
+      },
+      {
+        id: 'apply',
+        title: 'Apply advice, or open a pull request',
+        blocks: [
+          { p: 'By default Cost Deck only advises. Under **Settings → Right-sizing** an admin lets operators act on the advice from a namespace\'s page:' },
+          {
+            list: [
+              '**Apply** sets the workload\'s requests to the recommended ones (never above a limit), which rolls its pods. The new pods are watched for 30 minutes by default; if one is OOMKilled, restarts or crash-loops, the old requests come back and the alert channels are told. **Put back** undoes a change by hand.',
+              '**Pull request** finds the workload\'s manifest in your GitOps repository (GitHub, GitLab or Gitea), sets its requests and opens a pull request with what was used and the saving. Workloads Argo CD or Flux manage can only be changed this way.',
+            ],
+          },
+          { p: 'Every change, applied, proposed or put back, is listed under the advice with who made it and when.' },
         ],
       },
     ],
@@ -866,7 +1053,7 @@ spec:
             list: [
               '**Budget alerts** fire once per threshold per month. Reaching 100% first never sends the 80% alert afterwards.',
               '**Anomaly alerts** compare each namespace\'s cost for the day before with its average over the seven days before that, and fire when it is the chosen percentage higher and at least the minimum amount more.',
-              'Alerts go to the Webex space when one is connected, and are always listed under **Recent alerts**.',
+              'Alerts go to the Webex space and to Slack, Teams or email when they take alerts (Settings → Notifications), and are always listed under **Recent alerts**.',
             ],
           },
           { code: `# Prometheus: budgets heading over
@@ -883,11 +1070,43 @@ costdeck_budget_forecast_ratio > 1`, label: 'Alert from your own monitoring' },
     summary: 'The cost digest everyone reads, sent on a schedule, and AI-written reports for each audience.',
     topics: [
       {
+        id: 'estimate',
+        title: 'Cost estimates in pull requests',
+        blocks: [
+          { p: 'Render the manifests of the base branch and of the pull request (helm template, kustomize build) and Cost Deck prices the difference at your cluster\'s rates and with its schedules, so a pull request says it adds €340 a month before anyone merges it. HorizontalPodAutoscalers count at minReplicas, DaemonSets on every node.' },
+          { p: 'The GitHub Action `migalsp/costdeck/actions/cost-estimate` posts the estimate on the pull request and keeps it up to date; elsewhere, run the image with `estimate --base base.yaml --head head.yaml`. With `fail-above` a change that adds too much fails the check.' },
+          { ways: { api: `curl -H "Authorization: Bearer $TOKEN" -X POST "$COSTDECK/api/estimate" -d @change.json` } },
+        ],
+      },
+      {
+        id: 'clusters',
+        title: 'Several clusters side by side',
+        blocks: [
+          {
+            steps: [
+              'On each other Cost Deck installation, create a **viewer** API token under Settings → API tokens.',
+              'On the installation you open, add each one under **Settings → Clusters**: a name, its dashboard URL and the token. **Test connection**, then **Save**.',
+              'Open **Clusters**: every cluster with its cost, what schedules save, what more could be saved and this month so far, with totals.',
+            ],
+          },
+          { p: 'Each cluster is read at most once a minute; one that cannot be read says why. Tokens are kept in a Secret and never shown again.' },
+        ],
+      },
+      {
+        id: 'allocation',
+        title: 'Cost allocation: showback and chargeback',
+        blocks: [
+          { p: '**Reports → Cost allocation** shows what each team, environment, namespace or label value (such as `cost-center`) cost this month, last month or over the last 7 or 30 days, from the cost history. **Download CSV** gives finance the same table, and the rows add up to the bill.' },
+          { p: 'Under **Settings → Cost allocation**, list the namespaces every team relies on (`kube-*`, `monitoring`): their cost is charged to the others, by what each requests or evenly. Capacity no pod requests is either a line of its own or charged to the namespaces too.' },
+          { ways: { api: `curl -H "Authorization: Bearer $TOKEN" "$COSTDECK/api/finops/allocation.csv?by=label:cost-center&period=last-month"` } },
+        ],
+      },
+      {
         id: 'digest',
         title: 'The cost digest',
         blocks: [
           { p: 'The digest compares the last seven days, or the last calendar month, with the period before: what the nodes cost, what pods requested and used, what the schedules saved, the most expensive namespaces and teams, and the actions worth taking. It comes from the cost history, not from a model, so engineers and finance read the same numbers.' },
-          { p: 'Open **Reports**, pick **Last 7 days** or **Last month**, then copy it as Markdown, download it, or send it to the Webex space now.' },
+          { p: 'Open **Reports**, pick **Last 7 days** or **Last month**, then copy it as Markdown, download it, or send it now to the notification channels that take digests.' },
           { ways: { api: `curl -H "Authorization: Bearer $TOKEN" "$COSTDECK/api/reports/digest?period=week"` } },
         ],
       },
@@ -897,7 +1116,7 @@ costdeck_budget_forecast_ratio > 1`, label: 'Alert from your own monitoring' },
         blocks: [
           {
             steps: [
-              'Connect Webex with a space ID (Settings → Notifications → Webex).',
+              'Set up a channel under Settings → Notifications: Webex with a space ID, Slack, Teams or email.',
               'In **Reports** → **Scheduled digest**, switch it on and choose weekly (Mondays) or monthly (the 1st), the time and the time zone.',
               'Save. The digest is posted at that time and kept in the history.',
             ],
@@ -942,7 +1161,7 @@ spec:
     id: 'access',
     title: 'Access and sign-in',
     icon: 'access',
-    summary: 'Roles, users, single sign-on with Microsoft Entra ID, and API tokens.',
+    summary: 'Roles, users, single sign-on with Microsoft Entra ID, Keycloak or any OpenID Connect provider, and API tokens.',
     topics: [
       {
         id: 'roles',
@@ -993,6 +1212,21 @@ spec:
         ],
       },
       {
+        id: 'oidc',
+        title: 'Sign in with Keycloak or another OpenID Connect provider',
+        blocks: [
+          {
+            steps: [
+              'In Keycloak, create a confidential OpenID Connect client with the standard flow, the redirect URI `https://<your-host>/api/auth/oidc/callback`, and a **Group Membership** mapper that adds `groups` to the ID token.',
+              'In Cost Deck open **Settings** → **Single sign-on**, click **Keycloak defaults**, and enter the issuer (`https://<keycloak>/realms/<realm>`), client ID and secret.',
+              'Map groups to roles: with full group paths a mapping works with or without the leading slash (`/costdeck-admins`). Realm roles named viewer, operator or admin count as they are.',
+              'Click **Test connection**, then use **Sign in with Keycloak** in a private window.',
+            ],
+          },
+          { p: 'Any other OpenID Connect provider (Okta, Auth0, Dex…) works the same way: set its issuer, and the claims that carry groups and roles; dotted paths such as `resource_access.costdeck.roles` reach nested claims. Without **Let anyone the provider signs in use Cost Deck**, only users with a mapped group or role get in.' },
+        ],
+      },
+      {
         id: 'tokens',
         title: 'API tokens',
         blocks: [
@@ -1039,6 +1273,7 @@ curl -H "Authorization: Bearer $TOKEN" "$COSTDECK/api/scaling/groups"`, label: '
             ],
           },
           { tip: 'The model sees what the assistant\'s tools return: namespace and workload names, usage, costs and schedule states. It cannot read Secrets or logs.' },
+          { p: '**Monthly token budget**: the assistant and AI reports count the tokens every answer uses, as the provider reports them (or estimated from the text, four characters a token, when it does not). Once the month\'s budget is used up they refuse new requests until the next month (UTC) or until an admin raises it. Settings shows the month\'s usage, priced at the model\'s price under Settings → Prices, and so does **AI Costs**.' },
         ],
       },
       {
@@ -1112,15 +1347,49 @@ claude mcp add --transport http costdeck https://costdeck.example.com/mcp \\
                 ['get_cluster_overview', 'Nodes, cost and the biggest namespaces'],
                 ['list_scaling_groups, get_scaling_group', 'Schedules and their state'],
                 ['list_namespace_configs', 'Per-namespace configs and workload rules'],
+                ['list_calendars', 'Shared holiday calendars and their days to come'],
+                ['add_schedule_exception, remove_schedule_exception', 'Keep a schedule up or down on given dates (admin)'],
+                ['preview_schedule', 'What a schedule would scale, when, and what it saves, without changing anything'],
+                ['realized_savings', 'Which nodes a scale-down freed, and what keeps the others'],
+                ['get_gpu_usage', 'What the GPUs cost, who holds them, how busy they are, and the GPU advice'],
+                ['get_ai_costs', 'LLM API spend by team and model, and what self-hosted models cost per million tokens'],
+                ['suggest_schedule', 'Working hours for a namespace, read from a week of its CPU usage'],
                 ['list_namespaces, get_namespace_status', 'Usage and cost per namespace'],
                 ['get_cost_overview', 'Run rate, efficiency, month to date, savings and the ranked opportunities'],
                 ['get_rightsizing_recommendations', 'What can be reduced in a namespace'],
                 ['scale_group, scale_namespace', 'Start now, scale down now, or resume the schedule (operator)'],
-                ['revert_optimization', 'Undo an automatic right-sizing from version 1.3 or earlier (operator)'],
+                ['get_cost_allocation', 'A period\'s cost by team, environment, namespace or label, with shared and idle cost'],
+                ['get_clusters', 'Every Cost Deck installation side by side'],
+                ['apply_rightsizing, propose_rightsizing', 'Apply a workload\'s advice, or open a pull request with it (operator)'],
+                ['revert_optimization', 'Put back the requests right-sizing changed in a namespace (operator)'],
               ],
             },
           },
           { warn: 'Action tools change the cluster immediately. Give clients a viewer token unless they need to scale.' },
+        ],
+      },
+    ],
+  },
+
+  {
+    id: 'notifications',
+    title: 'Slack, Teams and email',
+    icon: 'webex',
+    summary: 'Scaling changes, alerts and digests in the chat and mailboxes your teams already read.',
+    topics: [
+      {
+        id: 'channels',
+        title: 'Set up a channel',
+        blocks: [
+          {
+            steps: [
+              'Open **Settings** → **Notifications** and switch on Slack, Microsoft Teams or Email.',
+              'Slack: paste the URL of an incoming webhook. Teams: the URL of a workflow "Post to a channel when a webhook request is received". Email: the SMTP server, the sender and the recipients.',
+              'Tick what the channel should get: scaling changes, alerts, digests.',
+              'Press **Send test message**, then **Save**.',
+            ],
+          },
+          { p: 'Webhook URLs and the SMTP password are kept in Secrets and never shown again. A password is only sent over TLS. When one channel is down the others still get the message, and reports and alerts say where they went.' },
         ],
       },
     ],

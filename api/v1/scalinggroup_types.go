@@ -21,15 +21,26 @@ import (
 )
 
 // ScalingGroupSpec defines the desired state of ScalingGroup
+// +kubebuilder:validation:XValidation:rule="(has(self.namespaces) && size(self.namespaces) > 0) || has(self.namespaceSelector)",message="list namespaces or set a namespaceSelector"
 type ScalingGroupSpec struct {
 	// Category is the group classification (e.g. Solution, Platform)
 	// +kubebuilder:validation:Required
 	Category string `json:"category"`
 
 	// Namespaces is the list of namespaces managed by this group
-	// +kubebuilder:validation:MinItems=1
+	// +optional
 	// +listType=set
 	Namespaces []string `json:"namespaces"`
+
+	// NamespaceSelector adds every namespace whose labels match, such as the preview
+	// environments of a pull request, so they join the group as they are created. A
+	// namespace labelled costdeck.io/schedule=off is never selected, nor is the operator's
+	// own. Where groups claim the same namespace, one that lists it by name wins over one
+	// that selects it, and otherwise the older group. When a namespace stops matching, the
+	// group brings back what it scaled down there. status.selectedNamespaces shows the
+	// matches.
+	// +optional
+	NamespaceSelector *metav1.LabelSelector `json:"namespaceSelector,omitempty"`
 
 	// Active is a manual override. While it is set the schedule is ignored completely:
 	// true forces the group up, false forces it down. Remove the field (null) to return
@@ -48,6 +59,27 @@ type ScalingGroupSpec struct {
 	// +optional
 	// +listType=atomic
 	Schedules []ScalingSchedule `json:"schedules,omitempty"`
+
+	// Hibernate stops services that operators run, such as databases, in every namespace of
+	// the group, after its workloads, and starts them before; the rules of a namespace's own
+	// ScalingConfig add to these. Needs hibernation.enabled in the Helm chart.
+	// +kubebuilder:validation:MaxItems=20
+	// +optional
+	// +listType=atomic
+	Hibernate []HibernateRule `json:"hibernate,omitempty"`
+
+	// Exceptions override the schedules on given dates (holidays, release weekends).
+	// +kubebuilder:validation:MaxItems=100
+	// +optional
+	// +listType=atomic
+	Exceptions []ScheduleException `json:"exceptions,omitempty"`
+
+	// Calendars names shared holiday calendars (CostDeckConfig spec.calendars) whose days
+	// apply as exceptions too.
+	// +kubebuilder:validation:MaxItems=10
+	// +optional
+	// +listType=set
+	Calendars []string `json:"calendars,omitempty"`
 
 	// Sequence defines the order of scaling namespaces.
 	// Each element can be a single namespace or multiple namespaces separated by spaces (a "stage").
@@ -83,6 +115,35 @@ type ScalingGroupSpec struct {
 	// +kubebuilder:validation:Enum=Schedule;OnDemand
 	// +optional
 	Activation string `json:"activation,omitempty"`
+
+	// DryRun works out what the schedule would do and reports it (phase DryRun and the
+	// DryRun condition) without scaling anything, to try a schedule before it acts. To the
+	// schedules that depend on it, a group in dry run counts as up.
+	// +optional
+	DryRun bool `json:"dryRun,omitempty"`
+
+	// PauseGitOps pauses the GitOps tools that would bring the workloads back while the
+	// schedule keeps them down: Flux Kustomizations and HelmReleases are suspended and Argo CD
+	// Applications lose self-heal, and they are resumed once everything is up again. Only
+	// what CostDeck paused itself is resumed. Needs gitops.pause in the Helm chart.
+	// +optional
+	PauseGitOps bool `json:"pauseGitOps,omitempty"`
+
+	// SleepPage points the namespaces' Gateway API HTTPRoutes at Cost Deck's sleep page while
+	// the schedule keeps them down, and back once they are up: whoever opens an application
+	// sees that it is asleep and a link to wake it, not a gateway error. Needs
+	// sleepPage.enabled in the Helm chart.
+	// +optional
+	SleepPage bool `json:"sleepPage,omitempty"`
+
+	// IdleAfter puts the namespaces to sleep inside the schedule's hours once nobody has
+	// used them for this long: no requests through Envoy Gateway, Istio or ingress-nginx and
+	// no GPU busier than 5% (DCGM) in VictoriaMetrics, counted once they have been up that
+	// long. They stay down until the schedule next starts them, at most a week, or until
+	// someone starts them by hand. Namespaces without such metrics are never treated as
+	// unused.
+	// +optional
+	IdleAfter *metav1.Duration `json:"idleAfter,omitempty"`
 }
 
 // Activation modes for ScalingGroupSpec.Activation.
@@ -185,6 +246,12 @@ type ScalingGroupStatus struct {
 	// RequiredBy lists the dependent groups that currently keep this group up.
 	// +optional
 	RequiredBy []string `json:"requiredBy,omitempty"`
+
+	// SelectedNamespaces are the namespaces spec.namespaceSelector matched at the last
+	// reconcile.
+	// +optional
+	// +listType=atomic
+	SelectedNamespaces []string `json:"selectedNamespaces,omitempty"`
 
 	// ConflictingNamespaces lists namespaces this group skips because an older
 	// ScalingGroup already manages them. A namespace is never scaled by two groups.

@@ -97,7 +97,7 @@ const badgeTones: Record<Tone, string> = {
 
 export function Badge({ tone = 'neutral', children, title }: { tone?: Tone; children: ReactNode; title?: string }) {
   return (
-    <span title={title} className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[11px] font-semibold ${badgeTones[tone]}`}>
+    <span title={title} className={`inline-flex shrink-0 items-center gap-1 whitespace-nowrap px-2 py-0.5 rounded-md border text-[11px] font-semibold ${badgeTones[tone]}`}>
       {children}
     </span>
   )
@@ -149,7 +149,7 @@ export function Modal({ title, subtitle, onClose, children, footer, headerExtra,
   useEscape(onClose)
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-slate-900/40" onClick={dismissOnBackdrop ? onClose : undefined} />
+      <div className="absolute inset-0 bg-slate-900/40 dark:bg-black/60" onClick={dismissOnBackdrop ? onClose : undefined} />
       <div className={`relative w-full ${modalWidths[size]} ${tall ? 'h-[85vh]' : 'max-h-[90vh]'} bg-white rounded-2xl shadow-2xl flex flex-col animate-pop`}>
         <div className={`px-6 pt-5 ${headerExtra ? 'pb-0' : 'pb-4'} border-b border-slate-200`}>
           <div className="flex items-start justify-between gap-4">

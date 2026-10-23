@@ -46,9 +46,15 @@ func control(_, address string, _ syscall.RawConn) error {
 	return nil
 }
 
+// Dialer returns a dialer that refuses metadata addresses, for protocols other than HTTP
+// such as SMTP.
+func Dialer(timeout time.Duration) *net.Dialer {
+	return &net.Dialer{Timeout: timeout, KeepAlive: 30 * time.Second, Control: control}
+}
+
 // Transport returns a clone of http.DefaultTransport that refuses metadata addresses.
 func Transport() *http.Transport {
 	t := http.DefaultTransport.(*http.Transport).Clone()
-	t.DialContext = (&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second, Control: control}).DialContext
+	t.DialContext = Dialer(30 * time.Second).DialContext
 	return t
 }

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { LogIn } from 'lucide-react'
+import { KeyRound, LogIn } from 'lucide-react'
 
 interface LoginPageProps {
   onLogin: () => void;
@@ -8,6 +8,7 @@ interface LoginPageProps {
 interface AuthConfig {
   localLogin: boolean
   entra: { enabled: boolean }
+  oidc?: { enabled: boolean; displayName: string }
 }
 
 const MicrosoftLogo = () => (
@@ -83,10 +84,11 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
     }
   }
 
-  const signInWithMicrosoft = () => {
+  const signInWith = (provider: 'entra' | 'oidc') => {
     const back = window.location.pathname + window.location.search
-    window.location.href = `/api/auth/entra/login?return=${encodeURIComponent(back)}`
+    window.location.href = `/api/auth/${provider}/login?return=${encodeURIComponent(back)}`
   }
+  const sso = config.entra.enabled || !!config.oidc?.enabled
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center p-4">
@@ -108,7 +110,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
           {config.entra.enabled && (
             <button
               type="button"
-              onClick={signInWithMicrosoft}
+              onClick={() => signInWith('entra')}
               className="w-full flex items-center justify-center gap-3 px-6 py-3 bg-white hover:bg-slate-100 text-slate-800 font-bold rounded-xl transition-all shadow-lg"
             >
               <MicrosoftLogo />
@@ -116,7 +118,18 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
             </button>
           )}
 
-          {config.entra.enabled && config.localLogin && (
+          {config.oidc?.enabled && (
+            <button
+              type="button"
+              onClick={() => signInWith('oidc')}
+              className={`w-full flex items-center justify-center gap-3 px-6 py-3 bg-white hover:bg-slate-100 text-slate-800 font-bold rounded-xl transition-all shadow-lg ${config.entra.enabled ? 'mt-3' : ''}`}
+            >
+              <KeyRound size={18} aria-hidden="true" />
+              Sign in with {config.oidc.displayName}
+            </button>
+          )}
+
+          {sso && config.localLogin && (
             <div className="flex items-center gap-3 my-6 text-[10px] uppercase tracking-widest text-slate-500 font-bold">
               <div className="h-px flex-1 bg-white/10" /> or <div className="h-px flex-1 bg-white/10" />
             </div>
@@ -135,7 +148,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
                     onChange={e => setUsername(e.target.value)}
                     className="w-full px-4 py-3 bg-slate-800/50 border border-slate-700 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/50 focus:border-emerald-500/50 transition-all"
                     placeholder="costdeck"
-                    autoFocus={!config.entra.enabled}
+                    autoFocus={!sso}
                     autoComplete="username"
                     required
                   />

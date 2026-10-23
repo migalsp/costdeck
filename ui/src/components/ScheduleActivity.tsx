@@ -3,6 +3,7 @@ import { AlertTriangle, ArrowLeft, ArrowRight, Check, Clock, Cloud, Link2, Loade
 import { targetLabel } from '../lib/cloud'
 import type { ScalingGroup } from '../lib/types'
 import { usePolling } from '../lib/usePolling'
+import { groupNamespaces } from '../lib/selector'
 
 interface KubeEvent {
   metadata: { name: string; creationTimestamp: string }
@@ -31,7 +32,7 @@ const busyPhases = ['ScalingUp', 'ScalingDown', 'WaitingForDependencies']
 function startStages(group: ScalingGroup): string[][] {
   const stages = (group.spec.sequence || []).map(s => s.split(/\s+/).filter(Boolean)).filter(s => s.length > 0)
   const placed = new Set(stages.flat())
-  const rest = group.spec.namespaces.filter(ns => !placed.has(ns))
+  const rest = groupNamespaces(group).filter(ns => !placed.has(ns))
   return rest.length ? [...stages, rest] : stages
 }
 
@@ -147,7 +148,7 @@ export default function ScheduleActivity({ group: initial }: { group: ScalingGro
   const arrow = down
     ? <ArrowLeft size={18} className="shrink-0 self-center text-slate-300" />
     : <ArrowRight size={18} className="shrink-0 self-center text-slate-300" />
-  const total = group.status?.namespacesTotal || group.spec.namespaces.length
+  const total = group.status?.namespacesTotal || groupNamespaces(group).length
   const directionText = phase === 'WaitingForDependencies' ? 'Waiting for dependencies before starting'
     : busy ? (down ? 'Scaling down: right to left, stage by stage' : 'Scaling up: left to right, stage by stage')
       : phase === 'ScaledDown' ? 'Scaled down' : phase === 'ScaledUp' ? 'Up and ready' : phase || 'No activity yet'

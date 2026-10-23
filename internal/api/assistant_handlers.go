@@ -83,9 +83,11 @@ func (s *Server) loadAIProvider(w http.ResponseWriter, r *http.Request) (ai.Prov
 }
 
 // canMutate reports whether the caller may confirm cluster changes.
-func canMutate(r *http.Request) bool {
-	id := auth.FromContext(r.Context())
-	return id == nil || id.Role.Allows(auth.RoleOperator)
+// roleAllows reports whether the caller has at least role. Without an identity the
+// dashboard runs with authentication disabled, where everyone is admin.
+func roleAllows(ctx context.Context, role auth.Role) bool {
+	id := auth.FromContext(ctx)
+	return id == nil || id.Role.Allows(role)
 }
 
 // handleAIChat streams an assistant answer: POST /api/ai/chat {"messages": [...]}.
@@ -98,7 +100,7 @@ func (s *Server) handleAIChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	provider, ok := s.loadAIProvider(w, r)
-	if !ok {
+	if !ok || !s.checkAIBudget(w, r) {
 		return
 	}
 	stream, ok := newEventStream(w)
@@ -107,10 +109,12 @@ func (s *Server) handleAIChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	agent := &ai.Agent{Provider: provider, System: assistantSystemPrompt, Tools: s.toolsFor(canMutate(r))}
+	agent := &ai.Agent{Provider: provider, System: assistantSystemPrompt, Tools: s.toolsFor(r.Context())}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
 	defer cancel()
-	if err := agent.Run(ctx, req.Messages, stream.send); err != nil {
+	meter := &usageMeter{}
+	defer s.recordAIUsage(r.Context(), meter)
+	if err := agent.Run(ctx, req.Messages, meter.observe(stream.send)); err != nil {
 		logf.FromContext(ctx).Error(err, "Assistant request failed")
 		stream.send(ai.Event{Type: "error", Text: userMessage(err)})
 	}
@@ -135,6 +139,10 @@ func (s *Server) handleAIExecuteTool(w http.ResponseWriter, r *http.Request) {
 		var bad errBadOverride
 		if errors.As(err, &bad) {
 			writeError(w, http.StatusBadRequest, bad.Error())
+			return
+		}
+		if errors.Is(err, errAdminOnly) {
+			writeError(w, http.StatusForbidden, err.Error())
 			return
 		}
 		writeK8sError(w, err)

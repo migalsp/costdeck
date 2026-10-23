@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 )
 
 // openAIProvider speaks the OpenAI Chat Completions API, which OpenAI, most gateways and
@@ -99,6 +100,11 @@ type openAISession struct {
 }
 
 type oaChunk struct {
+	// Usage comes in the last chunk when stream_options.include_usage is set.
+	Usage *struct {
+		PromptTokens     int64 `json:"prompt_tokens"`
+		CompletionTokens int64 `json:"completion_tokens"`
+	} `json:"usage"`
 	Choices []struct {
 		Delta struct {
 			Content   string `json:"content"`
@@ -115,25 +121,53 @@ type oaChunk struct {
 	} `json:"choices"`
 }
 
+// noStreamUsage remembers the endpoints that refused stream_options: their usage is
+// estimated instead.
+var noStreamUsage sync.Map
+
+// post sends a chat completion request, asking for the token usage unless the endpoint
+// refused that before. An endpoint that refuses it is asked once more without.
+func (s *openAISession) post(ctx context.Context, body map[string]any) (*http.Response, []byte, error) {
+	endpoint := s.p.s.baseURL() + "/chat/completions"
+	_, refused := noStreamUsage.Load(endpoint)
+	if !refused {
+		body["stream_options"] = map[string]any{"include_usage": true}
+	}
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return nil, nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
+	if err != nil {
+		return nil, nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	s.p.authorize(req)
+	resp, err := s.p.s.httpClient().Do(req)
+	if err != nil {
+		return nil, nil, fmt.Errorf("could not reach %s: %w", s.p.s.Provider, err)
+	}
+	if resp.StatusCode == http.StatusBadRequest && !refused {
+		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
+		_ = resp.Body.Close()
+		if strings.Contains(string(msg), "stream_options") {
+			noStreamUsage.Store(endpoint, true)
+			delete(body, "stream_options")
+			return s.post(ctx, body)
+		}
+		resp.Body = io.NopCloser(bytes.NewReader(msg))
+	}
+	return resp, payload, nil
+}
+
 func (s *openAISession) Step(ctx context.Context, emit func(Event)) ([]ToolCall, error) {
 	body := map[string]any{"model": s.p.s.Model, "stream": true, "messages": s.messages}
 	if len(s.tools) > 0 {
 		body["tools"] = s.tools
 	}
-	payload, err := json.Marshal(body)
+	resp, payload, err := s.post(ctx, body)
 	if err != nil {
 		return nil, err
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.p.s.baseURL()+"/chat/completions", bytes.NewReader(payload))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	s.p.authorize(req)
-
-	resp, err := s.p.s.httpClient().Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("could not reach %s: %w", s.p.s.Provider, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 300 {
@@ -143,10 +177,14 @@ func (s *openAISession) Step(ctx context.Context, emit func(Event)) ([]ToolCall,
 	var text strings.Builder
 	calls := map[int]*oaToolCall{}
 	finish := ""
+	var usage *Usage
 	err = readSSE(resp.Body, func(data string) error {
 		var chunk oaChunk
 		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
 			return nil // Keep-alive comments and vendor extensions are skipped.
+		}
+		if u := chunk.Usage; u != nil && u.PromptTokens > 0 {
+			usage = &Usage{InputTokens: u.PromptTokens, OutputTokens: u.CompletionTokens}
 		}
 		for _, choice := range chunk.Choices {
 			if choice.Delta.Content != "" {
@@ -177,6 +215,14 @@ func (s *openAISession) Step(ctx context.Context, emit func(Event)) ([]ToolCall,
 	if err != nil {
 		return nil, err
 	}
+	if usage == nil {
+		out := text.Len()
+		for _, c := range calls {
+			out += len(c.Function.Name) + len(c.Function.Arguments)
+		}
+		usage = &Usage{InputTokens: estimateTokens(len(payload)), OutputTokens: estimateTokens(out), Estimated: true}
+	}
+	emit(Event{Type: "usage", Usage: usage})
 	if finish == "content_filter" {
 		return nil, ErrRefused
 	}

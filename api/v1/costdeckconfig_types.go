@@ -157,6 +157,13 @@ type AIIntegrationConfig struct {
 	// SkipSSLVerify allows skipping TLS certificate verification for custom endpoints
 	// +optional
 	SkipSSLVerify bool `json:"skipSslVerify,omitempty"`
+
+	// MonthlyTokenBudget caps the tokens (input and output) the assistant and AI reports
+	// may use in a calendar month (UTC); once it is spent they refuse new requests until
+	// the next month. 0 means no cap.
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	MonthlyTokenBudget int64 `json:"monthlyTokenBudget,omitempty"`
 }
 
 // WebexConfig configures the Webex bot.
@@ -255,9 +262,182 @@ type IntegrationsConfig struct {
 	// MCP Server configuration
 	// +optional
 	MCP *MCPConfig `json:"mcp,omitempty"`
+
+	// Notifications sends alerts, digests and scaling changes to Slack, Microsoft Teams or
+	// email, besides the Webex space.
+	// +optional
+	Notifications *NotificationsConfig `json:"notifications,omitempty"`
+}
+
+// NotificationEvent is a kind of message Cost Deck sends: schedules (a schedule finished
+// scaling up or down), alerts (budgets, cost anomalies, namespaces about to be deleted) or
+// digests (the scheduled cost summary).
+// +kubebuilder:validation:Enum=schedules;alerts;digests
+type NotificationEvent string
+
+// NotificationsConfig lists the channels besides Webex.
+type NotificationsConfig struct {
+	// Slack posts through an incoming webhook.
+	// +optional
+	Slack *WebhookChannelConfig `json:"slack,omitempty"`
+
+	// Teams posts through a Microsoft Teams Workflows webhook ("Post to a channel when a
+	// webhook request is received"), as an Adaptive Card.
+	// +optional
+	Teams *WebhookChannelConfig `json:"teams,omitempty"`
+
+	// Email sends through an SMTP server.
+	// +optional
+	Email *EmailChannelConfig `json:"email,omitempty"`
+}
+
+// WebhookChannelConfig is a chat channel reached through an incoming webhook.
+type WebhookChannelConfig struct {
+	// Enabled turns the channel on.
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+
+	// SecretRef names the Secret holding the webhook URL under WEBHOOK_URL: whoever has
+	// the URL can post to the channel, so it is kept out of the CR.
+	// +optional
+	SecretRef string `json:"secretRef,omitempty"`
+
+	// Events limits what the channel receives; empty sends everything.
+	// +listType=set
+	// +optional
+	Events []NotificationEvent `json:"events,omitempty"`
+}
+
+// EmailChannelConfig sends notifications by email.
+type EmailChannelConfig struct {
+	// Enabled turns the channel on.
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+
+	// Host is the SMTP server, such as smtp.example.com.
+	// +kubebuilder:validation:MaxLength=253
+	// +optional
+	Host string `json:"host,omitempty"`
+
+	// Port of the SMTP server. Defaults to 587, or 465 with Security tls.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	// +optional
+	Port int32 `json:"port,omitempty"`
+
+	// Security is starttls (the default: upgrade the connection before signing in), tls
+	// (TLS from the start, usually port 465) or none (a relay inside the cluster; no
+	// password is sent without TLS).
+	// +kubebuilder:validation:Enum=starttls;tls;none
+	// +optional
+	Security string `json:"security,omitempty"`
+
+	// From is the sender address.
+	// +optional
+	From string `json:"from,omitempty"`
+
+	// To lists the recipients.
+	// +kubebuilder:validation:MaxItems=50
+	// +listType=atomic
+	// +optional
+	To []string `json:"to,omitempty"`
+
+	// Username signs in to the SMTP server; empty sends without signing in.
+	// +optional
+	Username string `json:"username,omitempty"`
+
+	// SecretRef names the Secret holding the SMTP password under PASSWORD.
+	// +optional
+	SecretRef string `json:"secretRef,omitempty"`
+
+	// Events limits what is sent; empty sends everything.
+	// +listType=set
+	// +optional
+	Events []NotificationEvent `json:"events,omitempty"`
 }
 
 // ─── Authentication ──────────────────────────────────────────────────────────
+
+// OIDCConfig configures single sign-on with an OpenID Connect provider: the authorization
+// code flow with PKCE, a nonce and the issuer's keys, as for Entra ID.
+// +kubebuilder:validation:XValidation:rule="!self.enabled || (size(self.issuerUrl) > 0 && size(self.clientId) > 0)",message="issuerUrl and clientId are required when OIDC sign-in is enabled"
+type OIDCConfig struct {
+	// Enabled shows the sign-in button and accepts sign-ins from the provider.
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+
+	// DisplayName labels the button: "Sign in with <DisplayName>". Defaults to "single
+	// sign-on".
+	// +kubebuilder:validation:MaxLength=64
+	// +optional
+	DisplayName string `json:"displayName,omitempty"`
+
+	// IssuerURL is the provider's issuer, whose /.well-known/openid-configuration is read,
+	// e.g. https://keycloak.example.com/realms/costdeck. It must be HTTPS: the client
+	// secret is sent to it.
+	// +kubebuilder:validation:Pattern=`^https://[^\s]+$`
+	// +kubebuilder:validation:MaxLength=512
+	// +optional
+	IssuerURL string `json:"issuerUrl,omitempty"`
+
+	// ClientID of the client registered for CostDeck.
+	// +kubebuilder:validation:MaxLength=256
+	// +optional
+	ClientID string `json:"clientId,omitempty"`
+
+	// ClientSecretRef names the Secret holding the client secret under CLIENT_SECRET.
+	// Without one the client is public and PKCE alone protects the code.
+	// +optional
+	ClientSecretRef string `json:"clientSecretRef,omitempty"`
+
+	// RedirectURL must match a redirect URI of the client exactly:
+	// https://<host>/api/auth/oidc/callback. Derived from the request host when empty.
+	// +kubebuilder:validation:MaxLength=512
+	// +optional
+	RedirectURL string `json:"redirectUrl,omitempty"`
+
+	// Scopes requested besides openid. Defaults to profile and email; add groups or roles
+	// when the provider only sends those claims for a scope.
+	// +listType=atomic
+	// +optional
+	Scopes []string `json:"scopes,omitempty"`
+
+	// GroupsClaim is the claim listing the user's groups; dotted paths reach nested claims.
+	// Defaults to groups (Keycloak's group membership mapper; full paths such as /team-a
+	// match a mapping with or without the leading slash).
+	// +kubebuilder:validation:MaxLength=128
+	// +optional
+	GroupsClaim string `json:"groupsClaim,omitempty"`
+
+	// RolesClaim is a claim listing roles named viewer, operator or admin, which are honoured
+	// as they are, e.g. realm_access.roles (Keycloak realm roles) or
+	// resource_access.costdeck.roles (client roles).
+	// +kubebuilder:validation:MaxLength=128
+	// +optional
+	RolesClaim string `json:"rolesClaim,omitempty"`
+
+	// DefaultRole is granted to users who match no group or role: viewer, operator or admin.
+	// +kubebuilder:validation:Enum=viewer;operator;admin
+	// +kubebuilder:default=viewer
+	// +optional
+	DefaultRole string `json:"defaultRole,omitempty"`
+
+	// AutoProvision lets anyone the provider signs in use CostDeck with DefaultRole. When
+	// false, only users matched by GroupRoleMapping or RolesClaim may sign in.
+	// +kubebuilder:default=true
+	// +optional
+	AutoProvision *bool `json:"autoProvision,omitempty"`
+
+	// GroupRoleMapping maps groups (as GroupsClaim lists them) to a role. The most
+	// privileged match wins.
+	// +optional
+	GroupRoleMapping map[string]string `json:"groupRoleMapping,omitempty"`
+
+	// SkipSSLVerify disables TLS verification towards the provider. Only for providers with
+	// a certificate the operator cannot verify, and SSL-inspecting proxies.
+	// +optional
+	SkipSSLVerify bool `json:"skipSslVerify,omitempty"`
+}
 
 // EntraConfig configures Microsoft Entra ID (Azure AD) single sign-on using the OpenID
 // Connect authorization code flow with PKCE.
@@ -329,6 +509,11 @@ type AuthConfig struct {
 	// +optional
 	Entra *EntraConfig `json:"entra,omitempty"`
 
+	// OIDC configures single sign-on with any other OpenID Connect provider: Keycloak,
+	// Okta, Auth0, Dex, Google and the like.
+	// +optional
+	OIDC *OIDCConfig `json:"oidc,omitempty"`
+
 	// DisableLocalLogin hides the username/password form once SSO works. The built-in
 	// admin account (COSTDECK_AUTH_USER/PASSWORD) then only serves as break-glass access
 	// through the API.
@@ -377,18 +562,47 @@ type PricingConfig struct {
 	// +kubebuilder:validation:Pattern=`^[0-9]+(\.[0-9]+)?$`
 	// +optional
 	LoadBalancerMonth string `json:"loadBalancerMonth,omitempty"`
+
+	// GPUHour is the price of one GPU for one hour, e.g. "0.81", for every GPU model.
+	// Without it a GPU costs its share of the node's list price, or an estimate for its
+	// model.
+	// +kubebuilder:validation:Pattern=`^[0-9]+(\.[0-9]+)?$`
+	// +optional
+	GPUHour string `json:"gpuHour,omitempty"`
+
+	// LLMModels price the LLM tokens applications report through OpenTelemetry, per
+	// million tokens. LiteLLM reports what its tokens cost itself.
+	// +kubebuilder:validation:MaxItems=100
+	// +listType=atomic
+	// +optional
+	LLMModels []LLMModelPrice `json:"llmModels,omitempty"`
+}
+
+// LLMModelPrice is what a model's tokens cost.
+type LLMModelPrice struct {
+	// Model as the metrics name it (gen_ai.request.model), e.g. "gpt-4o"; globs such as
+	// "claude-sonnet-*" work. The first matching entry wins.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=200
+	Model string `json:"model"`
+	// InputPer1M and OutputPer1M are the price of a million input and output tokens.
+	// +kubebuilder:validation:Pattern=`^[0-9]+(\.[0-9]+)?$`
+	InputPer1M string `json:"inputPer1M"`
+	// +kubebuilder:validation:Pattern=`^[0-9]+(\.[0-9]+)?$`
+	OutputPer1M string `json:"outputPer1M"`
 }
 
 // ReportsConfig schedules the reports CostDeck sends by itself.
 type ReportsConfig struct {
-	// Digest posts a cost summary to the Webex space on a schedule.
+	// Digest posts a cost summary to the notification channels on a schedule.
 	// +optional
 	Digest DigestSchedule `json:"digest,omitempty"`
 }
 
 // DigestSchedule says when the cost digest is sent.
 type DigestSchedule struct {
-	// Enabled turns the scheduled digest on. It needs Webex with a space ID.
+	// Enabled turns the scheduled digest on. It needs a notification channel: Webex
+	// with a space ID, Slack, Teams or email.
 	// +optional
 	Enabled bool `json:"enabled,omitempty"`
 
@@ -569,6 +783,13 @@ type CostDeckConfigSpec struct {
 	// +optional
 	ClusterName string `json:"clusterName,omitempty"`
 
+	// DashboardURL is the address people open Cost Deck at, e.g.
+	// https://costdeck.example.com. The sleep page links to it to wake a namespace.
+	// +kubebuilder:validation:Pattern=`^https?://[^\s]+$`
+	// +kubebuilder:validation:MaxLength=512
+	// +optional
+	DashboardURL string `json:"dashboardUrl,omitempty"`
+
 	// Providers holds cloud provider configurations
 	// +optional
 	Providers ProvidersConfig `json:"providers,omitempty"`
@@ -608,6 +829,197 @@ type CostDeckConfigSpec struct {
 	// Billing reconciles estimates with the cloud bill.
 	// +optional
 	Billing BillingConfig `json:"billing,omitempty"`
+
+	// Calendars are shared lists of days, such as public holidays, that schedules name in
+	// spec.calendars to apply them as exceptions.
+	// +kubebuilder:validation:MaxItems=50
+	// +listType=map
+	// +listMapKey=name
+	// +optional
+	Calendars []HolidayCalendar `json:"calendars,omitempty"`
+
+	// NamespaceTTL deletes preview namespaces some time after they were created. Off by
+	// default; it also needs namespaceTTL.enabled in the Helm chart.
+	// +optional
+	NamespaceTTL NamespaceTTLConfig `json:"namespaceTTL,omitempty"`
+
+	// Allocation decides how cost that belongs to no team is charged in showback and
+	// chargeback: capacity no pod requests, and namespaces everyone shares.
+	// +optional
+	Allocation AllocationConfig `json:"allocation,omitempty"`
+
+	// Clusters are other Cost Deck installations this one shows next to its own on the
+	// Clusters page, read with a viewer API token of each.
+	// +kubebuilder:validation:MaxItems=50
+	// +listType=map
+	// +listMapKey=name
+	// +optional
+	Clusters []RemoteCluster `json:"clusters,omitempty"`
+
+	// Rightsizing lets operators act on right-sizing advice: apply it to workloads, or
+	// open a pull request with it in a GitOps repository. Both are off by default.
+	// +optional
+	Rightsizing RightsizingConfig `json:"rightsizing,omitempty"`
+}
+
+// RightsizingConfig decides what can be done with right-sizing advice besides reading it.
+type RightsizingConfig struct {
+	// Apply lets operators apply advice to a workload from the dashboard: its pod requests
+	// are patched, which rolls its pods. Workloads a GitOps tool manages are left to pull
+	// requests.
+	// +optional
+	Apply bool `json:"apply,omitempty"`
+
+	// GuardMinutes is how long after a change Cost Deck watches the workload's new pods
+	// and puts the old requests back if one is OOMKilled, restarts or crash-loops.
+	// Defaults to 30.
+	// +kubebuilder:validation:Minimum=5
+	// +kubebuilder:validation:Maximum=1440
+	// +optional
+	GuardMinutes int32 `json:"guardMinutes,omitempty"`
+
+	// Git opens pull requests with the advice in the repository the workloads are
+	// deployed from.
+	// +optional
+	Git *GitRepositoryConfig `json:"git,omitempty"`
+}
+
+// GitRepositoryConfig is a GitOps repository Cost Deck opens pull requests in.
+type GitRepositoryConfig struct {
+	// Provider is github, gitlab or gitea.
+	// +kubebuilder:validation:Enum=github;gitlab;gitea
+	Provider string `json:"provider"`
+
+	// Repository is owner/name on GitHub and Gitea, or the project path on GitLab.
+	// +kubebuilder:validation:MaxLength=255
+	Repository string `json:"repository"`
+
+	// APIURL is the API's address: https://api.github.com, https://gitlab.com/api/v4, or
+	// a Gitea's https://gitea.example.com/api/v1. Defaults by provider (not for Gitea).
+	// +optional
+	APIURL string `json:"apiUrl,omitempty"`
+
+	// BaseBranch is where pull requests go. Defaults to main.
+	// +optional
+	BaseBranch string `json:"baseBranch,omitempty"`
+
+	// Path limits the search for a workload's manifest to a directory, such as deploy/.
+	// +optional
+	Path string `json:"path,omitempty"`
+
+	// SecretRef names the Secret holding an access token that can push branches and open
+	// pull requests, under TOKEN.
+	// +optional
+	SecretRef string `json:"secretRef,omitempty"`
+}
+
+// RemoteCluster is another Cost Deck installation.
+type RemoteCluster struct {
+	// Name is how the Clusters page calls it.
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=63
+	Name string `json:"name"`
+
+	// URL is where its dashboard answers, such as https://costdeck.eu.example.com.
+	// +kubebuilder:validation:Pattern=`^https?://[^\s]+$`
+	URL string `json:"url"`
+
+	// SecretRef names the Secret holding a viewer API token of that installation under
+	// the cluster's name.
+	// +optional
+	SecretRef string `json:"secretRef,omitempty"`
+
+	// SkipTLSVerify accepts its certificate without checking it.
+	// +optional
+	SkipTLSVerify bool `json:"skipTlsVerify,omitempty"`
+}
+
+// AllocationConfig decides how cost that belongs to no team is charged: capacity no pod
+// requests, and namespaces everyone shares such as kube-system, monitoring or ingress.
+type AllocationConfig struct {
+	// Idle is how capacity no pod requests is charged: separate (its own line, the
+	// default) or proportional (spread over the namespaces by the compute they request).
+	// +kubebuilder:validation:Enum=separate;proportional
+	// +optional
+	Idle string `json:"idle,omitempty"`
+
+	// SharedNamespaces are charged to the other namespaces instead of to themselves:
+	// names or patterns such as kube-* or monitoring.
+	// +kubebuilder:validation:MaxItems=100
+	// +listType=set
+	// +optional
+	SharedNamespaces []string `json:"sharedNamespaces,omitempty"`
+
+	// SharedSplit spreads the shared namespaces' cost by the compute the others request
+	// (proportional, the default) or evenly.
+	// +kubebuilder:validation:Enum=proportional;even
+	// +optional
+	SharedSplit string `json:"sharedSplit,omitempty"`
+}
+
+// NamespaceTTLConfig deletes the namespaces a label selector picks once they are older
+// than a time to live. A namespace's costdeck.io/ttl label overrides the time ("3d",
+// "36h") or keeps it ("off"); kube-*, default, the operator's namespace and namespaces a
+// schedule lists by name are never deleted.
+type NamespaceTTLConfig struct {
+	// Enabled turns deleting on.
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+
+	// DryRun works out what would be deleted and when, and deletes and sends nothing.
+	// +optional
+	DryRun bool `json:"dryRun,omitempty"`
+
+	// Selector picks the namespaces, such as env=preview. Required: an empty selector
+	// would match every namespace.
+	// +kubebuilder:validation:MaxLength=1024
+	// +optional
+	Selector string `json:"selector,omitempty"`
+
+	// TTL is how long after its creation a namespace is deleted, such as 168h.
+	// +optional
+	TTL *metav1.Duration `json:"ttl,omitempty"`
+
+	// WarnBefore sends an alert to the notification channels this long before a
+	// deletion. Defaults to 24h; 0s sends none.
+	// +optional
+	WarnBefore *metav1.Duration `json:"warnBefore,omitempty"`
+}
+
+// HolidayCalendar is a named list of days on which the schedules that use it keep their
+// targets in State, typically down for public holidays.
+type HolidayCalendar struct {
+	// Name schedules use to refer to the calendar.
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=63
+	Name string `json:"name"`
+
+	// Timezone the days are counted in. Defaults to the timezone of the schedule that
+	// uses the calendar.
+	// +optional
+	Timezone string `json:"timezone,omitempty"`
+
+	// State targets are kept in on these days. Defaults to Down.
+	// +kubebuilder:validation:Enum=Up;Down
+	// +optional
+	State string `json:"state,omitempty"`
+
+	// Days of the calendar.
+	// +kubebuilder:validation:MaxItems=400
+	// +listType=atomic
+	Days []CalendarDay `json:"days"`
+}
+
+// CalendarDay is one day of a HolidayCalendar.
+type CalendarDay struct {
+	// Date is the day, "2026-12-25".
+	// +kubebuilder:validation:Pattern=`^[0-9]{4}-[0-9]{2}-[0-9]{2}$`
+	Date string `json:"date"`
+
+	// Name of the day, such as "Christmas Day".
+	// +kubebuilder:validation:MaxLength=100
+	// +optional
+	Name string `json:"name,omitempty"`
 }
 
 // ProviderStatus represents the connection status of a single provider.

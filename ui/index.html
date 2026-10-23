@@ -9,6 +9,14 @@
     <link rel="manifest" href="/site.webmanifest" />
     <meta name="theme-color" content="#0f172a" />
     <title>Cost Deck</title>
+    <!-- Apply the saved theme before the first paint; the same rules as src/lib/theme.ts. -->
+    <script>
+      try {
+        var t = localStorage.getItem('costdeck.theme')
+        if (t === 'dark' || (t !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches))
+          document.documentElement.classList.add('dark')
+      } catch (e) {}
+    </script>
   </head>
   <body>
     <div id="root"></div>

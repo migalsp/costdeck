@@ -18,7 +18,7 @@ var officeHours = []finopsv1.ScalingSchedule{{
 func TestDecideScheduleMode(t *testing.T) {
 	e := &Engine{}
 
-	d := e.Decide(at(t, time.Wednesday, "12:00"), officeHours, nil, nil, nil)
+	d := e.Decide(at(t, time.Wednesday, "12:00"), Timetable{Schedules: officeHours}, nil, nil, nil)
 	if !d.Active || d.Mode != ModeSchedule {
 		t.Fatalf("Decide(Wed 12:00) = %+v, want active schedule mode", d)
 	}
@@ -28,7 +28,7 @@ func TestDecideScheduleMode(t *testing.T) {
 	}
 
 	// Friday evening: the next change is Monday morning, across the weekend.
-	d = e.Decide(at(t, time.Friday, "19:30"), officeHours, nil, nil, nil)
+	d = e.Decide(at(t, time.Friday, "19:30"), Timetable{Schedules: officeHours}, nil, nil, nil)
 	want = at(t, time.Monday, "09:00").AddDate(0, 0, 7)
 	if d.Active || d.NextTransition == nil || !d.NextTransition.Equal(want) {
 		t.Errorf("Decide(Fri 19:30) = active %v next %v, want down until %v", d.Active, d.NextTransition, want)
@@ -36,7 +36,7 @@ func TestDecideScheduleMode(t *testing.T) {
 }
 
 func TestDecideAlwaysOnWithoutSchedule(t *testing.T) {
-	d := (&Engine{}).Decide(time.Now(), nil, nil, nil, nil)
+	d := (&Engine{}).Decide(time.Now(), Timetable{}, nil, nil, nil)
 	if !d.Active || d.Mode != ModeAlwaysOn || d.NextTransition != nil {
 		t.Errorf("Decide(no schedule) = %+v, want AlwaysOn with no transition", d)
 	}
@@ -44,7 +44,7 @@ func TestDecideAlwaysOnWithoutSchedule(t *testing.T) {
 
 func TestDecideOpenEndedOverride(t *testing.T) {
 	up := true
-	d := (&Engine{}).Decide(at(t, time.Saturday, "03:00"), officeHours, &up, nil, nil)
+	d := (&Engine{}).Decide(at(t, time.Saturday, "03:00"), Timetable{Schedules: officeHours}, &up, nil, nil)
 	if !d.Active || d.Mode != ModeManualUp {
 		t.Fatalf("Decide(override up) = %+v", d)
 	}
@@ -60,7 +60,7 @@ func TestDecideBoundedOverride(t *testing.T) {
 	// Forced up on Saturday until Sunday 12:00: the schedule says down then, so that is
 	// the transition.
 	until := metav1.NewTime(at(t, time.Sunday, "12:00").AddDate(0, 0, 7))
-	d := e.Decide(at(t, time.Saturday, "03:00"), officeHours, &up, &until, nil)
+	d := e.Decide(at(t, time.Saturday, "03:00"), Timetable{Schedules: officeHours}, &up, &until, nil)
 	if d.Mode != ModeManualUp || d.NextTransition == nil || !d.NextTransition.Equal(until.Time) {
 		t.Errorf("Decide(bounded override) = %+v, want transition at %v", d, until.Time)
 	}
@@ -68,7 +68,7 @@ func TestDecideBoundedOverride(t *testing.T) {
 	// Forced up until Monday 10:00, when the schedule is up anyway: the next real change
 	// is the schedule's 18:01 scale-down.
 	until = metav1.NewTime(at(t, time.Monday, "10:00").AddDate(0, 0, 7))
-	d = e.Decide(at(t, time.Saturday, "03:00"), officeHours, &up, &until, nil)
+	d = e.Decide(at(t, time.Saturday, "03:00"), Timetable{Schedules: officeHours}, &up, &until, nil)
 	want := at(t, time.Monday, "18:01").AddDate(0, 0, 7)
 	if d.NextTransition == nil || !d.NextTransition.Equal(want) {
 		t.Errorf("NextTransition = %v, want %v", d.NextTransition, want)
@@ -76,7 +76,7 @@ func TestDecideBoundedOverride(t *testing.T) {
 
 	// An expired override is ignored entirely.
 	expired := metav1.NewTime(at(t, time.Wednesday, "11:00"))
-	d = e.Decide(at(t, time.Wednesday, "12:00"), officeHours, new(bool), &expired, nil)
+	d = e.Decide(at(t, time.Wednesday, "12:00"), Timetable{Schedules: officeHours}, new(bool), &expired, nil)
 	if !d.Active || d.Mode != ModeSchedule {
 		t.Errorf("Decide(expired override) = %+v, want the schedule back in control", d)
 	}
@@ -84,7 +84,7 @@ func TestDecideBoundedOverride(t *testing.T) {
 
 func TestDecideLegacyAnnotationWins(t *testing.T) {
 	up := true
-	d := (&Engine{}).Decide(at(t, time.Wednesday, "12:00"), officeHours, &up, nil,
+	d := (&Engine{}).Decide(at(t, time.Wednesday, "12:00"), Timetable{Schedules: officeHours}, &up, nil,
 		map[string]string{LegacyOverrideAnnotation: "ScaledDown"})
 	if d.Active || d.Mode != ModeManualDown {
 		t.Errorf("Decide(legacy annotation) = %+v, want forced down", d)

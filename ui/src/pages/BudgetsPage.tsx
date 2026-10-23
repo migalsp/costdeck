@@ -5,6 +5,7 @@ import { useAuth } from '../lib/auth'
 import { environmentLabel, fetchBudgets, saveSettings, type AnomalySettings, type Budget, type BudgetScope, type BudgetStatus, type BudgetsResponse, type Environment } from '../lib/finops'
 import { formatMoney } from '../lib/format'
 import { errorMessage } from '../lib/api'
+import { toast } from '../lib/toast'
 import { usePolling } from '../lib/usePolling'
 
 const stateLabel: Record<BudgetStatus['state'], { label: string; tone: Tone }> = {
@@ -110,11 +111,12 @@ function BudgetEditor({ initial, existing, scopes, onClose, onSave }: {
     environment: ['production', 'non-production', 'system', 'unclassified'],
   }
   const others = existing.filter(x => x.name !== initial?.name)
-  const submit = async (list: Budget[]) => {
+  const submit = async (list: Budget[], done: string) => {
     setSaving(true)
     setError(null)
     try {
       await onSave(list)
+      toast.success(done)
       onClose()
     } catch (e) {
       setError(errorMessage(e))
@@ -128,10 +130,10 @@ function BudgetEditor({ initial, existing, scopes, onClose, onSave }: {
   }
   const field = 'w-full px-3 py-2 text-sm bg-white border border-slate-200 rounded-lg outline-none focus:border-brand-500'
   return (
-    <Modal title={initial ? `Budget ${initial.name}` : 'New budget'} subtitle="A monthly limit with alerts to the Webex space" size="md" onClose={onClose}
+    <Modal title={initial ? `Budget ${initial.name}` : 'New budget'} subtitle="A monthly limit, with alerts to the channels set up under Settings → Notifications" size="md" onClose={onClose}
       footer={<>
         {initial && (confirmDelete
-          ? <Button variant="danger" onClick={() => submit(others)} disabled={saving}>Delete for good</Button>
+          ? <Button variant="danger" onClick={() => submit(others, `Deleted the budget ${initial.name}`)} disabled={saving}>Delete for good</Button>
           : <Button variant="ghost" onClick={() => setConfirmDelete(true)}>Delete</Button>)}
         <div className="ml-auto flex gap-2">
           <Button onClick={onClose}>Cancel</Button>
@@ -139,7 +141,8 @@ function BudgetEditor({ initial, existing, scopes, onClose, onSave }: {
             disabled={saving || !b.name || !b.monthlyLimit || (b.scope === 'namespace' ? picked.length === 0 : b.scope !== 'cluster' && !b.value)}
             onClick={() => submit([...others, b.scope === 'namespace'
               ? { ...b, value: undefined, namespaces: picked }
-              : { ...b, value: b.scope === 'cluster' ? undefined : b.value, namespaces: undefined }])}>{saving ? 'Saving…' : 'Save budget'}</Button>
+              : { ...b, value: b.scope === 'cluster' ? undefined : b.value, namespaces: undefined }],
+              initial ? `Saved the budget ${b.name}` : `Created the budget ${b.name}`)}>{saving ? 'Saving…' : 'Save budget'}</Button>
         </div>
       </>}>
       <div className="space-y-4">
@@ -248,6 +251,7 @@ function AnomalyCard({ settings, onSaved }: { settings: AnomalySettings; onSaved
       await saveSettings({ alerts: { anomalies: { enabled: !!a.enabled, percent: a.percent || 30, minimumDaily: a.minimumDaily || '1' } } })
       setDraft(null)
       setError(null)
+      toast.success('Saved the anomaly alerts')
       onSaved()
     } catch (e) {
       setError(errorMessage(e))
@@ -315,10 +319,10 @@ export default function BudgetsPage() {
       <PageHeader title="Budgets & Alerts" subtitle="Monthly limits for teams, namespaces and environments, and alerts when spending jumps"
         actions={can('admin') ? <Button variant="primary" icon={<Plus size={16} />} onClick={() => setEditing('new')}>New budget</Button> : undefined} />
 
-      {!data.webexReady && (
+      {(data.channels || []).length === 0 && (
         <div className="mb-4 flex gap-2 p-3 rounded-xl border border-slate-200 bg-slate-50 text-sm text-slate-600">
           <AlertTriangle size={16} className="mt-0.5 shrink-0 text-slate-400" />
-          <span>Alerts are listed below and exported as Prometheus metrics. To receive them in Webex, connect it with a space ID under Settings → Notifications.</span>
+          <span>Alerts are listed below and exported as Prometheus metrics. To receive them in Webex, Slack, Teams or by email, set one up under Settings → Notifications.</span>
         </div>
       )}
 

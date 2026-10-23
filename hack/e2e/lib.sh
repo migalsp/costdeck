@@ -77,6 +77,12 @@ track_call() { CLEANUP_CALLS+=("$*"); }
 
 new_namespace() {
   track_namespace "$1"
+  # A namespace an earlier run left terminating must be gone before it is used again:
+  # what is still in it would pass for ready.
+  local deadline=$((SECONDS + 180))
+  while ((SECONDS < deadline)) && [[ "$(kubectl get namespace "$1" -o jsonpath='{.status.phase}' 2>/dev/null)" == Terminating ]]; do
+    sleep 2
+  done
   kubectl create namespace "$1" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 }
 
@@ -124,3 +130,98 @@ EOF
 CLOSED_SCHEDULE='[{startDay: 0, startTime: "03:00", endDay: 0, endTime: "03:01", timezone: "Pacific/Kiritimati"}]'
 # shellcheck disable=SC2034
 CLOSED_SCHEDULE_JSON='[{"startDay":0,"startTime":"03:00","endDay":0,"endTime":"03:01","timezone":"Pacific/Kiritimati"}]'
+
+# start_victoriametrics runs a VictoriaMetrics in smoke-vm (once), forwards it to
+# localhost:$VM_PORT for importing synthetic series, and points Cost Deck at it with the
+# given retention in days. The settings are switched off again on exit.
+VM_PORT=${VM_PORT:-18428}
+start_victoriametrics() {
+  local retention=${1:-7}
+  if ! curl -sf "localhost:$VM_PORT/health" >/dev/null 2>&1; then
+    new_namespace smoke-vm
+    kubectl apply -f - >/dev/null <<'YAML' || fail "applying VictoriaMetrics"
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: vm, namespace: smoke-vm}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: vm}}
+  template:
+    metadata: {labels: {app: vm}}
+    spec:
+      containers:
+        - name: vm
+          image: quay.io/victoriametrics/victoria-metrics:v1.108.1
+          args: ["-retentionPeriod=60d"]
+          readinessProbe: {httpGet: {path: /health, port: 8428}, periodSeconds: 2}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: vm, namespace: smoke-vm}
+spec: {selector: {app: vm}, ports: [{port: 8428}]}
+YAML
+    kubectl rollout status deploy/vm -n smoke-vm --timeout=180s >/dev/null
+    kubectl port-forward -n smoke-vm svc/vm "$VM_PORT:8428" >/dev/null 2>&1 &
+    PF_PIDS="$PF_PIDS $!"
+    wait_for "VictoriaMetrics reachable" curl -sf "localhost:$VM_PORT/health"
+  fi
+  local body='{"integrations":{"victoriaMetrics":{"enabled":true,"endpoint":"http://vm.smoke-vm.svc:8428","retentionDays":'"$retention"'}}}'
+  track_call PUT /api/settings '{"integrations":{"victoriaMetrics":{"enabled":false}}}'
+  api PUT /api/settings "$body" >/dev/null || fail "enabling VictoriaMetrics"
+}
+
+# start_webhook_receiver runs a webhook receiver in smoke-hooks (once): busybox httpd with a
+# CGI script that keeps every request body in /tmp/<query string>-<pid>.json, so one
+# receiver stands in for several channels told apart by their query string. HOOK_URL is
+# its address inside the cluster.
+# shellcheck disable=SC2034
+HOOK_URL="http://hook.smoke-hooks.svc:8080/cgi-bin/hook"
+start_webhook_receiver() {
+  # One left by an earlier run may be on its way out with its namespace.
+  if [[ "$(kubectl get namespace smoke-hooks -o jsonpath='{.status.phase}' 2>/dev/null)" == Active ]] &&
+    kubectl get deploy hook -n smoke-hooks >/dev/null 2>&1; then
+    return 0
+  fi
+  new_namespace smoke-hooks
+  kubectl apply -f - >/dev/null <<YAML || fail "applying the webhook receiver"
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: hook, namespace: smoke-hooks}
+data:
+  hook: |
+    #!/bin/sh
+    head -c "\${CONTENT_LENGTH:-0}" > "/tmp/\${QUERY_STRING:-hook}-\$\$.json"
+    printf 'Content-Type: text/plain\r\n\r\nok\n'
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: hook, namespace: smoke-hooks}
+spec:
+  selector: {matchLabels: {app: hook}}
+  template:
+    metadata: {labels: {app: hook}}
+    spec:
+      containers:
+        - name: httpd
+          image: $BUSYBOX_IMAGE
+          command: [sh, -c, "mkdir -p /www/cgi-bin && cp /cfg/hook /www/cgi-bin/hook && chmod +x /www/cgi-bin/hook && exec httpd -f -p 8080 -h /www"]
+          volumeMounts: [{name: cfg, mountPath: /cfg}]
+          readinessProbe: {tcpSocket: {port: 8080}, periodSeconds: 2}
+      volumes: [{name: cfg, configMap: {name: hook}}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: hook, namespace: smoke-hooks}
+spec: {selector: {app: hook}, ports: [{port: 8080}]}
+YAML
+  kubectl rollout status deploy/hook -n smoke-hooks --timeout=120s >/dev/null || fail "the webhook receiver did not start"
+}
+# hook_requests <name>: every body the receiver got at $HOOK_URL?<name>.
+hook_requests() { kubectl exec -n smoke-hooks deploy/hook -- sh -c "cat /tmp/$1-*.json 2>/dev/null"; }
+hook_has() { hook_requests "$1" | grep -q "$2"; }
+hook_count() { kubectl exec -n smoke-hooks deploy/hook -- sh -c "ls /tmp/$1-*.json 2>/dev/null | wc -l" | tr -d ' '; }
+
+# track_cleanup <command>: a shell command that undoes a change outside the smoke-*
+# namespaces (a node's status, say), run on exit.
+CLEANUP_COMMANDS=()
+track_cleanup() { CLEANUP_COMMANDS+=("$1"); }

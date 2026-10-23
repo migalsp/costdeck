@@ -136,13 +136,42 @@ Local users change their own password from the menu under their name.
    - **Redirect URL**: optional, derived from the request host when empty.
    - **Group → role mapping**: Entra group object IDs mapped to roles. The most privileged
      match wins.
-   - **Default role**: given to users who match no mapping.
-   - **Auto-provision**: off means only users matched by a group or app role may sign in.
+   - **Role without a match**: given to users who match no mapping.
+   - **Let anyone in the tenant use Cost Deck**: off means only users matched by a group
+     or app role may sign in.
    - **Authority host**: only for sovereign clouds.
    - **Skip TLS verification**: only for a TLS-inspecting proxy; never on the open internet.
 
    **Test connection** checks the tenant and the client credentials. Once SSO works you
    can turn off local login. Keep the admin password: it is the way back in if SSO breaks.
+
+## Single sign-on with Keycloak and other OpenID Connect providers
+
+**Settings → Single sign-on → OpenID Connect** signs users in with any OpenID Connect
+provider (`spec.auth.oidc`): authorization code flow with PKCE and a nonce, and the ID token
+checked against the issuer's keys, audience and expiry.
+
+1. **In Keycloak**, create a confidential OpenID Connect client:
+   - standard flow;
+   - redirect URI `https://costdeck.example.com/api/auth/oidc/callback`;
+   - a **Group Membership** mapper with the claim name `groups`, added to the ID token.
+2. **In Cost Deck**, click **Keycloak defaults** (groups claim `groups`, roles claim
+   `realm_access.roles`), then fill in:
+   - the issuer `https://keycloak.example.com/realms/<realm>`, which must be HTTPS;
+   - the client ID and the client secret, stored in the `costdeck-oidc-credentials`
+     Secret.
+3. **Map groups to roles.** Keycloak sends full paths (`/costdeck-admins`); a mapping
+   matches with or without the leading slash. Roles named `viewer`, `operator` or `admin`
+   in the roles claim count as they are; client roles are at
+   `resource_access.<client>.roles`.
+4. **Choose who else gets in.** Turn off auto-provisioning to admit only users with a
+   mapped group or role.
+
+For Okta, Auth0, Dex and others, set their issuer and the claims that carry groups and
+roles; dotted paths reach nested claims. Extra scopes (such as `groups`) are requested
+when a provider sends a claim only for its scope. **Skip TLS verification** is for a
+provider whose certificate the operator cannot verify. **Single sign-on only** hides the
+password form while Entra ID or OpenID Connect sign-in is on.
 
 ## API tokens
 
@@ -194,6 +223,147 @@ the last hour only, and right-sizing advice based on a single reading.
   $0.004237 on Google Cloud and clusters without a cloud. Without a cloud price list,
   network volumes are estimated at $0.08 a GiB-month, like a general-purpose cloud SSD, and
   load balancers at nothing.
+
+### GPUs
+
+GPUs are priced apart from CPU and memory, so a GPU node does not make every other pod
+look expensive:
+
+- **With cloud list prices**, a GPU costs its node's price less the node's CPU and memory
+  at the cluster's rates, divided by its GPUs. The CPU and memory rates come from the nodes
+  without GPUs.
+- **Otherwise** a GPU is estimated by its model, from the `nvidia.com/gpu.product` label
+  GPU feature discovery sets: T4 $0.33, L4 $0.61, A10G $0.81, L40S $1.61, A100 $1.81
+  (80 GB $2.50), V100 $2.57, H100 $5.13, H200 $6.16, B200 $12.49 an hour. These are AWS
+  on-demand prices in us-east-1 (October 2026) less CPU and memory. An unknown model is
+  priced like an A10G.
+- **A custom GPU rate** (Settings → Prices, `spec.pricing.gpuHour`) applies to every GPU.
+
+A namespace pays for the GPUs its pods request (`nvidia.com/gpu`, `amd.com/gpu`, MIG
+devices `nvidia.com/mig-<n>g.<mem>gb` as n sevenths of a GPU, time-sliced or MPS shares as
+1/replicas). That cost is part of its compute cost everywhere: overview, budgets, digests,
+schedule candidates.
+
+With VictoriaMetrics scraping NVIDIA's [DCGM exporter](https://github.com/NVIDIA/dcgm-exporter)
+in Kubernetes mode, Cost Deck reads how busy each namespace's GPUs were over the last day
+(`DCGM_FI_DEV_GPU_UTIL`) and the most memory they held over the last week
+(`DCGM_FI_DEV_FB_USED`). It accepts the pod namespace as `namespace`, `pod_namespace`, or
+`exported_namespace` when a ServiceMonitor does not honour the exporter's labels. It then
+flags:
+
+- GPUs that are nearly idle (below 10%);
+- GPUs that several workloads could share through MIG or time-slicing (below 50%);
+- a cheaper model with enough memory for what the workload holds.
+
+### AI costs
+
+**AI Costs** (`GET /api/finops/ai`) shows what the cluster's applications pay LLM APIs,
+per team and model, and what the models it serves itself cost per million tokens. The
+token counts of the last seven days come from VictoriaMetrics, extrapolated to a month:
+
+- **LiteLLM** (`callbacks: ["prometheus"]`) reports its spend and tokens per LiteLLM team
+  (`litellm_spend_metric`, `litellm_input_tokens_metric`, `litellm_output_tokens_metric`).
+- **OpenTelemetry GenAI** metrics from your applications: the `gen_ai.client.token.usage`
+  histogram, or the `gen_ai.client.inference.usage.input_tokens` and `output_tokens`
+  counters that replace it. They are charged to the team of the namespace
+  (`k8s.namespace.name` through a collector, else the scrape's `namespace`) at the model
+  prices you set under **Settings → Prices** (`spec.pricing.llmModels`, per million input
+  and output tokens; globs such as `claude-sonnet-*` work). Models without a price are
+  listed so you can add one.
+- **vLLM** (`vllm:prompt_tokens`, `vllm:generation_tokens`): the run rate of the
+  namespace serving a model, GPUs included, divided by the tokens it served gives the cost
+  per million tokens.
+
+## Cost estimates in pull requests
+
+Cost Deck can say what a change of Kubernetes manifests will cost before it is merged.
+Render the manifests of the base branch and of the pull request (`helm template`,
+`kustomize build`), and Cost Deck prices the difference. It covers Deployments,
+StatefulSets with their volume templates, DaemonSets on every node, Argo Rollouts, Pods,
+PersistentVolumeClaims and LoadBalancer Services. HorizontalPodAutoscalers count at
+`minReplicas`, and namespaces on a schedule count only the share of the time they run.
+
+- **With your Cost Deck** (`--server` and a viewer API token): your rates, storage classes,
+  load balancer price, node count and schedules.
+- **Offline**: list-price estimates for `--cloud aws|azure|gcp|local`, or your own
+  `--cpu-hour` and `--gib-hour`.
+
+The GitHub Action posts the estimate on the pull request and updates it on every push:
+
+```yaml
+on: pull_request
+permissions: { contents: read, pull-requests: write }
+jobs:
+  cost:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with: { fetch-depth: 0 }
+      - name: Render both sides
+        run: |
+          git show "origin/${{ github.base_ref }}:deploy/values.yaml" > /tmp/base-values.yaml
+          helm template app deploy/chart -f /tmp/base-values.yaml > /tmp/base.yaml
+          helm template app deploy/chart -f deploy/values.yaml > /tmp/head.yaml
+      - uses: migalsp/costdeck/actions/cost-estimate@v1
+        with:
+          base: /tmp/base.yaml
+          head: /tmp/head.yaml
+          server: https://costdeck.example.com   # leave out to price offline
+          token: ${{ secrets.COSTDECK_TOKEN }}   # a viewer API token
+          fail-above: "500"                      # optional: fail above +500 a month
+```
+
+Elsewhere, such as GitLab CI, run the image directly:
+
+```bash
+docker run --rm -v "$PWD:/work" -e COSTDECK_URL -e COSTDECK_TOKEN \
+  ghcr.io/migalsp/costdeck/costdeck-operator:1.6.0 estimate \
+  --base /work/base.yaml --head /work/head.yaml --format markdown
+```
+
+The same is `POST /api/estimate` with `{"base": ..., "head": ...}`.
+
+## Several clusters
+
+Every Cost Deck installation serves a summary of its cluster (`GET /api/finops/summary`):
+nodes, monthly cost, what schedules save and what more could be saved, month to date,
+forecast and schedules. One installation can show the others next to its own on the
+**Clusters** page:
+
+1. On each other installation, create a **viewer** API token (Settings → API tokens).
+2. On the one you open, add them under **Settings → Clusters**: a name, the dashboard URL
+   and the token. **Test connection** checks them before you save.
+
+Each cluster is read at most once a minute. A cluster that cannot be read says why
+(unreachable, token refused). Totals add up the clusters per currency. Tokens are stored
+in the Secret `costdeck-cluster-tokens` and never shown again. Outbound requests refuse
+link-local and cloud metadata addresses. An installation too old to serve a summary is read
+from its overview. The same list is `GET /api/clusters`, and `get_clusters` for the
+assistant and MCP clients.
+
+## Cost allocation (showback and chargeback)
+
+**Reports → Cost allocation** charges a period's cost (this month, last month, the last 7
+or 30 days, or any dates through the API) to teams, environments, namespaces or the values
+of any namespace label such as `cost-center`, from the daily cost history. **Download CSV**
+gives finance the same table. The rows and the unallocated capacity add up to the bill for
+the days the history covers.
+
+**Settings → Cost allocation** (`spec.allocation`) decides how cost that belongs to no team
+is charged:
+
+- **Shared namespaces** (`sharedNamespaces`, names or patterns such as `kube-*`,
+  `monitoring`): their cost is charged to the other namespaces, by the compute each
+  requests (`sharedSplit: proportional`, the default) or evenly (`even`).
+- **Capacity no pod requests** (`idle`): a line of its own (`separate`, the default), for
+  the platform team to shrink, or charged to the namespaces by what they request
+  (`proportional`), so the groups cover the whole bill. Namespace Insights shares it out
+  the same way by default.
+
+A team is read from the namespace's `team`, `owner`, `cost-center` (and similar) labels. A
+namespace deleted since keeps its cost under "(no team)". The same report is available as
+`GET /api/finops/allocation` and `GET /api/finops/allocation.csv`, and to the assistant
+and MCP clients as `get_cost_allocation`.
 
 ## Reconciling with the cloud bill
 
@@ -283,6 +453,32 @@ or custom roles with `compute.instances.list|get|start|stop`, `compute.projects.
 Cloud SQL has no start/stop call: CostDeck sets the instance's activation policy to
 `NEVER` to stop it and `ALWAYS` to start it.
 
+## Slack, Microsoft Teams and email
+
+Besides the Webex space, **Settings → Notifications** sends Cost Deck's messages to Slack,
+Microsoft Teams and email. Each channel picks what it receives:
+
+- **Scaling changes**: a schedule finished scaling up or down.
+- **Alerts**: budgets, cost anomalies and namespaces about to be deleted.
+- **Digests**: the scheduled cost summary.
+
+**Send test message** checks a channel with the values in the form before you save.
+
+| Channel | What to enter |
+|---|---|
+| Slack | The URL of an incoming webhook: a Slack app with **Incoming Webhooks** on, added to one channel. |
+| Microsoft Teams | The URL of a Teams workflow **Post to a channel when a webhook request is received**. Messages arrive as Adaptive Cards. The old Office 365 connectors are retired. |
+| Email | The SMTP server, port and security, the sender and the recipients. **STARTTLS** (port 587) is the default. **TLS** is for port 465. **None** is for a relay inside the cluster. |
+
+- **Secrets.** The webhook URLs and the SMTP password are stored in Secrets in the operator
+  namespace (`costdeck-slack-webhook`, `costdeck-teams-webhook`,
+  `costdeck-smtp-credentials`). They are never sent back to the dashboard.
+- **No password in clear.** A password is only sent over TLS, so **None** works without a
+  username only.
+- **Delivery.** When one channel fails, the others still get the message, and reports and
+  alerts say where they were sent. Outbound connections refuse link-local and cloud
+  metadata addresses.
+
 ## Webex
 
 **Settings → Notifications → Webex**: a bot token from
@@ -301,11 +497,11 @@ Webex can message a bot directly.
   Needs a space ID.
 - **Budget and anomaly alerts**: budgets (under **Budgets & Alerts**, stored in
   `spec.budgets`) alert at their thresholds and when the month is heading over, and
-  anomaly alerts when a namespace's daily cost jumps. They are posted to the space when
-  there is one and always listed in the dashboard.
+  anomaly alerts when a namespace's daily cost jumps. They go to every notification
+  channel that takes alerts, and are always listed in the dashboard.
 - **Cost digest**: under **Reports → Scheduled digest**, a weekly (Mondays) or monthly
-  (the 1st) summary of cost, savings and the top opportunities is posted to the same
-  space. It is stored in `spec.reports.digest` of the `CostDeckConfig`.
+  (the 1st) summary of cost, savings and the top opportunities goes to every channel that
+  takes digests. It is stored in `spec.reports.digest` of the `CostDeckConfig`.
 
 Commands (`help` lists them):
 
@@ -328,6 +524,14 @@ Azure OpenAI, vLLM, Ollama) or Gemini. The assistant reads live data through too
 (scaling, resuming, reverting) appear as confirmation cards and run only after a user with
 the operator role confirms.
 
+A **monthly token budget** (`spec.integrations.ai.monthlyTokenBudget`) caps what the
+assistant and AI reports may use in a calendar month (UTC). Usage is counted from what the
+provider reports, or estimated from the text when an OpenAI-compatible endpoint does not
+report it, and kept in the `costdeck-ai-usage` ConfigMap, so every replica counts against
+the same budget. Once the budget is spent, requests are refused (HTTP 429) until the next
+month or until it is raised. Settings and AI Costs show the month's usage, priced at the
+model's price under Settings → Prices.
+
 **Settings → MCP server** serves the same tools over MCP (Streamable HTTP) at
 `https://costdeck.example.com/mcp`, authenticated with an API token:
 
@@ -338,8 +542,8 @@ claude mcp add --transport http costdeck https://costdeck.example.com/mcp \
 
 ## Scaling: what happens to workloads
 
-- **Schedules** (ScalingGroups) scale Deployments and StatefulSets in their namespaces to
-  zero outside their hours and restore the recorded replica counts afterwards. A workload
+- **Schedules** (ScalingGroups) scale Deployments, StatefulSets and Argo Rollouts in their
+  namespaces to zero outside their hours and restore the recorded replica counts afterwards. A workload
   scaled up with no recorded count gets one replica.
 - **Start order**: stages start top to bottom and stop bottom to top. Namespaces not in
   any stage start last and stop first. With **Don't wait forever** (Advanced), a stage
@@ -349,6 +553,9 @@ claude mcp add --transport http costdeck https://costdeck.example.com/mcp \
   keeps it up while running. An **on-demand** schedule has no hours of its own.
 - **Overrides**: Start now and Scale down now ignore the schedule until the next scheduled
   change, for a chosen time, or until you click **Follow schedule**.
+- **Suggest from usage** (schedule editor, one namespace picked): the hours the namespace
+  was busy over the last week, read from VictoriaMetrics, with an hour of margin on either
+  side, become its windows; the editor shows the share of the week and the saving.
 - **Workload rules** (on the namespace page): workloads that never scale down, and the
   order workloads start in, in stages that start top to bottom and stop bottom to top;
   workloads in no stage start last and stop first. A workload goes to the stage of its
@@ -364,25 +571,172 @@ claude mcp add --transport http costdeck https://costdeck.example.com/mcp \
   `costdeck.io/original-replicas` annotation, written in the same change that scales it
   down and removed once it is restored.
 
+### Argo Rollouts
+
+Rollouts (`argoproj.io/v1alpha1`) are scaled like Deployments: `spec.replicas` goes to zero
+with the `costdeck.io/original-replicas` annotation and comes back to that count. They
+appear in previews, savings, the namespace page and right-sizing advice. Workload rules
+name them `Rollout/<name>`.
+
+A Rollout that takes its pod template from a Deployment (`spec.workloadRef`) is scaled
+itself. Its owner keeps that Deployment at zero, so Cost Deck leaves the Deployment alone
+rather than starting a copy of the Rollout's pods. The operator's role can read and patch
+Rollouts; without Argo Rollouts installed nothing changes.
+
 ### GitOps (Argo CD, Flux)
 
 A GitOps controller that syncs `spec.replicas` from Git scales the workloads straight
-back up. Tell it to ignore the fields Cost Deck manages. For Argo CD:
+back up. Cost Deck recognises the workloads Argo CD and Flux manage and names them in the
+schedule's preview and in its `GitOps` condition. Either let schedules pause the tool
+while they keep the workloads down, or tell the tool to ignore what Cost Deck changes.
+
+**Pause it.** Install with `--set gitops.pause=true`, which grants reading and patching
+Flux Kustomizations, HelmReleases and Argo CD Applications, and tick *Pause GitOps while
+down* on the schedule (`spec.pauseGitOps`). Cost Deck suspends the Flux objects and turns
+off Argo CD self-heal before scaling down, and resumes only what it paused once everything
+is up again. A Kustomization that also applies elsewhere, and an application generated by
+an ApplicationSet, are left running; the condition says which.
+
+**Or ignore the replicas.** Cost Deck writes every change with the field manager
+`costdeck`. For Argo CD:
 
 ```yaml
 spec:
   ignoreDifferences:
     - group: apps
       kind: Deployment
-      jsonPointers: [/spec/replicas, /metadata/annotations/costdeck.io~1original-replicas]
+      managedFieldsManagers: [costdeck]
     - group: apps
       kind: StatefulSet
-      jsonPointers: [/spec/replicas, /metadata/annotations/costdeck.io~1original-replicas]
+      managedFieldsManagers: [costdeck]
   syncPolicy:
     syncOptions: [RespectIgnoreDifferences=true]
 ```
 
 For Flux, leave `spec.replicas` out of the manifests in Git, as you would with an HPA.
+
+### Databases and other operator-run services
+
+Scaling the pods of a database an operator runs does not stop it: the operator brings them
+back. Hibernate rules (`spec.hibernate`, *Services to stop* in a namespace's workload rules
+or a group's Advanced tab) ask the operator instead. They stop the services once the
+namespace's workloads are down and start them before the workloads, and leave the
+workloads the operator runs for them alone. Install with `--set hibernation.enabled=true`,
+which grants reading and patching the resources of the presets:
+
+| Preset | Resources | How they stop |
+|---|---|---|
+| `cnpg` | CloudNativePG `Cluster` | declarative hibernation, volumes kept |
+| `zalando-postgres` | Zalando `postgresql` | `numberOfInstances: 0`, earlier count restored |
+| `strimzi` | `KafkaConnect`, `KafkaMirrorMaker2`, `KafkaBridge` | `spec.replicas: 0` |
+
+A Strimzi `Kafka` cluster itself cannot be stopped: Strimzi refuses a cluster without
+brokers and controllers. Zalando's `min_instances` setting raises clusters back unless they
+carry its ignore-limits annotation.
+
+For another operator, give its `apiVersion`, `kind`, `replicasField` and optionally
+`readyField`, and grant access through `hibernation.extraRules`:
+
+```yaml
+hibernation:
+  extraRules:
+    - apiGroups: ["redis.example.com"]
+      resources: ["redisclusters"]
+```
+
+Only what Cost Deck stopped is started again (it marks it with `costdeck.io/hibernated`).
+
+### Sleep page
+
+With **Show a sleep page while down** (`spec.sleepPage`), once a schedule has brought its
+namespaces down, Cost Deck points their Gateway API HTTPRoutes at its own page. Whoever
+opens the application then sees that it is asleep, when it starts again, and a link to wake
+it, instead of a gateway error. The routes get their backends and filters back once the
+namespaces are up again, so nothing of Cost Deck is in the path of the traffic while they
+run.
+
+- **Waking.** The link opens the dashboard's `/wake/<namespace>` page (set **Settings →
+  Single sign-on → Dashboard address**). Someone with the operator role starts the
+  namespace there for 1, 4 or 8 hours, a manual start that ends by itself. The sleep page
+  checks every 20 seconds and shows the application once it is back. A person wakes it,
+  not every request, so bots and health checks do not keep it up.
+- **How the routes are changed.** Each rule's backends and filters are kept in the
+  `costdeck.io/sleeping` annotation. Meanwhile the rule points at the `<release>-api`
+  Service with a header naming the namespace. A ReferenceGrant `costdeck-sleep-page` in the
+  operator namespace opens that Service to the sleeping routes.
+- **Permissions.** Install with `--set sleepPage.enabled=true`, which grants read and patch
+  on HTTPRoutes cluster-wide and ReferenceGrants in the operator namespace.
+- **Ingress controllers.** Ingress-based routing is not covered. ingress-nginx, the usual
+  one, was retired in March 2026, and Gateway API is its recommended successor.
+
+### Sleep when unused
+
+**Sleep when unused for** (`spec.idleAfter`, such as `1h`) scales the namespaces down
+inside the schedule's hours once nobody has used them for that long. A test environment
+that is up from 8 to 18 but nobody touched after lunch stops paying for the afternoon.
+
+- **What counts as use.** Two signals in VictoriaMetrics:
+  - requests from the gateway or the mesh: Envoy Gateway (`envoy_cluster_upstream_rq_total`,
+    by the `httproute/<namespace>/…` cluster), Istio (`istio_requests_total` from the
+    callers' side) and ingress-nginx (`nginx_ingress_controller_requests`);
+  - GPUs: any GPU of the namespace busier than 5% (`DCGM_FI_DEV_GPU_UTIL` from NVIDIA's
+    DCGM exporter). A notebook or a model server nobody calls keeps its GPUs under that.
+- **When it counts as unused.** The namespaces must have been up for the whole period, and
+  every signal that is known must say unused. A training job that sends no requests but
+  keeps a GPU busy stays up. In a group, the signals of its namespaces are combined.
+  Namespaces with neither signal are never treated as unused (condition `Idle`, reason
+  `NoTrafficData`).
+- **How long it sleeps.** Until the schedule next starts the namespaces, at most a week,
+  with mode `Idle` and `status.idleUntil`. A manual start wakes them at once. Combined with
+  the sleep page, whoever opens the application can wake it. Once the manual start is
+  over, an unused environment goes back to sleep after the same period.
+- **What it does not override.** Manual starts and stops, exceptions and the fail-safe
+  keep their say, and a group stays up while groups that depend on it need it.
+
+### Preview cleanup
+
+Preview environments (a namespace per pull request or branch) are often left behind
+after the review. **Settings → Preview cleanup** (`spec.namespaceTTL` of the
+`CostDeckConfig`) deletes the namespaces a label selector picks, such as `env=preview`,
+some time after they were created. Unlike sleeping, it also removes their volumes, load
+balancers and IP addresses.
+
+It is off twice over: install with `--set namespaceTTL.enabled=true`, which grants patch
+and delete on namespaces, and switch it on in the dashboard. Turning it on asks you to
+confirm that deleted namespaces cannot be restored, and the first save starts in a dry
+run that only lists what would be deleted and when.
+
+- **Never deleted**: `kube-*`, `default`, the operator's namespace, namespaces a schedule
+  lists by name (`spec.namespaces` of a ScalingGroup, the target of a ScalingConfig), and
+  namespaces labelled `costdeck.io/ttl=off`. An empty selector is refused.
+- **Per namespace**: CI can give a namespace its own time with the label
+  `costdeck.io/ttl=3d` (or `36h`).
+- **Warnings**: by default a day before, the notification channels that take alerts are
+  told which namespace goes when. **Keep 3 more days** in the dashboard moves the time
+  (annotation `costdeck.io/expires-at`) and warns again.
+- **Pace and record**: at most 20 namespaces go in one run, every 30 seconds, each only
+  if it is still the namespace that was planned (by UID). Deletions are recorded in the
+  ConfigMap `costdeck-namespace-ttl` and shown in the dashboard.
+
+### Realized savings
+
+The saving a schedule shows is what the stopped workloads request. The bill drops only
+when Cluster Autoscaler or Karpenter removes the nodes they ran on. When a scale-down
+begins, Cost Deck records those nodes and what they cost (`status.scaleDownNodes`). The
+schedule's card then shows which nodes went away, and for each node still there what keeps
+it:
+
+- a PodDisruptionBudget that allows no disruption;
+- `karpenter.sh/do-not-disrupt`, or `cluster-autoscaler.kubernetes.io/safe-to-evict: "false"`;
+- pods Cluster Autoscaler will not move by default: local storage (`hostPath`, a
+  disk-backed `emptyDir`), pods without a controller, pods of other controllers, and
+  kube-system pods without a budget;
+- node annotations that opt out (`scale-down-disabled`, `do-not-disrupt`);
+- or pods of other namespaces that still need it.
+
+The verdict comes 15 minutes after the scale-down begins, once autoscalers have had time to
+act (Cluster Autoscaler waits 10 minutes by default). For this check the operator reads
+PodDisruptionBudgets cluster-wide.
 
 ## Right-sizing advice
 
@@ -390,7 +744,29 @@ The namespace page lists containers whose requests are well above what they use,
 recommended value, the estimated monthly saving and a YAML snippet to apply through your
 own pipeline. With VictoriaMetrics the advice uses p95 CPU and peak memory over up to 14
 days plus 20% headroom; with metrics-server only, a single reading plus 50% headroom.
-Cost Deck does not change requests itself.
+
+By default Cost Deck only advises. Under **Settings → Right-sizing** an admin can let
+operators act on the advice, in two ways:
+
+- **Apply** (`spec.rightsizing.apply`): the workload's requests are set to the recommended
+  ones, never above a limit, which rolls its pods.
+  - The old values are kept per container in the namespace's `NamespaceOptimization`.
+  - For `guardMinutes` (30 by default), Cost Deck watches the new pods. If one is
+    OOMKilled, restarts or crash-loops, the old requests come back and the channels that
+    take alerts are told.
+  - **Put back** undoes a change by hand.
+  - Workloads Argo CD or Flux manage are refused, since they would put the old requests
+    back.
+- **Pull request** (`spec.rightsizing.git`: GitHub, GitLab or Gitea with an access token):
+  - Cost Deck finds the workload's manifest in the repository and sets its containers'
+    requests, keeping comments.
+  - It then opens a pull request with the values, what was used and the saving.
+  - Plain YAML and kustomize work. Requests in a Helm chart's values file cannot be mapped
+    to a workload, so the snippet is the way there.
+
+Every change, applied, proposed or put back, is listed on the namespace page and by
+`GET /api/rightsizing/changes`. The assistant and MCP clients have `apply_rightsizing`
+and `propose_rightsizing`, which ask for confirmation.
 
 ## Prometheus metrics
 
@@ -465,6 +841,11 @@ helm upgrade costdeck-operator oci://ghcr.io/migalsp/costdeck/charts/costdeck-op
 | `imagePullSecrets`, `podAnnotations`, `podLabels`, `priorityClassName` | empty | |
 | `extraArgs`, `extraEnv` | `[]` | e.g. `--zap-log-level=debug` |
 | `nodeSelector`, `tolerations`, `affinity` | empty | |
+| `gitops.pause` | `false` | Lets schedules with `spec.pauseGitOps` pause Flux and Argo CD (cluster-wide read and patch on their objects) |
+| `hibernation.enabled` | `false` | Lets hibernate rules stop CloudNativePG and Zalando Postgres clusters and Strimzi Connect, MirrorMaker 2 and Bridge (cluster-wide read and patch on them) |
+| `hibernation.extraRules` | `[]` | `apiGroups` and `resources` of other operators' kinds that hibernate rules stop |
+| `sleepPage.enabled` | `false` | Lets schedules with `spec.sleepPage` point their HTTPRoutes at the sleep page (read and patch on HTTPRoutes, ReferenceGrants in the release namespace) |
+| `namespaceTTL.enabled` | `false` | Lets preview cleanup delete namespaces past their time to live (patch and delete on namespaces) |
 
 `values.schema.json` rejects malformed values at install time.
 

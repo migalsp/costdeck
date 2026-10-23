@@ -13,6 +13,7 @@ import (
 	"github.com/migalsp/costdeck-operator/internal/config"
 	"github.com/migalsp/costdeck-operator/internal/finops"
 	"github.com/migalsp/costdeck-operator/internal/metrics"
+	"github.com/migalsp/costdeck-operator/internal/notify"
 	"github.com/migalsp/costdeck-operator/internal/pricing"
 )
 
@@ -56,6 +57,20 @@ func (s *Server) handleFinOpsOverview(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, overview)
 }
 
+// gpuUsage is what DCGM says each namespace's GPUs do, or nil without VictoriaMetrics or
+// DCGM: the cost of GPUs never depends on it, only whether they look idle.
+func (s *Server) gpuUsage(ctx context.Context) map[string]metrics.GPUUsage {
+	if s.Metrics == nil {
+		return nil
+	}
+	usage, err := s.Metrics.GPUUsage(ctx)
+	if err != nil {
+		logf.FromContext(ctx).V(1).Info("Could not read GPU usage", "error", err.Error())
+		return nil
+	}
+	return usage
+}
+
 // FinOpsOverview is finopsOverview for other components, such as the digest scheduler.
 func (s *Server) FinOpsOverview(ctx context.Context) (finops.Overview, error) {
 	return s.finopsOverview(ctx)
@@ -65,7 +80,7 @@ func (s *Server) FinOpsOverview(ctx context.Context) (finops.Overview, error) {
 // right-sizing advice cached so far; missing advice is calculated in the background.
 func (s *Server) finopsOverview(ctx context.Context) (finops.Overview, error) {
 	ns := config.OperatorNamespace()
-	snap, err := finops.Build(ctx, s.Client, s.costRates(ctx), finops.Options{Namespace: ns, Now: time.Now(), Live: s.APIReader})
+	snap, err := finops.Build(ctx, s.Client, s.costRates(ctx), finops.Options{Namespace: ns, Now: time.Now(), Live: s.APIReader, GPUUsage: s.gpuUsage(ctx)})
 	if err != nil {
 		return finops.Overview{}, err
 	}
@@ -284,6 +299,7 @@ func (s *Server) handleBudgets(w http.ResponseWriter, r *http.Request) {
 		"anomalies":  cfg.Spec.Alerts.Anomalies,
 		"events":     events,
 		"webexReady": wx != nil && wx.Webex != nil && wx.Webex.Enabled && wx.Webex.RoomID != "",
+		"channels":   notify.Ready(cfg, notify.EventAlerts),
 		"scopes":     map[string]any{"namespaces": names, "teams": teamList},
 	})
 }

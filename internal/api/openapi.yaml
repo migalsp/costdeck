@@ -204,6 +204,38 @@ paths:
         "302":
           description: Redirect back into the dashboard
 
+  /api/auth/oidc/login:
+    get:
+      tags: [Auth]
+      security: []
+      summary: Start OpenID Connect sign-in (Keycloak, Okta, …)
+      description: >-
+        Redirects the browser to the issuer in spec.auth.oidc (authorization code flow with
+        PKCE and a nonce).
+      parameters:
+        - name: return
+          in: query
+          description: Path to return to after signing in.
+          schema: { type: string, example: /scaling }
+      responses:
+        "302":
+          description: Redirect to the provider's sign-in page
+
+  /api/auth/oidc/callback:
+    get:
+      tags: [Auth]
+      security: []
+      summary: OpenID Connect redirect URI
+      description: >
+        Register https://<host>/api/auth/oidc/callback as the client's redirect URI. Verifies
+        state, PKCE, the ID token signature, audience, issuer and nonce, maps the groups claim
+        (spec.auth.oidc.groupsClaim, default groups) through groupRoleMapping and honours
+        roles named viewer, operator or admin in rolesClaim, sets the session cookie and
+        redirects back. Failures redirect with ?sso_error=<code>&sso_detail=<text>.
+      responses:
+        "302":
+          description: Redirect back into the dashboard
+
   /api/auth/entra/callback-spa:
     post:
       tags: [Auth]
@@ -356,6 +388,43 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /api/namespaces/{ns}/schedule-suggestion:
+    get:
+      x-role: viewer
+      tags: [Namespaces]
+      summary: Suggest a schedule from usage
+      description: >-
+        Working hours read from the namespace's CPU usage over the last week (VictoriaMetrics):
+        the hours it was busy, relative to its own idle level, plus an hour on either side,
+        merged into weekly windows in the given time zone. reason is pattern (schedules
+        suggested), steady (busy at almost every hour), idle (no activity) or insufficient
+        (less than a day of history). monthlySaving is what the schedule would keep down at
+        the namespace's current cost.
+      parameters:
+        - { name: ns, in: path, required: true, schema: { type: string } }
+        - { name: timezone, in: query, schema: { type: string, default: UTC }, example: Europe/Berlin }
+      responses:
+        "200":
+          description: The suggestion
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  namespace: { type: string }
+                  reason: { type: string, enum: [pattern, steady, idle, insufficient] }
+                  schedules: { type: array, items: { $ref: "#/components/schemas/ScalingSchedule" } }
+                  upShare: { type: number }
+                  busy: { type: array, description: "7 days (Sunday first) of 24 booleans: hours with activity." }
+                  up: { type: array, description: "7 days of 24 booleans: hours the suggested schedules keep up." }
+                  days: { type: integer }
+                  timezone: { type: string }
+                  monthlySaving: { type: number }
+                  currency: { type: string }
+                  source: { type: string, enum: [victoriametrics, costdeck] }
+        "400": { description: Unknown time zone }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
   /api/namespaces/{ns}/history:
     get:
       x-role: viewer
@@ -484,6 +553,61 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /api/namespaces/{ns}/rightsizing/apply:
+    post:
+      x-role: operator
+      tags: [Namespaces]
+      summary: Apply a workload's right-sizing advice
+      description: >-
+        Sets the workload's pod requests to the recommended ones (never above a limit), which
+        rolls its pods, and records the old ones in its NamespaceOptimization. The guard puts
+        them back if a new pod is OOMKilled, restarts or crash-loops within
+        spec.rightsizing.guardMinutes. Needs spec.rightsizing.apply; refuses workloads a GitOps
+        tool manages.
+      parameters: &nsParam
+        - { name: ns, in: path, required: true, schema: { type: string } }
+      requestBody: &workloadBody
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [kind, name], properties: { kind: { type: string, enum: [Deployment, StatefulSet, Rollout] }, name: { type: string } } }
+      responses:
+        "200": { description: The change on record }
+        "400": { description: The advice changes nothing, or the workload cannot be changed }
+        "403": { description: Applying advice is off }
+        "404": { description: No advice for the workload }
+        "409": { description: A GitOps tool manages the workload }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/namespaces/{ns}/rightsizing/revert:
+    post:
+      x-role: operator
+      tags: [Namespaces]
+      summary: Put a workload's old requests back
+      parameters: *nsParam
+      requestBody: *workloadBody
+      responses:
+        "200": { description: The change, now reverted }
+        "404": { description: No change on record for the workload }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/namespaces/{ns}/rightsizing/pull-request:
+    post:
+      x-role: operator
+      tags: [Namespaces]
+      summary: Open a pull request with a workload's advice
+      description: >-
+        Finds the workload's manifest in the repository of spec.rightsizing.git (plain YAML or
+        kustomize; not Helm values), sets its containers' requests, keeping comments, and opens a
+        pull request on GitHub, GitLab or Gitea with the evidence behind the advice.
+      parameters: *nsParam
+      requestBody: *workloadBody
+      responses:
+        "200": { description: The proposal on record, with its pullRequest URL }
+        "400": { description: The advice changes nothing, or no manifest of the workload is in the repository }
+        "403": { description: No repository is set up }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
   /api/namespaces/{ns}/recommendations:
     get:
       x-role: viewer
@@ -527,6 +651,93 @@ paths:
                 $ref: "#/components/schemas/OptimizationStatus"
         "401":
           $ref: "#/components/responses/Unauthorized"
+
+  /api/namespace-selector:
+    get:
+      x-role: viewer
+      tags: [Scaling]
+      summary: Preview a namespace selector
+      description: >-
+        Parses a label selector in kubectl's syntax and returns it as a ScalingGroup stores it
+        in spec.namespaceSelector, with the namespaces it matches now. Namespaces labelled
+        costdeck.io/schedule=off and the operator's own are never matched.
+      parameters:
+        - { name: selector, in: query, required: true, schema: { type: string }, example: "env=preview,team in (shop,payments),!legacy" }
+      responses:
+        "200":
+          description: The parsed selector and its matches
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  selector: { type: object, description: "A Kubernetes LabelSelector (matchLabels, matchExpressions)." }
+                  namespaces: { type: array, items: { type: string } }
+        "400": { description: The selector cannot be parsed }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/scaling/preview:
+    post:
+      x-role: viewer
+      tags: [Scaling]
+      summary: Preview a schedule
+      description: >-
+        What a schedule would do, saved or not, without changing anything: the namespaces it
+        would take (listed or selected by label, and those another group keeps), the
+        workloads, CronJobs and operator-run services (hibernate rules) it would stop with the
+        workload rules applied, the timetable
+        for the next 14 days with exceptions, the share of time up over four weeks, and the
+        estimated saving at the current rates. name is the schedule being edited, so it does
+        not conflict with itself.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind, spec]
+              properties:
+                kind: { type: string, enum: [group, config] }
+                name: { type: string }
+                spec: { type: object, description: "The spec of a ScalingGroup or ScalingConfig as the editor holds it." }
+            example:
+              kind: group
+              spec:
+                namespaceSelector: { matchLabels: { env: preview } }
+                schedules: [{ days: [1, 2, 3, 4, 5], startTime: "08:00", endTime: "19:00", timezone: Europe/Berlin }]
+                calendars: [de-holidays]
+      responses:
+        "200":
+          description: The preview
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  namespaces: { type: array, items: { type: object } }
+                  cloudTargets: { type: array, items: { $ref: "#/components/schemas/ExternalTarget" } }
+                  intervals:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        from: { type: string, format: date-time }
+                        to: { type: string, format: date-time }
+                        active: { type: boolean }
+                        reason: { type: string, description: "schedule, or the name of the exception in force" }
+                  upShare: { type: number }
+                  nextChange: { type: string, format: date-time }
+                  savings:
+                    type: object
+                    properties:
+                      hourly: { type: number }
+                      monthly: { type: number }
+                      currency: { type: string }
+                      basis: { type: string }
+                  problems: { type: array, items: { type: string } }
+                  warnings: { type: array, items: { type: string } }
+        "400": { description: Invalid request }
+        "401": { $ref: "#/components/responses/Unauthorized" }
 
   /api/scaling/groups:
     get:
@@ -777,6 +988,48 @@ paths:
               schema: { type: array, items: { type: object } }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
+  /api/scaling/groups/{name}/realized:
+    get:
+      x-role: viewer
+      tags: [Scaling]
+      summary: Realized savings of a group's scale-down
+      description: >-
+        Whether the last scale-down lowered the bill: the nodes the scaled workloads ran on when
+        it began (with what they cost then), which of them autoscalers have removed, and for
+        each node still there what keeps it (PodDisruptionBudgets that allow no disruption,
+        karpenter.sh/do-not-disrupt, cluster-autoscaler.kubernetes.io/safe-to-evict "false",
+        local storage, pods no controller would recreate, kube-system pods without a budget,
+        node annotations) and what other namespaces still request on it. state is none while
+        nothing is recorded (the target is up, or was already down), settling during the first
+        settleMinutes after the scale-down began, and checked afterwards.
+      parameters:
+        - { name: name, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The check
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RealizedSavings" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { description: No such schedule }
+
+  /api/scaling/configs/{name}/realized:
+    get:
+      x-role: viewer
+      tags: [Scaling]
+      summary: Realized savings of a namespace schedule's scale-down
+      description: The same check as for a group, for a ScalingConfig.
+      parameters:
+        - { name: name, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The check
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RealizedSavings" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { description: No such schedule }
+
   /api/costing:
     post:
       x-role: viewer
@@ -827,6 +1080,317 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/FinOpsOverview"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/wake/{ns}:
+    get:
+      x-role: viewer
+      tags: [Scaling]
+      summary: State of a sleeping namespace
+      description: >-
+        What the dashboard's wake page shows: the schedule that scales the namespace, its desired
+        state, phase and mode, when a manual start ends, whether its HTTPRoutes show the sleep
+        page, and their hostnames (the only hosts the page sends a browser back to). Waking is a
+        manual start on the schedule (POST /api/scaling/{groups|configs}/{name}/manual).
+      parameters:
+        - { name: ns, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The namespace's state
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  namespace: { type: string }
+                  schedule: { type: object, properties: { kind: { type: string, enum: [group, config] }, name: { type: string } } }
+                  desiredState: { type: string }
+                  phase: { type: string }
+                  mode: { type: string }
+                  overrideExpiresAt: { type: string, format: date-time }
+                  sleeping: { type: boolean }
+                  hostnames: { type: array, items: { type: string } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/namespace-ttl:
+    get:
+      x-role: viewer
+      tags: [Scaling]
+      summary: Preview cleanup
+      description: >-
+        The preview cleanup setting (spec.namespaceTTL), every namespace its selector picks with
+        when it is deleted (soonest first; protected ones say why they never are), the namespaces it
+        deleted, and whether the operator may delete namespaces at all (namespaceTTL.enabled in the
+        Helm chart). selector and ttl work the plan out for unsaved values.
+      parameters:
+        - { name: selector, in: query, schema: { type: string }, example: env=preview }
+        - { name: ttl, in: query, schema: { type: string }, example: 7d }
+      responses:
+        "200":
+          description: The setting, the plan and the record
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enabled: { type: boolean }
+                  dryRun: { type: boolean }
+                  selector: { type: string }
+                  ttl: { type: string, example: 168h0m0s }
+                  warnBefore: { type: string, example: 24h0m0s }
+                  permitted: { type: boolean }
+                  error: { type: string }
+                  namespaces:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        namespace: { type: string }
+                        createdAt: { type: string, format: date-time }
+                        expiresAt: { type: string, format: date-time }
+                        source: { type: string, enum: [ttl, label, extended] }
+                        warned: { type: boolean }
+                        protected: { type: string }
+                  deleted:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        namespace: { type: string }
+                        createdAt: { type: string, format: date-time }
+                        expiresAt: { type: string, format: date-time }
+                        deletedAt: { type: string, format: date-time }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/namespace-ttl/{ns}/extend:
+    post:
+      x-role: operator
+      tags: [Scaling]
+      summary: Keep a preview namespace longer
+      description: >-
+        Moves the namespace's deletion that long after its current time, or after now when that has
+        passed (annotation costdeck.io/expires-at), and announces the new time again.
+      parameters:
+        - { name: ns, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [by], properties: { by: { type: string, example: 3d } } }
+      responses:
+        "200": { description: The namespace with its new time }
+        "400": { description: Not a duration, or the namespace is never deleted }
+        "403": { description: The operator may not change namespaces }
+        "404": { description: Preview cleanup does not select the namespace }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/rightsizing/changes:
+    get:
+      x-role: viewer
+      tags: [FinOps]
+      summary: Right-sizing changes
+      description: Every change applied, proposed or put back, newest first, with who, when, the old and new requests per container, its state and why it was put back.
+      parameters:
+        - { name: namespace, in: query, schema: { type: string } }
+      responses:
+        "200": { description: The changes }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/finops/allocation:
+    get:
+      x-role: viewer
+      tags: [FinOps]
+      summary: Cost allocation
+      description: >-
+        A period's cost from the daily history, charged to teams, environments, namespaces or the
+        values of a namespace label. Namespaces in spec.allocation.sharedNamespaces are charged to
+        the others (by the compute they request, or evenly), and capacity no pod requested is a line
+        of its own or charged too (spec.allocation.idle). The rows and unallocated add up to total,
+        the bill for the days the history covers.
+      parameters: &allocationParams
+        - { name: by, in: query, schema: { type: string, default: team }, description: "team, environment, namespace or label:<key>" }
+        - { name: period, in: query, schema: { type: string, enum: [this-month, last-month, last-7-days, last-30-days], default: this-month } }
+        - { name: from, in: query, schema: { type: string, format: date }, description: With to, instead of period. }
+        - { name: to, in: query, schema: { type: string, format: date } }
+      responses:
+        "200":
+          description: The report
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  currency: { type: string }
+                  from: { type: string, format: date }
+                  to: { type: string, format: date }
+                  by: { type: string }
+                  policy: { type: object }
+                  days: { type: integer }
+                  sharedNamespaces: { type: array, items: { type: string } }
+                  unallocated: { type: number }
+                  total: { type: number }
+                  rows:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        key: { type: string }
+                        namespaces: { type: array, items: { type: string } }
+                        compute: { type: number }
+                        storage: { type: number }
+                        network: { type: number }
+                        shared: { type: number }
+                        idle: { type: number }
+                        total: { type: number }
+        "400": { description: A bad by, period or dates }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/estimate:
+    post:
+      x-role: viewer
+      tags: [FinOps]
+      summary: What a change of manifests costs
+      description: >-
+        Prices the change between two sets of rendered manifests (helm template or kustomize build
+        of the base branch and of a pull request) at this cluster's rates: Deployments,
+        StatefulSets with their volume templates, DaemonSets on every node, Argo Rollouts, Pods,
+        PersistentVolumeClaims and LoadBalancer Services, with HorizontalPodAutoscalers counted at
+        minReplicas and namespaces on a schedule counted for the share of the time they run. The
+        markdown is a pull request comment; the costdeck-operator image runs the same as
+        "manager estimate".
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [base, head]
+              properties:
+                base: { type: string, description: Manifests before the change (multi-document YAML or JSON) }
+                head: { type: string, description: Manifests after the change }
+                namespace: { type: string, default: default, description: The namespace of objects without one }
+      responses:
+        "200":
+          description: The priced change
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  currency: { type: string }
+                  basis: { type: string }
+                  before: { type: number }
+                  after: { type: number }
+                  delta: { type: number }
+                  unchanged: { type: integer }
+                  warnings: { type: array, items: { type: string } }
+                  items: { type: array, items: { type: object } }
+                  markdown: { type: string }
+        "400": { description: Manifests that do not parse }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/finops/summary:
+    get:
+      x-role: viewer
+      tags: [FinOps]
+      summary: This cluster at a glance
+      description: >-
+        Nodes, monthly cost, what schedules save and what more could be saved, month to date,
+        forecast and schedules: what another Cost Deck reads to show this cluster on its Clusters
+        page, with a viewer API token.
+      responses:
+        "200":
+          description: The summary
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ClusterSummary" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/clusters:
+    get:
+      x-role: viewer
+      tags: [FinOps]
+      summary: Every installation side by side
+      description: >-
+        This installation's summary and those of the installations in spec.clusters, read with
+        their viewer API tokens (an installation too old to serve a summary is read from its
+        overview), each cached for a minute; a cluster that could not be read says why. Totals add
+        up the clusters per currency.
+      responses:
+        "200":
+          description: The clusters and their totals
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  clusters:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name: { type: string }
+                        url: { type: string }
+                        local: { type: boolean }
+                        error: { type: string }
+                        summary: { $ref: "#/components/schemas/ClusterSummary" }
+                  totals: { type: array, items: { type: object } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/finops/allocation.csv:
+    get:
+      x-role: viewer
+      tags: [FinOps]
+      summary: Cost allocation as CSV
+      description: The same report as a CSV file for finance, with the unallocated capacity and the total as the last rows.
+      parameters: *allocationParams
+      responses:
+        "200": { description: The CSV file, content: { text/csv: { schema: { type: string } } } }
+        "400": { description: A bad by, period or dates }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/finops/ai:
+    get:
+      x-role: viewer
+      tags: [Costing]
+      summary: LLM and self-hosted model costs
+      description: >-
+        What applications pay LLM APIs per month, by team and by model, from the last seven
+        days of token counts in VictoriaMetrics: LiteLLM's own spend (per LiteLLM team), and
+        OpenTelemetry GenAI token metrics priced with spec.pricing.llmModels (per team of the
+        namespace). Models without a price are listed in api.unpriced. selfHosted shares the
+        run rate of each namespace serving models through vLLM out over its models by tokens,
+        giving a cost per million tokens. available is false without VictoriaMetrics.
+      responses:
+        "200":
+          description: The AI costs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  available: { type: boolean }
+                  error: { type: string }
+                  currency: { type: string }
+                  windowDays: { type: integer }
+                  api:
+                    type: object
+                    properties:
+                      monthly: { type: number }
+                      sources: { type: array, items: { type: string, enum: [litellm, opentelemetry] } }
+                      teams: { type: array, items: { type: object } }
+                      models: { type: array, items: { type: object } }
+                      unpriced: { type: array, items: { type: string } }
+                  selfHosted:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        namespace: { type: string }
+                        model: { type: string }
+                        tokensPerHour: { type: number }
+                        monthlyCost: { type: number }
+                        costPer1M: { type: number }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
   /api/finops/nodes:
@@ -963,6 +1527,7 @@ paths:
                         detail: { type: string }
                         delivered: { type: string }
                   webexReady: { type: boolean }
+                  channels: { type: array, items: { type: string }, description: The channels that take alerts, such as Webex, Slack, Teams or email. }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
   /api/billing/reconcile:
@@ -1056,6 +1621,7 @@ paths:
                   reports: { type: array, items: { $ref: "#/components/schemas/ReportEntry" } }
                   schedule: { $ref: "#/components/schemas/DigestSchedule" }
                   webexReady: { type: boolean, description: Webex is enabled with a space to post to. }
+                  channels: { type: array, items: { type: string }, description: The channels that take digests, such as Webex, Slack, Teams or email. }
                   lastSent: { type: string, format: date-time }
                   nextDue: { type: string, format: date-time }
         "401": { $ref: "#/components/responses/Unauthorized" }
@@ -1088,7 +1654,7 @@ paths:
     post:
       x-role: operator
       tags: [Reports]
-      summary: Post the digest to Webex now
+      summary: Send the digest to the notification channels now
       requestBody:
         content:
           application/json:
@@ -1103,8 +1669,8 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ReportEntry" }
-        "400": { description: Webex is not enabled or has no space }
-        "502": { description: Webex rejected the message }
+        "400": { description: No notification channel takes digests }
+        "502": { description: Every channel rejected the message }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
   /api/reports/{id}:
@@ -1144,7 +1710,9 @@ paths:
         Streams the answer as Server-Sent Events. Each `data:` line is a JSON event of type
         text, reset, tool_call, tool_result, confirm, error or done. A `confirm` event names a
         mutating tool the model wants to run; nothing happens until the client calls
-        POST /api/ai/tools/{name}.
+        POST /api/ai/tools/{name}. Every answer's tokens count against the monthly token
+        budget (spec.integrations.ai.monthlyTokenBudget); once it is spent the request is
+        refused with 429.
       requestBody:
         required: true
         content:
@@ -1173,6 +1741,7 @@ paths:
                   args: { type: object }
                   isError: { type: boolean }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { description: "The assistant's monthly token budget is spent" }
 
   /api/ai/tools/{name}:
     post:
@@ -1237,6 +1806,7 @@ paths:
       responses:
         "200": { description: Event stream, content: { text/event-stream: {} } }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { description: "The assistant's monthly token budget is spent" }
 
   /api/ai/report/save:
     post:
@@ -1267,7 +1837,8 @@ paths:
       summary: Update settings
       description: >-
         Updates the sections present in the body (providers, integrations, features, pricing,
-        auth). Omitted credential fields keep the stored Secret. Requires the admin role.
+        auth, budgets, alerts, billing, reports, calendars). Omitted credential fields keep the
+        stored Secret. Requires the admin role.
       requestBody:
         required: true
         content:
@@ -1290,6 +1861,13 @@ paths:
                     - { name: payments, scope: team, value: payments, monthlyLimit: "1200", thresholds: [80, 100], forecast: true }
                   alerts:
                     anomalies: { enabled: true, percent: 30, minimumDaily: "5" }
+              calendars:
+                summary: Public holidays that schedules name in spec.calendars
+                value:
+                  calendars:
+                    - name: de-holidays
+                      timezone: Europe/Berlin
+                      days: [{ date: "2026-12-25", name: Christmas Day }, { date: "2026-12-26", name: Boxing Day }]
               billing:
                 summary: Reconcile with AWS Cost Explorer
                 value:
@@ -1314,9 +1892,12 @@ paths:
       x-role: admin
       tags: [Settings]
       summary: Test a connection
-      description: Tests unsaved credentials or settings. For cloud providers it also reports how many resources discovery finds.
+      description: >-
+        Tests unsaved credentials or settings. For cloud providers it also reports how many
+        resources discovery finds. For slack, teams and email it sends a test message, with
+        the body shaped like integrations.notifications of the settings update.
       parameters:
-        - { name: provider, in: path, required: true, schema: { type: string, enum: [aws, azure, gcp, ai, entra, webex, victoriametrics] } }
+        - { name: provider, in: path, required: true, schema: { type: string, enum: [aws, azure, gcp, ai, entra, oidc, webex, slack, teams, email, cluster, victoriametrics] } }
       requestBody:
         content:
           application/json:
@@ -1623,6 +2204,24 @@ components:
             $ref: "#/components/schemas/Error"
 
   schemas:
+    ClusterSummary:
+      type: object
+      properties:
+        name: { type: string }
+        generatedAt: { type: string, format: date-time }
+        currency: { type: string }
+        nodes: { type: integer }
+        namespaces: { type: integer }
+        monthlyCost: { type: number }
+        monthlyRequested: { type: number }
+        monthlyUsed: { type: number }
+        monthlyUnallocated: { type: number }
+        schedulesSaving: { type: number }
+        savingsAvailable: { type: number }
+        monthToDate: { type: number }
+        forecast: { type: number }
+        schedules: { type: integer }
+        schedulesDown: { type: integer }
     Error:
       type: object
       properties:
@@ -1860,7 +2459,7 @@ components:
             name: { type: string, description: "Lowercase letters, digits and dashes." }
         spec:
           type: object
-          required: [category, namespaces]
+          required: [category]
           properties:
             category:
               type: string
@@ -1868,10 +2467,63 @@ components:
             namespaces:
               type: array
               items: { type: string }
+              description: Namespaces listed by name. Optional when namespaceSelector is set.
+            namespaceSelector:
+              type: object
+              description: >-
+                A Kubernetes LabelSelector. Every namespace it matches joins the group (the matches
+                are in status.selectedNamespaces), except the operator's own and those labelled
+                costdeck.io/schedule=off. A group that lists a namespace by name wins over one that
+                selects it; otherwise the older group wins. When a namespace stops matching, the
+                group restores what it scaled down there.
+              example: { matchLabels: { env: preview } }
             schedules:
               type: array
               description: When the namespaces run. Windows are OR-ed; outside all of them everything is scaled down.
               items: { $ref: "#/components/schemas/ScalingSchedule" }
+            exceptions:
+              type: array
+              description: >-
+                Dates on which the schedules do not apply: a holiday the target stays down, or a
+                release weekend it stays up. A manual override still wins; of overlapping
+                exceptions the one that began last applies.
+              items: { $ref: "#/components/schemas/ScheduleException" }
+            calendars:
+              type: array
+              items: { type: string }
+              description: Shared holiday calendars (settings, calendars) whose days apply as exceptions too.
+            dryRun:
+              type: boolean
+              description: >-
+                Work out what the schedule would do and report it (phase DryRun and the DryRun
+                condition) without scaling anything.
+            pauseGitOps:
+              type: boolean
+              description: >-
+                Suspend the Flux Kustomizations and HelmReleases and turn off self-heal of the Argo
+                CD Applications that manage the workloads while they are down, and resume them
+                afterwards. Needs gitops.pause in the Helm chart.
+            sleepPage:
+              type: boolean
+              description: >-
+                Point the namespaces' Gateway API HTTPRoutes at Cost Deck's sleep page while the
+                schedule keeps them down, and back once they are up. Needs sleepPage.enabled in the
+                Helm chart.
+            idleAfter:
+              type: string
+              example: 1h
+              description: >-
+                Scale the namespaces down inside the schedule's hours once no request reached them
+                and no GPU was busier than 5% for this long (a duration such as 30m or 2h),
+                counted from Envoy Gateway, Istio or ingress-nginx and DCGM metrics in
+                VictoriaMetrics. They stay down until the schedule next starts them, at most a
+                week, or a manual start.
+            hibernate:
+              type: array
+              description: >-
+                Services operators run in every namespace of the group, such as databases, to stop
+                after the workloads and start before them. Added to each namespace's own rules.
+              items: { $ref: "#/components/schemas/HibernateRule" }
             activation:
               type: string
               enum: [Schedule, OnDemand]
@@ -1908,7 +2560,12 @@ components:
               description: When the manual override ends by itself.
         status:
           type: object
-          description: Written by the operator. phase is ScaledUp, ScalingUp, ScalingDown, ScaledDown or WaitingForDependencies; mode says what decides the state (Schedule, ManualUp, ManualDown, AlwaysOn, Dependency, OnDemand).
+          description: >-
+            Written by the operator. phase is ScaledUp, ScalingUp, ScalingDown, ScaledDown or
+            WaitingForDependencies; mode says what decides the state (Schedule, ManualUp,
+            ManualDown, Exception, AlwaysOn, Dependency, OnDemand, Idle). While mode is
+            Exception, exception names it and exceptionEndsAt says when it ends; while it is
+            Idle, idleUntil says when the schedule takes over again.
 
     ScalingConfig:
       type: object
@@ -1935,6 +2592,49 @@ components:
             schedules:
               type: array
               items: { $ref: "#/components/schemas/ScalingSchedule" }
+            exceptions:
+              type: array
+              description: >-
+                Dates on which the schedules do not apply: a holiday the target stays down, or a
+                release weekend it stays up. A manual override still wins; of overlapping
+                exceptions the one that began last applies.
+              items: { $ref: "#/components/schemas/ScheduleException" }
+            calendars:
+              type: array
+              items: { type: string }
+              description: Shared holiday calendars (settings, calendars) whose days apply as exceptions too.
+            dryRun:
+              type: boolean
+              description: >-
+                Work out what the schedule would do and report it (phase DryRun and the DryRun
+                condition) without scaling anything.
+            pauseGitOps:
+              type: boolean
+              description: >-
+                Suspend the Flux Kustomizations and HelmReleases and turn off self-heal of the Argo
+                CD Applications that manage the workloads while they are down, and resume them
+                afterwards. Needs gitops.pause in the Helm chart.
+            sleepPage:
+              type: boolean
+              description: >-
+                Point the namespaces' Gateway API HTTPRoutes at Cost Deck's sleep page while the
+                schedule keeps them down, and back once they are up. Needs sleepPage.enabled in the
+                Helm chart.
+            idleAfter:
+              type: string
+              example: 1h
+              description: >-
+                Scale the namespaces down inside the schedule's hours once no request reached them
+                and no GPU was busier than 5% for this long (a duration such as 30m or 2h),
+                counted from Envoy Gateway, Istio or ingress-nginx and DCGM metrics in
+                VictoriaMetrics. They stay down until the schedule next starts them, at most a
+                week, or a manual start.
+            hibernate:
+              type: array
+              description: >-
+                Services operators run in the namespace, such as databases, to stop after the
+                workloads and start before them. Groups apply them too (workload rules).
+              items: { $ref: "#/components/schemas/HibernateRule" }
             exclusions:
               type: array
               items: { type: string }
@@ -2077,6 +2777,75 @@ components:
           description: "AWS: cluster identifier or instance ID. Azure: full resource ID. Google Cloud: <zone>/<name> for Compute Engine, the instance name for Cloud SQL."
         region: { type: string }
         name: { type: string, description: Display name. }
+
+    RealizedSavings:
+      type: object
+      properties:
+        state: { type: string, enum: [none, settling, checked] }
+        scaledDownAt: { type: string, format: date-time }
+        settleMinutes: { type: integer }
+        estimatedHourly: { type: number, description: What the stopped workloads' requests cost per hour. }
+        realizedHourly: { type: number, description: What the removed nodes cost per hour. }
+        currency: { type: string }
+        gone: { type: integer }
+        blocked: { type: integer }
+        nodes:
+          type: array
+          items:
+            type: object
+            properties:
+              name: { type: string }
+              hourlyCost: { type: number }
+              gone: { type: boolean }
+              blockers:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    reason: { type: string, enum: [node, pdb, do-not-disrupt, safe-to-evict, local-storage, no-controller, custom-controller, kube-system] }
+                    pod: { type: string }
+                    detail: { type: string }
+              tenants: { type: array, items: { type: object } }
+              requestedShare: { type: number }
+    HibernateRule:
+      type: object
+      description: >-
+        Stops services an operator runs, such as a database: they stop after the namespace's
+        workloads and start before them, and the workloads the operator runs for them are left
+        to it. Only what CostDeck stopped is started again. Needs hibernation.enabled in the
+        Helm chart (hibernation.extraRules for kinds without a preset).
+      properties:
+        preset:
+          type: string
+          enum: [cnpg, zalando-postgres, strimzi]
+          description: >-
+            cnpg hibernates CloudNativePG clusters; zalando-postgres sets numberOfInstances of
+            Zalando postgresql clusters to zero; strimzi scales KafkaConnect, KafkaMirrorMaker2 and
+            KafkaBridge (Kafka clusters themselves cannot be stopped).
+        apiVersion: { type: string, example: redis.example.com/v1, description: "Without a preset: the resources' group/version." }
+        kind: { type: string, example: Redis }
+        replicasField: { type: string, example: spec.size, description: Dotted path of the replica count. }
+        readyField: { type: string, example: status.readyNodes, description: Dotted path of the ready count; without it a resource counts as there once patched. }
+        names:
+          type: array
+          items: { type: string }
+          description: Only resources with these names or globs (pg-*); empty means all in the namespace.
+    ScheduleException:
+      type: object
+      required: [start, state]
+      example: { name: Christmas break, start: "2026-12-24", end: "2027-01-01", state: Down }
+      properties:
+        name: { type: string, description: What the exception is for. }
+        start:
+          type: string
+          description: First day ("2026-12-24") or moment ("2026-12-24T18:00") it applies.
+          pattern: '^[0-9]{4}-[0-9]{2}-[0-9]{2}(T([01][0-9]|2[0-3]):[0-5][0-9])?$'
+        end:
+          type: string
+          description: Last day it applies (the whole day) or the moment it stops. Defaults to the end of the start day.
+          pattern: '^[0-9]{4}-[0-9]{2}-[0-9]{2}(T([01][0-9]|2[0-3]):[0-5][0-9])?$'
+        state: { type: string, enum: [Up, Down] }
+        timezone: { type: string, description: "Zone of start and end; defaults to the first schedule's, then UTC." }
 
     ScalingSchedule:
       type: object

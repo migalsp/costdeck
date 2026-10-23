@@ -15,6 +15,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
+	"github.com/migalsp/costdeck-operator/internal/config"
 	"github.com/migalsp/costdeck-operator/internal/scaling"
 )
 
@@ -349,7 +350,7 @@ func (b *Bot) status(ctx context.Context, cmd command) (string, error) {
 		if len(g.Status.RequiredBy) > 0 {
 			fmt.Fprintf(&sb, "Kept up for: %s\n", strings.Join(g.Status.RequiredBy, ", "))
 		}
-		for _, ns := range g.Spec.Namespaces {
+		for _, ns := range g.Members() {
 			fmt.Fprintf(&sb, "- `%s`\n", ns)
 		}
 		return sb.String(), nil
@@ -426,7 +427,7 @@ func (b *Bot) scale(ctx context.Context, msg *Message, cmd command) (string, err
 
 	var (
 		obj       client.Object
-		schedules func() []finopsv1.ScalingSchedule
+		timetable func() scaling.Timetable
 		set       func(active *bool, until *metav1.Time)
 		name      string
 	)
@@ -437,7 +438,9 @@ func (b *Bot) scale(ctx context.Context, msg *Message, cmd command) (string, err
 			return "", err
 		}
 		obj, name = g, g.Name
-		schedules = func() []finopsv1.ScalingSchedule { return g.Spec.Schedules }
+		timetable = func() scaling.Timetable {
+			return b.timetable(ctx, g.Spec.Schedules, g.Spec.Exceptions, g.Spec.Calendars)
+		}
 		set = func(a *bool, u *metav1.Time) { g.Spec.Active, g.Spec.ActiveUntil = a, u }
 	case targetConfig:
 		c, err := b.findConfig(ctx, cmd)
@@ -445,21 +448,23 @@ func (b *Bot) scale(ctx context.Context, msg *Message, cmd command) (string, err
 			return "", err
 		}
 		obj, name = c, c.Name
-		schedules = func() []finopsv1.ScalingSchedule { return c.Spec.Schedules }
+		timetable = func() scaling.Timetable {
+			return b.timetable(ctx, c.Spec.Schedules, c.Spec.Exceptions, c.Spec.Calendars)
+		}
 		set = func(a *bool, u *metav1.Time) { c.Spec.Active, c.Spec.ActiveUntil = a, u }
 	default:
 		return "", fmt.Errorf("usage: `scale group <name> up|down` or `scale config <namespace> up|down`")
 	}
 
 	until := cmd.until
-	if until == "" && len(schedules()) > 0 {
+	if until == "" && timetable().NextChange(time.Now()) != nil {
 		until = holdNextTransition
 	}
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		if err := b.K8s.Get(ctx, client.ObjectKeyFromObject(obj), obj); err != nil {
 			return err
 		}
-		deadline, err := resolveUntil(until, schedules(), time.Now())
+		deadline, err := resolveUntil(until, timetable(), time.Now())
 		if err != nil {
 			return err
 		}
@@ -475,16 +480,16 @@ func (b *Bot) scale(ctx context.Context, msg *Message, cmd command) (string, err
 	if active {
 		direction = "up"
 	}
-	return fmt.Sprintf("🚀 Scaling %s `%s` %s — %s.", cmd.targetType, name, direction, describeHold(until, schedules())), nil
+	return fmt.Sprintf("🚀 Scaling %s `%s` %s — %s.", cmd.targetType, name, direction, describeHold(until, timetable())), nil
 }
 
 // resolveUntil turns the parsed duration into spec.activeUntil.
-func resolveUntil(until string, schedules []finopsv1.ScalingSchedule, now time.Time) (*metav1.Time, error) {
+func resolveUntil(until string, tt scaling.Timetable, now time.Time) (*metav1.Time, error) {
 	switch until {
 	case "", holdForever:
 		return nil, nil
 	case holdNextTransition:
-		next := (&scaling.Engine{}).NextScheduleChange(now, schedules)
+		next := tt.NextChange(now)
 		if next == nil {
 			return nil, nil // The schedule never changes: hold until resumed.
 		}
@@ -499,12 +504,12 @@ func resolveUntil(until string, schedules []finopsv1.ScalingSchedule, now time.T
 	return &t, nil
 }
 
-func describeHold(until string, schedules []finopsv1.ScalingSchedule) string {
+func describeHold(until string, tt scaling.Timetable) string {
 	switch until {
 	case "", holdForever:
 		return "holding until you `resume` the schedule"
 	case holdNextTransition:
-		if next := (&scaling.Engine{}).NextScheduleChange(time.Now(), schedules); next != nil {
+		if next := tt.NextChange(time.Now()); next != nil {
 			return "holding until the next scheduled change at " + next.UTC().Format("Mon 15:04 MST")
 		}
 		return "holding until you `resume` (the schedule never changes)"
@@ -641,4 +646,15 @@ func orDefault(s, def string) string {
 		return def
 	}
 	return s
+}
+
+// timetable resolves when a group or config runs on its own, exceptions and calendar
+// days included, so "until the next change" also ends with a holiday.
+func (b *Bot) timetable(ctx context.Context, schedules []finopsv1.ScalingSchedule, own []finopsv1.ScheduleException, calendars []string) scaling.Timetable {
+	var shared []finopsv1.HolidayCalendar
+	if cfg, err := config.Get(ctx, b.K8s); err == nil {
+		shared = cfg.Spec.Calendars
+	}
+	exceptions, _ := scaling.ResolveExceptions(own, calendars, shared, scaling.ExceptionZone(schedules))
+	return scaling.Timetable{Schedules: schedules, Exceptions: exceptions}
 }

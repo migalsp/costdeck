@@ -192,9 +192,6 @@ type AlertEvent struct {
 	Delivered string `json:"delivered,omitempty"`
 }
 
-// DeliveredWebex marks alerts and digests posted to the Webex space.
-const DeliveredWebex = "webex"
-
 // Alert kinds.
 const (
 	AlertBudget   = "budget"
@@ -431,8 +428,8 @@ func (a *Alerter) fire(ctx context.Context, pending []pendingAlert, now time.Tim
 		ev := p.event
 		md := fmt.Sprintf("**%s**\n%s", ev.Title, ev.Detail)
 		if a.Poster != nil {
-			if err := a.Poster.Post(ctx, md); err == nil {
-				ev.Delivered = DeliveredWebex
+			if delivered, err := a.Poster.Post(ctx, md); err == nil {
+				ev.Delivered = delivered
 			} else if !errors.Is(err, ErrNoDestination) {
 				// Not marked as fired: the next check tries again.
 				if firstErr == nil {

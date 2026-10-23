@@ -1,0 +1,58 @@
+{{- if .Values.sleepPage.enabled }}
+# Lets schedules with spec.sleepPage point the Gateway API HTTPRoutes of the namespaces they
+# keep down at Cost Deck's sleep page, and back (sleepPage.enabled).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "costdeck-operator.fullname" . }}-sleep-page
+  labels:
+    {{- include "costdeck-operator.labels" . | nindent 4 }}
+rules:
+- apiGroups: ["gateway.networking.k8s.io"]
+  resources: ["httproutes"]
+  verbs: ["get", "list", "watch", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "costdeck-operator.fullname" . }}-sleep-page
+  labels:
+    {{- include "costdeck-operator.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "costdeck-operator.fullname" . }}-sleep-page
+subjects:
+- kind: ServiceAccount
+  name: {{ include "costdeck-operator.serviceAccountName" . }}
+  namespace: {{ .Release.Namespace }}
+---
+# The ReferenceGrant that opens the API Service to the sleeping routes lives here.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "costdeck-operator.fullname" . }}-sleep-page
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "costdeck-operator.labels" . | nindent 4 }}
+rules:
+- apiGroups: ["gateway.networking.k8s.io"]
+  resources: ["referencegrants"]
+  verbs: ["get", "list", "watch", "create", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "costdeck-operator.fullname" . }}-sleep-page
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "costdeck-operator.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "costdeck-operator.fullname" . }}-sleep-page
+subjects:
+- kind: ServiceAccount
+  name: {{ include "costdeck-operator.serviceAccountName" . }}
+  namespace: {{ .Release.Namespace }}
+{{- end }}

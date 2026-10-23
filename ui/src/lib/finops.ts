@@ -31,12 +31,15 @@ export interface NamespaceRow {
   cost7d?: number
   costPrev7d?: number
   trend?: number[]
+  // gpu is set when the namespace's pods request GPUs; utilization (0–1, last day) and
+  // memoryUsedGiB (peak, last week) come from DCGM.
+  gpu?: { requested: number; models: string[]; monthlyCost: number; utilization?: number; memoryUsedGiB?: number }
 }
 
 export interface Opportunity {
   kind: 'rightsizing' | 'schedule' | 'idle-capacity' | 'cost-increase' | 'missing-requests'
     | 'consolidation' | 'node-shape' | 'pending-pods' | 'node-not-ready' | 'node-pressure' | 'no-spot' | 'node-type'
-    | 'unused-volumes' | 'orphaned-volumes' | 'idle-load-balancers'
+    | 'unused-volumes' | 'orphaned-volumes' | 'idle-load-balancers' | 'idle-gpu' | 'share-gpu' | 'gpu-model'
   namespace?: string
   title: string
   detail: string
@@ -58,15 +61,18 @@ export interface HistoryDay {
 export interface Overview {
   generatedAt: string
   currency: string
-  rates: { cpuCoreHour: number; memoryGiBHour: number; currency: string; basis: string }
+  rates: { cpuCoreHour: number; memoryGiBHour: number; gpuHour?: number; currency: string; basis: string }
   cluster: {
     nodes: number; spotNodes: number; cpuCores: number; memoryGiB: number
     cpuRequested: number; memoryRequestedGiB: number; cpuUsed: number; memoryUsedGiB: number
     provisionedHourly: number; requestedHourly: number; usedHourly: number
+    gpus: number; gpuRequested: number; gpuHourly: number
   }
   monthly: {
     provisioned: number; requested: number; used: number; unallocated: number; overprovisioned: number
     storage: number; network: number; total: number; unusedStorage: number; idleNetwork: number
+    // gpu is part of provisioned; idleGpu what DCGM reports unused of the requested GPUs.
+    gpu: number; idleGpu: number
   }
   savings: { schedulesMonthly: number; rightsizingMonthly: number; rightsizingPending: number; scheduleCandidatesMonthly: number }
   monthToDate: { month: string; cost: number; saved: number; hours: number; forecast: number; partial: boolean }
@@ -106,10 +112,11 @@ export const isDown = (ns: NamespaceRow) => ns.schedule?.desiredState === 'Down'
 // Categorical series colours for per-namespace charts, in fixed order (validated for
 // colour-vision deficiency on white); everything past them folds into neutral "Other".
 export const seriesColors = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4']
-export const otherColor = '#94a3b8'
+export const otherColor = 'var(--color-slate-400)'
 
-// The cost funnel is one ordinal emerald ramp, darkest for what is used.
-export const funnelColors = { used: '#064e3b', idle: '#047857', unallocated: '#10b981' }
+// The cost funnel is one ordinal emerald ramp, strongest for what is used: darkest on the
+// light theme, lightest on the dark one (the theme mirrors the scale).
+export const funnelColors = { used: 'var(--color-emerald-900)', idle: 'var(--color-emerald-700)', unallocated: 'var(--color-emerald-500)' }
 
 export const percent = (v: number | undefined, digits = 0) =>
   v === undefined || !isFinite(v) ? '—' : `${(v * 100).toFixed(digits)}%`
@@ -160,6 +167,11 @@ export interface NodeView {
   consolidationCandidate?: boolean
   daemonSetCpu: number
   daemonSetMemoryGiB: number
+  // GPUs: physical count, the share pods request, the model and what one costs per hour.
+  gpus?: number
+  gpuRequested?: number
+  gpuModel?: string
+  gpuHourly?: number
 }
 
 export interface PoolSummary {
@@ -179,6 +191,7 @@ export interface NodesReport {
   summary: {
     nodes: number; ready: number; spot: number; unschedulable: number; pendingPods: number; pods: number; maxPods: number
     cpu: NodeResource; memoryGiB: NodeResource; monthlyCost: number; monthlyUnrequested: number
+    gpus: number; gpuRequested: number
   }
   pools: PoolSummary[]
   nodes: NodeView[]
@@ -243,6 +256,8 @@ export interface ReportsIndex {
   reports: ReportEntry[]
   schedule: DigestSchedule
   webexReady: boolean
+  // channels take digests: Webex, Slack, Teams, email.
+  channels?: string[]
   lastSent?: string
   nextDue?: string
 }
@@ -401,6 +416,8 @@ export interface BudgetsResponse {
   anomalies: AnomalySettings
   events: AlertEvent[]
   webexReady: boolean
+  // channels take alerts: Webex, Slack, Teams, email.
+  channels?: string[]
   scopes: { namespaces: string[]; teams: string[] }
 }
 
@@ -414,4 +431,44 @@ export async function fetchBudgets(): Promise<BudgetsResponse> {
 export async function saveSettings(body: unknown): Promise<void> {
   const res = await fetch('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
   if (!res.ok) throw new Error(await apiError(res))
+}
+
+// ─── AI costs (GET /api/finops/ai) ──────────────────────────────────────────
+
+export interface AITeam {
+  team: string
+  source: 'litellm' | 'opentelemetry'
+  monthly: number
+  inputTokens: number
+  outputTokens: number
+  namespaces?: string[]
+}
+
+export interface AIModel { model: string; monthly: number; inputTokens: number; outputTokens: number; priced: boolean }
+
+export interface SelfHostedModel { namespace: string; model: string; tokensPerHour: number; monthlyCost: number; costPer1M?: number }
+
+export interface AICosts {
+  available: boolean
+  error?: string
+  currency: string
+  windowDays: number
+  api: { monthly: number; sources: ('litellm' | 'opentelemetry')[]; teams: AITeam[]; models: AIModel[]; unpriced: string[] }
+  selfHosted: SelfHostedModel[]
+  // assistant is what Cost Deck's own assistant used this month, when it is set up.
+  assistant?: { month: string; inputTokens: number; outputTokens: number; requests: number; estimated?: boolean; model: string; monthlyTokenBudget: number; cost?: number }
+}
+
+export async function fetchAICosts(): Promise<AICosts> {
+  const res = await fetch('/api/finops/ai')
+  if (!res.ok) throw new Error(await apiError(res))
+  return res.json()
+}
+
+// tokens shortens a token count: 1.2M, 340k.
+export function tokens(n: number): string {
+  if (n >= 1e9) return `${(n / 1e9).toFixed(1)}B`
+  if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`
+  if (n >= 1e3) return `${Math.round(n / 1e3)}k`
+  return String(Math.round(n))
 }

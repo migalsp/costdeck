@@ -59,6 +59,9 @@ type NodesSummary struct {
 	// MonthlyCost is what the nodes cost; MonthlyUnrequested the part no pod requests.
 	MonthlyCost        float64 `json:"monthlyCost"`
 	MonthlyUnrequested float64 `json:"monthlyUnrequested"`
+	// GPUs and GPURequested count physical GPUs and the share pods request.
+	GPUs         float64 `json:"gpus"`
+	GPURequested float64 `json:"gpuRequested"`
 }
 
 // NodeResource is one resource of a node or of all nodes, in cores or GiB.
@@ -112,6 +115,12 @@ type NodeView struct {
 	// node of a pool carries.
 	DaemonSetCPU    float64 `json:"daemonSetCpu"`
 	DaemonSetMemGiB float64 `json:"daemonSetMemoryGiB"`
+	// GPUs and GPURequested count physical GPUs and the share pods request; GPUHourly is
+	// what one GPU costs, included in MonthlyCost and MonthlyRequested.
+	GPUs         float64 `json:"gpus,omitempty"`
+	GPURequested float64 `json:"gpuRequested,omitempty"`
+	GPUModel     string  `json:"gpuModel,omitempty"`
+	GPUHourly    float64 `json:"gpuHourly,omitempty"`
 }
 
 // NodeTenancy is what one namespace requests on a node.
@@ -205,6 +214,11 @@ func BuildNodes(nodes []corev1.Node, pods []corev1.Pod, usage map[string]corev1.
 	// DaemonSet pods, which run on every node anyway.
 	movableCPU, movableMem := map[string]float64{}, map[string]float64{}
 	dsCPU, dsMem := map[string]float64{}, map[string]float64{}
+	nodeByName := map[string]*corev1.Node{}
+	for i := range nodes {
+		nodeByName[nodes[i].Name] = &nodes[i]
+	}
+	gpuRequested := map[string]float64{}
 	for i := range pods {
 		p := &pods[i]
 		if Unschedulable(p) {
@@ -227,6 +241,9 @@ func BuildNodes(nodes []corev1.Node, pods []corev1.Pod, usage map[string]corev1.
 		t.cpu += c
 		t.mem += m
 		podsOn[p.Spec.NodeName]++
+		if list := PodGPURequests(p); len(list) > 0 {
+			gpuRequested[p.Spec.NodeName] += pricing.GPUUnits(list, nodeByName[p.Spec.NodeName])
+		}
 		if isDaemonSetPod(p) {
 			dsCPU[p.Spec.NodeName] += c
 			dsMem[p.Spec.NodeName] += m
@@ -294,6 +311,11 @@ func BuildNodes(nodes []corev1.Node, pods []corev1.Pod, usage map[string]corev1.
 		}
 		v.MonthlyCost = month(v.CPU.Capacity, v.Memory.Capacity)
 		v.MonthlyRequested = month(v.CPU.Requested, v.Memory.Requested)
+		if v.GPUs = pricing.NodeGPUs(n); v.GPUs > 0 {
+			v.GPUModel, v.GPUHourly, v.GPURequested = pricing.GPUModel(n), rates.NodeGPUHour(n), gpuRequested[n.Name]
+			v.MonthlyCost += v.GPUs * v.GPUHourly * pricing.HoursPerMonth
+			v.MonthlyRequested += v.GPURequested * v.GPUHourly * pricing.HoursPerMonth
+		}
 		v.MonthlyUsed = month(v.CPU.Used, v.Memory.Used)
 		rep.Nodes = append(rep.Nodes, v)
 	}
@@ -317,7 +339,9 @@ func markConsolidation(nodes []NodeView, movableCPU, movableMem map[string]float
 	schedulable := 0
 	var freeCPU, freeMem float64
 	for _, n := range nodes {
-		if n.Status == nodeReady && !n.Unschedulable {
+		// GPU nodes take GPU pods, which cannot move to the others, and are tainted for
+		// them as a rule: they are left out on both sides.
+		if n.Status == nodeReady && !n.Unschedulable && n.GPUs == 0 {
 			schedulable++
 			freeCPU += max(0, n.CPU.Allocatable*(1-headroom)-n.CPU.Requested)
 			freeMem += max(0, n.Memory.Allocatable*(1-headroom)-n.Memory.Requested)
@@ -328,7 +352,7 @@ func markConsolidation(nodes []NodeView, movableCPU, movableMem map[string]float
 	}
 	order := make([]int, 0, len(nodes))
 	for i, n := range nodes {
-		if n.Status != nodeReady || n.Unschedulable || n.CPU.Allocatable == 0 || n.Memory.Allocatable == 0 {
+		if n.Status != nodeReady || n.Unschedulable || n.CPU.Allocatable == 0 || n.Memory.Allocatable == 0 || n.GPUs > 0 {
 			continue
 		}
 		if n.CPU.Requested/n.CPU.Allocatable <= consolidationShare && n.Memory.Requested/n.Memory.Allocatable <= consolidationShare {
@@ -381,6 +405,8 @@ func summarise(nodes []NodeView, pending int) (NodesSummary, []PoolSummary) {
 		add(&s.Memory, n.Memory)
 		s.MonthlyCost += n.MonthlyCost
 		s.MonthlyUnrequested += max(0, n.MonthlyCost-n.MonthlyRequested)
+		s.GPUs += n.GPUs
+		s.GPURequested += n.GPURequested
 
 		name := n.Pool
 		if name == "" {

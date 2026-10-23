@@ -11,6 +11,26 @@
 #   60 single-namespace schedules, created and deleted through the API
 #   70 usage history from VictoriaMetrics            (disposable clusters only)
 #   80 the MCP endpoint                               (disposable clusters only)
+#   90 date exceptions and holiday calendars (calendars on disposable clusters only)
+#   91 namespaces joining and leaving a schedule by label
+#   92 schedule preview and dry run
+#   93 pausing Flux and Argo CD while a schedule keeps workloads down
+#   94 stopping operator-run services (databases, Kafka Connect) with their namespace
+#   95 realized savings: the nodes a scale-down should free, and what keeps them
+#   96 GPU cost and idle GPUs from DCGM               (disposable clusters only)
+#   97 LLM API spend and self-hosted model costs        (disposable clusters only)
+#   98 the assistant's monthly token budget            (disposable clusters only)
+#   99 a schedule suggested from a week of usage        (disposable clusters only)
+#  990 single sign-on with a real Keycloak               (disposable clusters only)
+#  991 the sleep page on Gateway API HTTPRoutes           (disposable clusters only)
+#  992 idle auto-sleep from Envoy Gateway request counters (disposable clusters only)
+#  993 notifications to Slack, Teams and email             (disposable clusters only)
+#  994 Argo Rollouts, also with workloadRef                 (disposable clusters only)
+#  995 preview cleanup deletes namespaces past their TTL    (disposable clusters only)
+#  996 cost allocation from the history, with its CSV     (disposable clusters only)
+#  997 several clusters side by side                       (disposable clusters only)
+#  998 cost estimates of a change of manifests              (disposable clusters only)
+#  999 applying right-sizing advice, and pull requests      (disposable clusters only)
 #
 # Run it against a disposable cluster (Kind in CI, `make test-e2e` locally): it installs
 # CRDs, metrics-server and changes settings. IMAGE must already be loadable by the cluster
@@ -37,8 +57,16 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 source "$HERE/e2e/lib.sh"
 
 cleanup() {
+  # A run that did not reach the end failed, whatever $? says: bash 3.2 reports 0 to an
+  # EXIT trap after an unbound-variable error, so a scenario that stopped on a shell error
+  # would otherwise pass.
+  local status=$?
+  [[ -n "${SUITE_PASSED:-}" ]] || status=$((status ? status : 1))
   set +e
   # ${a[@]+"${a[@]}"}: an empty array is not "unbound" under set -u, even in bash 3.2.
+  for cmd in ${CLEANUP_COMMANDS[@]+"${CLEANUP_COMMANDS[@]}"}; do
+    eval "$cmd" >/dev/null 2>&1
+  done
   for call in ${CLEANUP_CALLS[@]+"${CLEANUP_CALLS[@]}"}; do
     # shellcheck disable=SC2086 # method, path and body are separate words on purpose
     api $call >/dev/null 2>&1
@@ -51,6 +79,7 @@ cleanup() {
     wait $PF_PIDS 2>/dev/null
   fi
   [[ -n "${JAR:-}" ]] && rm -f "$JAR"
+  exit "$status"
 }
 trap cleanup EXIT
 
@@ -59,6 +88,10 @@ if [[ -z "${SKIP_INSTALL:-}" ]]; then
   log "Installing chart with $IMAGE"
   helm upgrade --install "$RELEASE" deploy/helm/costdeck-operator -n "$NS" --create-namespace \
     --set image.repository="${IMAGE%:*}" --set image.tag="${IMAGE##*:}" --set image.pullPolicy=Never \
+    --set gitops.pause=true \
+    --set hibernation.enabled=true \
+    --set sleepPage.enabled=true \
+    --set namespaceTTL.enabled=true \
     --wait --timeout 3m
   if ! kubectl get apiservice v1beta1.metrics.k8s.io >/dev/null 2>&1; then
     log "Installing metrics-server $METRICS_SERVER_VERSION"
@@ -93,4 +126,5 @@ for scenario in "$HERE"/e2e/[0-9]*.sh; do
   source "$scenario"
 done
 
+SUITE_PASSED=1
 log "All scenarios passed"

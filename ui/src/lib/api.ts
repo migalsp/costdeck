@@ -23,6 +23,14 @@ export async function fetchNamespaceCost(namespace: string): Promise<CostEstimat
   return res.ok ? res.json() : null
 }
 
+// getJSON fetches a JSON document and throws the server's error message for a failed
+// response, so an error body is never taken for data.
+export async function getJSON<T>(url: string): Promise<T> {
+  const res = await fetch(url)
+  if (!res.ok) throw new Error(await apiError(res))
+  return res.json()
+}
+
 // errorMessage turns a caught value into display text.
 export const errorMessage = (err: unknown): string => (err instanceof Error ? err.message : String(err))
 

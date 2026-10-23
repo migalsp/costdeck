@@ -60,6 +60,10 @@ type Monthly struct {
 	// UnusedStorage and IdleNetwork are the parts of them nothing uses.
 	UnusedStorage float64 `json:"unusedStorage"`
 	IdleNetwork   float64 `json:"idleNetwork"`
+	// GPU is what the GPUs cost, part of Provisioned; IdleGPU the part of the requested
+	// GPUs DCGM reports unused.
+	GPU     float64 `json:"gpu"`
+	IdleGPU float64 `json:"idleGpu"`
 }
 
 // Savings sums what is saved and what could be.
@@ -137,6 +141,19 @@ type NamespaceRow struct {
 	Cost7d     *float64  `json:"cost7d,omitempty"`
 	CostPrev7d *float64  `json:"costPrev7d,omitempty"`
 	Trend      []float64 `json:"trend,omitempty"`
+	// GPU is set for namespaces whose pods request GPUs.
+	GPU *GPURow `json:"gpu,omitempty"`
+}
+
+// GPURow is what a namespace's GPUs cost and do.
+type GPURow struct {
+	Requested   float64  `json:"requested"`
+	Models      []string `json:"models"`
+	MonthlyCost float64  `json:"monthlyCost"`
+	// Utilization (0–1, last day) and MemoryUsedGiB (peak, last week) come from DCGM and
+	// are absent without it.
+	Utilization   *float64 `json:"utilization,omitempty"`
+	MemoryUsedGiB *float64 `json:"memoryUsedGiB,omitempty"`
 }
 
 // Resource is requested, used and limit in cores or GiB.
@@ -195,6 +212,7 @@ func NewOverview(s Snapshot, ledger *Ledger, rightsizing map[string]float64, pen
 			Total:         m(s.Cluster.BillHourly()),
 			UnusedStorage: s.Infra.UnusedStorageMonthly,
 			IdleNetwork:   s.Infra.IdleNetworkMonthly,
+			GPU:           m(s.Cluster.GPUHourly),
 		},
 		InfraError:    s.InfraError,
 		Savings:       Savings{SchedulesMonthly: m(s.SavedHourly()), RightsizingPending: pending},
@@ -220,6 +238,17 @@ func NewOverview(s Snapshot, ledger *Ledger, rightsizing map[string]float64, pen
 		}
 		if row.Insights == nil {
 			row.Insights = []string{}
+		}
+		if ns.GPURequested > 0 {
+			row.GPU = &GPURow{Requested: ns.GPURequested, Models: ns.GPUModels, MonthlyCost: m(ns.GPUHourly)}
+			if row.GPU.Models == nil {
+				row.GPU.Models = []string{}
+			}
+			if u := ns.GPUUsage; u != nil {
+				util, mem := u.Utilization, u.MemoryUsedGiB
+				row.GPU.Utilization, row.GPU.MemoryUsedGiB = &util, &mem
+				o.Monthly.IdleGPU += m(ns.GPUHourly) * (1 - util)
+			}
 		}
 		if ns.RequestedHourly > 0 {
 			e := ns.UsedHourly / ns.RequestedHourly
@@ -247,7 +276,7 @@ func NewOverview(s Snapshot, ledger *Ledger, rightsizing map[string]float64, pen
 		row.Trend = trend(ledger, ns.Name, s.At)
 		o.Namespaces = append(o.Namespaces, row)
 	}
-	o.Opportunities = opportunities(o, s.Infra)
+	o.Opportunities = opportunities(o, s.Infra, gpuOpportunities(s)...)
 	return o
 }
 
@@ -360,8 +389,8 @@ func trend(l *Ledger, ns string, now time.Time) []float64 {
 	return out
 }
 
-func opportunities(o Overview, inf Infra) []Opportunity {
-	ops := []Opportunity{}
+func opportunities(o Overview, inf Infra, extra ...Opportunity) []Opportunity {
+	ops := append([]Opportunity{}, extra...)
 	cur := o.Currency
 	for _, ns := range o.Namespaces {
 		if ns.RightsizingMonthly != nil && *ns.RightsizingMonthly >= 0.01 {

@@ -69,6 +69,37 @@ spec:
                         type: integer
                     type: object
                 type: object
+              allocation:
+                description: |-
+                  Allocation decides how cost that belongs to no team is charged in showback and
+                  chargeback: capacity no pod requests, and namespaces everyone shares.
+                properties:
+                  idle:
+                    description: |-
+                      Idle is how capacity no pod requests is charged: separate (its own line, the
+                      default) or proportional (spread over the namespaces by the compute they request).
+                    enum:
+                    - separate
+                    - proportional
+                    type: string
+                  sharedNamespaces:
+                    description: |-
+                      SharedNamespaces are charged to the other namespaces instead of to themselves:
+                      names or patterns such as kube-* or monitoring.
+                    items:
+                      type: string
+                    maxItems: 100
+                    type: array
+                    x-kubernetes-list-type: set
+                  sharedSplit:
+                    description: |-
+                      SharedSplit spreads the shared namespaces' cost by the compute the others request
+                      (proportional, the default) or evenly.
+                    enum:
+                    - proportional
+                    - even
+                    type: string
+                type: object
               auth:
                 description: Auth configures single sign-on and local login.
                 properties:
@@ -150,6 +181,99 @@ spec:
                     - message: tenantId and clientId are required when Entra SSO is
                         enabled
                       rule: '!self.enabled || (size(self.tenantId) > 0 && size(self.clientId)
+                        > 0)'
+                  oidc:
+                    description: |-
+                      OIDC configures single sign-on with any other OpenID Connect provider: Keycloak,
+                      Okta, Auth0, Dex, Google and the like.
+                    properties:
+                      autoProvision:
+                        default: true
+                        description: |-
+                          AutoProvision lets anyone the provider signs in use CostDeck with DefaultRole. When
+                          false, only users matched by GroupRoleMapping or RolesClaim may sign in.
+                        type: boolean
+                      clientId:
+                        description: ClientID of the client registered for CostDeck.
+                        maxLength: 256
+                        type: string
+                      clientSecretRef:
+                        description: |-
+                          ClientSecretRef names the Secret holding the client secret under CLIENT_SECRET.
+                          Without one the client is public and PKCE alone protects the code.
+                        type: string
+                      defaultRole:
+                        default: viewer
+                        description: 'DefaultRole is granted to users who match no
+                          group or role: viewer, operator or admin.'
+                        enum:
+                        - viewer
+                        - operator
+                        - admin
+                        type: string
+                      displayName:
+                        description: |-
+                          DisplayName labels the button: "Sign in with <DisplayName>". Defaults to "single
+                          sign-on".
+                        maxLength: 64
+                        type: string
+                      enabled:
+                        description: Enabled shows the sign-in button and accepts
+                          sign-ins from the provider.
+                        type: boolean
+                      groupRoleMapping:
+                        additionalProperties:
+                          type: string
+                        description: |-
+                          GroupRoleMapping maps groups (as GroupsClaim lists them) to a role. The most
+                          privileged match wins.
+                        type: object
+                      groupsClaim:
+                        description: |-
+                          GroupsClaim is the claim listing the user's groups; dotted paths reach nested claims.
+                          Defaults to groups (Keycloak's group membership mapper; full paths such as /team-a
+                          match a mapping with or without the leading slash).
+                        maxLength: 128
+                        type: string
+                      issuerUrl:
+                        description: |-
+                          IssuerURL is the provider's issuer, whose /.well-known/openid-configuration is read,
+                          e.g. https://keycloak.example.com/realms/costdeck. It must be HTTPS: the client
+                          secret is sent to it.
+                        maxLength: 512
+                        pattern: ^https://[^\s]+$
+                        type: string
+                      redirectUrl:
+                        description: |-
+                          RedirectURL must match a redirect URI of the client exactly:
+                          https://<host>/api/auth/oidc/callback. Derived from the request host when empty.
+                        maxLength: 512
+                        type: string
+                      rolesClaim:
+                        description: |-
+                          RolesClaim is a claim listing roles named viewer, operator or admin, which are honoured
+                          as they are, e.g. realm_access.roles (Keycloak realm roles) or
+                          resource_access.costdeck.roles (client roles).
+                        maxLength: 128
+                        type: string
+                      scopes:
+                        description: |-
+                          Scopes requested besides openid. Defaults to profile and email; add groups or roles
+                          when the provider only sends those claims for a scope.
+                        items:
+                          type: string
+                        type: array
+                        x-kubernetes-list-type: atomic
+                      skipSslVerify:
+                        description: |-
+                          SkipSSLVerify disables TLS verification towards the provider. Only for providers with
+                          a certificate the operator cannot verify, and SSL-inspecting proxies.
+                        type: boolean
+                    type: object
+                    x-kubernetes-validations:
+                    - message: issuerUrl and clientId are required when OIDC sign-in
+                        is enabled
+                      rule: '!self.enabled || (size(self.issuerUrl) > 0 && size(self.clientId)
                         > 0)'
                 type: object
               billing:
@@ -274,10 +398,105 @@ spec:
                 x-kubernetes-list-map-keys:
                 - name
                 x-kubernetes-list-type: map
+              calendars:
+                description: |-
+                  Calendars are shared lists of days, such as public holidays, that schedules name in
+                  spec.calendars to apply them as exceptions.
+                items:
+                  description: |-
+                    HolidayCalendar is a named list of days on which the schedules that use it keep their
+                    targets in State, typically down for public holidays.
+                  properties:
+                    days:
+                      description: Days of the calendar.
+                      items:
+                        description: CalendarDay is one day of a HolidayCalendar.
+                        properties:
+                          date:
+                            description: Date is the day, "2026-12-25".
+                            pattern: ^[0-9]{4}-[0-9]{2}-[0-9]{2}$
+                            type: string
+                          name:
+                            description: Name of the day, such as "Christmas Day".
+                            maxLength: 100
+                            type: string
+                        required:
+                        - date
+                        type: object
+                      maxItems: 400
+                      type: array
+                      x-kubernetes-list-type: atomic
+                    name:
+                      description: Name schedules use to refer to the calendar.
+                      maxLength: 63
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                    state:
+                      description: State targets are kept in on these days. Defaults
+                        to Down.
+                      enum:
+                      - Up
+                      - Down
+                      type: string
+                    timezone:
+                      description: |-
+                        Timezone the days are counted in. Defaults to the timezone of the schedule that
+                        uses the calendar.
+                      type: string
+                  required:
+                  - days
+                  - name
+                  type: object
+                maxItems: 50
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
               clusterName:
                 description: |-
                   ClusterName defines an optional identifier for this cluster.
                   Used in multi-cluster environments to distinguish bot commands.
+                type: string
+              clusters:
+                description: |-
+                  Clusters are other Cost Deck installations this one shows next to its own on the
+                  Clusters page, read with a viewer API token of each.
+                items:
+                  description: RemoteCluster is another Cost Deck installation.
+                  properties:
+                    name:
+                      description: Name is how the Clusters page calls it.
+                      maxLength: 63
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                    secretRef:
+                      description: |-
+                        SecretRef names the Secret holding a viewer API token of that installation under
+                        the cluster's name.
+                      type: string
+                    skipTlsVerify:
+                      description: SkipTLSVerify accepts its certificate without checking
+                        it.
+                      type: boolean
+                    url:
+                      description: URL is where its dashboard answers, such as https://costdeck.eu.example.com.
+                      pattern: ^https?://[^\s]+$
+                      type: string
+                  required:
+                  - name
+                  - url
+                  type: object
+                maxItems: 50
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
+              dashboardUrl:
+                description: |-
+                  DashboardURL is the address people open Cost Deck at, e.g.
+                  https://costdeck.example.com. The sleep page links to it to wake a namespace.
+                maxLength: 512
+                pattern: ^https?://[^\s]+$
                 type: string
               features:
                 description: Features holds core CostDeck feature toggles
@@ -308,6 +527,14 @@ spec:
                           Model is the model ID, e.g. "claude-opus-5-5". Defaults per provider when empty;
                           the settings page lists the models the configured key can use.
                         type: string
+                      monthlyTokenBudget:
+                        description: |-
+                          MonthlyTokenBudget caps the tokens (input and output) the assistant and AI reports
+                          may use in a calendar month (UTC); once it is spent they refuse new requests until
+                          the next month. 0 means no cap.
+                        format: int64
+                        minimum: 0
+                        type: integer
                       provider:
                         description: |-
                           Provider is anthropic, openai, gemini, or local (any OpenAI-compatible endpoint such
@@ -367,6 +594,128 @@ spec:
                             type: string
                         type: object
                     type: object
+                  notifications:
+                    description: |-
+                      Notifications sends alerts, digests and scaling changes to Slack, Microsoft Teams or
+                      email, besides the Webex space.
+                    properties:
+                      email:
+                        description: Email sends through an SMTP server.
+                        properties:
+                          enabled:
+                            description: Enabled turns the channel on.
+                            type: boolean
+                          events:
+                            description: Events limits what is sent; empty sends everything.
+                            items:
+                              description: |-
+                                NotificationEvent is a kind of message Cost Deck sends: schedules (a schedule finished
+                                scaling up or down), alerts (budgets, cost anomalies, namespaces about to be deleted) or
+                                digests (the scheduled cost summary).
+                              enum:
+                              - schedules
+                              - alerts
+                              - digests
+                              type: string
+                            type: array
+                            x-kubernetes-list-type: set
+                          from:
+                            description: From is the sender address.
+                            type: string
+                          host:
+                            description: Host is the SMTP server, such as smtp.example.com.
+                            maxLength: 253
+                            type: string
+                          port:
+                            description: Port of the SMTP server. Defaults to 587,
+                              or 465 with Security tls.
+                            format: int32
+                            maximum: 65535
+                            minimum: 1
+                            type: integer
+                          secretRef:
+                            description: SecretRef names the Secret holding the SMTP
+                              password under PASSWORD.
+                            type: string
+                          security:
+                            description: |-
+                              Security is starttls (the default: upgrade the connection before signing in), tls
+                              (TLS from the start, usually port 465) or none (a relay inside the cluster; no
+                              password is sent without TLS).
+                            enum:
+                            - starttls
+                            - tls
+                            - none
+                            type: string
+                          to:
+                            description: To lists the recipients.
+                            items:
+                              type: string
+                            maxItems: 50
+                            type: array
+                            x-kubernetes-list-type: atomic
+                          username:
+                            description: Username signs in to the SMTP server; empty
+                              sends without signing in.
+                            type: string
+                        type: object
+                      slack:
+                        description: Slack posts through an incoming webhook.
+                        properties:
+                          enabled:
+                            description: Enabled turns the channel on.
+                            type: boolean
+                          events:
+                            description: Events limits what the channel receives;
+                              empty sends everything.
+                            items:
+                              description: |-
+                                NotificationEvent is a kind of message Cost Deck sends: schedules (a schedule finished
+                                scaling up or down), alerts (budgets, cost anomalies, namespaces about to be deleted) or
+                                digests (the scheduled cost summary).
+                              enum:
+                              - schedules
+                              - alerts
+                              - digests
+                              type: string
+                            type: array
+                            x-kubernetes-list-type: set
+                          secretRef:
+                            description: |-
+                              SecretRef names the Secret holding the webhook URL under WEBHOOK_URL: whoever has
+                              the URL can post to the channel, so it is kept out of the CR.
+                            type: string
+                        type: object
+                      teams:
+                        description: |-
+                          Teams posts through a Microsoft Teams Workflows webhook ("Post to a channel when a
+                          webhook request is received"), as an Adaptive Card.
+                        properties:
+                          enabled:
+                            description: Enabled turns the channel on.
+                            type: boolean
+                          events:
+                            description: Events limits what the channel receives;
+                              empty sends everything.
+                            items:
+                              description: |-
+                                NotificationEvent is a kind of message Cost Deck sends: schedules (a schedule finished
+                                scaling up or down), alerts (budgets, cost anomalies, namespaces about to be deleted) or
+                                digests (the scheduled cost summary).
+                              enum:
+                              - schedules
+                              - alerts
+                              - digests
+                              type: string
+                            type: array
+                            x-kubernetes-list-type: set
+                          secretRef:
+                            description: |-
+                              SecretRef names the Secret holding the webhook URL under WEBHOOK_URL: whoever has
+                              the URL can post to the channel, so it is kept out of the CR.
+                            type: string
+                        type: object
+                    type: object
                   victoriaMetrics:
                     description: VictoriaMetrics metrics integration
                     properties:
@@ -406,6 +755,34 @@ spec:
                         type: boolean
                     type: object
                 type: object
+              namespaceTTL:
+                description: |-
+                  NamespaceTTL deletes preview namespaces some time after they were created. Off by
+                  default; it also needs namespaceTTL.enabled in the Helm chart.
+                properties:
+                  dryRun:
+                    description: DryRun works out what would be deleted and when,
+                      and deletes and sends nothing.
+                    type: boolean
+                  enabled:
+                    description: Enabled turns deleting on.
+                    type: boolean
+                  selector:
+                    description: |-
+                      Selector picks the namespaces, such as env=preview. Required: an empty selector
+                      would match every namespace.
+                    maxLength: 1024
+                    type: string
+                  ttl:
+                    description: TTL is how long after its creation a namespace is
+                      deleted, such as 168h.
+                    type: string
+                  warnBefore:
+                    description: |-
+                      WarnBefore sends an alert to the notification channels this long before a
+                      deletion. Defaults to 24h; 0s sends none.
+                    type: string
+                type: object
               pricing:
                 description: Pricing sets custom cost rates.
                 properties:
@@ -419,6 +796,43 @@ spec:
                       Defaults to USD.
                     pattern: ^[A-Za-z]{3}$
                     type: string
+                  gpuHour:
+                    description: |-
+                      GPUHour is the price of one GPU for one hour, e.g. "0.81", for every GPU model.
+                      Without it a GPU costs its share of the node's list price, or an estimate for its
+                      model.
+                    pattern: ^[0-9]+(\.[0-9]+)?$
+                    type: string
+                  llmModels:
+                    description: |-
+                      LLMModels price the LLM tokens applications report through OpenTelemetry, per
+                      million tokens. LiteLLM reports what its tokens cost itself.
+                    items:
+                      description: LLMModelPrice is what a model's tokens cost.
+                      properties:
+                        inputPer1M:
+                          description: InputPer1M and OutputPer1M are the price of
+                            a million input and output tokens.
+                          pattern: ^[0-9]+(\.[0-9]+)?$
+                          type: string
+                        model:
+                          description: |-
+                            Model as the metrics name it (gen_ai.request.model), e.g. "gpt-4o"; globs such as
+                            "claude-sonnet-*" work. The first matching entry wins.
+                          maxLength: 200
+                          minLength: 1
+                          type: string
+                        outputPer1M:
+                          pattern: ^[0-9]+(\.[0-9]+)?$
+                          type: string
+                      required:
+                      - inputPer1M
+                      - model
+                      - outputPer1M
+                      type: object
+                    maxItems: 100
+                    type: array
+                    x-kubernetes-list-type: atomic
                   loadBalancerMonth:
                     description: |-
                       LoadBalancerMonth is the price of one LoadBalancer Service for a month, before
@@ -548,12 +962,13 @@ spec:
                 description: Reports schedules the cost digest.
                 properties:
                   digest:
-                    description: Digest posts a cost summary to the Webex space on
-                      a schedule.
+                    description: Digest posts a cost summary to the notification channels
+                      on a schedule.
                     properties:
                       enabled:
-                        description: Enabled turns the scheduled digest on. It needs
-                          Webex with a space ID.
+                        description: |-
+                          Enabled turns the scheduled digest on. It needs a notification channel: Webex
+                          with a space ID, Slack, Teams or email.
                         type: boolean
                       frequency:
                         description: |-
@@ -573,6 +988,66 @@ spec:
                           Defaults to UTC.
                         type: string
                     type: object
+                type: object
+              rightsizing:
+                description: |-
+                  Rightsizing lets operators act on right-sizing advice: apply it to workloads, or
+                  open a pull request with it in a GitOps repository. Both are off by default.
+                properties:
+                  apply:
+                    description: |-
+                      Apply lets operators apply advice to a workload from the dashboard: its pod requests
+                      are patched, which rolls its pods. Workloads a GitOps tool manages are left to pull
+                      requests.
+                    type: boolean
+                  git:
+                    description: |-
+                      Git opens pull requests with the advice in the repository the workloads are
+                      deployed from.
+                    properties:
+                      apiUrl:
+                        description: |-
+                          APIURL is the API's address: https://api.github.com, https://gitlab.com/api/v4, or
+                          a Gitea's https://gitea.example.com/api/v1. Defaults by provider (not for Gitea).
+                        type: string
+                      baseBranch:
+                        description: BaseBranch is where pull requests go. Defaults
+                          to main.
+                        type: string
+                      path:
+                        description: Path limits the search for a workload's manifest
+                          to a directory, such as deploy/.
+                        type: string
+                      provider:
+                        description: Provider is github, gitlab or gitea.
+                        enum:
+                        - github
+                        - gitlab
+                        - gitea
+                        type: string
+                      repository:
+                        description: Repository is owner/name on GitHub and Gitea,
+                          or the project path on GitLab.
+                        maxLength: 255
+                        type: string
+                      secretRef:
+                        description: |-
+                          SecretRef names the Secret holding an access token that can push branches and open
+                          pull requests, under TOKEN.
+                        type: string
+                    required:
+                    - provider
+                    - repository
+                    type: object
+                  guardMinutes:
+                    description: |-
+                      GuardMinutes is how long after a change Cost Deck watches the workload's new pods
+                      and puts the old requests back if one is OOMKilled, restarts or crash-loops.
+                      Defaults to 30.
+                    format: int32
+                    maximum: 1440
+                    minimum: 5
+                    type: integer
                 type: object
             type: object
           status:

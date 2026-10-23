@@ -28,7 +28,9 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
 	"github.com/migalsp/costdeck-operator/internal/pricing"
@@ -47,14 +49,18 @@ type ScalingConfigReconciler struct {
 	// Pricing values the savings of kept-down workloads; optional.
 	Pricing *pricing.Resolver
 	// Notifier announces finished transitions; optional.
-	Notifier  Notifier
+	Notifier Notifier
+	// Requests counts the traffic idle auto-sleep looks at; optional.
+	Requests  RequestCounter
 	announced transitionLog
+	idle      idleWatch
 }
 
 // +kubebuilder:rbac:groups=finops.costdeck.io,namespace=costdeck,resources=scalingconfigs,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=finops.costdeck.io,namespace=costdeck,resources=scalingconfigs/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=finops.costdeck.io,namespace=costdeck,resources=scalingconfigs/finalizers,verbs=update
 // +kubebuilder:rbac:groups=apps,resources=deployments;statefulsets,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups=argoproj.io,resources=rollouts,verbs=get;list;watch;patch
 
 func (r *ScalingConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	l := logf.FromContext(ctx)
@@ -77,26 +83,65 @@ func (r *ScalingConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	// 2. Determine desired state
-	decision := r.Engine.Decide(time.Now(), config.Spec.Schedules, config.Spec.Active, config.Spec.ActiveUntil, config.Annotations)
+	exceptions, problems := scaling.ResolveExceptions(config.Spec.Exceptions, config.Spec.Calendars, calendars(ctx, r.Client), scaling.ExceptionZone(config.Spec.Schedules))
+	timetable := scaling.Timetable{Schedules: config.Spec.Schedules, Exceptions: exceptions}
+	at := func(t time.Time) scaling.Decision {
+		return r.Engine.Decide(t, timetable, config.Spec.Active, config.Spec.ActiveUntil, config.Annotations)
+	}
+	decision := scaling.ApplyIdle(at(time.Now()), scaling.IdleUntil(&config.Status.ScheduleStatus), time.Now(), at)
 	targetActive := decision.Active
+	exclusions := scaling.ExclusionsWith(config.Spec.Exclusions, config.Spec.Hibernate)
 
 	l.Info("Reconciling ScalingConfig", "targetNamespace", config.Spec.TargetNamespace, "targetActive", targetActive, "mode", decision.Mode)
 
+	if config.Spec.DryRun {
+		applyDecision(&config.Status.ScheduleStatus, &config.Status.Conditions, decision, config.Generation, "namespace")
+		setExceptionsCondition(&config.Status.Conditions, problems, config.Generation)
+		n, err := wouldChange(ctx, r.Engine, config.Spec.TargetNamespace, targetActive, exclusions, config.Spec.Hibernate)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		config.Status.Phase = scaling.PhaseDryRun
+		setDryRunCondition(&config.Status.Conditions, dryRunMessage("schedule", targetActive, n, min(n, 1), 0, nil), config.Generation)
+		if err := updateStatus(ctx, r.Client, config, before, &config.Status); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{RequeueAfter: settledRequeue(decision, time.Now())}, nil
+	}
+	setDryRunCondition(&config.Status.Conditions, "", config.Generation)
+
+	// 2.2 Idle auto-sleep may take the namespace down inside its schedule's hours.
+	decision = r.idle.reconcile(ctx, r.Requests, &config.Status.ScheduleStatus, &config.Status.Conditions, idleCheck{
+		UID: config.UID, Generation: config.Generation, IdleAfter: config.Spec.IdleAfter, Namespaces: []string{config.Spec.TargetNamespace},
+		Phase: config.Status.Phase, UpSince: config.Status.LastAction.Time, At: at,
+	}, decision, time.Now())
+	targetActive = decision.Active
+
 	// 2.5 Phase and Timeout Logic
 	previousPhase := config.Status.Phase
-	timeoutPassed := r.updateStatusPhase(ctx, config, targetActive)
+	timeoutPassed := r.updateStatusPhase(ctx, config, targetActive, exclusions)
 
-	// 3. Execute Scaling if needed
-	newReplicas, ready, err := r.Engine.ScaleTarget(ctx, config.Spec.TargetNamespace, targetActive, config.Spec.Sequence, config.Spec.Exclusions, config.Status.OriginalReplicas, timeoutPassed)
+	// 3. Execute Scaling if needed; GitOps is paused first, so it cannot race the scale-down.
+	exclusionsOf := func(string) []string { return exclusions }
+	namespaces := []string{config.Spec.TargetNamespace}
+	reconcileGitOps(ctx, r.Engine, &config.Status.Conditions, config.Generation, namespaces, exclusionsOf, config.Spec.PauseGitOps, targetActive)
+	recordScaleDown(ctx, r.Engine, r.Pricing, &config.Status.ScheduleStatus, namespaces, exclusionsOf, targetActive, previousPhase == scaling.PhaseScaledDown)
+	newReplicas, ready, err := r.Engine.ScaleWithServices(ctx, config.Spec.TargetNamespace, targetActive, config.Spec.Sequence, exclusions, config.Spec.Hibernate, config.Status.OriginalReplicas, timeoutPassed)
 	if err != nil {
 		l.Error(err, "failed to execute scaling")
 		return ctrl.Result{RequeueAfter: time.Minute}, err
 	}
 
+	if targetActive && ready {
+		resumeGitOps(ctx, r.Engine, namespaces, exclusionsOf)
+	}
+	reconcileSleepPage(ctx, r.Engine, &config.Status.Conditions, config.Generation, namespaces, config.Spec.SleepPage, targetActive, ready)
+
 	// 4. Update Status
 	config.Status.OriginalReplicas = newReplicas
 	// Phase and LastAction are tracked before ScaleTarget so the timeout window starts immediately.
 	applyDecision(&config.Status.ScheduleStatus, &config.Status.Conditions, decision, config.Generation, "namespace")
+	setExceptionsCondition(&config.Status.Conditions, problems, config.Generation)
 	if ready {
 		config.Status.Phase = scaling.PhaseScaledDown
 		if targetActive {
@@ -129,7 +174,7 @@ func (r *ScalingConfigReconciler) isManagedByGroup(ctx context.Context, ns strin
 		return false, "", err
 	}
 	for _, g := range groups.Items {
-		if slices.Contains(g.Spec.Namespaces, ns) {
+		if slices.Contains(g.Members(), ns) {
 			return true, g.Name, nil
 		}
 	}
@@ -145,7 +190,7 @@ func (r *ScalingConfigReconciler) markAsOverridden(ctx context.Context, config *
 	meta.SetStatusCondition(&config.Status.Conditions, metav1.Condition{
 		Type: ConditionReady, Status: metav1.ConditionFalse, Reason: PhaseOverriddenByGroup,
 		ObservedGeneration: config.Generation,
-		Message: fmt.Sprintf("Namespace %s is managed by ScalingGroup %s; this config only contributes its sequence and exclusions.",
+		Message: fmt.Sprintf("Namespace %s is managed by ScalingGroup %s; this config only contributes its sequence, exclusions and hibernate rules.",
 			config.Spec.TargetNamespace, groupName),
 	})
 	if err := updateStatus(ctx, r.Client, config, before, &config.Status); err != nil {
@@ -154,10 +199,10 @@ func (r *ScalingConfigReconciler) markAsOverridden(ctx context.Context, config *
 	return ctrl.Result{RequeueAfter: 5 * time.Minute}, nil
 }
 
-func (r *ScalingConfigReconciler) updateStatusPhase(ctx context.Context, config *finopsv1.ScalingConfig, targetActive bool) bool {
+func (r *ScalingConfigReconciler) updateStatusPhase(ctx context.Context, config *finopsv1.ScalingConfig, targetActive bool, exclusions []string) bool {
 	l := logf.FromContext(ctx)
 	currentPhase := config.Status.Phase
-	computedPhase := r.Engine.ComputePhase(ctx, config.Spec.TargetNamespace, targetActive, config.Spec.Exclusions)
+	computedPhase := r.Engine.ComputePhase(ctx, config.Spec.TargetNamespace, targetActive, exclusions)
 
 	if currentPhase != computedPhase {
 		config.Status.Phase = computedPhase
@@ -182,6 +227,23 @@ func (r *ScalingConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	}
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&finopsv1.ScalingConfig{}).
+		// A changed holiday calendar applies at once to the configs that use one.
+		Watches(&finopsv1.CostDeckConfig{}, handler.EnqueueRequestsFromMapFunc(r.configsWithCalendars)).
 		Named("scalingconfig").
 		Complete(r)
+}
+
+// configsWithCalendars maps a CostDeckConfig event to the configs that name a calendar.
+func (r *ScalingConfigReconciler) configsWithCalendars(ctx context.Context, obj client.Object) []reconcile.Request {
+	var configs finopsv1.ScalingConfigList
+	if err := r.List(ctx, &configs, client.InNamespace(obj.GetNamespace())); err != nil {
+		return nil
+	}
+	var out []reconcile.Request
+	for _, c := range configs.Items {
+		if len(c.Spec.Calendars) > 0 {
+			out = append(out, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&c)})
+		}
+	}
+	return out
 }

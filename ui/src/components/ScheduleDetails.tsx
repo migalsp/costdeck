@@ -2,13 +2,17 @@ import { useState } from 'react'
 import { Activity, ArrowRight, LayoutList, ListOrdered, Link2, Pencil, Play, RotateCcw, PowerOff, Trash2 } from 'lucide-react'
 import { formatMoney } from '../lib/format'
 import { describeSpec, statusLine } from '../lib/schedule'
+import { describeException, isPast } from '../lib/exceptions'
+import { describeRule } from '../lib/hibernate'
 import { targetLabel } from '../lib/cloud'
 import type { ScalingConfig, ScalingGroup, ScalingSpec } from '../lib/types'
+import RealizedSavings from './RealizedSavings'
 import ScheduleActivity from './ScheduleActivity'
 import ScheduleStatusLine from './ScheduleStatus'
 import WeekTimeline from './WeekTimeline'
 import type { WizardTab } from './ScheduleWizard'
 import { Badge, Button, Modal, Tabs } from './ui'
+import { groupNamespaces } from '../lib/selector'
 
 export type DetailsTab = 'overview' | 'activity'
 
@@ -38,10 +42,13 @@ export default function ScheduleDetails(p: Props) {
   const obj = p.target.kind === 'group' ? p.target.group : p.target.config
   const spec: ScalingSpec = obj.spec
   const status = obj.status
-  const namespaces = p.target.kind === 'group' ? p.target.group.spec.namespaces : [p.target.config.spec.targetNamespace]
+  const namespaces = p.target.kind === 'group' ? groupNamespaces(p.target.group) : [p.target.config.spec.targetNamespace]
   const name = p.target.kind === 'group' ? obj.metadata.name : p.target.config.spec.targetNamespace
   const [confirmDelete, setConfirmDelete] = useState(false)
 
+  const gitOps = status?.conditions?.find(c => c.type === 'GitOps')
+  const sleepPage = status?.conditions?.find(c => c.type === 'SleepPage')
+  const idle = status?.conditions?.find(c => c.type === 'Idle')
   const line = statusLine({ phase: status?.phase, status, dependsOn: spec.dependsOn, activeUntil: spec.activeUntil, generation: obj.metadata.generation })
   const manual = status?.mode === 'ManualUp' || status?.mode === 'ManualDown' || (spec.active !== undefined && spec.active !== null)
   const up = status?.desiredState ? status.desiredState === 'Up' : status?.phase === 'ScaledUp'
@@ -95,10 +102,53 @@ export default function ScheduleDetails(p: Props) {
             </div>
           )}
 
+          {!up && <RealizedSavings kind={p.target.kind} name={obj.metadata.name} />}
+
+          {sleepPage && (
+            <div className={`rounded-xl border px-4 py-3 text-sm ${sleepPage.reason === 'Forbidden' || sleepPage.reason === 'Failed' ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-slate-200 bg-slate-50 text-slate-600'}`} data-testid="sleep-note">
+              <b>Sleep page:</b> {sleepPage.message}
+            </div>
+          )}
+          {idle && (
+            <div className={`rounded-xl border px-4 py-3 text-sm ${idle.reason === 'Failed' || idle.reason === 'NoVictoriaMetrics' || idle.reason === 'NoTrafficData' ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-slate-200 bg-slate-50 text-slate-600'}`} data-testid="idle-note">
+              <b>Sleep when unused:</b> {idle.message}
+            </div>
+          )}
+
+          {gitOps && (
+            <div className={`rounded-xl border px-4 py-3 text-sm ${gitOps.reason === 'Paused' ? 'border-slate-200 bg-slate-50 text-slate-600' : 'border-amber-200 bg-amber-50 text-amber-800'}`} data-testid="gitops-note">
+              <b>GitOps:</b> {gitOps.message}
+            </div>
+          )}
+
           <section>
             <h3 className="text-sm font-semibold text-slate-800 mb-3">Week</h3>
             <WeekTimeline schedules={spec.schedules} onDemand={spec.activation === 'OnDemand'} />
           </section>
+
+          {(spec.exceptions?.some(e => !isPast(e)) || !!spec.calendars?.length) && (
+            <section>
+              <h3 className="text-sm font-semibold text-slate-800 mb-2">Exceptions</h3>
+              <ul className="space-y-1 text-sm text-slate-600">
+                {spec.calendars?.map(c => (
+                  <li key={`cal-${c}`}>Every day of the calendar <b className="font-semibold text-slate-800">{c}</b></li>
+                ))}
+                {spec.exceptions?.filter(e => !isPast(e)).map((e, i) => (
+                  <li key={i}>
+                    <Badge tone={e.state === 'Up' ? 'success' : 'neutral'}>{e.state === 'Up' ? 'Up' : 'Down'}</Badge>{' '}
+                    {describeException(e)}{e.name ? ` · ${e.name}` : ''}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+
+          {!!spec.hibernate?.length && (
+            <section data-testid="hibernate-rules">
+              <h3 className="text-sm font-semibold text-slate-800 mb-1">Services stopped with every namespace</h3>
+              <p className="text-sm text-slate-600">{spec.hibernate.map(describeRule).join(' · ')}: stopped after the workloads, started before them.</p>
+            </section>
+          )}
 
           <section>
             <h3 className="text-sm font-semibold text-slate-800 mb-2">Namespaces</h3>

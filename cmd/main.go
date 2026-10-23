@@ -17,11 +17,8 @@ limitations under the License.
 package main
 
 import (
-	"context"
 	"crypto/tls"
-	"errors"
 	"flag"
-	"fmt"
 	"os"
 
 	// Embeds the IANA timezone database into the binary. The runtime image is
@@ -49,10 +46,13 @@ import (
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
 	"github.com/migalsp/costdeck-operator/internal/api"
+	"github.com/migalsp/costdeck-operator/internal/cleanup"
 	cdconfig "github.com/migalsp/costdeck-operator/internal/config"
 	"github.com/migalsp/costdeck-operator/internal/controller"
 	"github.com/migalsp/costdeck-operator/internal/finops"
 	"github.com/migalsp/costdeck-operator/internal/metrics"
+	"github.com/migalsp/costdeck-operator/internal/notify"
+	"github.com/migalsp/costdeck-operator/internal/optimize"
 	"github.com/migalsp/costdeck-operator/internal/pricing"
 	"github.com/migalsp/costdeck-operator/internal/webex"
 	// +kubebuilder:scaffold:imports
@@ -102,6 +102,10 @@ func parseFlags() (map[string]string, bool, string, bool, zap.Options) {
 }
 
 func main() {
+	// "manager estimate" prices a change of manifests for CI and exits.
+	if len(os.Args) > 1 && os.Args[1] == "estimate" {
+		os.Exit(runEstimate(os.Args[2:], os.Stdout, os.Stderr))
+	}
 	flags, enableLeaderElection, probeAddr, secureMetrics, zapOpts := parseFlags()
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&zapOpts)))
 
@@ -180,11 +184,14 @@ func main() {
 		os.Exit(1)
 	}
 
-	// The scheduled cost digest, posted to the Webex space; the leader sends it.
+	// Scaling changes, alerts and digests go to Webex, Slack, Teams and email, as configured.
+	dispatcher := &notify.Dispatcher{Client: mgr.GetClient(), Webex: &webex.Notifier{Client: mgr.GetClient()}}
+
+	// The scheduled cost digest, sent to the notification channels; the leader sends it.
 	digest := &finops.DigestScheduler{
 		Client:    mgr.GetClient(),
 		Pricing:   pricingResolver,
-		Poster:    &webex.Notifier{Client: mgr.GetClient()},
+		Poster:    notify.Poster{Dispatcher: dispatcher, Event: notify.EventDigests},
 		Namespace: cdconfig.OperatorNamespace(),
 		Overview:  apiServer.FinOpsOverview,
 	}
@@ -193,16 +200,28 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Budgets and anomaly alerts, sent to the Webex space when there is one.
+	// Budgets and anomaly alerts, sent to the notification channels when there are any.
 	alerter := &finops.Alerter{
 		Client:    mgr.GetClient(),
 		Live:      mgr.GetAPIReader(),
 		Pricing:   pricingResolver,
-		Poster:    alertPoster{&webex.Notifier{Client: mgr.GetClient()}},
+		Poster:    notify.Poster{Dispatcher: dispatcher, Event: notify.EventAlerts},
 		Namespace: cdconfig.OperatorNamespace(),
 	}
 	if err := mgr.Add(alerter); err != nil {
 		setupLog.Error(err, "Failed to add the budget alerter to manager")
+		os.Exit(1)
+	}
+
+	// Right-sized workloads whose new pods fail get their old requests back; the leader watches.
+	if err := mgr.Add(&optimize.Guard{Client: mgr.GetClient(), Notify: dispatcher}); err != nil {
+		setupLog.Error(err, "Failed to add the right-sizing guard to manager")
+		os.Exit(1)
+	}
+
+	// Preview namespaces past their time to live are deleted; the leader does it.
+	if err := mgr.Add(&cleanup.Reaper{Client: mgr.GetClient(), Notify: dispatcher}); err != nil {
+		setupLog.Error(err, "Failed to add the namespace cleanup to manager")
 		os.Exit(1)
 	}
 
@@ -230,12 +249,12 @@ func main() {
 		setupLog.Error(err, "Failed to create controller", "controller", "NamespaceDiscovery")
 		os.Exit(1)
 	}
-	notifier := &webex.Notifier{Client: mgr.GetClient()}
 	if err := (&controller.ScalingConfigReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
 		Pricing:  pricingResolver,
-		Notifier: notifier,
+		Notifier: dispatcher,
+		Requests: metricsProvider,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "ScalingConfig")
 		os.Exit(1)
@@ -244,7 +263,8 @@ func main() {
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
 		Pricing:  pricingResolver,
-		Notifier: notifier,
+		Notifier: dispatcher,
+		Requests: metricsProvider,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "ScalingGroup")
 		os.Exit(1)
@@ -335,15 +355,4 @@ func setupMetricsOptions(flags map[string]string, secure bool) metricsserver.Opt
 		opts.KeyName = flags["metricsCertKey"]
 	}
 	return opts
-}
-
-// alertPoster posts alerts to Webex; without a Webex space they are only recorded.
-type alertPoster struct{ n *webex.Notifier }
-
-func (p alertPoster) Post(ctx context.Context, markdown string) error {
-	err := p.n.Post(ctx, markdown)
-	if errors.Is(err, webex.ErrNoSpace) {
-		return fmt.Errorf("%w: %v", finops.ErrNoDestination, err)
-	}
-	return err
 }

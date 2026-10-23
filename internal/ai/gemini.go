@@ -116,6 +116,11 @@ type geminiChunk struct {
 	PromptFeedback struct {
 		BlockReason string `json:"blockReason"`
 	} `json:"promptFeedback"`
+	UsageMetadata struct {
+		PromptTokenCount     int64 `json:"promptTokenCount"`
+		CandidatesTokenCount int64 `json:"candidatesTokenCount"`
+		ThoughtsTokenCount   int64 `json:"thoughtsTokenCount"`
+	} `json:"usageMetadata"`
 }
 
 func (s *geminiSession) Step(ctx context.Context, emit func(Event)) ([]ToolCall, error) {
@@ -151,6 +156,7 @@ func (s *geminiSession) Step(ctx context.Context, emit func(Event)) ([]ToolCall,
 	// signatures that Gemini requires back verbatim.
 	var parts []map[string]any
 	finish, blocked := "", ""
+	var usage Usage
 	err = readSSE(resp.Body, func(data string) error {
 		var chunk geminiChunk
 		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
@@ -158,6 +164,10 @@ func (s *geminiSession) Step(ctx context.Context, emit func(Event)) ([]ToolCall,
 		}
 		if chunk.PromptFeedback.BlockReason != "" {
 			blocked = chunk.PromptFeedback.BlockReason
+		}
+		// Every chunk carries the totals so far; thinking is billed as output.
+		if m := chunk.UsageMetadata; m.PromptTokenCount > 0 {
+			usage = Usage{InputTokens: m.PromptTokenCount, OutputTokens: m.CandidatesTokenCount + m.ThoughtsTokenCount}
 		}
 		for _, cand := range chunk.Candidates {
 			for _, part := range cand.Content.Parts {
@@ -178,6 +188,15 @@ func (s *geminiSession) Step(ctx context.Context, emit func(Event)) ([]ToolCall,
 	if err != nil {
 		return nil, err
 	}
+	if usage.InputTokens == 0 {
+		out := 0
+		for _, part := range parts {
+			raw, _ := json.Marshal(part)
+			out += len(raw)
+		}
+		usage = Usage{InputTokens: estimateTokens(len(payload)), OutputTokens: estimateTokens(out), Estimated: true}
+	}
+	emit(Event{Type: "usage", Usage: &usage})
 	switch {
 	case blocked != "", finish == "SAFETY", finish == "PROHIBITED_CONTENT", finish == "BLOCKLIST", finish == "SPII":
 		return nil, ErrRefused

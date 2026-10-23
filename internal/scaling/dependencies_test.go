@@ -54,7 +54,7 @@ func TestPlanGroupsPlatformFollowsItsDependents(t *testing.T) {
 	e := &Engine{}
 
 	t.Run("weekend night: nothing needs the platform", func(t *testing.T) {
-		plans := e.PlanGroups(at(t, time.Saturday, "03:00"), greenZone(PhaseScaledUp, PhaseScaledDown, PhaseScaledDown, PhaseScaledDown))
+		plans := e.PlanGroups(at(t, time.Saturday, "03:00"), greenZone(PhaseScaledUp, PhaseScaledDown, PhaseScaledDown, PhaseScaledDown), nil)
 		p := plans["platform"]
 		if p.Decision.Active || p.Decision.Mode != ModeOnDemand || len(p.RequiredBy) != 0 {
 			t.Errorf("platform plan = %+v, want down and idle", p)
@@ -62,7 +62,7 @@ func TestPlanGroupsPlatformFollowsItsDependents(t *testing.T) {
 	})
 
 	t.Run("platform waits for a dependent that is still scaling down", func(t *testing.T) {
-		plans := e.PlanGroups(at(t, time.Saturday, "00:05"), greenZone(PhaseScaledUp, PhaseScalingDown, PhaseScaledDown, PhaseScaledDown))
+		plans := e.PlanGroups(at(t, time.Saturday, "00:05"), greenZone(PhaseScaledUp, PhaseScalingDown, PhaseScaledDown, PhaseScaledDown), nil)
 		p := plans["platform"]
 		if !p.Decision.Active || !slices.Equal(p.RequiredBy, []string{"pps1"}) {
 			t.Errorf("platform plan = %+v, want it kept up for pps1 until pps1 is fully down", p)
@@ -70,21 +70,21 @@ func TestPlanGroupsPlatformFollowsItsDependents(t *testing.T) {
 	})
 
 	t.Run("a dependent scaling down does not start a stopped platform", func(t *testing.T) {
-		plans := e.PlanGroups(at(t, time.Saturday, "00:05"), greenZone(PhaseScaledDown, PhaseScalingDown, PhaseScaledDown, PhaseScaledDown))
+		plans := e.PlanGroups(at(t, time.Saturday, "00:05"), greenZone(PhaseScaledDown, PhaseScalingDown, PhaseScaledDown, PhaseScaledDown), nil)
 		if p := plans["platform"]; p.Decision.Active || len(p.RequiredBy) != 0 {
 			t.Errorf("platform plan = %+v, want it to stay down: pps1 is going down, not up", p)
 		}
 	})
 
 	t.Run("a new dependent that wants to be down does not start the platform", func(t *testing.T) {
-		plans := e.PlanGroups(at(t, time.Saturday, "03:00"), greenZone(PhaseScaledDown, "", PhaseScaledDown, PhaseScaledDown))
+		plans := e.PlanGroups(at(t, time.Saturday, "03:00"), greenZone(PhaseScaledDown, "", PhaseScaledDown, PhaseScaledDown), nil)
 		if p := plans["platform"]; p.Decision.Active || len(p.RequiredBy) != 0 {
 			t.Errorf("platform plan = %+v, want it to stay down for a new, idle dependent", p)
 		}
 	})
 
 	t.Run("weekday business hours: platform up for every running environment", func(t *testing.T) {
-		plans := e.PlanGroups(at(t, time.Wednesday, "10:00"), greenZone(PhaseScaledDown, PhaseScaledDown, PhaseScaledDown, PhaseScaledDown))
+		plans := e.PlanGroups(at(t, time.Wednesday, "10:00"), greenZone(PhaseScaledDown, PhaseScaledDown, PhaseScaledDown, PhaseScaledDown), nil)
 		p := plans["platform"]
 		if !p.Decision.Active || p.Decision.Mode != ModeDependency {
 			t.Fatalf("platform plan = %+v, want up because of its dependents", p)
@@ -101,14 +101,14 @@ func TestPlanGroupsPlatformFollowsItsDependents(t *testing.T) {
 	})
 
 	t.Run("an environment still scaling down after hours keeps the platform", func(t *testing.T) {
-		plans := e.PlanGroups(at(t, time.Tuesday, "18:02"), greenZone(PhaseScaledUp, PhaseScaledUp, PhaseScalingDown, PhaseScalingDown))
+		plans := e.PlanGroups(at(t, time.Tuesday, "18:02"), greenZone(PhaseScaledUp, PhaseScaledUp, PhaseScalingDown, PhaseScalingDown), nil)
 		if got := plans["platform"].RequiredBy; !slices.Equal(got, []string{"e2e1", "pps1", "stag1"}) {
 			t.Errorf("RequiredBy = %v, want [e2e1 pps1 stag1]", got)
 		}
 	})
 
 	t.Run("weekday night: only pps1 keeps the platform up", func(t *testing.T) {
-		plans := e.PlanGroups(at(t, time.Tuesday, "23:00"), greenZone(PhaseScaledUp, PhaseScaledUp, PhaseScaledDown, PhaseScaledDown))
+		plans := e.PlanGroups(at(t, time.Tuesday, "23:00"), greenZone(PhaseScaledUp, PhaseScaledUp, PhaseScaledDown, PhaseScaledDown), nil)
 		if got := plans["platform"].RequiredBy; !slices.Equal(got, []string{"pps1"}) {
 			t.Errorf("RequiredBy = %v, want [pps1]", got)
 		}
@@ -126,7 +126,7 @@ func TestPlanGroupsManualOverrideOnDependencyWins(t *testing.T) {
 	down := false
 	groups[0].Spec.Active = &down
 
-	p := (&Engine{}).PlanGroups(at(t, time.Wednesday, "10:00"), groups)["platform"]
+	p := (&Engine{}).PlanGroups(at(t, time.Wednesday, "10:00"), groups, nil)["platform"]
 	if p.Decision.Active || p.Decision.Mode != ModeManualDown {
 		t.Errorf("platform plan = %+v, a manual override must beat dependent demand", p)
 	}
@@ -136,7 +136,7 @@ func TestPlanGroupsMissingDependencyBlocks(t *testing.T) {
 	groups := []finopsv1.ScalingGroup{group("app", time.Now(), finopsv1.ScalingGroupSpec{
 		Namespaces: []string{"app"}, DependsOn: []string{"platform-typo"},
 	}, "")}
-	p := (&Engine{}).PlanGroups(time.Now(), groups)["app"]
+	p := (&Engine{}).PlanGroups(time.Now(), groups, nil)["app"]
 	if !p.BlockedOnDependencies() || !slices.Equal(p.MissingDependencies, []string{"platform-typo"}) {
 		t.Errorf("plan = %+v, want it blocked on the missing dependency", p)
 	}
@@ -149,7 +149,7 @@ func TestPlanGroupsCyclesAreIgnored(t *testing.T) {
 		group("b", now, finopsv1.ScalingGroupSpec{Namespaces: []string{"b"}, DependsOn: []string{"a"}}, PhaseScaledDown),
 		group("self", now, finopsv1.ScalingGroupSpec{Namespaces: []string{"s"}, DependsOn: []string{"self"}}, PhaseScaledDown),
 	}
-	plans := (&Engine{}).PlanGroups(now, groups)
+	plans := (&Engine{}).PlanGroups(now, groups, nil)
 	for _, name := range []string{"a", "b", "self"} {
 		if !plans[name].InCycle {
 			t.Errorf("%s must be reported as part of a cycle", name)
@@ -169,7 +169,7 @@ func TestPlanGroupsNamespaceConflicts(t *testing.T) {
 		group("newer", t0.Add(time.Hour), finopsv1.ScalingGroupSpec{Namespaces: []string{"shared", "own"}}, ""),
 		group("older", t0, finopsv1.ScalingGroupSpec{Namespaces: []string{"shared"}}, ""),
 	}
-	plans := (&Engine{}).PlanGroups(t0, groups)
+	plans := (&Engine{}).PlanGroups(t0, groups, nil)
 	if got := plans["newer"].ConflictingNamespaces; !slices.Equal(got, []string{"shared"}) {
 		t.Errorf("newer conflicts = %v, want [shared]", got)
 	}

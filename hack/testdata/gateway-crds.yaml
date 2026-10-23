@@ -1,0 +1,37 @@
+# Schema-less stand-ins for the Gateway API HTTPRoute and ReferenceGrant CRDs, for tests
+# that check how schedules point routes at the sleep page (envtest in internal/controller).
+# hack/e2e/991-sleep-page.sh installs the real standard CRDs instead.
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: httproutes.gateway.networking.k8s.io
+  # *.k8s.io groups are protected; the real Gateway API CRDs carry this too.
+  annotations: {api-approved.kubernetes.io: "https://github.com/kubernetes-sigs/gateway-api/pull/2466"}
+spec:
+  group: gateway.networking.k8s.io
+  names: {kind: HTTPRoute, listKind: HTTPRouteList, plural: httproutes, singular: httproute}
+  scope: Namespaced
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema: {type: object, x-kubernetes-preserve-unknown-fields: true}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: referencegrants.gateway.networking.k8s.io
+  # *.k8s.io groups are protected; the real Gateway API CRDs carry this too.
+  annotations: {api-approved.kubernetes.io: "https://github.com/kubernetes-sigs/gateway-api/pull/2466"}
+spec:
+  group: gateway.networking.k8s.io
+  names: {kind: ReferenceGrant, listKind: ReferenceGrantList, plural: referencegrants, singular: referencegrant}
+  scope: Namespaced
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema: {type: object, x-kubernetes-preserve-unknown-fields: true}

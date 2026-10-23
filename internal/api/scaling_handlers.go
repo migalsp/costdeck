@@ -57,6 +57,10 @@ func (s *Server) createScalingGroup(w http.ResponseWriter, r *http.Request) {
 	// make it permanently immune to its own schedule.
 	group.Spec.Active = nil
 	group.Spec.ActiveUntil = nil
+	if err := s.validateSchedule(r.Context(), &group); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	if err := s.Client.Create(r.Context(), &group); err != nil {
 		writeK8sError(w, err)
 		return
@@ -78,6 +82,10 @@ func (s *Server) getScalingGroup(w http.ResponseWriter, r *http.Request) {
 func (s *Server) updateScalingGroup(w http.ResponseWriter, r *http.Request) {
 	var updated finopsv1.ScalingGroup
 	if err := decodeJSON(w, r, &updated); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := s.validateSchedule(r.Context(), &updated); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -127,16 +135,16 @@ type manualOverrideRequest struct {
 // UntilNextTransition holds an override until the next schedule change.
 const UntilNextTransition = "nextTransition"
 
-// ResolveOverride normalises an override request against the schedules: an override
-// deadline is meaningless without an override, and a deadline already in the past would be
-// a no-op the user cannot see.
-func ResolveOverride(active *bool, activeUntil *metav1.Time, until string, schedules []finopsv1.ScalingSchedule, now time.Time) (*bool, *metav1.Time, error) {
+// ResolveOverride normalises an override request against the timetable (schedules and
+// exceptions): an override deadline is meaningless without an override, and a deadline
+// already in the past would be a no-op the user cannot see.
+func ResolveOverride(active *bool, activeUntil *metav1.Time, until string, tt scaling.Timetable, now time.Time) (*bool, *metav1.Time, error) {
 	if active == nil {
 		return nil, nil, nil
 	}
 	switch {
 	case until == UntilNextTransition:
-		next := (&scaling.Engine{}).NextScheduleChange(now, schedules)
+		next := tt.NextChange(now)
 		if next == nil {
 			return nil, nil, fmt.Errorf("the schedule never changes state on its own; use a duration or an explicit activeUntil")
 		}
@@ -182,7 +190,7 @@ func (s *Server) handleScalingGroupManual(w http.ResponseWriter, r *http.Request
 		if err := s.Client.Get(r.Context(), s.scalingKey(r), updated); err != nil {
 			return err
 		}
-		active, until, err := ResolveOverride(req.Active, req.ActiveUntil, req.Until, updated.Spec.Schedules, time.Now())
+		active, until, err := ResolveOverride(req.Active, req.ActiveUntil, req.Until, s.timetableOf(r.Context(), updated), time.Now())
 		if err != nil {
 			return errBadOverride{err}
 		}
@@ -248,6 +256,10 @@ func (s *Server) createScalingConfig(w http.ResponseWriter, r *http.Request) {
 	cfg.Status = finopsv1.ScalingConfigStatus{}
 	cfg.Spec.Active = nil
 	cfg.Spec.ActiveUntil = nil
+	if err := s.validateSchedule(r.Context(), &cfg); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	if err := s.Client.Create(r.Context(), &cfg); err != nil {
 		writeK8sError(w, err)
 		return
@@ -267,6 +279,10 @@ func (s *Server) getScalingConfig(w http.ResponseWriter, r *http.Request) {
 func (s *Server) updateScalingConfig(w http.ResponseWriter, r *http.Request) {
 	var updated finopsv1.ScalingConfig
 	if err := decodeJSON(w, r, &updated); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := s.validateSchedule(r.Context(), &updated); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -307,7 +323,7 @@ func (s *Server) handleScalingConfigManual(w http.ResponseWriter, r *http.Reques
 		if err := s.Client.Get(r.Context(), s.scalingKey(r), updated); err != nil {
 			return err
 		}
-		active, until, err := ResolveOverride(req.Active, req.ActiveUntil, req.Until, updated.Spec.Schedules, time.Now())
+		active, until, err := ResolveOverride(req.Active, req.ActiveUntil, req.Until, s.timetableOf(r.Context(), updated), time.Now())
 		if err != nil {
 			return errBadOverride{err}
 		}

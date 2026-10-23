@@ -1,9 +1,11 @@
-import { useState, useEffect, useCallback } from 'react'
-import { Scaling, Server, LineChart, Activity, BookOpen, FileText, LogOut, Settings, UserCircle2, LayoutDashboard, HardDrive, Target, KeyRound } from 'lucide-react'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { Scaling, Server, LineChart, Activity, BookOpen, FileText, LogOut, Settings, UserCircle2, LayoutDashboard, HardDrive, Target, KeyRound, Sparkles, Globe2 } from 'lucide-react'
 import type { ReactNode } from 'react'
 import NamespaceInsights from './pages/NamespaceInsights'
 import Overview from './pages/Overview'
 import StoragePage from './pages/StoragePage'
+import AICostsPage from './pages/AICostsPage'
+import WakePage from './pages/WakePage'
 import BudgetsPage from './pages/BudgetsPage'
 import NamespaceDetails from './pages/NamespaceDetails'
 import OperatorHealth from './pages/OperatorHealth'
@@ -13,10 +15,16 @@ import LoginPage from './pages/LoginPage'
 import Documentation from './pages/Documentation'
 import SettingsPage from './pages/SettingsPage'
 import ReportsPage from './pages/ReportsPage'
+import ClustersPage from './pages/ClustersPage'
 import AIChatWidget from './components/AIChatModal'
 import AuthCallback from './pages/AuthCallback'
 import ChangePasswordDialog from './components/ChangePasswordDialog'
+import ThemeSwitch from './components/ThemeSwitch'
+import Toaster from './components/Toaster'
+import LeaveDialog from './components/LeaveDialog'
 import { AuthContext, isManagedUser, type User } from './lib/auth'
+import { followLink, navigate, segment, splitPath, usePath } from './lib/router'
+import { Button, PageHeader } from './components/ui'
 
 interface Session {
   authenticated: boolean
@@ -39,34 +47,79 @@ async function fetchSession(): Promise<Session> {
 function NavGroup({ title, children }: { title: string; children: ReactNode }) {
   return (
     <div>
-      <h3 className="px-3 mb-2 text-[10px] font-semibold uppercase tracking-widest text-slate-500">{title}</h3>
-      <div className="space-y-1">{children}</div>
+      <h3 className="px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-slate-500">{title}</h3>
+      <div className="space-y-0.5">{children}</div>
     </div>
   )
 }
 
-function NavItem({ icon, label, active, onClick }: { icon: ReactNode; label: string; active: boolean; onClick: () => void }) {
+// NavItem is a real link, so a page can be opened in a new tab or its address copied.
+function NavItem({ icon, label, to, active }: { icon: ReactNode; label: string; to: string; active: boolean }) {
   return (
-    <button
-      onClick={onClick}
-      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+    <a
+      href={to}
+      onClick={e => followLink(e, to)}
+      aria-current={active ? 'page' : undefined}
+      className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
         active ? 'bg-brand-600 text-white' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}
     >
       <span className={active ? 'text-white' : 'text-slate-500'}>{icon}</span>
       {label}
-    </button>
+    </a>
+  )
+}
+
+type Page = 'overview' | 'clusters' | 'namespaces' | 'cluster' | 'storage' | 'ai' | 'wake' | 'health' | 'budgets' | 'scaling' | 'reports' | 'docs' | 'settings'
+
+// Every page has one path. Namespace details live under the page they were opened from,
+// /namespaces/<ns> or /scaling/<ns>, so Back leads to that list; the docs take a guide
+// and the settings a section as their second segment.
+const pages: Record<Page, { path: string; title: string; sub?: boolean }> = {
+  overview: { path: '/', title: 'Cost Overview' },
+  clusters: { path: '/clusters', title: 'Clusters' },
+  namespaces: { path: '/namespaces', title: 'Namespace Insights', sub: true },
+  cluster: { path: '/cluster', title: 'Cluster Node Map' },
+  storage: { path: '/storage', title: 'Storage & Network' },
+  ai: { path: '/ai', title: 'AI Costs' },
+  wake: { path: '/wake', title: 'Wake', sub: true },
+  health: { path: '/health', title: 'Cost Deck Health' },
+  budgets: { path: '/budgets', title: 'Budgets & Alerts' },
+  scaling: { path: '/scaling', title: 'Scaling Schedules', sub: true },
+  reports: { path: '/reports', title: 'Reports' },
+  docs: { path: '/docs', title: 'Documentation', sub: true },
+  settings: { path: '/settings', title: 'Settings', sub: true },
+}
+
+// The Overview links to other pages by these names.
+const overviewTargets = { dashboard: 'namespaces', scale: 'scaling', cluster: 'cluster', storage: 'storage', budgets: 'budgets' } as const
+
+// route reads the page from a path; page is null when nothing lives there.
+function route(path: string): { page: Page | null; sub?: string } {
+  const [first, sub, ...rest] = splitPath(path)
+  if (!first) return { page: 'overview' }
+  const page = (Object.keys(pages) as Page[]).find(p => p !== 'overview' && pages[p].path === `/${first}`)
+  if (!page || rest.length > 0 || (sub && !pages[page].sub)) return { page: null }
+  return { page, sub }
+}
+
+function NotFound({ title, subtitle }: { title: string; subtitle: string }) {
+  return (
+    <div className="p-8 max-w-[1600px] mx-auto">
+      <PageHeader title={title} subtitle={subtitle} />
+      <Button variant="primary" onClick={() => navigate('/')}>Open the cost overview</Button>
+    </div>
   )
 }
 
 function App() {
-  const [activeTab, setActiveTab] = useState<'overview' | 'dashboard' | 'scale' | 'cluster' | 'storage' | 'budgets' | 'operator' | 'api-docs' | 'settings' | 'reports'>('overview')
-  const [selectedNamespace, setSelectedNamespace] = useState<string | null>(null)
-  const [selectedScalingNS, setSelectedScalingNS] = useState<string | null>(null)
+  const path = usePath()
+  const { page, sub } = route(path)
+  const main = useRef<HTMLElement>(null)
   const [appVersion, setAppVersion] = useState('...')
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null)
   const [user, setUser] = useState<User | null>(null)
   const [changingPassword, setChangingPassword] = useState(false)
-  const isSSOCallback = window.location.pathname === '/auth/callback'
+  const isSSOCallback = path === '/auth/callback'
 
   // applySession runs after the fetch resolves, never synchronously inside an effect.
   const applySession = useCallback((session: Session) => {
@@ -81,10 +134,14 @@ function App() {
     if (!isSSOCallback) fetchSession().then(applySession)
   }, [isSSOCallback, applySession])
 
-  const finishSSO = useCallback((returnTo: string) => {
-    window.history.replaceState(null, '', returnTo)
-    loadSession()
-  }, [loadSession])
+  // Leaving /auth/callback runs the session effect above, which loads the signed-in user.
+  const finishSSO = useCallback((returnTo: string) => navigate(returnTo, { replace: true }), [])
+
+  const nsTitle = sub && (page === 'namespaces' || page === 'scaling') ? sub : null
+  const title = page ? nsTitle || pages[page].title : 'Page not found'
+  useEffect(() => { document.title = `${title} · Cost Deck` }, [title])
+  // A new page starts at the top, not where the previous one was scrolled to.
+  useEffect(() => { main.current?.scrollTo({ top: 0 }) }, [path])
 
   if (isSSOCallback && isAuthenticated === null) {
     return <AuthCallback onSignedIn={finishSSO} />
@@ -116,7 +173,9 @@ function App() {
   if (user?.mustChangePassword) {
     return (
       <div className="min-h-screen bg-slate-900">
-        <ChangePasswordDialog required onDone={loadSession} onClose={signOut} onSignOut={signOut} />
+        <div className="theme-surface contents text-slate-900">
+          <ChangePasswordDialog required onDone={loadSession} onClose={signOut} onSignOut={signOut} />
+        </div>
       </div>
     )
   }
@@ -125,111 +184,104 @@ function App() {
     <AuthContext.Provider value={user}>
     <div className="flex h-screen w-full bg-slate-50 font-sans">
       {/* Sidebar */}
-      <aside className="w-64 shrink-0 bg-slate-900 text-white flex flex-col z-10">
-        <div className="p-6">
-          <div className="flex items-center gap-4 mb-2">
-            <img src="/brand/cost-deck-icon-40.png" srcSet="/brand/cost-deck-icon-80.png 2x" width={40} height={40} alt="" className="shrink-0" />
+      {/* The links scroll on their own and the account controls stay at the bottom, so every
+          page is reachable on a short screen. */}
+      <aside className="w-64 shrink-0 bg-slate-900 text-white flex flex-col z-10" aria-label="Sidebar">
+        <div className="px-6 pt-5 pb-4 flex items-center gap-4">
+          <img src="/brand/cost-deck-icon-40.png" srcSet="/brand/cost-deck-icon-80.png 2x" width={40} height={40} alt="" className="shrink-0" />
           <div className="flex flex-col">
             <h1 className="text-xl font-bold tracking-tight text-white leading-none">Cost Deck</h1>
             <span className="text-[10px] uppercase tracking-[0.2em] text-brand-400 font-semibold mt-1">FinOps Platform</span>
           </div>
-          </div>
         </div>
 
-        <nav className="flex-1 px-4 mt-2 space-y-6 overflow-y-auto">
+        <nav className="flex-1 min-h-0 px-4 pb-4 space-y-5 overflow-y-auto" aria-label="Pages">
           <NavGroup title="Analytics">
-            <NavItem icon={<LayoutDashboard size={18} />} label="Cost Overview" active={activeTab === 'overview'} onClick={() => setActiveTab('overview')} />
-            <NavItem icon={<LineChart size={18} />} label="Namespace Insights" active={activeTab === 'dashboard'} onClick={() => { setActiveTab('dashboard'); setSelectedNamespace(null) }} />
-            <NavItem icon={<Server size={18} />} label="Cluster Node Map" active={activeTab === 'cluster'} onClick={() => setActiveTab('cluster')} />
-            <NavItem icon={<HardDrive size={18} />} label="Storage & Network" active={activeTab === 'storage'} onClick={() => setActiveTab('storage')} />
-            <NavItem icon={<Activity size={18} />} label="Cost Deck Health" active={activeTab === 'operator'} onClick={() => setActiveTab('operator')} />
+            <NavItem icon={<LayoutDashboard size={18} />} label="Cost Overview" to="/" active={page === 'overview'} />
+            <NavItem icon={<Globe2 size={18} />} label="Clusters" to="/clusters" active={page === 'clusters'} />
+            <NavItem icon={<LineChart size={18} />} label="Namespace Insights" to="/namespaces" active={page === 'namespaces'} />
+            <NavItem icon={<Server size={18} />} label="Cluster Node Map" to="/cluster" active={page === 'cluster'} />
+            <NavItem icon={<HardDrive size={18} />} label="Storage & Network" to="/storage" active={page === 'storage'} />
+            <NavItem icon={<Sparkles size={18} />} label="AI Costs" to="/ai" active={page === 'ai'} />
           </NavGroup>
           <NavGroup title="Management">
-            <NavItem icon={<Target size={18} />} label="Budgets & Alerts" active={activeTab === 'budgets'} onClick={() => setActiveTab('budgets')} />
-            <NavItem icon={<Scaling size={18} />} label="Scaling Schedules" active={activeTab === 'scale'} onClick={() => { setActiveTab('scale'); setSelectedScalingNS(null) }} />
+            <NavItem icon={<Scaling size={18} />} label="Scaling Schedules" to="/scaling" active={page === 'scaling'} />
+            <NavItem icon={<Target size={18} />} label="Budgets & Alerts" to="/budgets" active={page === 'budgets'} />
+            <NavItem icon={<FileText size={18} />} label="Reports" to="/reports" active={page === 'reports'} />
           </NavGroup>
-          <NavGroup title="Reporting">
-            <NavItem icon={<FileText size={18} />} label="Reports" active={activeTab === 'reports'} onClick={() => setActiveTab('reports')} />
+          <NavGroup title="Cost Deck">
+            <NavItem icon={<Activity size={18} />} label="Health" to="/health" active={page === 'health'} />
+            <NavItem icon={<BookOpen size={18} />} label="Documentation" to="/docs" active={page === 'docs'} />
+            {isAdmin && <NavItem icon={<Settings size={18} />} label="Settings" to="/settings" active={page === 'settings'} />}
           </NavGroup>
-          <NavGroup title="Help">
-            <NavItem icon={<BookOpen size={18} />} label="Documentation" active={activeTab === 'api-docs'} onClick={() => setActiveTab('api-docs')} />
-          </NavGroup>
-          {isAdmin && (
-            <NavGroup title="Configuration">
-              <NavItem icon={<Settings size={18} />} label="Settings" active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} />
-            </NavGroup>
-          )}
         </nav>
-        
-        <div className="p-6 border-t border-slate-800">
-          {user && user.provider !== 'anonymous' && (
-            <div className="flex items-center gap-3 mb-4 px-1" title={user.email || user.name}>
-              <UserCircle2 size={28} className="text-slate-500 shrink-0" />
-              <div className="min-w-0">
-                <div className="text-xs font-bold text-slate-200 truncate">{user.name}</div>
-                <div className="text-[10px] uppercase tracking-widest text-brand-400 font-semibold">
-                  {user.role}{user.provider === 'entra' ? ' · Microsoft' : ''}
+
+        <div className="px-4 py-3 border-t border-slate-800 space-y-3">
+          <ThemeSwitch />
+          <div className="flex items-center gap-2 px-1">
+            {user && user.provider !== 'anonymous' ? (
+              <div className="flex items-center gap-2.5 min-w-0 flex-1" title={user.email || user.name}>
+                <UserCircle2 size={26} className="text-slate-500 shrink-0" />
+                <div className="min-w-0">
+                  <div className="text-xs font-bold text-slate-200 truncate">{user.name}</div>
+                  <div className="text-[10px] uppercase tracking-widest text-brand-400 font-semibold truncate">
+                    {user.role}{user.provider === 'entra' ? ' · Microsoft' : ''}
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
-          {isManagedUser(user) && (
-            <button
-              onClick={() => setChangingPassword(true)}
-              className="w-full flex items-center justify-center gap-2 px-4 py-2 mb-1 rounded-xl text-slate-500 hover:text-white hover:bg-white/5 transition-all text-xs font-bold"
-            >
-              <KeyRound size={14} />
-              Change password
+            ) : <div className="flex-1" />}
+            {isManagedUser(user) && (
+              <button type="button" onClick={() => setChangingPassword(true)} title="Change password" aria-label="Change password"
+                className="p-2 rounded-lg text-slate-500 hover:text-white hover:bg-white/5 transition-colors">
+                <KeyRound size={16} />
+              </button>
+            )}
+            <button type="button" onClick={signOut} title="Sign out" aria-label="Sign out"
+              className="p-2 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition-colors">
+              <LogOut size={16} />
             </button>
-          )}
-          <button
-            onClick={signOut}
-            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition-all text-xs font-bold"
-          >
-            <LogOut size={14} />
-            Sign Out
-          </button>
-          <div className="text-xs text-slate-600 text-center mt-3">
-            {appVersion}
           </div>
+          <div className="text-[11px] text-slate-600 text-center">{appVersion}</div>
         </div>
       </aside>
 
-      {/* Main Content Area */}
-      <main className="flex-1 overflow-auto bg-slate-50">
-        {activeTab === 'dashboard' && (
-          selectedNamespace ? (
-            <NamespaceDetails 
-              namespace={selectedNamespace} 
-              onBack={() => setSelectedNamespace(null)} 
-            />
-          ) : (
-            <NamespaceInsights onSelectNamespace={setSelectedNamespace} />
-          )
-        )}
-        {activeTab === 'overview' && (
+      {/* Everything right of the sidebar follows the theme (see .theme-surface in index.css). */}
+      <div className="theme-surface contents text-slate-900">
+      <main ref={main} className="flex-1 overflow-auto bg-slate-50">
+        {page === 'overview' && (
           <Overview
-            onSelectNamespace={name => { setSelectedNamespace(name); setActiveTab('dashboard') }}
-            onNavigate={tab => { setSelectedNamespace(null); setSelectedScalingNS(null); setActiveTab(tab) }}
+            onSelectNamespace={name => navigate(`/namespaces/${segment(name)}`)}
+            onNavigate={tab => navigate(pages[overviewTargets[tab]].path)}
           />
         )}
-        {activeTab === 'cluster' && <ClusterDashboard />}
-        {activeTab === 'storage' && <StoragePage />}
-        {activeTab === 'budgets' && <BudgetsPage />}
-        {activeTab === 'operator' && <OperatorHealth />}
-        {activeTab === 'api-docs' && <Documentation />}
-        {activeTab === 'settings' && isAdmin && <SettingsPage />}
-        {activeTab === 'reports' && <ReportsPage />}
-        {activeTab === 'scale' && (
-          selectedScalingNS ? (
-            <NamespaceDetails
-              namespace={selectedScalingNS}
-              onBack={() => setSelectedScalingNS(null)}
-            />
+        {page === 'namespaces' && (
+          sub ? (
+            <NamespaceDetails key={sub} namespace={sub} onBack={() => navigate('/namespaces')} />
           ) : (
-            <ScalingPage onSelectNamespace={setSelectedScalingNS} />
+            <NamespaceInsights onSelectNamespace={name => navigate(`/namespaces/${segment(name)}`)} />
           )
         )}
+        {page === 'cluster' && <ClusterDashboard />}
+        {page === 'clusters' && <ClustersPage />}
+        {page === 'storage' && <StoragePage />}
+        {page === 'ai' && <AICostsPage />}
+        {page === 'wake' && sub && <WakePage namespace={sub} />}
+        {page === 'wake' && !sub && <NotFound title="Wake" subtitle="Open the wake link a sleeping application shows, or start a namespace from Scaling Schedules." />}
+        {page === 'budgets' && <BudgetsPage />}
+        {page === 'health' && <OperatorHealth />}
+        {page === 'docs' && <Documentation guide={sub} />}
+        {page === 'settings' && (isAdmin
+          ? <SettingsPage section={sub} />
+          : <NotFound title="Settings" subtitle="Only administrators can change the settings." />)}
+        {page === 'reports' && <ReportsPage />}
+        {page === 'scaling' && (
+          sub ? (
+            <NamespaceDetails key={sub} namespace={sub} onBack={() => navigate('/scaling')} />
+          ) : (
+            <ScalingPage onSelectNamespace={name => navigate(`/scaling/${segment(name)}`)} />
+          )
+        )}
+        {page === null && <NotFound title="Page not found" subtitle={`Nothing lives at ${path}.`} />}
       </main>
       
       {/* AI Chat Widget */}
@@ -237,6 +289,9 @@ function App() {
       {changingPassword && (
         <ChangePasswordDialog onDone={() => { setChangingPassword(false); loadSession() }} onClose={() => setChangingPassword(false)} onSignOut={signOut} />
       )}
+      <LeaveDialog />
+      <Toaster />
+      </div>
     </div>
     </AuthContext.Provider>
   )

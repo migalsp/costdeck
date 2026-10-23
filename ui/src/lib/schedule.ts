@@ -1,4 +1,5 @@
 import type { Condition, ScalingSchedule, ScalingSpec, ScheduleStatus } from './types'
+import type { OverrideUntil } from '../components/OverrideDialog'
 
 // Day indexes follow the operator: Sunday = 0.
 export const DAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -111,18 +112,21 @@ const toMinutes = (hhmm: string): number | null => {
   return h < 24 && min < 60 ? h * 60 + min : null
 }
 
+const isWeekday = (d: number) => Number.isInteger(d) && d >= 0 && d <= 6
+
 // windowsOf converts schedules into [start, end] week-minute ranges; end < start wraps
-// through Sunday midnight, exactly as the operator evaluates them.
+// through Sunday midnight, exactly as the operator evaluates them. Like the operator it
+// skips days outside the week, so a schedule left with none counts as no schedule.
 function windowsOf(schedules: ScalingSchedule[]): [number, number][] {
   const out: [number, number][] = []
   for (const s of schedules) {
     const start = toMinutes(s.startTime), end = toMinutes(s.endTime)
     if (start === null || end === null) continue
     if (isWeekly(s)) {
-      out.push([s.startDay! * MINUTES_PER_DAY + start, s.endDay! * MINUTES_PER_DAY + end])
+      if (isWeekday(s.startDay!) && isWeekday(s.endDay!)) out.push([s.startDay! * MINUTES_PER_DAY + start, s.endDay! * MINUTES_PER_DAY + end])
       continue
     }
-    for (const d of s.days || []) {
+    for (const d of (s.days || []).filter(isWeekday)) {
       const a = d * MINUTES_PER_DAY + start
       const b = end >= start ? d * MINUTES_PER_DAY + end : ((d + 1) % 7) * MINUTES_PER_DAY + end
       out.push([a, b])
@@ -133,12 +137,18 @@ function windowsOf(schedules: ScalingSchedule[]): [number, number][] {
 
 const inWindow = (minute: number, [a, b]: [number, number]) => (a <= b ? minute >= a && minute <= b : minute >= a || minute <= b)
 
-// weekGrid returns 7 * 48 half-hour slots (Sunday first) that are up. Without a usable
-// window the operator keeps the target up (its fail-safe), and so does the grid.
-export function weekGrid(schedules: ScalingSchedule[] | undefined): boolean[] {
+// isUpAt says whether the schedules keep a target up at a minute of the week (Sunday
+// 00:00 = 0) in their own time zone. Without a usable window the operator keeps the
+// target up (its fail-safe), and so does this.
+export function isUpAt(schedules: ScalingSchedule[] | undefined, weekMinute: number): boolean {
   const windows = windowsOf(schedules || [])
-  return Array.from({ length: 7 * SLOTS_PER_DAY }, (_, slot) =>
-    windows.length === 0 || windows.some(w => inWindow((slot * 30 + 15) % MINUTES_PER_WEEK, w)))
+  return windows.length === 0 || windows.some(w => inWindow(weekMinute % MINUTES_PER_WEEK, w))
+}
+
+// weekGrid returns 7 * 48 half-hour slots (Sunday first) that are up, judged at the
+// middle of each slot.
+export function weekGrid(schedules: ScalingSchedule[] | undefined): boolean[] {
+  return Array.from({ length: 7 * SLOTS_PER_DAY }, (_, slot) => isUpAt(schedules, slot * 30 + 15))
 }
 
 export const upHours = (grid: boolean[]) => grid.filter(Boolean).length / 2
@@ -238,6 +248,12 @@ export function statusLine({ phase, status, dependsOn, activeUntil, generation }
       return { tone: 'blocked', title: `Waiting for ${(dependsOn || []).join(', ') || 'dependencies'} to start` }
     case 'OverriddenByGroup':
       return { tone: 'down', title: 'Controlled by a group schedule' }
+    case 'DryRun':
+      return {
+        tone: 'manual',
+        title: `Dry run · would be ${status?.desiredState === 'Up' ? 'up' : 'down'}`,
+        detail: status?.conditions?.find(c => c.type === 'DryRun')?.message?.replace(/ Nothing is scaled while .*$/, '') || 'nothing is scaled',
+      }
   }
   const up = status?.desiredState ? status.desiredState === 'Up' : phase === 'ScaledUp'
   const expiry = status?.overrideExpiresAt || activeUntil
@@ -249,13 +265,45 @@ export function statusLine({ phase, status, dependsOn, activeUntil, generation }
         title: `Kept ${status.mode === 'ManualUp' ? 'up' : 'down'} manually`,
         detail: expiry ? `until ${when(expiry)}, then the schedule takes over` : 'until you hand it back to the schedule',
       }
+    case 'Exception':
+      return {
+        tone: up ? 'up' : 'down',
+        title: `${up ? 'Up' : 'Down'} for ${status.exception || 'an exception'}`,
+        detail: status.exceptionEndsAt ? `until ${when(status.exceptionEndsAt)}, then the schedule takes over` : undefined,
+      }
     case 'Dependency':
       return { tone: 'up', title: 'Up', detail: `needed by ${(status.requiredBy || []).join(', ')}` }
     case 'OnDemand':
       return { tone: 'down', title: 'Down', detail: 'starts when a schedule that depends on it needs it' }
     case 'AlwaysOn':
       return { tone: 'up', title: 'Up', detail: 'no schedule set' }
+    case 'Idle':
+      return { tone: 'down', title: 'Asleep, unused', detail: next ? `starts ${when(next.time)}, or when someone starts it` : 'until someone starts it' }
   }
   if (up) return { tone: 'up', title: 'Up', detail: next ? `scales down ${when(next.time)}` : undefined }
   return { tone: 'down', title: 'Down', detail: next ? `starts ${when(next.time)}` : undefined }
+}
+
+// IDLE_CHOICES are the idle periods the schedule editor offers.
+export const IDLE_CHOICES = ['30m', '1h', '2h', '4h', '8h']
+
+// shortDuration writes a Go duration as the API returns it ("1h0m0s") the way the editor
+// offers it ("1h"), so that a saved value selects its choice. Anything else is kept.
+export function shortDuration(d?: string): string {
+  const m = d ? /^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/.exec(d) : null
+  if (!d || !m) return d || ''
+  const seconds = Number(m[1] || 0) * 3600 + Number(m[2] || 0) * 60 + Number(m[3] || 0)
+  if (seconds % 3600 === 0) return `${seconds / 3600}h`
+  if (seconds % 60 === 0) return `${seconds / 60}m`
+  return `${seconds}s`
+}
+
+// describeOverride confirms a manual start or stop, or the hand-back to the schedule
+// (active null), in the words of the override dialog.
+export function describeOverride(name: string, active: boolean | null, until?: OverrideUntil): string {
+  if (active === null) return `${name} follows its schedule again`
+  const span = !until || until === 'forever' ? 'until you hand it back to the schedule'
+    : until === 'nextTransition' ? 'until the next scheduled change'
+    : `for ${until.slice(0, -1)} hour${until === '1h' ? '' : 's'}`
+  return `${active ? 'Starting' : 'Stopping'} ${name} ${span}`
 }

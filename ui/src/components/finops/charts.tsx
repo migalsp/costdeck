@@ -278,8 +278,8 @@ export function Sparkline({ values, width = 72, height = 20 }: { values: number[
   const last = pts[pts.length - 1]
   return (
     <svg width={width} height={height} className="overflow-visible" aria-hidden>
-      <polyline points={pts.map(p => p.join(',')).join(' ')} fill="none" stroke="#64748b" strokeWidth={1.5} strokeLinejoin="round" strokeLinecap="round" />
-      <circle cx={last[0]} cy={last[1]} r={2.5} fill="#334155" stroke="#fff" strokeWidth={1.5} />
+      <polyline points={pts.map(p => p.join(',')).join(' ')} fill="none" stroke="var(--color-slate-500)" strokeWidth={1.5} strokeLinejoin="round" strokeLinecap="round" />
+      <circle cx={last[0]} cy={last[1]} r={2.5} fill="var(--color-slate-700)" stroke="var(--color-white)" strokeWidth={1.5} />
     </svg>
   )
 }

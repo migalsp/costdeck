@@ -1,0 +1,43 @@
+{{- if or .Values.hibernation.enabled .Values.hibernation.extraRules }}
+# Lets schedules with hibernate rules stop and start the services operators run: CloudNativePG
+# and Zalando Postgres clusters and Strimzi Connect, MirrorMaker 2 and Bridge resources
+# (hibernation.enabled), plus the kinds of rules without a preset (hibernation.extraRules).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "costdeck-operator.fullname" . }}-hibernation
+  labels:
+    {{- include "costdeck-operator.labels" . | nindent 4 }}
+rules:
+{{- if .Values.hibernation.enabled }}
+- apiGroups: ["postgresql.cnpg.io"]
+  resources: ["clusters"]
+  verbs: ["get", "list", "patch"]
+- apiGroups: ["acid.zalan.do"]
+  resources: ["postgresqls"]
+  verbs: ["get", "list", "patch"]
+- apiGroups: ["kafka.strimzi.io"]
+  resources: ["kafkaconnects", "kafkamirrormaker2s", "kafkabridges"]
+  verbs: ["get", "list", "patch"]
+{{- end }}
+{{- range .Values.hibernation.extraRules }}
+- apiGroups: {{ toJson .apiGroups }}
+  resources: {{ toJson .resources }}
+  verbs: ["get", "list", "patch"]
+{{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "costdeck-operator.fullname" . }}-hibernation
+  labels:
+    {{- include "costdeck-operator.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "costdeck-operator.fullname" . }}-hibernation
+subjects:
+- kind: ServiceAccount
+  name: {{ include "costdeck-operator.serviceAccountName" . }}
+  namespace: {{ .Release.Namespace }}
+{{- end }}

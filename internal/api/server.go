@@ -68,7 +68,11 @@ type Server struct {
 	ledger   *finops.Ledger
 	ledgerAt time.Time
 
-	// Poster delivers cost digests; nil means the Webex space.
+	// HTTPClient sends test notifications and reads other clusters; nil uses one that
+	// refuses metadata addresses.
+	HTTPClient *http.Client
+	remotes    remoteCache
+	// Poster delivers cost digests; nil means every configured notification channel.
 	Poster finops.Poster
 
 	// rootCtx lives as long as the server; background work started by a request uses it.
@@ -162,7 +166,7 @@ func (s *Server) Handler() (http.Handler, error) {
 	if s.Auth != nil {
 		h = s.Auth.Middleware(h)
 	}
-	return securityHeaders(h), nil
+	return securityHeaders(s.sleepPages(h)), nil
 }
 
 // routes registers every API endpoint with the minimum role it requires. Method-qualified
@@ -184,6 +188,8 @@ func (s *Server) routes() *http.ServeMux {
 		mux.HandleFunc("GET /api/auth/entra/login", s.Auth.Entra.HandleLogin)
 		mux.HandleFunc("GET /api/auth/entra/callback", s.Auth.Entra.HandleCallback)
 		mux.HandleFunc("POST /api/auth/entra/callback-spa", s.Auth.Entra.HandleSPACallback)
+		mux.HandleFunc("GET /api/auth/oidc/login", s.Auth.OIDC.HandleLogin)
+		mux.HandleFunc("GET /api/auth/oidc/callback", s.Auth.OIDC.HandleCallback)
 	}
 	viewer("GET /api/version", s.handleVersion)
 
@@ -197,12 +203,17 @@ func (s *Server) routes() *http.ServeMux {
 	// Namespace insights and right-sizing
 	viewer("GET /api/namespaces", s.handleNamespaces)
 	viewer("GET /api/namespaces/{ns}/history", s.serveHistory)
+	viewer("GET /api/namespaces/{ns}/schedule-suggestion", s.handleScheduleSuggestion)
 	viewer("GET /api/namespaces/{ns}/pods", s.servePods)
 	viewer("GET /api/namespaces/{ns}/workloads", s.serveWorkloads)
 	operator("PUT /api/namespaces/{ns}/workloads/{name}", s.serveWorkloadAction)
 	operator("POST /api/namespaces/{ns}/revert", s.handleNamespaceRevert)
 	viewer("GET /api/namespaces/{ns}/optimization", s.handleNamespaceOptimizationInfo)
 	viewer("GET /api/namespaces/{ns}/recommendations", s.handleRecommendations)
+	operator("POST /api/namespaces/{ns}/rightsizing/apply", s.handleApplyRightsizing)
+	operator("POST /api/namespaces/{ns}/rightsizing/revert", s.handleRevertRightsizing)
+	operator("POST /api/namespaces/{ns}/rightsizing/pull-request", s.handleProposeRightsizing)
+	viewer("GET /api/rightsizing/changes", s.handleRightsizingChanges)
 	viewer("POST /api/costing", s.handleCosting)
 	viewer("GET /api/finops/overview", s.handleFinOpsOverview)
 	viewer("GET /api/finops/nodes", s.handleFinOpsNodes)
@@ -219,6 +230,9 @@ func (s *Server) routes() *http.ServeMux {
 	admin("DELETE /api/reports/{id}", s.handleDeleteReport)
 
 	// Scaling
+	viewer("GET /api/namespace-selector", s.handleSelectNamespaces)
+	viewer("POST /api/scaling/preview", s.handlePreviewSchedule)
+	viewer("POST /api/estimate", s.handleEstimate)
 	viewer("GET /api/scaling/groups", s.listScalingGroups)
 	admin("POST /api/scaling/groups", s.createScalingGroup)
 	viewer("GET /api/scaling/groups/{name}", s.getScalingGroup)
@@ -226,12 +240,22 @@ func (s *Server) routes() *http.ServeMux {
 	admin("DELETE /api/scaling/groups/{name}", s.deleteScalingGroup)
 	operator("POST /api/scaling/groups/{name}/manual", s.handleScalingGroupManual)
 	viewer("GET /api/scaling/groups/{name}/events", s.handleScalingGroupEvents)
+	viewer("GET /api/scaling/groups/{name}/realized", s.handleGroupRealized)
+	viewer("GET /api/finops/ai", s.handleAICosts)
+	viewer("GET /api/finops/allocation", s.handleAllocation)
+	viewer("GET /api/finops/summary", s.handleSummary)
+	viewer("GET /api/clusters", s.handleClusters)
+	viewer("GET /api/finops/allocation.csv", s.handleAllocationCSV)
+	viewer("GET /api/wake/{ns}", s.handleWakeStatus)
+	viewer("GET /api/namespace-ttl", s.handleNamespaceTTL)
+	operator("POST /api/namespace-ttl/{ns}/extend", s.handleExtendNamespace)
 	viewer("GET /api/scaling/configs", s.listScalingConfigs)
 	admin("POST /api/scaling/configs", s.createScalingConfig)
 	viewer("GET /api/scaling/configs/{name}", s.getScalingConfig)
 	admin("PUT /api/scaling/configs/{name}", s.updateScalingConfig)
 	admin("DELETE /api/scaling/configs/{name}", s.deleteScalingConfig)
 	operator("POST /api/scaling/configs/{name}/manual", s.handleScalingConfigManual)
+	viewer("GET /api/scaling/configs/{name}/realized", s.handleConfigRealized)
 	viewer("GET /api/discovery", s.handleDiscoverAll)
 	viewer("GET /api/discovery/{provider}/{type}", s.handleDiscovery)
 

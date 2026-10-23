@@ -94,6 +94,15 @@ spec:
                   to clear the override by hand. Ignored when Active is null.
                 format: date-time
                 type: string
+              calendars:
+                description: |-
+                  Calendars names shared holiday calendars (CostDeckConfig spec.calendars) whose days
+                  apply as exceptions too.
+                items:
+                  type: string
+                maxItems: 10
+                type: array
+                x-kubernetes-list-type: set
               category:
                 description: Category is the group classification (e.g. Solution,
                   Platform)
@@ -110,6 +119,57 @@ spec:
                 maxItems: 32
                 type: array
                 x-kubernetes-list-type: set
+              dryRun:
+                description: |-
+                  DryRun works out what the schedule would do and reports it (phase DryRun and the
+                  DryRun condition) without scaling anything, to try a schedule before it acts. To the
+                  schedules that depend on it, a group in dry run counts as up.
+                type: boolean
+              exceptions:
+                description: Exceptions override the schedules on given dates (holidays,
+                  release weekends).
+                items:
+                  description: |-
+                    ScheduleException overrides the weekly schedules on given dates: a public holiday the
+                    environment stays down, or a release weekend it stays up. A manual override (spec.active)
+                    still beats it. When exceptions overlap, the one that began last wins, so a release
+                    weekend inside a holiday break keeps the environment up.
+                  properties:
+                    end:
+                      description: |-
+                        End is the last day it applies (the whole day) or the moment it stops applying.
+                        Defaults to the end of the Start day.
+                      pattern: ^[0-9]{4}-[0-9]{2}-[0-9]{2}(T([01][0-9]|2[0-3]):[0-5][0-9])?$
+                      type: string
+                    name:
+                      description: Name says what the exception is for, such as "New
+                        Year" or "Release 2.4".
+                      maxLength: 100
+                      type: string
+                    start:
+                      description: Start is the first day ("2026-12-24") or the moment
+                        ("2026-12-24T18:00") it applies.
+                      pattern: ^[0-9]{4}-[0-9]{2}-[0-9]{2}(T([01][0-9]|2[0-3]):[0-5][0-9])?$
+                      type: string
+                    state:
+                      description: State the target is kept in while the exception
+                        applies.
+                      enum:
+                      - Up
+                      - Down
+                      type: string
+                    timezone:
+                      description: |-
+                        Timezone of Start and End (e.g. "Europe/Berlin"). Defaults to the timezone of the
+                        first schedule, then to UTC.
+                      type: string
+                  required:
+                  - start
+                  - state
+                  type: object
+                maxItems: 100
+                type: array
+                x-kubernetes-list-type: atomic
               externalTargets:
                 description: ExternalTargets allows you to manage 3rd party cloud
                   resources alongside Kubernetes resources.
@@ -168,14 +228,138 @@ spec:
                     minimum: 1
                     type: integer
                 type: object
+              hibernate:
+                description: |-
+                  Hibernate stops services that operators run, such as databases, in every namespace of
+                  the group, after its workloads, and starts them before; the rules of a namespace's own
+                  ScalingConfig add to these. Needs hibernation.enabled in the Helm chart.
+                items:
+                  description: |-
+                    HibernateRule stops services an operator runs in a namespace, such as a database, together
+                    with the namespace's workloads: they stop after the workloads and start before them. A
+                    preset covers a known operator; otherwise apiVersion, kind and replicasField describe the
+                    resources. Only what CostDeck stopped is started again.
+                  properties:
+                    apiVersion:
+                      description: |-
+                        APIVersion and Kind of the resources a rule without a preset stops, such as
+                        redis.example.com/v1 Redis.
+                      type: string
+                    kind:
+                      type: string
+                    names:
+                      description: |-
+                        Names limits the rule to resources with these names; globs such as "pg-*" work.
+                        Empty means every matching resource in the namespace.
+                      items:
+                        type: string
+                      type: array
+                      x-kubernetes-list-type: atomic
+                    preset:
+                      description: |-
+                        Preset is a built-in rule: cnpg (CloudNativePG clusters, by declarative hibernation),
+                        zalando-postgres (Zalando postgres-operator clusters, numberOfInstances to zero) or
+                        strimzi (Strimzi KafkaConnect, KafkaMirrorMaker2 and KafkaBridge; Kafka clusters
+                        themselves cannot be stopped).
+                      enum:
+                      - cnpg
+                      - zalando-postgres
+                      - strimzi
+                      type: string
+                    readyField:
+                      description: |-
+                        ReadyField is the dotted path of the ready replica count in the status, such as
+                        status.readyReplicas. Without it a resource counts as stopped or started once patched.
+                      type: string
+                    replicasField:
+                      description: |-
+                        ReplicasField is the dotted path of the replica count, such as spec.replicas: zero to
+                        stop, the earlier count to start.
+                      type: string
+                  type: object
+                  x-kubernetes-validations:
+                  - message: set a preset, or apiVersion, kind and replicasField
+                    rule: has(self.preset) != (has(self.apiVersion) && has(self.kind)
+                      && has(self.replicasField))
+                maxItems: 20
+                type: array
+                x-kubernetes-list-type: atomic
+              idleAfter:
+                description: |-
+                  IdleAfter puts the namespaces to sleep inside the schedule's hours once nobody has
+                  used them for this long: no requests through Envoy Gateway, Istio or ingress-nginx and
+                  no GPU busier than 5% (DCGM) in VictoriaMetrics, counted once they have been up that
+                  long. They stay down until the schedule next starts them, at most a week, or until
+                  someone starts them by hand. Namespaces without such metrics are never treated as
+                  unused.
+                type: string
+              namespaceSelector:
+                description: |-
+                  NamespaceSelector adds every namespace whose labels match, such as the preview
+                  environments of a pull request, so they join the group as they are created. A
+                  namespace labelled costdeck.io/schedule=off is never selected, nor is the operator's
+                  own. Where groups claim the same namespace, one that lists it by name wins over one
+                  that selects it, and otherwise the older group. When a namespace stops matching, the
+                  group brings back what it scaled down there. status.selectedNamespaces shows the
+                  matches.
+                properties:
+                  matchExpressions:
+                    description: matchExpressions is a list of label selector requirements.
+                      The requirements are ANDed.
+                    items:
+                      description: |-
+                        A label selector requirement is a selector that contains values, a key, and an operator that
+                        relates the key and values.
+                      properties:
+                        key:
+                          description: key is the label key that the selector applies
+                            to.
+                          type: string
+                        operator:
+                          description: |-
+                            operator represents a key's relationship to a set of values.
+                            Valid operators are In, NotIn, Exists and DoesNotExist.
+                          type: string
+                        values:
+                          description: |-
+                            values is an array of string values. If the operator is In or NotIn,
+                            the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                            the values array must be empty. This array is replaced during a strategic
+                            merge patch.
+                          items:
+                            type: string
+                          type: array
+                          x-kubernetes-list-type: atomic
+                      required:
+                      - key
+                      - operator
+                      type: object
+                    type: array
+                    x-kubernetes-list-type: atomic
+                  matchLabels:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                      map is equivalent to an element of matchExpressions, whose key field is "key", the
+                      operator is "In", and the values array contains only "value". The requirements are ANDed.
+                    type: object
+                type: object
+                x-kubernetes-map-type: atomic
               namespaces:
                 description: Namespaces is the list of namespaces managed by this
                   group
                 items:
                   type: string
-                minItems: 1
                 type: array
                 x-kubernetes-list-type: set
+              pauseGitOps:
+                description: |-
+                  PauseGitOps pauses the GitOps tools that would bring the workloads back while the
+                  schedule keeps them down: Flux Kustomizations and HelmReleases are suspended and Argo CD
+                  Applications lose self-heal, and they are resumed once everything is up again. Only
+                  what CostDeck paused itself is resumed. Needs gitops.pause in the Helm chart.
+                type: boolean
               schedules:
                 description: Schedules define periodic scaling events for the group
                 items:
@@ -251,10 +435,19 @@ spec:
                   type: string
                 type: array
                 x-kubernetes-list-type: atomic
+              sleepPage:
+                description: |-
+                  SleepPage points the namespaces' Gateway API HTTPRoutes at Cost Deck's sleep page while
+                  the schedule keeps them down, and back once they are up: whoever opens an application
+                  sees that it is asleep and a link to wake it, not a gateway error. Needs
+                  sleepPage.enabled in the Helm chart.
+                type: boolean
             required:
             - category
-            - namespaces
             type: object
+            x-kubernetes-validations:
+            - message: list namespaces or set a namespaceSelector
+              rule: (has(self.namespaces) && size(self.namespaces) > 0) || has(self.namespaceSelector)
           status:
             description: status defines the observed state of ScalingGroup
             properties:
@@ -343,6 +536,21 @@ spec:
                   EstimatedHourlySavings is what the workloads CostDeck keeps scaled down would cost
                   per hour at the current rates (requests x missing replicas), e.g. "1.2400".
                 type: string
+              exception:
+                description: Exception names the exception or calendar day in force
+                  while Mode is Exception.
+                type: string
+              exceptionEndsAt:
+                description: ExceptionEndsAt is when the exception in force stops
+                  applying.
+                format: date-time
+                type: string
+              idleUntil:
+                description: |-
+                  IdleUntil is when idle auto-sleep hands the namespaces back to the schedule. Set
+                  while Mode is Idle; a manual start clears it.
+                format: date-time
+                type: string
               lastAction:
                 description: LastAction is the timestamp of the last scaling event
                 format: date-time
@@ -355,8 +563,10 @@ spec:
                 description: |-
                   Mode is what currently decides the desired state:
                   Schedule (spec.schedules), ManualUp / ManualDown (spec.active is set and the
-                  schedule is ignored), AlwaysOn (no usable schedule, kept up as a fail-safe) or
-                  Dependency (a ScalingGroup kept up for a group that depends on it).
+                  schedule is ignored), Exception (a dated exception or calendar day), AlwaysOn (no
+                  usable schedule, kept up as a fail-safe), Dependency (a ScalingGroup kept up for a
+                  group that depends on it) or Idle (the schedule's hours, put to sleep for being
+                  unused, see spec.idleAfter).
                 type: string
               namespacesReady:
                 description: NamespacesReady is the number of namespaces that have
@@ -412,6 +622,38 @@ spec:
                 items:
                   type: string
                 type: array
+              scaleDownAt:
+                description: ScaleDownAt is when that scale-down began.
+                format: date-time
+                type: string
+              scaleDownNodes:
+                description: |-
+                  ScaleDownNodes are the nodes the scaled workloads ran on when the last scale-down
+                  began, with what they cost then, so the realized-savings check can tell later whether
+                  they went away. Cleared once the target is up again.
+                items:
+                  description: ScaleDownNode is a node a scale-down could free.
+                  properties:
+                    hourlyCost:
+                      description: HourlyCost is what the node cost per hour when
+                        the scale-down began, e.g. "0.1920".
+                      type: string
+                    name:
+                      type: string
+                  required:
+                  - name
+                  type: object
+                maxItems: 200
+                type: array
+                x-kubernetes-list-type: atomic
+              selectedNamespaces:
+                description: |-
+                  SelectedNamespaces are the namespaces spec.namespaceSelector matched at the last
+                  reconcile.
+                items:
+                  type: string
+                type: array
+                x-kubernetes-list-type: atomic
               skippedNamespaces:
                 description: |-
                   SkippedNamespaces lists namespaces the running transition moved on without because

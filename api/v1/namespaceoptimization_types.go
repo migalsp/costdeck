@@ -38,6 +38,40 @@ type WorkloadOptimization struct {
 	Original ResourceValues `json:"original"`
 	// Optimized values applied
 	Optimized ResourceValues `json:"optimized"`
+
+	// Containers holds the values of every container a change touched; Original and
+	// Optimized describe the first container of records made before it existed.
+	// +listType=map
+	// +listMapKey=name
+	// +optional
+	Containers []ContainerOptimization `json:"containers,omitempty"`
+
+	// AppliedAt and AppliedBy say when and by whom the advice was applied or proposed.
+	// +optional
+	AppliedAt *metav1.Time `json:"appliedAt,omitempty"`
+	// +optional
+	AppliedBy string `json:"appliedBy,omitempty"`
+
+	// State is applied (its new pods are watched), kept (the watch passed), reverted, or
+	// proposed (a pull request is open).
+	// +kubebuilder:validation:Enum=applied;kept;reverted;proposed
+	// +optional
+	State string `json:"state,omitempty"`
+
+	// Reason says why a change was put back.
+	// +optional
+	Reason string `json:"reason,omitempty"`
+
+	// PullRequest is the pull request that proposes the change.
+	// +optional
+	PullRequest string `json:"pullRequest,omitempty"`
+}
+
+// ContainerOptimization is one container's requests and limits before and after a change.
+type ContainerOptimization struct {
+	Name      string         `json:"name"`
+	Original  ResourceValues `json:"original"`
+	Optimized ResourceValues `json:"optimized"`
 }
 
 // NamespaceOptimizationSpec defines the desired state of NamespaceOptimization

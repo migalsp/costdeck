@@ -3,6 +3,7 @@ import { CalendarClock, Check, Copy, Download, FileText, Loader2, Printer, Send,
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { apiError, errorMessage } from '../lib/api'
+import { toast } from '../lib/toast'
 import { useAuth } from '../lib/auth'
 import { Badge, Button, Card, PageHeader, SectionTitle, Tabs } from '../components/ui'
 import { Delta, KpiTile } from '../components/finops/charts'
@@ -12,6 +13,8 @@ import {
 } from '../lib/finops'
 import { formatMoney } from '../lib/format'
 import { usePolling } from '../lib/usePolling'
+import { channelList } from '../lib/notifications'
+import AllocationCard from '../components/finops/AllocationCard'
 
 const audiences: { id: Audience; label: string; hint: string }[] = [
   { id: 'executive', label: 'Executive', hint: 'One page for leadership and finance: run rate, trend, savings, three decisions.' },
@@ -100,6 +103,7 @@ function ScheduleCard({ index, onSaved }: { index: ReportsIndex; onSaved: () => 
       })
       if (!res.ok) throw new Error(await apiError(res))
       setDraft(null)
+      toast.success('Saved the digest schedule')
       onSaved()
     } catch (e) {
       setError(errorMessage(e))
@@ -109,8 +113,8 @@ function ScheduleCard({ index, onSaved }: { index: ReportsIndex; onSaved: () => 
   }
 
   const describe = index.schedule.enabled
-    ? `${index.schedule.frequency === 'monthly' ? 'On the 1st of every month' : 'Every Monday'} at ${index.schedule.time || '09:00'} ${index.schedule.timezone || 'UTC'}, to the Webex space.`
-    : 'Not scheduled. Turn it on to post the digest to the Webex space every week or month.'
+    ? `${index.schedule.frequency === 'monthly' ? 'On the 1st of every month' : 'Every Monday'} at ${index.schedule.time || '09:00'} ${index.schedule.timezone || 'UTC'}, to the channels set up under Settings → Notifications.`
+    : 'Not scheduled. Turn it on to send the digest every week or month to the channels set up under Settings → Notifications.'
   return (
     <Card className="p-5">
       <div className="flex items-center gap-2">
@@ -123,11 +127,11 @@ function ScheduleCard({ index, onSaved }: { index: ReportsIndex; onSaved: () => 
         {index.nextDue && index.schedule.enabled && <div>Next: {when(index.nextDue)}</div>}
         {index.lastSent && <div>Last sent: {when(index.lastSent)}</div>}
       </div>
-      {!index.webexReady && (
+      {(index.channels || []).length === 0 ? (
         <p className="mt-3 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-          The digest is posted to Webex. Enable Webex with a space ID under Settings → Notifications first.
+          Nothing receives the digest yet: set up Webex, Slack, Teams or email under Settings → Notifications.
         </p>
-      )}
+      ) : <p className="mt-3 text-xs text-slate-500">Sent to {channelList(index.channels)}.</p>}
       {can('admin') && (
         <div className="mt-4 pt-4 border-t border-slate-100 space-y-3">
           <label className="flex items-center gap-2 text-sm text-slate-700">
@@ -159,7 +163,6 @@ export default function ReportsPage() {
   const [period, setPeriod] = useState<'week' | 'month'>('week')
   const [digest, setDigest] = useState<{ digest: Digest; markdown: string } | null>(null)
   const [digestError, setDigestError] = useState<string | null>(null)
-  const [notice, setNotice] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
   const [copied, setCopied] = useState(false)
 
@@ -181,14 +184,14 @@ export default function ReportsPage() {
 
   const sendDigest = async () => {
     setSending(true)
-    setNotice(null)
     try {
       const res = await fetch('/api/reports/digest/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ period }) })
       if (!res.ok) throw new Error(await apiError(res))
-      setNotice('Posted to the Webex space and saved in the history.')
+      const entry: ReportEntry = await res.json()
+      toast.success(`Sent the digest to ${entry.delivered || 'the notification channels'} and saved it in the history`)
       loadIndex()
     } catch (e) {
-      setNotice(errorMessage(e))
+      toast.error(`Could not send the digest: ${errorMessage(e)}`)
     } finally {
       setSending(false)
     }
@@ -246,11 +249,14 @@ export default function ReportsPage() {
     if (!viewed) return
     const res = await fetch(`/api/reports/${encodeURIComponent(viewed.report.id)}`, { method: 'DELETE' })
     setConfirmDelete(false)
-    if (res.ok) {
-      setSelected(null)
-      setViewed(null)
-      loadIndex()
+    if (!res.ok) {
+      toast.error(`Could not delete the report: ${await apiError(res)}`)
+      return
     }
+    toast.success('Deleted the report')
+    setSelected(null)
+    setViewed(null)
+    loadIndex()
   }
 
   const reports = index?.reports || []
@@ -280,14 +286,20 @@ export default function ReportsPage() {
             <Button size="sm" onClick={copy} disabled={!digest} icon={copied ? <Check size={14} /> : <Copy size={14} />}>{copied ? 'Copied' : 'Copy as Markdown'}</Button>
             <Button size="sm" onClick={() => digest && downloadText(`cost-digest-${digest.digest.to}.md`, digest.markdown)} disabled={!digest} icon={<Download size={14} />}>Download</Button>
             {can('operator') && (
-              <span title={index?.webexReady ? undefined : 'Enable Webex with a space ID under Settings → Notifications'}>
-                <Button size="sm" variant="primary" onClick={sendDigest} disabled={!digest || sending || !index?.webexReady} icon={sending ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}>Send to Webex now</Button>
+              <span title={index?.channels?.length ? undefined : 'Set up Webex, Slack, Teams or email under Settings → Notifications'}>
+                <Button size="sm" variant="primary" onClick={sendDigest} disabled={!digest || sending || !index?.channels?.length} icon={sending ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}>
+                  {index?.channels?.length ? `Send to ${channelList(index.channels)} now` : 'Send now'}
+                </Button>
               </span>
             )}
-            {notice && <span className="text-xs text-slate-600">{notice}</span>}
           </div>
         </Card>
         {index && <ScheduleCard index={index} onSaved={loadIndex} />}
+      </div>
+
+      <div className="mt-8 print-hide">
+        <SectionTitle aside={<span className="text-xs text-slate-400">showback and chargeback from the cost history</span>}>Cost allocation</SectionTitle>
+        <AllocationCard canAdmin={can('admin')} />
       </div>
 
       <div className="mt-8 print-hide">
@@ -348,7 +360,7 @@ export default function ReportsPage() {
                   </div>
                 </div>
               )}
-              <div className="prose prose-slate max-w-none p-8 print-prose prose-headings:tracking-tight prose-a:text-brand-700 prose-table:text-sm">
+              <div className="prose prose-slate dark:prose-invert max-w-none p-8 print-prose prose-headings:tracking-tight prose-a:text-brand-700 prose-table:text-sm">
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>{shown || '…'}</ReactMarkdown>
               </div>
             </>

@@ -121,6 +121,9 @@ func (s *anthropicSession) Step(ctx context.Context, emit func(Event)) ([]ToolCa
 	if err := stream.Err(); err != nil {
 		return nil, describeAnthropicError(err)
 	}
+	// Cached prompt tokens are billed too, at their own rates; the budget counts them all.
+	u := msg.Usage
+	emit(Event{Type: "usage", Usage: &Usage{InputTokens: u.InputTokens + u.CacheCreationInputTokens + u.CacheReadInputTokens, OutputTokens: u.OutputTokens}})
 
 	switch msg.StopReason {
 	case anthropic.BetaStopReasonRefusal:

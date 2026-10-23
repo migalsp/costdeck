@@ -1,8 +1,9 @@
 import { useState } from 'react'
 import { CalendarClock, ListChecks, Play, PowerOff, RotateCcw, Plus } from 'lucide-react'
-import { apiError, errorMessage } from '../lib/api'
+import { apiError, errorMessage, getJSON } from '../lib/api'
 import { useAuth } from '../lib/auth'
-import { describeSpec, statusLine } from '../lib/schedule'
+import { describeOverride, describeSpec, statusLine } from '../lib/schedule'
+import { toast } from '../lib/toast'
 import type { ScalingConfig, ScalingGroup, ScalingSpec } from '../lib/types'
 import { usePolling } from '../lib/usePolling'
 import type { NamespaceFinOps } from '../lib/types'
@@ -10,6 +11,7 @@ import OverrideDialog, { type OverrideUntil } from './OverrideDialog'
 import WorkloadRulesDialog from './WorkloadRulesDialog'
 import ScheduleWizard from './ScheduleWizard'
 import WeekTimeline from './WeekTimeline'
+import { groupNamespaces } from '../lib/selector'
 
 type Controller =
   | { type: 'group'; name: string; spec: ScalingSpec; status: ScalingGroup['status']; size: number }
@@ -31,22 +33,23 @@ export default function NamespaceScalingPanel({ namespace }: { namespace: string
 
   const load = () => {
     Promise.all([
-      fetch('/api/scaling/groups').then(r => r.json()),
-      fetch('/api/scaling/configs').then(r => r.json()),
-      fetch('/api/namespaces').then(r => r.json()),
+      getJSON<ScalingGroup[] | null>('/api/scaling/groups'),
+      getJSON<ScalingConfig[] | null>('/api/scaling/configs'),
+      getJSON<NamespaceFinOps[] | null>('/api/namespaces'),
     ]).then(([g, c, n]) => {
       setGroups(g || [])
       setConfigs(c || [])
-      setNamespaces(((n || []) as NamespaceFinOps[]).map(x => x.spec.targetNamespace || x.metadata.name).sort())
-      setLoaded(true)
-    }).catch(err => setError(errorMessage(err)))
+      setNamespaces((n || []).map(x => x.spec.targetNamespace || x.metadata.name).sort())
+      setError(null)
+    }).catch(err => setError(`Could not load the schedules: ${errorMessage(err)}`))
+      .finally(() => setLoaded(true))
   }
   usePolling(load, 10000, namespace)
 
-  const group = groups.find(g => g.spec.namespaces.includes(namespace))
+  const group = groups.find(g => groupNamespaces(g).includes(namespace))
   const config = configs.find(c => c.spec.targetNamespace === namespace)
   const controller: Controller | null = group
-    ? { type: 'group', name: group.metadata.name, spec: group.spec, status: group.status, size: group.spec.namespaces.length }
+    ? { type: 'group', name: group.metadata.name, spec: group.spec, status: group.status, size: groupNamespaces(group).length }
     : config && ((config.spec.schedules?.length || 0) > 0 || config.spec.active !== undefined)
       ? { type: 'config', name: config.metadata.name, spec: config.spec, status: config.status, size: 1 }
       : null
@@ -63,6 +66,7 @@ export default function NamespaceScalingPanel({ namespace }: { namespace: string
         body: JSON.stringify({ active, ...(active !== null && until && until !== 'forever' ? { until } : {}) }),
       })
       if (!res.ok) throw new Error(await apiError(res))
+      toast.success(describeOverride(controller.type === 'group' ? `group ${controller.name}` : namespace, active, until))
       load()
     } catch (err) {
       setError(errorMessage(err))
@@ -99,9 +103,11 @@ export default function NamespaceScalingPanel({ namespace }: { namespace: string
       })
       if (!res.ok) throw new Error(await apiError(res))
       setRulesFor(null)
+      toast.success(`Saved the workload rules for ${namespace}`)
       load()
     } catch (err) {
-      setError(errorMessage(err))
+      // The rules dialog is still open over the panel, so the error goes in a toast.
+      toast.error(`Could not save the workload rules: ${errorMessage(err)}`)
     }
   }
 

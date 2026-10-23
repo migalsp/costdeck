@@ -222,7 +222,7 @@ func redirectURL(r *http.Request, cfg finopsv1.EntraConfig) string {
 func safeReturnPath(p string) string {
 	if p == "" || p[0] != '/' || (len(p) > 1 && (p[1] == '/' || p[1] == '\\')) ||
 		strings.ContainsFunc(p, func(r rune) bool { return r == '\\' || unicode.IsSpace(r) || unicode.IsControl(r) }) ||
-		strings.HasPrefix(p, CallbackPath) || strings.HasPrefix(p, SPACallbackPath) {
+		strings.HasPrefix(p, CallbackPath) || strings.HasPrefix(p, SPACallbackPath) || strings.HasPrefix(p, OIDCCallbackPath) {
 		return "/"
 	}
 	if u, err := url.Parse(p); err != nil || u.Scheme != "" || u.Host != "" {

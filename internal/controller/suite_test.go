@@ -67,7 +67,12 @@ var _ = BeforeSuite(func() {
 
 	By("bootstrapping test environment")
 	testEnv = &envtest.Environment{
-		CRDDirectoryPaths:     []string{filepath.Join("..", "..", "config", "crd", "bases")},
+		CRDDirectoryPaths: []string{
+			filepath.Join("..", "..", "config", "crd", "bases"),
+			// Stand-ins for the Flux and Argo CD CRDs the GitOps pause works with, and for
+			// the operators hibernate rules stop services of.
+			filepath.Join("..", "..", "hack", "testdata"),
+		},
 		ErrorIfCRDPathMissing: true,
 	}
 

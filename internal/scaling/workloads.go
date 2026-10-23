@@ -13,6 +13,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
@@ -34,7 +35,14 @@ const (
 	PhaseScalingUp   = "ScalingUp"
 	PhaseScaledDown  = "ScaledDown"
 	PhaseScalingDown = "ScalingDown"
+	// PhaseDryRun: spec.dryRun is set; the desired state is worked out but not applied.
+	PhaseDryRun = "DryRun"
 )
+
+// FieldManager is the field manager of every change CostDeck makes to a workload, a
+// CronJob, a ScaledObject or a GitOps object, so a GitOps tool can be told to leave those
+// fields alone (Argo CD: ignoreDifferences managedFieldsManagers: [costdeck]).
+const FieldManager = "costdeck"
 
 func (e *Engine) listScalableResources(ctx context.Context, ns string, exclusions []string) ([]client.Object, error) {
 	deployments := &appsv1.DeploymentList{}
@@ -46,15 +54,30 @@ func (e *Engine) listScalableResources(ctx context.Context, ns string, exclusion
 		return nil, err
 	}
 
+	rollouts, referenced, err := e.listRollouts(ctx, ns)
+	if err != nil {
+		return nil, err
+	}
+
 	var scalableResources []client.Object
+	byName := make(map[string]*appsv1.Deployment, len(deployments.Items))
 	for i := range deployments.Items {
-		if !isExcluded(deployments.Items[i].Name, exclusions) {
-			scalableResources = append(scalableResources, &deployments.Items[i])
+		d := &deployments.Items[i]
+		byName[d.Name] = d
+		// A Rollout runs this Deployment's pods; scaling the Deployment would start a copy.
+		if !referenced[d.Name] && !excludedObject(d, exclusions) {
+			scalableResources = append(scalableResources, d)
 		}
 	}
 	for i := range statefulSets.Items {
-		if !isExcluded(statefulSets.Items[i].Name, exclusions) {
+		if !excludedObject(&statefulSets.Items[i], exclusions) {
 			scalableResources = append(scalableResources, &statefulSets.Items[i])
+		}
+	}
+	for _, r := range rollouts {
+		if !excludedObject(r, exclusions) {
+			withReferencedTemplate(r, byName)
+			scalableResources = append(scalableResources, r)
 		}
 	}
 	return scalableResources, nil
@@ -117,6 +140,9 @@ func (e *Engine) scalePriorityGroup(ctx context.Context, ns string, objs []clien
 // originalKey identifies a workload in status.originalReplicas. The "%T/%s" form
 // ("*v1.Deployment/name") is what existing objects already store, so it is kept as is.
 func originalKey(obj client.Object) string {
+	if _, ok := isRollout(obj); ok {
+		return kindRollout + "/" + obj.GetName()
+	}
 	return fmt.Sprintf("%T/%s", obj, obj.GetName())
 }
 
@@ -172,6 +198,12 @@ func cleanupOriginals(objs []client.Object, originals map[string]int32) {
 	for _, obj := range objs {
 		delete(originals, originalKey(obj))
 	}
+}
+
+// excludedObject reports whether workload rules exclude an object, by its name or by the
+// kind of its controller (an owner:<Kind> entry).
+func excludedObject(obj client.Object, exclusions []string) bool {
+	return isExcluded(obj.GetName(), exclusions) || ownedByKind(obj, exclusions) != ""
 }
 
 func isExcluded(name string, exclusions []string) bool {
@@ -258,9 +290,12 @@ func matchWorkloadPattern(pattern, kind, name string) bool {
 func workloadKind(obj client.Object) string {
 	switch obj.(type) {
 	case *appsv1.Deployment:
-		return "Deployment"
+		return kindDeployment
 	case *appsv1.StatefulSet:
 		return "StatefulSet"
+	}
+	if _, ok := isRollout(obj); ok {
+		return kindRollout
 	}
 	return ""
 }
@@ -274,6 +309,10 @@ func getReplicas(obj client.Object) int32 {
 		replicas = v.Spec.Replicas
 	case *appsv1.StatefulSet:
 		replicas = v.Spec.Replicas
+	case *unstructured.Unstructured:
+		if u, ok := isRollout(v); ok {
+			return rolloutReplicas(u)
+		}
 	}
 	if replicas == nil {
 		return 1
@@ -291,6 +330,13 @@ func (e *Engine) setReplicas(ctx context.Context, obj client.Object, count, reco
 		v.Spec.Replicas = &count
 	case *appsv1.StatefulSet:
 		v.Spec.Replicas = &count
+	case *unstructured.Unstructured:
+		if _, ok := isRollout(v); !ok {
+			return fmt.Errorf("unsupported workload kind %s", v.GetKind())
+		}
+		if err := unstructured.SetNestedField(v.Object, int64(count), "spec", "replicas"); err != nil {
+			return err
+		}
 	default:
 		return fmt.Errorf("unsupported workload type %T", obj)
 	}
@@ -305,7 +351,7 @@ func (e *Engine) setReplicas(ctx context.Context, obj client.Object, count, reco
 		delete(annotations, OriginalReplicasAnnotation)
 	}
 	obj.SetAnnotations(annotations)
-	return e.Client.Patch(ctx, obj, patch)
+	return e.Client.Patch(ctx, obj, patch, client.FieldOwner(FieldManager))
 }
 
 // hasRemainingPods reports whether any pod selected by the workload is still running or
@@ -340,7 +386,8 @@ func (e *Engine) isGroupReady(ctx context.Context, objs []client.Object, targetA
 	return true
 }
 
-// workloadState extracts what readiness checks need from a Deployment or StatefulSet.
+// workloadState extracts what readiness checks need from a Deployment, StatefulSet or
+// Rollout.
 type workloadState struct {
 	desired, ready, current int32
 	selector                *metav1.LabelSelector
@@ -353,7 +400,24 @@ func stateOf(obj client.Object) (workloadState, bool) {
 	case *appsv1.StatefulSet:
 		return workloadState{getReplicas(v), v.Status.ReadyReplicas, v.Status.Replicas, v.Spec.Selector}, true
 	}
+	if u, ok := isRollout(obj); ok {
+		return rolloutState(u), true
+	}
 	return workloadState{}, false
+}
+
+// podTemplate is the pod template of a workload, empty for an unknown kind.
+func podTemplate(obj client.Object) corev1.PodTemplateSpec {
+	switch v := obj.(type) {
+	case *appsv1.Deployment:
+		return v.Spec.Template
+	case *appsv1.StatefulSet:
+		return v.Spec.Template
+	}
+	if u, ok := isRollout(obj); ok {
+		return rolloutTemplate(u)
+	}
+	return corev1.PodTemplateSpec{}
 }
 
 func (e *Engine) isResourceReady(ctx context.Context, o client.Object, targetActive bool) bool {
@@ -425,14 +489,7 @@ func (e *Engine) KeptDown(ctx context.Context, ns string, originals map[string]i
 		if missing <= 0 {
 			continue
 		}
-		var tmpl corev1.PodTemplateSpec
-		switch v := obj.(type) {
-		case *appsv1.Deployment:
-			tmpl = v.Spec.Template
-		case *appsv1.StatefulSet:
-			tmpl = v.Spec.Template
-		}
-		podCPU, podMem := PodRequests(tmpl.Spec)
+		podCPU, podMem := PodRequests(podTemplate(obj).Spec)
 		podCPU.Mul(missing)
 		podMem.Mul(missing)
 		cpu.Add(podCPU)

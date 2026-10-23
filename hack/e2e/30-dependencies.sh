@@ -49,7 +49,7 @@ api POST /api/scaling/groups/smoke-env/manual '{"active":true,"until":"1h"}' >/d
 wait_for "smoke-env reports ManualUp" group_field_is smoke-env mode ManualUp
 wait_for "smoke-platform started for its dependent, back at its 2 replicas" replicas_are smoke-platform db 2
 wait_for "smoke-env WaitingForDependencies" group_field_is smoke-env phase WaitingForDependencies
-group_field_is smoke-platform mode Dependency || fail "smoke-platform is not up in Dependency mode"
+wait_for "smoke-platform reports mode Dependency" group_field_is smoke-platform mode Dependency
 holds_for 6 "smoke-env does not start while the platform is not ready" replicas_are smoke-env app 0
 wait_for "smoke-platform ScaledUp" group_field_is smoke-platform phase ScaledUp
 wait_for "then smoke-env starts, back at its 1 replica" replicas_are smoke-env app 1

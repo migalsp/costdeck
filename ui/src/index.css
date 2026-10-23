@@ -1,5 +1,15 @@
 @import "tailwindcss";
 @plugin "@tailwindcss/typography";
+/* dark: follows the theme chosen in the sidebar (the class lib/theme.ts puts on <html>),
+   not only the operating system's setting. Like the palette below it is for the screen
+   only: a report printed from the dark theme still comes out dark on white. */
+@custom-variant dark {
+  @media screen {
+    &:where(.dark, .dark *) {
+      @slot;
+    }
+  }
+}
 /* Design tokens. "brand" is the single accent colour (the emerald of the logo); change it
    here to re-theme every primary action, selection and focus ring. */
 @theme {
@@ -55,6 +65,168 @@
 @media (prefers-reduced-motion: reduce) {
   .animate-slide-in, .animate-pop, .animate-rise, .animate-drop, .animate-fade {
     animation: none;
+  }
+}
+
+/* The dark theme. Tailwind's colours are CSS variables, so instead of a dark: variant on
+   every class it swaps the palettes the dashboard uses: each scale is mirrored (50 <-> 950,
+   100 <-> 900, ...), white becomes the card surface and slate-50 the page behind it. So
+   bg-white is a dark card, text-slate-900 light text and a bg-amber-50 text-amber-800
+   warning a dark amber box with light text, and new code is dark-ready without extra
+   classes. It applies inside .theme-surface (pages, dialogs, the assistant, toasts); the
+   sidebar and the sign-in screens are dark in both themes and keep their colours. Use
+   dark: only where mirroring is wrong, such as a backdrop that must stay dark. Printing
+   always uses the light palette. Values are Tailwind v4's own palette. */
+@media screen {
+  :root.dark {
+    color-scheme: dark;
+  }
+  :root.dark body {
+    background-color: oklch(12.9% 0.042 264.695);
+  }
+  :root.dark .theme-surface {
+    --color-white: oklch(17% 0.04 264);
+    --color-slate-50: oklch(12.9% 0.042 264.695);
+    --color-slate-100: oklch(20.8% 0.042 265.755);
+    --color-slate-200: oklch(27.9% 0.041 260.031);
+    --color-slate-300: oklch(37.2% 0.044 257.287);
+    --color-slate-400: oklch(50% 0.044 257);
+    --color-slate-500: oklch(66% 0.043 257);
+    --color-slate-600: oklch(70.4% 0.04 256.788);
+    --color-slate-700: oklch(86.9% 0.022 252.894);
+    --color-slate-800: oklch(92.9% 0.013 255.508);
+    --color-slate-900: oklch(96.8% 0.007 247.896);
+    --color-slate-950: oklch(98.4% 0.003 247.858);
+    --color-emerald-50: oklch(26.2% 0.051 172.552);
+    --color-emerald-100: oklch(37.8% 0.077 168.94);
+    --color-emerald-200: oklch(43.2% 0.095 166.913);
+    --color-emerald-300: oklch(50.8% 0.118 165.612);
+    --color-emerald-400: oklch(59.6% 0.145 163.225);
+    --color-emerald-500: oklch(69.6% 0.17 162.48);
+    --color-emerald-600: oklch(76.5% 0.177 163.223);
+    --color-emerald-700: oklch(84.5% 0.143 164.978);
+    --color-emerald-800: oklch(90.5% 0.093 164.15);
+    --color-emerald-900: oklch(95% 0.052 163.051);
+    --color-emerald-950: oklch(97.9% 0.021 166.113);
+    --color-rose-50: oklch(27.1% 0.105 12.094);
+    --color-rose-100: oklch(41% 0.159 10.272);
+    --color-rose-200: oklch(45.5% 0.188 13.697);
+    --color-rose-300: oklch(51.4% 0.222 16.935);
+    --color-rose-400: oklch(58.6% 0.253 17.585);
+    --color-rose-500: oklch(64.5% 0.246 16.439);
+    --color-rose-600: oklch(71.2% 0.194 13.428);
+    --color-rose-700: oklch(81% 0.117 11.638);
+    --color-rose-800: oklch(89.2% 0.058 10.001);
+    --color-rose-900: oklch(94.1% 0.03 12.58);
+    --color-rose-950: oklch(96.9% 0.015 12.422);
+    --color-amber-50: oklch(27.9% 0.077 45.635);
+    --color-amber-100: oklch(41.4% 0.112 45.904);
+    --color-amber-200: oklch(47.3% 0.137 46.201);
+    --color-amber-300: oklch(55.5% 0.163 48.998);
+    --color-amber-400: oklch(66.6% 0.179 58.318);
+    --color-amber-500: oklch(76.9% 0.188 70.08);
+    --color-amber-600: oklch(82.8% 0.189 84.429);
+    --color-amber-700: oklch(87.9% 0.169 91.605);
+    --color-amber-800: oklch(92.4% 0.12 95.746);
+    --color-amber-900: oklch(96.2% 0.059 95.617);
+    --color-amber-950: oklch(98.7% 0.022 95.277);
+    --color-sky-50: oklch(29.3% 0.066 243.157);
+    --color-sky-100: oklch(39.1% 0.09 240.876);
+    --color-sky-200: oklch(44.3% 0.11 240.79);
+    --color-sky-300: oklch(50% 0.134 242.749);
+    --color-sky-400: oklch(58.8% 0.158 241.966);
+    --color-sky-500: oklch(68.5% 0.169 237.323);
+    --color-sky-600: oklch(74.6% 0.16 232.661);
+    --color-sky-700: oklch(82.8% 0.111 230.318);
+    --color-sky-800: oklch(90.1% 0.058 230.902);
+    --color-sky-900: oklch(95.1% 0.026 236.824);
+    --color-sky-950: oklch(97.7% 0.013 236.62);
+    /* brand is defined on :root from emerald; restate it so it picks up the swap. */
+    --color-brand-50: var(--color-emerald-50);
+    --color-brand-100: var(--color-emerald-100);
+    --color-brand-200: var(--color-emerald-200);
+    --color-brand-300: var(--color-emerald-300);
+    --color-brand-400: var(--color-emerald-400);
+    --color-brand-500: var(--color-emerald-500);
+    --color-brand-600: var(--color-emerald-600);
+    --color-brand-700: var(--color-emerald-700);
+    --color-brand-800: var(--color-emerald-800);
+    --color-brand-900: var(--color-emerald-900);
+    --color-brand-950: var(--color-emerald-950);
+  }
+}
+
+/* theme-keep marks a block that looks the same in both themes, such as code and logs,
+   which are dark in the light theme already: it restores the light palette inside. */
+@utility theme-keep {
+  @variant dark {
+    --color-white: #fff;
+    --color-slate-50: oklch(98.4% 0.003 247.858);
+    --color-slate-100: oklch(96.8% 0.007 247.896);
+    --color-slate-200: oklch(92.9% 0.013 255.508);
+    --color-slate-300: oklch(86.9% 0.022 252.894);
+    --color-slate-400: oklch(70.4% 0.04 256.788);
+    --color-slate-500: oklch(55.4% 0.046 257.417);
+    --color-slate-600: oklch(44.6% 0.043 257.281);
+    --color-slate-700: oklch(37.2% 0.044 257.287);
+    --color-slate-800: oklch(27.9% 0.041 260.031);
+    --color-slate-900: oklch(20.8% 0.042 265.755);
+    --color-slate-950: oklch(12.9% 0.042 264.695);
+    --color-emerald-50: oklch(97.9% 0.021 166.113);
+    --color-emerald-100: oklch(95% 0.052 163.051);
+    --color-emerald-200: oklch(90.5% 0.093 164.15);
+    --color-emerald-300: oklch(84.5% 0.143 164.978);
+    --color-emerald-400: oklch(76.5% 0.177 163.223);
+    --color-emerald-500: oklch(69.6% 0.17 162.48);
+    --color-emerald-600: oklch(59.6% 0.145 163.225);
+    --color-emerald-700: oklch(50.8% 0.118 165.612);
+    --color-emerald-800: oklch(43.2% 0.095 166.913);
+    --color-emerald-900: oklch(37.8% 0.077 168.94);
+    --color-emerald-950: oklch(26.2% 0.051 172.552);
+    --color-rose-50: oklch(96.9% 0.015 12.422);
+    --color-rose-100: oklch(94.1% 0.03 12.58);
+    --color-rose-200: oklch(89.2% 0.058 10.001);
+    --color-rose-300: oklch(81% 0.117 11.638);
+    --color-rose-400: oklch(71.2% 0.194 13.428);
+    --color-rose-500: oklch(64.5% 0.246 16.439);
+    --color-rose-600: oklch(58.6% 0.253 17.585);
+    --color-rose-700: oklch(51.4% 0.222 16.935);
+    --color-rose-800: oklch(45.5% 0.188 13.697);
+    --color-rose-900: oklch(41% 0.159 10.272);
+    --color-rose-950: oklch(27.1% 0.105 12.094);
+    --color-amber-50: oklch(98.7% 0.022 95.277);
+    --color-amber-100: oklch(96.2% 0.059 95.617);
+    --color-amber-200: oklch(92.4% 0.12 95.746);
+    --color-amber-300: oklch(87.9% 0.169 91.605);
+    --color-amber-400: oklch(82.8% 0.189 84.429);
+    --color-amber-500: oklch(76.9% 0.188 70.08);
+    --color-amber-600: oklch(66.6% 0.179 58.318);
+    --color-amber-700: oklch(55.5% 0.163 48.998);
+    --color-amber-800: oklch(47.3% 0.137 46.201);
+    --color-amber-900: oklch(41.4% 0.112 45.904);
+    --color-amber-950: oklch(27.9% 0.077 45.635);
+    --color-sky-50: oklch(97.7% 0.013 236.62);
+    --color-sky-100: oklch(95.1% 0.026 236.824);
+    --color-sky-200: oklch(90.1% 0.058 230.902);
+    --color-sky-300: oklch(82.8% 0.111 230.318);
+    --color-sky-400: oklch(74.6% 0.16 232.661);
+    --color-sky-500: oklch(68.5% 0.169 237.323);
+    --color-sky-600: oklch(58.8% 0.158 241.966);
+    --color-sky-700: oklch(50% 0.134 242.749);
+    --color-sky-800: oklch(44.3% 0.11 240.79);
+    --color-sky-900: oklch(39.1% 0.09 240.876);
+    --color-sky-950: oklch(29.3% 0.066 243.157);
+    --color-brand-50: var(--color-emerald-50);
+    --color-brand-100: var(--color-emerald-100);
+    --color-brand-200: var(--color-emerald-200);
+    --color-brand-300: var(--color-emerald-300);
+    --color-brand-400: var(--color-emerald-400);
+    --color-brand-500: var(--color-emerald-500);
+    --color-brand-600: var(--color-emerald-600);
+    --color-brand-700: var(--color-emerald-700);
+    --color-brand-800: var(--color-emerald-800);
+    --color-brand-900: var(--color-emerald-900);
+    --color-brand-950: var(--color-emerald-950);
   }
 }
 

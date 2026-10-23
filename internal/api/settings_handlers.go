@@ -8,6 +8,7 @@ import (
 	"io"
 	"maps"
 	"net/http"
+	"path"
 	"regexp"
 	"slices"
 	"strings"
@@ -35,6 +36,12 @@ import (
 // SettingsResponse is the full settings response returned to the UI.
 // Credentials are always masked.
 type SettingsResponse struct {
+	// DashboardURL is the address people open Cost Deck at.
+	DashboardURL string                       `json:"dashboardUrl,omitempty"`
+	NamespaceTTL NamespaceTTLSettings         `json:"namespaceTTL"`
+	Allocation   AllocationSettings           `json:"allocation"`
+	Clusters     []ClusterSettings            `json:"clusters"`
+	Rightsizing  RightsizingSettings          `json:"rightsizing"`
 	Providers    ProvidersSettingsResponse    `json:"providers"`
 	Integrations IntegrationsSettingsResponse `json:"integrations"`
 	Features     *FeaturesSettingsResponse    `json:"features,omitempty"`
@@ -44,22 +51,43 @@ type SettingsResponse struct {
 	Budgets      []finopsv1.Budget            `json:"budgets"`
 	Alerts       finopsv1.AlertsConfig        `json:"alerts"`
 	Billing      BillingSettingsResponse      `json:"billing"`
+	Calendars    []finopsv1.HolidayCalendar   `json:"calendars"`
 }
 
 // PricingSettingsResponse shows the configured custom rates and the rates in effect.
 type PricingSettingsResponse struct {
-	CPUCoreHour       string        `json:"cpuCoreHour,omitempty"`
-	MemoryGBHour      string        `json:"memoryGiBHour,omitempty"`
-	StorageGiBMonth   string        `json:"storageGiBMonth,omitempty"`
-	LoadBalancerMonth string        `json:"loadBalancerMonth,omitempty"`
-	Currency          string        `json:"currency,omitempty"`
-	Effective         pricing.Rates `json:"effective"`
+	CPUCoreHour       string                   `json:"cpuCoreHour,omitempty"`
+	MemoryGBHour      string                   `json:"memoryGiBHour,omitempty"`
+	StorageGiBMonth   string                   `json:"storageGiBMonth,omitempty"`
+	LoadBalancerMonth string                   `json:"loadBalancerMonth,omitempty"`
+	GPUHour           string                   `json:"gpuHour,omitempty"`
+	LLMModels         []finopsv1.LLMModelPrice `json:"llmModels"`
+	Currency          string                   `json:"currency,omitempty"`
+	Effective         pricing.Rates            `json:"effective"`
 }
 
 // AuthSettingsResponse describes sign-in settings. The client secret is never returned.
 type AuthSettingsResponse struct {
 	DisableLocalLogin bool                   `json:"disableLocalLogin"`
 	Entra             *EntraSettingsResponse `json:"entra,omitempty"`
+	OIDC              *OIDCSettingsResponse  `json:"oidc,omitempty"`
+}
+
+// OIDCSettingsResponse is the masked OpenID Connect configuration.
+type OIDCSettingsResponse struct {
+	Enabled          bool              `json:"enabled"`
+	DisplayName      string            `json:"displayName,omitempty"`
+	IssuerURL        string            `json:"issuerUrl,omitempty"`
+	ClientID         string            `json:"clientId,omitempty"`
+	RedirectURL      string            `json:"redirectUrl,omitempty"`
+	Scopes           []string          `json:"scopes,omitempty"`
+	GroupsClaim      string            `json:"groupsClaim,omitempty"`
+	RolesClaim       string            `json:"rolesClaim,omitempty"`
+	DefaultRole      string            `json:"defaultRole,omitempty"`
+	AutoProvision    bool              `json:"autoProvision"`
+	GroupRoleMapping map[string]string `json:"groupRoleMapping,omitempty"`
+	SkipSSLVerify    bool              `json:"skipSslVerify"`
+	HasClientSecret  bool              `json:"hasClientSecret"`
 }
 
 // EntraSettingsResponse is the masked Entra ID configuration.
@@ -119,6 +147,7 @@ type IntegrationsSettingsResponse struct {
 	Messenger       *MessengerSettingsResponse       `json:"messenger,omitempty"`
 	VictoriaMetrics *VictoriaMetricsSettingsResponse `json:"victoriaMetrics,omitempty"`
 	MCP             MCPSettingsResponse              `json:"mcp"`
+	Notifications   *NotificationsSettingsResponse   `json:"notifications"`
 }
 
 // MCPSettingsResponse describes the MCP endpoint.
@@ -129,12 +158,17 @@ type MCPSettingsResponse struct {
 }
 
 type AISettingsResponse struct {
-	Enabled        bool   `json:"enabled"`
-	Provider       string `json:"provider,omitempty"`
-	Model          string `json:"model,omitempty"`
-	BaseURL        string `json:"baseUrl,omitempty"`
-	SkipSSLVerify  bool   `json:"skipSslVerify"`
-	HasCredentials bool   `json:"hasCredentials"`
+	Enabled            bool    `json:"enabled"`
+	Provider           string  `json:"provider,omitempty"`
+	Model              string  `json:"model,omitempty"`
+	BaseURL            string  `json:"baseUrl,omitempty"`
+	SkipSSLVerify      bool    `json:"skipSslVerify"`
+	HasCredentials     bool    `json:"hasCredentials"`
+	MonthlyTokenBudget int64   `json:"monthlyTokenBudget"`
+	Usage              AIUsage `json:"usage"`
+	// UsageCost prices this month's usage at the model's price under Settings -> Prices;
+	// absent without one.
+	UsageCost *float64 `json:"usageCost,omitempty"`
 }
 
 type MessengerSettingsResponse struct {
@@ -162,6 +196,11 @@ type VictoriaMetricsSettingsResponse struct {
 // SettingsUpdateRequest is the payload for updating settings.
 // Credentials are provided here in plaintext and then stored in K8s Secrets.
 type SettingsUpdateRequest struct {
+	DashboardURL *string                    `json:"dashboardUrl,omitempty"`
+	NamespaceTTL *NamespaceTTLUpdateRequest `json:"namespaceTTL,omitempty"`
+	Allocation   *AllocationUpdateRequest   `json:"allocation,omitempty"`
+	Clusters     *[]ClusterUpdate           `json:"clusters,omitempty"`
+	Rightsizing  *RightsizingUpdateRequest  `json:"rightsizing,omitempty"`
 	Providers    *ProvidersUpdateRequest    `json:"providers,omitempty"`
 	Integrations *IntegrationsUpdateRequest `json:"integrations,omitempty"`
 	Features     *FeaturesUpdateRequest     `json:"features,omitempty"`
@@ -173,6 +212,8 @@ type SettingsUpdateRequest struct {
 	Alerts  *finopsv1.AlertsConfig `json:"alerts,omitempty"`
 	// Billing replaces the reconciliation setup when present.
 	Billing *finopsv1.BillingConfig `json:"billing,omitempty"`
+	// Calendars replaces the holiday calendars when present.
+	Calendars *[]finopsv1.HolidayCalendar `json:"calendars,omitempty"`
 }
 
 // BillingSettingsResponse is the reconciliation setup and its last result.
@@ -188,17 +229,38 @@ type ReportsUpdateRequest struct {
 
 // PricingUpdateRequest sets custom rates; empty strings clear them.
 type PricingUpdateRequest struct {
-	CPUCoreHour       *string `json:"cpuCoreHour,omitempty"`
-	MemoryGBHour      *string `json:"memoryGiBHour,omitempty"`
-	StorageGiBMonth   *string `json:"storageGiBMonth,omitempty"`
-	LoadBalancerMonth *string `json:"loadBalancerMonth,omitempty"`
-	Currency          *string `json:"currency,omitempty"`
+	CPUCoreHour       *string                   `json:"cpuCoreHour,omitempty"`
+	MemoryGBHour      *string                   `json:"memoryGiBHour,omitempty"`
+	StorageGiBMonth   *string                   `json:"storageGiBMonth,omitempty"`
+	LoadBalancerMonth *string                   `json:"loadBalancerMonth,omitempty"`
+	GPUHour           *string                   `json:"gpuHour,omitempty"`
+	LLMModels         *[]finopsv1.LLMModelPrice `json:"llmModels,omitempty"`
+	Currency          *string                   `json:"currency,omitempty"`
 }
 
 // AuthUpdateRequest changes sign-in settings. Nil fields stay unchanged.
 type AuthUpdateRequest struct {
 	DisableLocalLogin *bool               `json:"disableLocalLogin,omitempty"`
 	Entra             *EntraUpdateRequest `json:"entra,omitempty"`
+	OIDC              *OIDCUpdateRequest  `json:"oidc,omitempty"`
+}
+
+// OIDCUpdateRequest changes OpenID Connect sign-in. Scopes and GroupRoleMapping replace
+// the whole list or mapping when present.
+type OIDCUpdateRequest struct {
+	Enabled          *bool             `json:"enabled,omitempty"`
+	DisplayName      *string           `json:"displayName,omitempty"`
+	IssuerURL        *string           `json:"issuerUrl,omitempty"`
+	ClientID         *string           `json:"clientId,omitempty"`
+	ClientSecret     string            `json:"clientSecret,omitempty"`
+	RedirectURL      *string           `json:"redirectUrl,omitempty"`
+	Scopes           []string          `json:"scopes,omitempty"`
+	GroupsClaim      *string           `json:"groupsClaim,omitempty"`
+	RolesClaim       *string           `json:"rolesClaim,omitempty"`
+	DefaultRole      *string           `json:"defaultRole,omitempty"`
+	AutoProvision    *bool             `json:"autoProvision,omitempty"`
+	GroupRoleMapping map[string]string `json:"groupRoleMapping,omitempty"`
+	SkipSSLVerify    *bool             `json:"skipSslVerify,omitempty"`
 }
 
 // EntraUpdateRequest changes Microsoft Entra ID SSO settings. GroupRoleMapping replaces the
@@ -258,6 +320,7 @@ type IntegrationsUpdateRequest struct {
 	Messenger       *MessengerUpdateRequest       `json:"messenger,omitempty"`
 	VictoriaMetrics *VictoriaMetricsUpdateRequest `json:"victoriaMetrics,omitempty"`
 	MCP             *MCPUpdateRequest             `json:"mcp,omitempty"`
+	Notifications   *NotificationsUpdateRequest   `json:"notifications,omitempty"`
 }
 
 // MCPUpdateRequest toggles the MCP endpoint.
@@ -272,6 +335,8 @@ type AIUpdateRequest struct {
 	BaseURL       string `json:"baseUrl,omitempty"`
 	APIKey        string `json:"apiKey,omitempty"`
 	SkipSSLVerify *bool  `json:"skipSslVerify,omitempty"`
+	// MonthlyTokenBudget caps the tokens per month; 0 removes the cap.
+	MonthlyTokenBudget *int64 `json:"monthlyTokenBudget,omitempty"`
 }
 
 type MessengerUpdateRequest struct {
@@ -384,7 +449,14 @@ func (s *Server) buildSettingsResponse(ctx context.Context, cfg *finopsv1.CostDe
 			SkipSSLVerify:  cfg.Spec.Integrations.AI.SkipSSLVerify,
 			HasCredentials: cfg.Spec.Integrations.AI.SecretRef != "",
 		}
+		resp.Integrations.AI.MonthlyTokenBudget = cfg.Spec.Integrations.AI.MonthlyTokenBudget
+		if usage, err := s.aiUsage(ctx, time.Now()); err == nil {
+			resp.Integrations.AI.Usage = usage
+			resp.Integrations.AI.UsageCost = usageCost(usage, cfg.Spec.Integrations.AI.Model, cfg.Spec.Pricing.LLMModels)
+		}
 	}
+
+	resp.Integrations.Notifications = notificationsResponse(cfg.Spec.Integrations.Notifications)
 
 	// Messenger / Webex
 	if cfg.Spec.Integrations.Messenger != nil && cfg.Spec.Integrations.Messenger.Webex != nil {
@@ -434,11 +506,17 @@ func (s *Server) buildSettingsResponse(ctx context.Context, cfg *finopsv1.CostDe
 		MemoryGBHour:      cfg.Spec.Pricing.MemoryGBHour,
 		StorageGiBMonth:   cfg.Spec.Pricing.StorageGiBMonth,
 		LoadBalancerMonth: cfg.Spec.Pricing.LoadBalancerMonth,
+		GPUHour:           cfg.Spec.Pricing.GPUHour,
+		LLMModels:         cfg.Spec.Pricing.LLMModels,
 		Currency:          cfg.Spec.Pricing.Currency,
 		Effective:         s.costRates(ctx),
 	}
 
 	resp.Reports = cfg.Spec.Reports
+	resp.Calendars = cfg.Spec.Calendars
+	if resp.Calendars == nil {
+		resp.Calendars = []finopsv1.HolidayCalendar{}
+	}
 	resp.Budgets = cfg.Spec.Budgets
 	if resp.Budgets == nil {
 		resp.Budgets = []finopsv1.Budget{}
@@ -448,6 +526,11 @@ func (s *Server) buildSettingsResponse(ctx context.Context, cfg *finopsv1.CostDe
 
 	// Sign-in
 	resp.Auth.DisableLocalLogin = cfg.Spec.Auth.DisableLocalLogin
+	resp.DashboardURL = cfg.Spec.DashboardURL
+	resp.NamespaceTTL = namespaceTTLSettings(cfg.Spec.NamespaceTTL)
+	resp.Allocation = allocationSettings(cfg.Spec.Allocation)
+	resp.Clusters = clusterSettings(cfg.Spec.Clusters)
+	resp.Rightsizing = rightsizingSettings(cfg.Spec.Rightsizing)
 	if e := cfg.Spec.Auth.Entra; e != nil {
 		resp.Auth.Entra = &EntraSettingsResponse{
 			Enabled:          e.Enabled,
@@ -460,6 +543,14 @@ func (s *Server) buildSettingsResponse(ctx context.Context, cfg *finopsv1.CostDe
 			GroupRoleMapping: e.GroupRoleMapping,
 			SkipSSLVerify:    e.SkipSSLVerify,
 			HasClientSecret:  e.ClientSecretRef != "" && s.secretExists(ctx, e.ClientSecretRef, cfg.Namespace),
+		}
+	}
+	if o := cfg.Spec.Auth.OIDC; o != nil {
+		resp.Auth.OIDC = &OIDCSettingsResponse{
+			Enabled: o.Enabled, DisplayName: o.DisplayName, IssuerURL: o.IssuerURL, ClientID: o.ClientID, RedirectURL: o.RedirectURL,
+			Scopes: o.Scopes, GroupsClaim: o.GroupsClaim, RolesClaim: o.RolesClaim, DefaultRole: o.DefaultRole,
+			AutoProvision: o.AutoProvision == nil || *o.AutoProvision, GroupRoleMapping: o.GroupRoleMapping, SkipSSLVerify: o.SkipSSLVerify,
+			HasClientSecret: o.ClientSecretRef != "" && s.secretExists(ctx, o.ClientSecretRef, cfg.Namespace),
 		}
 	}
 
@@ -479,7 +570,7 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 
 	appliers := []func(context.Context, *finopsv1.CostDeckConfig, *SettingsUpdateRequest) error{
 		s.applyAWSSettings, s.applyAzureSettings, s.applyGCPSettings, s.applyAISettings,
-		s.applyWebexSettings, s.applyVictoriaMetricsSettings, applyMCPSettings, applyFeatureSettings, applyPricingSettings, applyReportSettings, applyBudgetSettings, applyBillingSettings, s.applyAuthSettings,
+		s.applyWebexSettings, s.applyNotificationSettings, s.applyVictoriaMetricsSettings, applyMCPSettings, applyFeatureSettings, applyPricingSettings, applyReportSettings, applyBudgetSettings, applyBillingSettings, applyCalendarSettings, s.applyAuthSettings, applyDashboardURL, applyNamespaceTTLSettings, applyAllocationSettings, s.applyClusterSettings, s.applyRightsizingSettings,
 	}
 
 	var cfg *finopsv1.CostDeckConfig
@@ -642,6 +733,12 @@ func (s *Server) applyAISettings(ctx context.Context, cfg *finopsv1.CostDeckConf
 	if aiReq.SkipSSLVerify != nil {
 		ai.SkipSSLVerify = *aiReq.SkipSSLVerify
 	}
+	if b := aiReq.MonthlyTokenBudget; b != nil {
+		if *b < 0 {
+			return badRequestf("the monthly token budget cannot be negative")
+		}
+		ai.MonthlyTokenBudget = *b
+	}
 	if aiReq.APIKey == "" {
 		return nil
 	}
@@ -740,6 +837,34 @@ func applyMCPSettings(_ context.Context, cfg *finopsv1.CostDeckConfig, req *Sett
 
 var decimalRate = regexp.MustCompile(`^[0-9]+(\.[0-9]+)?$`)
 
+// validateLLMModels checks the model prices of a settings update: a model name or glob
+// each, once, with two plain decimal prices.
+func validateLLMModels(models []finopsv1.LLMModelPrice) ([]finopsv1.LLMModelPrice, error) {
+	seen := map[string]bool{}
+	out := make([]finopsv1.LLMModelPrice, 0, len(models))
+	for _, m := range models {
+		m.Model, m.InputPer1M, m.OutputPer1M = strings.TrimSpace(m.Model), strings.TrimSpace(m.InputPer1M), strings.TrimSpace(m.OutputPer1M)
+		if _, err := path.Match(m.Model, ""); m.Model == "" || len(m.Model) > 200 || err != nil {
+			return nil, badRequestf("model %q must be a model name or a glob such as gpt-4o*", m.Model)
+		}
+		if seen[m.Model] {
+			return nil, badRequestf("model %q is priced twice", m.Model)
+		}
+		seen[m.Model] = true
+		if !decimalRate.MatchString(m.InputPer1M) || !decimalRate.MatchString(m.OutputPer1M) {
+			return nil, badRequestf("model %q: prices per million tokens must be plain decimal numbers such as 2.50", m.Model)
+		}
+		out = append(out, m)
+	}
+	if len(out) > 100 {
+		return nil, badRequestf("at most 100 model prices")
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+	return out, nil
+}
+
 func applyPricingSettings(_ context.Context, cfg *finopsv1.CostDeckConfig, req *SettingsUpdateRequest) error {
 	p := req.Pricing
 	if p == nil {
@@ -751,6 +876,7 @@ func applyPricingSettings(_ context.Context, cfg *finopsv1.CostDeckConfig, req *
 	}{
 		{p.CPUCoreHour, &cfg.Spec.Pricing.CPUCoreHour}, {p.MemoryGBHour, &cfg.Spec.Pricing.MemoryGBHour},
 		{p.StorageGiBMonth, &cfg.Spec.Pricing.StorageGiBMonth}, {p.LoadBalancerMonth, &cfg.Spec.Pricing.LoadBalancerMonth},
+		{p.GPUHour, &cfg.Spec.Pricing.GPUHour},
 	} {
 		if f.src == nil {
 			continue
@@ -760,6 +886,13 @@ func applyPricingSettings(_ context.Context, cfg *finopsv1.CostDeckConfig, req *
 			return badRequestf("rates must be plain decimal numbers such as 0.031, got %q", v)
 		}
 		*f.dst = v
+	}
+	if p.LLMModels != nil {
+		models, err := validateLLMModels(*p.LLMModels)
+		if err != nil {
+			return err
+		}
+		cfg.Spec.Pricing.LLMModels = models
 	}
 	if p.Currency != nil {
 		c := strings.ToUpper(strings.TrimSpace(*p.Currency))
@@ -923,6 +1056,9 @@ func (s *Server) applyAuthSettings(ctx context.Context, cfg *finopsv1.CostDeckCo
 	if req.Auth.DisableLocalLogin != nil {
 		cfg.Spec.Auth.DisableLocalLogin = *req.Auth.DisableLocalLogin
 	}
+	if err := s.applyOIDCSettings(ctx, cfg, req.Auth.OIDC); err != nil {
+		return err
+	}
 	er := req.Auth.Entra
 	if er == nil {
 		return nil
@@ -978,6 +1114,96 @@ func (s *Server) applyAuthSettings(ctx context.Context, cfg *finopsv1.CostDeckCo
 		map[string][]byte{auth.SecretKeyClientSecret: []byte(er.ClientSecret)}, &e.ClientSecretRef)
 }
 
+// applyDashboardURL sets the address people open Cost Deck at; an empty one clears it.
+func applyDashboardURL(_ context.Context, cfg *finopsv1.CostDeckConfig, req *SettingsUpdateRequest) error {
+	if req.DashboardURL == nil {
+		return nil
+	}
+	v := strings.TrimRight(strings.TrimSpace(*req.DashboardURL), "/")
+	if v != "" {
+		if _, ok := httpURL(v); !ok {
+			return badRequestf("the dashboard URL must be an http(s) address such as https://costdeck.example.com")
+		}
+	}
+	cfg.Spec.DashboardURL = v
+	return nil
+}
+
+// roleMapping validates a group-to-role mapping.
+func roleMapping(in map[string]string) (map[string]string, error) {
+	out := make(map[string]string, len(in))
+	for group, roleName := range in {
+		role, ok := auth.ParseRole(roleName)
+		if !ok || strings.TrimSpace(group) == "" {
+			return nil, badRequestf("invalid group mapping %q -> %q", group, roleName)
+		}
+		out[strings.TrimSpace(group)] = string(role)
+	}
+	return out, nil
+}
+
+// applyOIDCSettings applies the OpenID Connect section of a settings update.
+func (s *Server) applyOIDCSettings(ctx context.Context, cfg *finopsv1.CostDeckConfig, or *OIDCUpdateRequest) error {
+	if or == nil {
+		return nil
+	}
+	if cfg.Spec.Auth.OIDC == nil {
+		cfg.Spec.Auth.OIDC = &finopsv1.OIDCConfig{}
+	}
+	o := cfg.Spec.Auth.OIDC
+	for dst, src := range map[*string]*string{&o.DisplayName: or.DisplayName, &o.IssuerURL: or.IssuerURL, &o.ClientID: or.ClientID,
+		&o.RedirectURL: or.RedirectURL, &o.GroupsClaim: or.GroupsClaim, &o.RolesClaim: or.RolesClaim} {
+		if src != nil {
+			*dst = strings.TrimSpace(*src)
+		}
+	}
+	o.IssuerURL = strings.TrimRight(o.IssuerURL, "/")
+	if o.IssuerURL != "" && !strings.HasPrefix(o.IssuerURL, "https://") {
+		return badRequestf("the issuer URL must be HTTPS: the client secret is sent to it")
+	}
+	if or.Scopes != nil {
+		var scopes []string
+		for _, sc := range or.Scopes {
+			if sc = strings.TrimSpace(sc); sc != "" && sc != "openid" && !slices.Contains(scopes, sc) {
+				scopes = append(scopes, sc)
+			}
+		}
+		o.Scopes = scopes
+	}
+	if or.DefaultRole != nil {
+		role, ok := auth.ParseRole(*or.DefaultRole)
+		if !ok {
+			return badRequestf("unknown default role %q (use viewer, operator or admin)", *or.DefaultRole)
+		}
+		o.DefaultRole = string(role)
+	}
+	if or.GroupRoleMapping != nil {
+		mapping, err := roleMapping(or.GroupRoleMapping)
+		if err != nil {
+			return err
+		}
+		o.GroupRoleMapping = mapping
+	}
+	if or.AutoProvision != nil {
+		v := *or.AutoProvision
+		o.AutoProvision = &v
+	}
+	if or.SkipSSLVerify != nil {
+		o.SkipSSLVerify = *or.SkipSSLVerify
+	}
+	if or.Enabled != nil {
+		o.Enabled = *or.Enabled
+	}
+	if o.Enabled && (o.IssuerURL == "" || o.ClientID == "") {
+		return badRequestf("issuer URL and client ID are required to enable single sign-on")
+	}
+	if or.ClientSecret == "" {
+		return nil
+	}
+	return s.storeCredentials(ctx, "costdeck-oidc-credentials",
+		map[string][]byte{auth.SecretKeyClientSecret: []byte(or.ClientSecret)}, &o.ClientSecretRef)
+}
+
 // storeCredentials writes a credentials Secret and points the config field at it.
 func (s *Server) storeCredentials(ctx context.Context, name string, data map[string][]byte, ref *string) error {
 	if err := s.upsertSecret(ctx, config.OperatorNamespace(), name, data); err != nil {
@@ -1007,8 +1233,16 @@ func (s *Server) handleTestProvider(w http.ResponseWriter, r *http.Request) {
 		s.testVictoriaMetrics(w, ctx, cfg, r)
 	case "webex":
 		s.testWebex(w, ctx, r)
+	case channelSlack, channelTeams, channelEmail:
+		s.testNotificationChannel(w, r, cfg, providerName)
+	case "cluster":
+		s.testCluster(w, r)
+	case "git":
+		s.testGit(w, r, cfg)
 	case "entra":
 		s.testEntra(w, ctx, cfg, r)
+	case "oidc":
+		s.testOIDC(w, ctx, cfg, r)
 	default:
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("Unknown provider: %s", providerName))
 	}
@@ -1119,6 +1353,37 @@ func validServiceAccountKey(raw string) error {
 
 // testEntra validates Entra SSO settings (unsaved form values first, stored ones otherwise):
 // the tenant must be discoverable and the client credentials must be accepted.
+// testOIDC checks the OpenID Connect settings typed into the form, before they are saved.
+func (s *Server) testOIDC(w http.ResponseWriter, ctx context.Context, cfg *finopsv1.CostDeckConfig, r *http.Request) {
+	var req OIDCUpdateRequest
+	if err := decodeJSON(w, r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	oc := finopsv1.OIDCConfig{}
+	if stored := cfg.Spec.Auth.OIDC; stored != nil {
+		oc = *stored
+	}
+	for dst, src := range map[*string]*string{&oc.IssuerURL: req.IssuerURL, &oc.ClientID: req.ClientID} {
+		if src != nil && *src != "" {
+			*dst = strings.TrimRight(strings.TrimSpace(*src), "/")
+		}
+	}
+	if req.SkipSSLVerify != nil {
+		oc.SkipSSLVerify = *req.SkipSSLVerify
+	}
+	o := &auth.OIDC{Client: s.Client}
+	if s.Auth != nil && s.Auth.OIDC != nil {
+		o = s.Auth.OIDC
+	}
+	msg, err := o.TestOIDC(ctx, oc)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"connected": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"connected": true, "message": msg})
+}
+
 func (s *Server) testEntra(w http.ResponseWriter, ctx context.Context, cfg *finopsv1.CostDeckConfig, r *http.Request) {
 	var req EntraUpdateRequest
 	if err := decodeJSON(w, r, &req); err != nil {

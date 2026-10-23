@@ -14,27 +14,45 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
+	"github.com/migalsp/costdeck-operator/internal/auth"
+	"github.com/migalsp/costdeck-operator/internal/config"
 	"github.com/migalsp/costdeck-operator/internal/scaling"
 )
 
+func as(role auth.Role) context.Context {
+	return auth.WithIdentity(context.Background(), &auth.Identity{Subject: "user:" + string(role), Role: role})
+}
+
 func TestToolsForViewerHideMutatingActions(t *testing.T) {
 	server := buildMockServer()
-	for _, tool := range server.toolsFor(false) {
+	for _, tool := range server.toolsFor(as(auth.RoleViewer)) {
 		if tool.Mutating {
 			t.Errorf("viewer was offered mutating tool %s", tool.Name)
 		}
 	}
 	var mutating int
-	for _, tool := range server.toolsFor(true) {
+	for _, tool := range server.toolsFor(as(auth.RoleOperator)) {
 		if tool.Mutating {
 			mutating++
 			if tool.Run != nil {
 				t.Errorf("mutating tool %s must not be runnable by the model", tool.Name)
 			}
 		}
+		if tool.AdminOnly {
+			t.Errorf("operator was offered admin tool %s", tool.Name)
+		}
 	}
 	if mutating == 0 {
 		t.Error("operators must be offered the mutating tools")
+	}
+	var admin int
+	for _, tool := range server.toolsFor(as(auth.RoleAdmin)) {
+		if tool.AdminOnly {
+			admin++
+		}
+	}
+	if admin == 0 {
+		t.Error("admins must be offered the tools that change schedules")
 	}
 }
 
@@ -173,5 +191,29 @@ func TestToolSchemasAreStrictJSONSchema(t *testing.T) {
 				t.Errorf("%s: required %q is not a declared property", tool.Name, name)
 			}
 		}
+	}
+}
+
+// The assistant sees why a group sleeps for being unused, and until when.
+func TestGetScalingGroupToolShowsIdleSleep(t *testing.T) {
+	server := buildMockServerWithK8s()
+	until := metav1.NewTime(time.Date(2026, 10, 23, 18, 1, 0, 0, time.UTC))
+	g := &finopsv1.ScalingGroup{ObjectMeta: metav1.ObjectMeta{Name: "shop", Namespace: config.OperatorNamespace()},
+		Spec: finopsv1.ScalingGroupSpec{Namespaces: []string{"shop-dev"}, SleepPage: true, IdleAfter: &metav1.Duration{Duration: time.Hour}}}
+	g.Status.Mode, g.Status.IdleUntil = "Idle", &until
+	if err := server.Client.Create(context.Background(), g); err != nil {
+		t.Fatal(err)
+	}
+	out, err := server.toolGetGroup(context.Background(), "shop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"idleAfter":"1h0m0s"`, `"sleepPage":true`, `"idleUntil":"2026-10-23T18:01:00Z"`, `"mode":"Idle"`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %s in %s", want, out)
+		}
+	}
+	if !strings.Contains(assistantSystemPrompt, "Idle (") {
+		t.Error("the system prompt does not explain the Idle mode")
 	}
 }

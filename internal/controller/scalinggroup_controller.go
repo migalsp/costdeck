@@ -38,6 +38,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
+	"github.com/migalsp/costdeck-operator/internal/config"
 	"github.com/migalsp/costdeck-operator/internal/pricing"
 	"github.com/migalsp/costdeck-operator/internal/scaling"
 	"github.com/migalsp/costdeck-operator/internal/telemetry"
@@ -52,8 +53,11 @@ type ScalingGroupReconciler struct {
 	// Pricing values the savings of kept-down workloads; optional.
 	Pricing *pricing.Resolver
 	// Notifier announces finished transitions; optional.
-	Notifier  Notifier
+	Notifier Notifier
+	// Requests counts the traffic idle auto-sleep looks at; optional.
+	Requests  RequestCounter
 	announced transitionLog
+	idle      idleWatch
 }
 
 // +kubebuilder:rbac:groups=finops.costdeck.io,namespace=costdeck,resources=scalinggroups,verbs=get;list;watch;create;update;patch;delete
@@ -76,15 +80,23 @@ func (r *ScalingGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 	before := group.Status.DeepCopy()
 
+	// 1.5 Namespaces the selector matches join the group; those that stopped matching
+	// are released below, once the plan says whether another group took them over.
+	departed, err := r.selectNamespaces(ctx, group)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
 	// 2. Determine the desired state against every group in the namespace, so that
 	// dependsOn edges and namespace ownership are taken into account.
 	plan, err := r.planFor(ctx, group)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
+	r.release(ctx, group, departed, plan)
 	decision := plan.Decision
 	targetActive := decision.Active
-	l.Info("Reconciling ScalingGroup", "category", group.Spec.Category, "namespaces", group.Spec.Namespaces, "targetActive", targetActive, "mode", decision.Mode)
+	l.Info("Reconciling ScalingGroup", "category", group.Spec.Category, "namespaces", group.Members(), "targetActive", targetActive, "mode", decision.Mode)
 
 	// Initialize status maps if nil
 	if group.Status.OriginalReplicas == nil {
@@ -93,6 +105,15 @@ func (r *ScalingGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	group.Status.RequiredBy = plan.RequiredBy
 	group.Status.ConflictingNamespaces = plan.ConflictingNamespaces
 	setDependencyConditions(group, plan)
+	setExceptionsCondition(&group.Status.Conditions, plan.ExceptionProblems, group.Generation)
+	if group.Spec.DryRun {
+		return r.dryRun(ctx, group, before, plan)
+	}
+	setDryRunCondition(&group.Status.Conditions, "", group.Generation)
+
+	// 2.2 Idle auto-sleep may take the group down inside its schedule's hours.
+	plan.Decision = r.idle.reconcile(ctx, r.Requests, &group.Status.ScheduleStatus, &group.Status.Conditions, r.idleCheck(ctx, group, plan), plan.Decision, time.Now())
+	decision, targetActive = plan.Decision, plan.Decision.Active
 
 	// 2.5 A group that wants to come up holds back until its dependencies are ScaledUp.
 	// One that is already up keeps running even if a dependency briefly degrades.
@@ -102,6 +123,8 @@ func (r *ScalingGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request
 
 	// 3. Define stages from group.Spec.Sequence, skipping namespaces an older group owns.
 	stages := r.getScalingStages(group, targetActive, plan.ConflictingNamespaces)
+	namespaces, exclusionsOf := r.gitOpsBeforeStages(ctx, group, stages, targetActive)
+	recordScaleDown(ctx, r.Engine, r.Pricing, &group.Status.ScheduleStatus, namespaces, exclusionsOf, targetActive, group.Status.Phase == scaling.PhaseScaledDown)
 
 	// A transition starts whenever the group is not already moving towards the target
 	// state. It begins at the first stage; while it runs, status.currentStage and
@@ -172,6 +195,10 @@ func (r *ScalingGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			currentStage, stageStarted = i+1, time.Now()
 		}
 	}
+	if targetActive && allReady {
+		resumeGitOps(ctx, r.Engine, namespaces, exclusionsOf)
+	}
+	reconcileSleepPage(ctx, r.Engine, &group.Status.Conditions, group.Generation, namespaces, group.Spec.SleepPage, targetActive, allReady)
 	// A settled group keeps no stage state, so its status stays unchanged between reconciles.
 	group.Status.CurrentStage, group.Status.SkippedNamespaces = 0, skippedNamespaces
 	if !allReady {
@@ -196,7 +223,7 @@ func (r *ScalingGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request
 // recordGroupSavings estimates what the group's kept-down workloads would cost per hour.
 func (r *ScalingGroupReconciler) recordGroupSavings(ctx context.Context, group *finopsv1.ScalingGroup, skip []string) {
 	var cpu, mem resource.Quantity
-	for _, ns := range group.Spec.Namespaces {
+	for _, ns := range group.Members() {
 		if slices.Contains(skip, ns) {
 			continue
 		}
@@ -243,7 +270,7 @@ func (r *ScalingGroupReconciler) planFor(ctx context.Context, group *finopsv1.Sc
 	if !found {
 		all.Items = append(all.Items, *group.DeepCopy())
 	}
-	return r.Engine.PlanGroups(time.Now(), all.Items)[group.Name], nil
+	return r.Engine.PlanGroups(time.Now(), all.Items, calendars(ctx, r.Client))[group.Name], nil
 }
 
 // waitForDependencies records that the group is held back and checks again shortly.
@@ -306,7 +333,7 @@ func setDependencyConditions(group *finopsv1.ScalingGroup, plan scaling.GroupPla
 
 func (r *ScalingGroupReconciler) getScalingStages(group *finopsv1.ScalingGroup, targetActive bool, skip []string) [][]string {
 	var managedNamespaces []string
-	for _, ns := range group.Spec.Namespaces {
+	for _, ns := range group.Members() {
 		if !slices.Contains(skip, ns) {
 			managedNamespaces = append(managedNamespaces, ns)
 		}
@@ -389,30 +416,96 @@ func (r *ScalingGroupReconciler) reconcileExternalTarget(ctx context.Context, gr
 	return provider.IsReady(ctx, *extTarget, targetActive)
 }
 
-func (r *ScalingGroupReconciler) reconcileK8sTarget(ctx context.Context, group *finopsv1.ScalingGroup, ns string, targetActive bool, timeoutPassed bool) (bool, error) {
-	var exclusions []string
-	var nsSequence []string
+// namespaceOriginals returns the replica counts the group recorded for a namespace, keyed
+// as the engine keys them.
+func namespaceOriginals(group *finopsv1.ScalingGroup, ns string) map[string]int32 {
+	out := make(map[string]int32)
+	for k, v := range group.Status.OriginalReplicas {
+		if after, ok := strings.CutPrefix(k, ns+"/"); ok {
+			out[after] = v
+		}
+	}
+	return out
+}
 
+// workloadRules returns the exclusions, workload order and hibernate rules of a namespace's
+// own ScalingConfig, which the group applies, plus the group's own hibernate rules. The
+// exclusions include those the hibernate rules add.
+func (r *ScalingGroupReconciler) workloadRules(ctx context.Context, group *finopsv1.ScalingGroup, ns string) (exclusions, sequence []string, hibernate []finopsv1.HibernateRule) {
+	hibernate = group.Spec.Hibernate
 	configList := &finopsv1.ScalingConfigList{}
 	if err := r.List(ctx, configList, client.InNamespace(group.Namespace)); err == nil {
 		for _, cfg := range configList.Items {
 			if cfg.Spec.TargetNamespace == ns {
-				exclusions = cfg.Spec.Exclusions
-				nsSequence = cfg.Spec.Sequence
+				exclusions, sequence = cfg.Spec.Exclusions, cfg.Spec.Sequence
+				hibernate = append(slices.Clone(hibernate), cfg.Spec.Hibernate...)
 				break
 			}
 		}
 	}
+	return scaling.ExclusionsWith(exclusions, hibernate), sequence, hibernate
+}
 
-	nsKeyPrefix := ns + "/"
-	nsReplicas := make(map[string]int32)
-	for k, v := range group.Status.OriginalReplicas {
-		if after, ok := strings.CutPrefix(k, nsKeyPrefix); ok {
-			nsReplicas[after] = v
+// gitOpsBeforeStages pauses GitOps, when the group asks for it, before anything scales down,
+// so it cannot race the scale-down, and reports it in the GitOps condition. It returns the
+// namespaces the stages scale and how to find their workload rules, to resume GitOps once
+// everything is up.
+func (r *ScalingGroupReconciler) gitOpsBeforeStages(ctx context.Context, group *finopsv1.ScalingGroup, stages [][]string, targetActive bool) ([]string, func(string) []string) {
+	var namespaces []string
+	for _, stage := range stages {
+		for _, ns := range stage {
+			if !strings.HasPrefix(ns, "ext:") {
+				namespaces = append(namespaces, ns)
+			}
 		}
 	}
+	exclusionsOf := func(ns string) []string { e, _, _ := r.workloadRules(ctx, group, ns); return e }
+	reconcileGitOps(ctx, r.Engine, &group.Status.Conditions, group.Generation, namespaces, exclusionsOf, group.Spec.PauseGitOps, targetActive)
+	return namespaces, exclusionsOf
+}
 
-	updatedOriginals, nsReady, err := r.Engine.ScaleTarget(ctx, ns, targetActive, nsSequence, exclusions, nsReplicas, timeoutPassed)
+// dryRun reports what the group would do now, without scaling or notifying anything.
+func (r *ScalingGroupReconciler) dryRun(ctx context.Context, group *finopsv1.ScalingGroup, before *finopsv1.ScalingGroupStatus, plan scaling.GroupPlan) (ctrl.Result, error) {
+	decision := plan.Decision
+	applyDecision(&group.Status.ScheduleStatus, &group.Status.Conditions, decision, group.Generation, "group")
+	workloads, namespaces, cloud := 0, 0, 0
+	for _, stage := range r.getScalingStages(group, decision.Active, plan.ConflictingNamespaces) {
+		for _, ns := range stage {
+			if strings.HasPrefix(ns, "ext:") {
+				cloud++
+				continue
+			}
+			exclusions, _, hibernate := r.workloadRules(ctx, group, ns)
+			n, err := wouldChange(ctx, r.Engine, ns, decision.Active, exclusions, hibernate)
+			if err != nil {
+				logf.FromContext(ctx).Error(err, "Could not work out the dry run", "namespace", ns)
+				continue
+			}
+			if n > 0 {
+				workloads += n
+				namespaces++
+			}
+		}
+	}
+	var waiting []string
+	if plan.BlockedOnDependencies() {
+		waiting = append(append(waiting, plan.WaitingFor...), plan.MissingDependencies...)
+	}
+	group.Status.Phase, group.Status.CurrentStage, group.Status.SkippedNamespaces = scaling.PhaseDryRun, 0, nil
+	setDryRunCondition(&group.Status.Conditions, dryRunMessage("group", decision.Active, workloads, namespaces, cloud, waiting), group.Generation)
+	if err := updateStatus(ctx, r.Client, group, before, &group.Status); err != nil {
+		return ctrl.Result{}, err
+	}
+	return ctrl.Result{RequeueAfter: settledRequeue(decision, time.Now())}, nil
+}
+
+func (r *ScalingGroupReconciler) reconcileK8sTarget(ctx context.Context, group *finopsv1.ScalingGroup, ns string, targetActive bool, timeoutPassed bool) (bool, error) {
+	exclusions, nsSequence, hibernate := r.workloadRules(ctx, group, ns)
+
+	nsKeyPrefix := ns + "/"
+	nsReplicas := namespaceOriginals(group, ns)
+
+	updatedOriginals, nsReady, err := r.Engine.ScaleWithServices(ctx, ns, targetActive, nsSequence, exclusions, hibernate, nsReplicas, timeoutPassed)
 	if err != nil {
 		return false, err
 	}
@@ -433,6 +526,25 @@ func (r *ScalingGroupReconciler) reconcileK8sTarget(ctx context.Context, group *
 
 	phase := r.Engine.ComputePhase(ctx, ns, targetActive, exclusions)
 	return (targetActive && phase == scaling.PhaseScaledUp) || (!targetActive && phase == scaling.PhaseScaledDown), nil
+}
+
+// idleCheck describes the group for idle auto-sleep: its own namespaces, how long they
+// have been up and whether dependents need them.
+func (r *ScalingGroupReconciler) idleCheck(ctx context.Context, group *finopsv1.ScalingGroup, plan scaling.GroupPlan) idleCheck {
+	var namespaces []string
+	for _, ns := range group.Members() {
+		if !slices.Contains(plan.ConflictingNamespaces, ns) {
+			namespaces = append(namespaces, ns)
+		}
+	}
+	return idleCheck{
+		UID: group.UID, Generation: group.Generation, IdleAfter: group.Spec.IdleAfter, Namespaces: namespaces,
+		Phase: group.Status.Phase, UpSince: group.Status.LastAction.Time, Required: len(plan.RequiredBy) > 0,
+		At: func(t time.Time) scaling.Decision {
+			exceptions, _ := scaling.ResolveExceptions(group.Spec.Exceptions, group.Spec.Calendars, calendars(ctx, r.Client), scaling.ExceptionZone(group.Spec.Schedules))
+			return r.Engine.Decide(t, scaling.Timetable{Schedules: group.Spec.Schedules, Exceptions: exceptions}, group.Spec.Active, group.Spec.ActiveUntil, group.Annotations)
+		},
+	}
 }
 
 func (r *ScalingGroupReconciler) updateStatusAndPhase(ctx context.Context, group *finopsv1.ScalingGroup, before *finopsv1.ScalingGroupStatus, allReady bool, managedCount, namespacesReady, namespacesTotal int, readyNamespaces []string, decision scaling.Decision, detail string) (ctrl.Result, error) {
@@ -504,8 +616,101 @@ func (r *ScalingGroupReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		// A group's desired state depends on its dependents' and dependencies' state, and
 		// namespace ownership on the other groups listing the same namespace.
 		Watches(&finopsv1.ScalingGroup{}, handler.EnqueueRequestsFromMapFunc(r.relatedGroups)).
+		// A changed holiday calendar applies at once to the groups that use one.
+		Watches(&finopsv1.CostDeckConfig{}, handler.EnqueueRequestsFromMapFunc(r.groupsWithCalendars)).
+		// A namespace created, relabelled or deleted can join or leave a selector's matches.
+		Watches(&corev1.Namespace{}, handler.EnqueueRequestsFromMapFunc(r.groupsWithSelectors)).
 		Named("scalinggroup").
 		Complete(r)
+}
+
+// selectNamespaces records in status.selectedNamespaces what the group's selector matches
+// now, and returns the namespaces that matched before but no longer do (and are not
+// listed by name either).
+func (r *ScalingGroupReconciler) selectNamespaces(ctx context.Context, group *finopsv1.ScalingGroup) ([]string, error) {
+	previous := group.Status.SelectedNamespaces
+	if group.Spec.NamespaceSelector == nil && len(previous) == 0 {
+		return nil, nil
+	}
+	var selected []string
+	if group.Spec.NamespaceSelector != nil {
+		var namespaces corev1.NamespaceList
+		if err := r.List(ctx, &namespaces); err != nil {
+			return nil, err
+		}
+		var err error
+		selected, err = scaling.SelectNamespaces(group.Spec.NamespaceSelector, namespaces.Items, group.Namespace)
+		if err != nil {
+			// The API refuses an invalid selector; one written past it selects nothing.
+			r.Recorder.Eventf(group, nil, corev1.EventTypeWarning, "InvalidSelector", "Select", "%v", err)
+			selected = nil
+		}
+	}
+	group.Status.SelectedNamespaces = selected
+	var departed []string
+	for _, ns := range previous {
+		if !slices.Contains(selected, ns) && !slices.Contains(group.Spec.Namespaces, ns) {
+			departed = append(departed, ns)
+		}
+	}
+	return departed, nil
+}
+
+// release brings back what the group scaled down in namespaces its selector no longer
+// matches, unless another group now owns them, and forgets their replica counts.
+func (r *ScalingGroupReconciler) release(ctx context.Context, group *finopsv1.ScalingGroup, departed []string, plan scaling.GroupPlan) {
+	for _, ns := range departed {
+		if owner, ok := plan.NamespaceOwners[ns]; ok && owner != group.Name {
+			continue
+		}
+		// Everything at once: nothing schedules the namespace any more to finish the stages.
+		exclusions, sequence, hibernate := r.workloadRules(ctx, group, ns)
+		err := r.Engine.ReleaseServices(ctx, ns, hibernate)
+		if err == nil {
+			_, _, err = r.Engine.ScaleTarget(ctx, ns, true, sequence, exclusions, namespaceOriginals(group, ns), true)
+		}
+		if err != nil {
+			logf.FromContext(ctx).Error(err, "Could not restore a namespace that left the group", "namespace", ns)
+			continue
+		}
+		for k := range group.Status.OriginalReplicas {
+			if strings.HasPrefix(k, ns+"/") {
+				delete(group.Status.OriginalReplicas, k)
+			}
+		}
+		r.Recorder.Eventf(group, nil, corev1.EventTypeNormal, "NamespaceReleased", "Release",
+			"Namespace %s no longer matches the selector; restored what the group had scaled down", ns)
+	}
+}
+
+// groupsWithSelectors maps a Namespace event to the groups that select namespaces.
+func (r *ScalingGroupReconciler) groupsWithSelectors(ctx context.Context, _ client.Object) []reconcile.Request {
+	var groups finopsv1.ScalingGroupList
+	if err := r.List(ctx, &groups, client.InNamespace(config.OperatorNamespace())); err != nil {
+		return nil
+	}
+	var out []reconcile.Request
+	for _, g := range groups.Items {
+		if g.Spec.NamespaceSelector != nil || len(g.Status.SelectedNamespaces) > 0 {
+			out = append(out, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&g)})
+		}
+	}
+	return out
+}
+
+// groupsWithCalendars maps a CostDeckConfig event to the groups that name a calendar.
+func (r *ScalingGroupReconciler) groupsWithCalendars(ctx context.Context, obj client.Object) []reconcile.Request {
+	var groups finopsv1.ScalingGroupList
+	if err := r.List(ctx, &groups, client.InNamespace(obj.GetNamespace())); err != nil {
+		return nil
+	}
+	var out []reconcile.Request
+	for _, g := range groups.Items {
+		if len(g.Spec.Calendars) > 0 {
+			out = append(out, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&g)})
+		}
+	}
+	return out
 }
 
 // relatedGroups maps a ScalingGroup event to the groups whose plan it can change: its
@@ -525,8 +730,8 @@ func (r *ScalingGroupReconciler) relatedGroups(ctx context.Context, obj client.O
 			continue
 		}
 		related := slices.Contains(changed.Spec.DependsOn, g.Name) || slices.Contains(g.Spec.DependsOn, changed.Name)
-		for _, ns := range g.Spec.Namespaces {
-			related = related || slices.Contains(changed.Spec.Namespaces, ns)
+		for _, ns := range g.Members() {
+			related = related || slices.Contains(changed.Members(), ns)
 		}
 		if related {
 			reqs = append(reqs, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&g)})

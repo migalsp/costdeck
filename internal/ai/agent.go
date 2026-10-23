@@ -35,19 +35,36 @@ type Tool struct {
 	// Mutating tools change the cluster. The model never runs them directly: the call is
 	// turned into a confirmation card and the user executes it from the dashboard.
 	Mutating bool
+	// AdminOnly mutating tools change what only admins may edit through the API (a
+	// schedule's definition): they are offered to admins, and refused to anyone else.
+	AdminOnly bool
 	// Run executes a read-only tool. Arguments have been validated against Parameters.
 	Run func(ctx context.Context, args map[string]any) (string, error)
 }
 
 // Event is streamed to the client while the agent works.
 type Event struct {
-	// Type is text, reset, tool_call, tool_result, confirm, error or done.
+	// Type is text, reset, tool_call, tool_result, confirm, usage, error or done.
 	Type    string         `json:"type"`
 	Text    string         `json:"text,omitempty"`
 	Tool    string         `json:"tool,omitempty"`
 	Args    map[string]any `json:"args,omitempty"`
 	IsError bool           `json:"isError,omitempty"`
+	// Usage comes with a usage event, after every model call.
+	Usage *Usage `json:"usage,omitempty"`
 }
+
+// Usage is what one model call consumed, in tokens.
+type Usage struct {
+	InputTokens  int64 `json:"inputTokens"`
+	OutputTokens int64 `json:"outputTokens"`
+	// Estimated is set when the provider reported nothing and the counts were guessed
+	// from the text, four characters a token.
+	Estimated bool `json:"estimated,omitempty"`
+}
+
+// estimateTokens guesses a token count from text, for providers that report none.
+func estimateTokens(chars int) int64 { return int64((chars + 3) / 4) }
 
 // ToolCall is a call the model requested.
 type ToolCall struct {

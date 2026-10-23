@@ -65,7 +65,7 @@ jobs:
           fail_ci_if_error: false
 
   ui:
-    name: UI · types, lint, build
+    name: UI · types, lint, tests, build
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -80,6 +80,7 @@ jobs:
       - run: npm ci
       - run: npx tsc -b
       - run: npm run lint
+      - run: npm test
       - run: npm run build
 
   helm:

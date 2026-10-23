@@ -105,6 +105,8 @@ function NodeTile({ n, currency, onOpen }: { n: NodeView; currency: string; onOp
       <div className="mt-3 space-y-2">
         <ResourceBar label="CPU" unit="cores" r={n.cpu} metrics={n.metricsAvailable} />
         <ResourceBar label="Memory" unit="GiB" r={n.memoryGiB} metrics={n.metricsAvailable} />
+        {!!n.gpus && <ResourceBar label={n.gpuModel ? `GPU · ${n.gpuModel}` : 'GPU'} unit="GPUs"
+          r={{ capacity: n.gpus, allocatable: n.gpus, requested: n.gpuRequested || 0, used: 0 }} metrics={false} />}
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-1">
         <span className="text-[11px] text-slate-500 mr-1">{n.pods}/{n.maxPods} pods · {age(n.createdAt)}</span>

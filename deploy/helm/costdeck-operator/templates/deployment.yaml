@@ -69,6 +69,11 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
+            # The sleep page is served by the API Service; routes asleep point at it.
+            - name: COSTDECK_SLEEP_PAGE_SERVICE
+              value: {{ include "costdeck-operator.fullname" . }}-api
+            - name: COSTDECK_SLEEP_PAGE_PORT
+              value: {{ .Values.service.port | quote }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

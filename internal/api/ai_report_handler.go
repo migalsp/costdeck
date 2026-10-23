@@ -175,7 +175,7 @@ func compactOverview(o finops.Overview) finops.Overview {
 // handleAIReportGenerate streams a new report and saves it when complete.
 func (s *Server) handleAIReportGenerate(w http.ResponseWriter, r *http.Request) {
 	provider, ok := s.loadAIProvider(w, r)
-	if !ok {
+	if !ok || !s.checkAIBudget(w, r) {
 		return
 	}
 	stream, ok := newEventStream(w)
@@ -185,6 +185,8 @@ func (s *Server) handleAIReportGenerate(w http.ResponseWriter, r *http.Request) 
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Minute)
 	defer cancel()
+	meter := &usageMeter{}
+	defer s.recordAIUsage(r.Context(), meter)
 
 	var report strings.Builder
 	collect := func(e ai.Event) {
@@ -210,7 +212,7 @@ func (s *Server) handleAIReportGenerate(w http.ResponseWriter, r *http.Request) 
 	agent := &ai.Agent{Provider: provider, System: reportSystemPrompt + "\n\n" + audience.brief}
 	prompt := "Write the report for this cluster from the data below (collected " +
 		time.Now().UTC().Format(time.RFC1123) + ").\n\n" + s.reportData(ctx)
-	if err := agent.Run(ctx, []ai.Message{{Role: "user", Content: prompt}}, collect); err != nil {
+	if err := agent.Run(ctx, []ai.Message{{Role: "user", Content: prompt}}, meter.observe(collect)); err != nil {
 		logf.FromContext(ctx).Error(err, "Report generation failed")
 		stream.send(ai.Event{Type: "error", Text: userMessage(err)})
 		stream.send(ai.Event{Type: "done"})

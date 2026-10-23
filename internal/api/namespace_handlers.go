@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"time"
 
-	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -18,13 +17,9 @@ import (
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
 	"github.com/migalsp/costdeck-operator/internal/config"
 	"github.com/migalsp/costdeck-operator/internal/metrics"
+	"github.com/migalsp/costdeck-operator/internal/optimize"
 	"github.com/migalsp/costdeck-operator/internal/pricing"
-)
-
-// Workload kinds CostDeck scales and right-sizes.
-const (
-	kindDeployment  = "Deployment"
-	kindStatefulSet = "StatefulSet"
+	"github.com/migalsp/costdeck-operator/internal/scaling"
 )
 
 func (s *Server) handleNamespaces(w http.ResponseWriter, r *http.Request) {
@@ -279,17 +274,11 @@ func (s *Server) serveWorkloads(w http.ResponseWriter, r *http.Request) {
 	nsName := r.PathValue("ns")
 	result := []WorkloadDetail{}
 
-	deployments := &appsv1.DeploymentList{}
-	if err := s.Client.List(ctx, deployments, client.InNamespace(nsName)); err == nil {
-		for _, d := range deployments.Items {
-			result = append(result, newWorkloadDetail(d.Name, kindDeployment, d.Spec.Replicas, d.Status.ReadyReplicas))
-		}
-	}
-
-	statefulSets := &appsv1.StatefulSetList{}
-	if err := s.Client.List(ctx, statefulSets, client.InNamespace(nsName)); err == nil {
-		for _, sts := range statefulSets.Items {
-			result = append(result, newWorkloadDetail(sts.Name, kindStatefulSet, sts.Spec.Replicas, sts.Status.ReadyReplicas))
+	// Deployments, StatefulSets and Argo Rollouts, as schedules scale them.
+	if workloads, err := (&scaling.Engine{Client: s.Client}).Workloads(ctx, nsName); err == nil {
+		for _, wl := range workloads {
+			replicas := wl.Replicas
+			result = append(result, newWorkloadDetail(wl.Name, wl.Kind, &replicas, wl.Ready))
 		}
 	}
 
@@ -313,29 +302,15 @@ func (s *Server) serveWorkloadAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var obj client.Object
-	switch req.Kind {
-	case kindDeployment:
-		obj = &appsv1.Deployment{}
-	case kindStatefulSet:
-		obj = &appsv1.StatefulSet{}
-	default:
-		writeError(w, http.StatusBadRequest, "Unknown kind")
+	err := (&scaling.Engine{Client: s.Client}).SetWorkloadReplicas(ctx, key.Namespace, req.Kind, key.Name, req.Replicas)
+	switch {
+	case errors.Is(err, scaling.ErrUnknownKind):
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
-	}
-
-	if err := s.Client.Get(ctx, key, obj); err != nil {
+	case apierrors.IsNotFound(err):
 		writeError(w, http.StatusNotFound, err.Error())
 		return
-	}
-	patch := client.MergeFrom(obj.DeepCopyObject().(client.Object))
-	switch o := obj.(type) {
-	case *appsv1.Deployment:
-		o.Spec.Replicas = &req.Replicas
-	case *appsv1.StatefulSet:
-		o.Spec.Replicas = &req.Replicas
-	}
-	if err := s.Client.Patch(ctx, obj, patch); err != nil {
+	case err != nil:
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -349,19 +324,6 @@ func (s *Server) metricsProvider() *metrics.Provider {
 		return s.Metrics
 	}
 	return metrics.NewProvider(s.Client, &metrics.MetricsServerSource{Client: s.MetricsClient})
-}
-
-// originalResources rebuilds a ResourceList from stored values, skipping the ones that
-// were never set. resource.MustParse would panic on an empty string.
-func originalResources(cpu, mem string) corev1.ResourceList {
-	list := corev1.ResourceList{}
-	if q, err := resource.ParseQuantity(cpu); err == nil && cpu != "" && !q.IsZero() {
-		list[corev1.ResourceCPU] = q
-	}
-	if q, err := resource.ParseQuantity(mem); err == nil && mem != "" && !q.IsZero() {
-		list[corev1.ResourceMemory] = q
-	}
-	return list
 }
 
 func (s *Server) handleNamespaceRevert(w http.ResponseWriter, r *http.Request) {
@@ -378,44 +340,11 @@ func (s *Server) handleNamespaceRevert(w http.ResponseWriter, r *http.Request) {
 
 // revertNamespace restores the requests and limits recorded before right-sizing.
 func (s *Server) revertNamespace(ctx context.Context, nsName string) error {
-	var opt finopsv1.NamespaceOptimization
-	if err := s.Client.Get(ctx, client.ObjectKey{Name: nsName, Namespace: config.OperatorNamespace()}, &opt); err != nil {
+	if err := optimize.RevertAll(ctx, s.Client, nsName, "put back for the whole namespace"); err != nil {
 		return err
 	}
-
-	for _, wl := range opt.Status.Workloads {
-		var obj client.Object
-		switch wl.Kind {
-		case kindDeployment:
-			obj = &appsv1.Deployment{}
-		case kindStatefulSet:
-			obj = &appsv1.StatefulSet{}
-		default:
-			continue
-		}
-		if err := s.Client.Get(ctx, client.ObjectKey{Name: wl.Name, Namespace: nsName}, obj); err != nil {
-			continue // The workload is gone; nothing to restore.
-		}
-		patch := client.MergeFrom(obj.DeepCopyObject().(client.Object))
-		var containers []corev1.Container
-		switch o := obj.(type) {
-		case *appsv1.Deployment:
-			containers = o.Spec.Template.Spec.Containers
-		case *appsv1.StatefulSet:
-			containers = o.Spec.Template.Spec.Containers
-		}
-		if len(containers) == 0 {
-			continue
-		}
-		containers[0].Resources.Requests = originalResources(wl.Original.CPURequest, wl.Original.MemoryRequest)
-		containers[0].Resources.Limits = originalResources(wl.Original.CPULimit, wl.Original.MemoryLimit)
-		if err := s.Client.Patch(ctx, obj, patch); err != nil {
-			return fmt.Errorf("could not restore %s %s: %w", wl.Kind, wl.Name, err)
-		}
-	}
-
-	opt.Status.Active = false
-	return s.Client.Status().Update(ctx, &opt)
+	s.recommendationCache.forget(nsName)
+	return nil
 }
 
 func (s *Server) handleNamespaceOptimizationInfo(w http.ResponseWriter, r *http.Request) {

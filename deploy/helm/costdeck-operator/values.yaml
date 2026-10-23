@@ -93,6 +93,35 @@ securityContext:
     drop:
       - ALL
 
+# GitOps: schedules with spec.pauseGitOps suspend the Flux Kustomizations and HelmReleases
+# and turn off self-heal of the Argo CD Applications that manage their workloads while they
+# are down. That needs permission to read and patch those objects cluster-wide, which this
+# grants. Off by default; without it CostDeck still names the GitOps tools it finds.
+gitops:
+  pause: false
+
+# Lets schedules with hibernate rules stop the services operators run with their namespace:
+# enabled grants read and patch on CloudNativePG and Zalando Postgres clusters and Strimzi
+# KafkaConnect, KafkaMirrorMaker2 and KafkaBridge resources; extraRules adds the kinds of
+# rules without a preset, for example
+#   - apiGroups: ["redis.example.com"]
+#     resources: ["redisclusters"]
+hibernation:
+  enabled: false
+  extraRules: []
+
+# Lets schedules with spec.sleepPage point their namespaces' Gateway API HTTPRoutes at
+# Cost Deck's sleep page while they are down: read and patch on HTTPRoutes cluster-wide,
+# and a ReferenceGrant in this namespace that opens the API Service to those routes.
+sleepPage:
+  enabled: false
+
+# Lets preview cleanup (Settings → Preview cleanup, spec.namespaceTTL) delete namespaces
+# past their time to live: patch and delete on namespaces cluster-wide. Off by default,
+# because deleting a namespace deletes everything in it; the setting itself is off too.
+namespaceTTL:
+  enabled: false
+
 # Created automatically when replicaCount > 1 (a PDB on a single replica would block node
 # drains); set enabled to force it.
 podDisruptionBudget:

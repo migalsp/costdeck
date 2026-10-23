@@ -15,6 +15,7 @@ import (
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
 	"github.com/migalsp/costdeck-operator/internal/config"
+	"github.com/migalsp/costdeck-operator/internal/metrics"
 	"github.com/migalsp/costdeck-operator/internal/pricing"
 )
 
@@ -29,6 +30,8 @@ type Snapshot struct {
 	Infra      Infra
 	// InfraError says why volumes and load balancers could not be read, if they could not.
 	InfraError string
+	// Labels are the labels of every namespace, tracked or not.
+	Labels map[string]map[string]string
 }
 
 // Options says where Build reads from.
@@ -39,6 +42,8 @@ type Options struct {
 	// Live reads objects that should not be cached cluster-wide (EndpointSlices); nil
 	// means the main reader.
 	Live client.Reader
+	// GPUUsage is what each namespace's GPUs do, from DCGM; nil without it.
+	GPUUsage map[string]metrics.GPUUsage
 }
 
 // Cluster sums the nodes and everything the namespaces request and use. Costs are per hour.
@@ -61,6 +66,11 @@ type Cluster struct {
 	// apart from the nodes.
 	StorageHourly float64 `json:"storageHourly"`
 	NetworkHourly float64 `json:"networkHourly"`
+	// GPUs counts physical GPUs, GPURequested the share pods request; GPUHourly is what
+	// the GPUs cost, part of ProvisionedHourly.
+	GPUs         float64 `json:"gpus"`
+	GPURequested float64 `json:"gpuRequested"`
+	GPUHourly    float64 `json:"gpuHourly"`
 }
 
 // BillHourly is everything the cluster costs per hour: nodes, volumes and load balancers.
@@ -87,6 +97,13 @@ type Namespace struct {
 	// StorageHourly and NetworkHourly are the namespace's volumes and load balancers.
 	StorageHourly float64
 	NetworkHourly float64
+	// GPURequested is the GPUs its pods request, in whole GPUs; GPUHourly what they cost,
+	// part of RequestedHourly. GPUModels are the models they run on, GPUUsage what DCGM
+	// says they do (nil without it).
+	GPURequested float64
+	GPUHourly    float64
+	GPUModels    []string
+	GPUUsage     *metrics.GPUUsage
 }
 
 // TotalHourly is the namespace's compute, storage and load balancers per hour.
@@ -129,17 +146,21 @@ func Build(ctx context.Context, c client.Reader, rates pricing.Rates, opts Optio
 		return snap, err
 	}
 	var cpuCap, memCap resource.Quantity
-	for _, n := range nodes.Items {
+	nodeByName := map[string]*corev1.Node{}
+	for i, n := range nodes.Items {
 		cpuCap.Add(*n.Status.Capacity.Cpu())
 		memCap.Add(*n.Status.Capacity.Memory())
 		if pricing.IsSpot(n) {
 			snap.Cluster.SpotNodes++
 		}
+		nodeByName[n.Name] = &nodes.Items[i]
+		snap.Cluster.GPUs += pricing.NodeGPUs(n)
+		snap.Cluster.GPUHourly += rates.NodeGPUsHourly(n)
 	}
 	snap.Cluster.Nodes = len(nodes.Items)
 	snap.Cluster.CPUCores = cpuCap.AsApproximateFloat64()
 	snap.Cluster.MemoryGiB = memCap.AsApproximateFloat64() / gib
-	snap.Cluster.ProvisionedHourly = rates.Hourly(cpuCap, memCap)
+	snap.Cluster.ProvisionedHourly = rates.Hourly(cpuCap, memCap) + snap.Cluster.GPUHourly
 	snap.Cloud = pricing.DetectCloud(nodes.Items)
 
 	var tracked finopsv1.NamespaceFinOpsList
@@ -154,11 +175,13 @@ func Build(ctx context.Context, c client.Reader, rates pricing.Rates, opts Optio
 	for _, ns := range namespaces.Items {
 		labels[ns.Name] = ns.Labels
 	}
+	snap.Labels = labels
 	var pods corev1.PodList
 	if err := c.List(ctx, &pods); err != nil {
 		return snap, err
 	}
 	running := map[string]int{}
+	gpus := podGPUs(pods.Items, nodeByName, rates)
 	for _, p := range pods.Items {
 		if p.Status.Phase == corev1.PodRunning {
 			running[p.Namespace]++
@@ -185,6 +208,19 @@ func Build(ctx context.Context, c client.Reader, rates pricing.Rates, opts Optio
 		ns.RequestedHourly = ns.CPURequested*rates.CPUCoreHour + ns.MemRequested*rates.MemoryGBHour
 		ns.UsedHourly = ns.CPUUsed*rates.CPUCoreHour + ns.MemUsed*rates.MemoryGBHour
 		ns.IdleHourly = max(0, ns.CPURequested-ns.CPUUsed)*rates.CPUCoreHour + max(0, ns.MemRequested-ns.MemUsed)*rates.MemoryGBHour
+		if g, ok := gpus[name]; ok {
+			ns.GPURequested, ns.GPUHourly, ns.GPUModels = g.units, g.hourly, g.models
+			ns.RequestedHourly += g.hourly
+			// Without DCGM a GPU counts as used: nothing says it is idle.
+			used := g.hourly
+			if u, ok := opts.GPUUsage[name]; ok {
+				ns.GPUUsage = &u
+				used = g.hourly * u.Utilization
+			}
+			ns.UsedHourly += used
+			ns.IdleHourly += g.hourly - used
+			snap.Cluster.GPURequested += g.units
+		}
 
 		snap.Cluster.CPURequested += ns.CPURequested
 		snap.Cluster.MemRequested += ns.MemRequested
@@ -202,7 +238,7 @@ func Build(ctx context.Context, c client.Reader, rates pricing.Rates, opts Optio
 	}
 	for _, g := range groups.Items {
 		snap.Schedules = append(snap.Schedules, Schedule{
-			Kind: "group", Name: g.Name, Namespaces: g.Spec.Namespaces,
+			Kind: "group", Name: g.Name, Namespaces: g.Members(),
 			DesiredState: g.Status.DesiredState, Mode: g.Status.Mode, Phase: g.Status.Phase,
 			SavedHourly: parseMoney(g.Status.EstimatedHourlySavings),
 		})

@@ -9,35 +9,9 @@ if [[ -z "$DISPOSABLE" ]]; then
 fi
 
 log "VictoriaMetrics with eight days of history"
-new_namespace smoke-vm
 new_namespace smoke-history
 deployment smoke-history web 1
-kubectl apply -f - >/dev/null <<'YAML' || fail "applying test objects"
-apiVersion: apps/v1
-kind: Deployment
-metadata: {name: vm, namespace: smoke-vm}
-spec:
-  replicas: 1
-  selector: {matchLabels: {app: vm}}
-  template:
-    metadata: {labels: {app: vm}}
-    spec:
-      containers:
-        - name: vm
-          image: quay.io/victoriametrics/victoria-metrics:v1.108.1
-          args: ["-retentionPeriod=60d"]
-          readinessProbe: {httpGet: {path: /health, port: 8428}, periodSeconds: 2}
----
-apiVersion: v1
-kind: Service
-metadata: {name: vm, namespace: smoke-vm}
-spec: {selector: {app: vm}, ports: [{port: 8428}]}
-YAML
-kubectl rollout status deploy/vm -n smoke-vm --timeout=180s >/dev/null
-VM_PORT=${VM_PORT:-18428}
-kubectl port-forward -n smoke-vm svc/vm "$VM_PORT:8428" >/dev/null 2>&1 &
-PF_PIDS="$PF_PIDS $!"
-wait_for "VictoriaMetrics reachable" curl -sf "localhost:$VM_PORT/health"
+start_victoriametrics 7
 
 python3 - <<'PY' | curl -sf --data-binary @- "localhost:$VM_PORT/api/v1/import" || fail "importing the synthetic metrics"
 import json, math, time
@@ -69,9 +43,6 @@ curl -sf "localhost:$VM_PORT/internal/force_flush" >/dev/null
 ok "imported"
 
 log "Namespace charts cover the configured seven days"
-track_call PUT /api/settings '{"integrations":{"victoriaMetrics":{"enabled":false}}}'
-api PUT /api/settings '{"integrations":{"victoriaMetrics":{"enabled":true,"endpoint":"http://vm.smoke-vm.svc:8428","retentionDays":7}}}' >/dev/null \
-  || fail "enabling VictoriaMetrics"
 HISTORY=$(mktemp)
 history_from_vm() {
   curl -sf -b "$JAR" -D "$HISTORY.h" -o "$HISTORY" "localhost:$API_PORT/api/namespaces/$1/history?range=$2" &&

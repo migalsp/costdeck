@@ -1,6 +1,8 @@
 import { useState, type KeyboardEvent } from 'react'
-import { ArrowDown, ArrowUp, Plus, ShieldCheck, ListOrdered, X } from 'lucide-react'
-import type { ScalingSpec } from '../lib/types'
+import { ArrowDown, ArrowUp, Database, Plus, ShieldCheck, ListOrdered, X } from 'lucide-react'
+import { hibernateIssue } from '../lib/hibernate'
+import type { HibernateRule, ScalingSpec } from '../lib/types'
+import HibernateEditor from './HibernateEditor'
 import { usePolling } from '../lib/usePolling'
 import { Button, Modal } from './ui'
 
@@ -45,11 +47,14 @@ function Chip({ label, onRemove }: { label: string; onRemove: () => void }) {
 }
 
 // WorkloadRulesDialog edits the per-namespace rules every schedule respects: workloads
-// that never scale down, and the order workloads start in (stopping runs in reverse).
+// that never scale down, the order workloads start in (stopping runs in reverse), and the
+// operator-run services that stop with them.
 export default function WorkloadRulesDialog({ namespace, spec, onClose, onSave }: Props) {
   const [workloads, setWorkloads] = useState<Workload[]>([])
   const [exclusions, setExclusions] = useState<string[]>(spec.exclusions || [])
   const [stages, setStages] = useState<string[][]>((spec.sequence || []).map(s => s.split(/\s+/).filter(Boolean)).filter(s => s.length > 0))
+  const [hibernate, setHibernate] = useState<HibernateRule[]>(spec.hibernate || [])
+  const issue = hibernateIssue(hibernate)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -68,7 +73,10 @@ export default function WorkloadRulesDialog({ namespace, spec, onClose, onSave }
     setError(null)
     try {
       const clean = stages.filter(s => s.length > 0)
-      await onSave({ ...spec, exclusions: exclusions.length ? exclusions : undefined, sequence: clean.length ? clean.map(s => s.join(' ')) : undefined })
+      await onSave({
+        ...spec, exclusions: exclusions.length ? exclusions : undefined, sequence: clean.length ? clean.map(s => s.join(' ')) : undefined,
+        hibernate: hibernate.length ? hibernate : undefined,
+      })
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
       setSaving(false)
@@ -84,9 +92,9 @@ export default function WorkloadRulesDialog({ namespace, spec, onClose, onSave }
       onClose={onClose}
       footer={
         <>
-          <span className="flex-1 text-xs font-medium text-rose-600">{error}</span>
+          <span className="flex-1 text-xs font-medium text-rose-600">{error || (issue && `Services to stop, ${issue}`)}</span>
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button variant="primary" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save rules'}</Button>
+          <Button variant="primary" onClick={save} disabled={saving || !!issue}>{saving ? 'Saving…' : 'Save rules'}</Button>
         </>
       }
     >
@@ -131,6 +139,12 @@ export default function WorkloadRulesDialog({ namespace, spec, onClose, onSave }
             <Button size="sm" variant="secondary" icon={<Plus size={13} />} onClick={() => setStages([...stages, []])}>Add stage</Button>
             {stages.some(s => s.length === 0) && <p className="text-xs text-slate-400">Empty stages are dropped when saving.</p>}
           </div>
+        </section>
+
+        <section>
+          <h3 className="text-sm font-semibold text-slate-800 flex items-center gap-1.5"><Database size={15} className="text-brand-600" /> Services to stop</h3>
+          <p className="text-sm text-slate-500 mb-2">Databases and other services an operator runs here, which scaling their pods would not stop: Cost Deck asks the operator instead.</p>
+          <HibernateEditor rules={hibernate} onChange={setHibernate} />
         </section>
       </div>
     </Modal>

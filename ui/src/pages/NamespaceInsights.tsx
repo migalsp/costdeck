@@ -86,7 +86,11 @@ export default function NamespaceInsights({ onSelectNamespace }: { onSelectNames
   const [filters, setFilters] = useState<Filters>({ query: '', env: 'all', schedule: 'all', issue: 'all', team: 'all' })
   const [groupBy, setGroupBy] = useState<GroupBy>('none')
   const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({ key: 'cost', desc: true })
-  const [idleShare, setIdleShare] = useState(false)
+  // Showing capacity nobody requested as shared out follows the allocation policy until
+  // the viewer picks otherwise.
+  const [idleChoice, setIdleShare] = useState<boolean | null>(null)
+  const [idlePolicy, setIdlePolicy] = useState(false)
+  const idleShare = idleChoice ?? idlePolicy
   const [historySource, setHistorySource] = useState<HistorySource | null>(null)
   const [chosenRange, setChosenRange] = useState(storedRange)
 
@@ -96,7 +100,7 @@ export default function NamespaceInsights({ onSelectNamespace }: { onSelectNames
   // Whether VictoriaMetrics is on, and how far back it reaches, decides the chart windows.
   usePolling(() => {
     fetch('/api/settings').then(r => (r.ok ? r.json() : null))
-      .then(d => setHistorySource(d?.integrations?.victoriaMetrics ?? { enabled: false }))
+      .then(d => { setHistorySource(d?.integrations?.victoriaMetrics ?? { enabled: false }); setIdlePolicy(d?.allocation?.idle === 'proportional') })
       .catch(() => setHistorySource({ enabled: false }))
   }, 300000)
   const ranges = historyRanges(historySource)
@@ -311,6 +315,9 @@ function NamespaceTableRow({ row, currency, onOpen }: { row: Row; currency: stri
         <div className="mt-1 flex flex-wrap gap-1">
           <Badge tone={ns.environment === 'production' ? 'info' : 'neutral'}>{environmentLabel[ns.environment]}</Badge>
           {ns.team && <Badge>{ns.team}</Badge>}
+          {ns.gpu && <Badge tone="brand" title={`${ns.gpu.models.join(', ') || 'GPU'}: ${formatMoney(ns.gpu.monthlyCost, currency)}/mo${ns.gpu.utilization !== undefined ? `, busy ${Math.round(ns.gpu.utilization * 100)}% of the last day` : ''}`}>
+            GPU ×{Number.isInteger(ns.gpu.requested) ? ns.gpu.requested : ns.gpu.requested.toFixed(2)}{ns.gpu.utilization !== undefined && ` · ${Math.round(ns.gpu.utilization * 100)}%`}
+          </Badge>}
           <span className="text-[11px] text-slate-400 self-center">{ns.pods} pod{ns.pods === 1 ? '' : 's'}</span>
         </div>
         {ns.insights.some(i => i !== 'Optimized') && (

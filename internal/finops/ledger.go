@@ -277,20 +277,11 @@ func (c *Collector) Start(ctx context.Context) error {
 	if interval <= 0 {
 		interval = DefaultInterval
 	}
-	ledger, err := LoadLedger(ctx, c.Client, c.Namespace)
-	if err != nil {
-		log.Error(err, "Could not read the cost history, starting a new one")
-		ledger = &Ledger{}
-	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
-		if err := c.sample(ctx, ledger); err != nil {
+		if err := c.Sample(ctx); err != nil {
 			log.Error(err, "Could not record cost history")
-			// Reload so the next sample starts from what is stored, not from a write that failed.
-			if reloaded, lerr := LoadLedger(ctx, c.Client, c.Namespace); lerr == nil {
-				ledger = reloaded
-			}
 		}
 		select {
 		case <-ctx.Done():
@@ -298,6 +289,18 @@ func (c *Collector) Start(ctx context.Context) error {
 		case <-ticker.C:
 		}
 	}
+}
+
+// Sample books the time since the last sample into the stored history. It reads the
+// history first, so a change made to the ConfigMap in between (a correction, a restored
+// backup) is kept rather than overwritten by an older copy, and it writes nothing when
+// it cannot read it.
+func (c *Collector) Sample(ctx context.Context) error {
+	ledger, err := LoadLedger(ctx, c.Client, c.Namespace)
+	if err != nil {
+		return err
+	}
+	return c.sample(ctx, ledger)
 }
 
 func (c *Collector) sample(ctx context.Context, ledger *Ledger) error {

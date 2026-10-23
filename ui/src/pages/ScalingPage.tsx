@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import { Plus, Cloud, Database, ChevronUp, ChevronDown, CalendarClock, MoonStar, Link2, Hand } from 'lucide-react'
-import { errorMessage } from '../lib/api'
+import { apiError, errorMessage, getJSON } from '../lib/api'
+import { describeOverride } from '../lib/schedule'
+import { toast } from '../lib/toast'
 import { formatMoney } from '../lib/format'
 import type { ExternalTarget, ScalingConfig, ScalingGroup, ScalingSpec } from '../lib/types'
 import { usePolling } from '../lib/usePolling'
@@ -14,6 +16,7 @@ import { cloudLabel } from '../lib/cloud'
 import { useAuth } from '../lib/auth'
 import OverrideDialog, { type OverrideUntil } from '../components/OverrideDialog'
 import { Button, SectionTitle } from '../components/ui'
+import { groupNamespaces } from '../lib/selector'
 
 type Target = { type: 'group' | 'config'; name: string }
 
@@ -30,7 +33,7 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
   const [policies, setPolicies] = useState<ScalingConfig[]>([]);
   const [namespaces, setNamespaces] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const [wizard, setWizard] = useState<WizardState | null>(null);
   // Workload rules (exclusions and workload order) of a single-namespace config.
@@ -64,21 +67,20 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
 
   const fetchData = async () => {
     try {
-      const [groupsRes, policiesRes, nsRes] = await Promise.all([
-        fetch('/api/scaling/groups'),
-        fetch('/api/scaling/configs'),
-        fetch('/api/namespaces')
+      const [groupsData, policiesData, nsData] = await Promise.all([
+        getJSON<ScalingGroup[] | null>('/api/scaling/groups'),
+        getJSON<ScalingConfig[] | null>('/api/scaling/configs'),
+        getJSON<NamespaceFinOps[] | null>('/api/namespaces'),
       ]);
-      const groupsData = await groupsRes.json();
-      const policiesData = await policiesRes.json();
-      const nsData = await nsRes.json();
-      setGroups(((groupsData || []) as ScalingGroup[]).sort((a, b) => a.metadata.name.localeCompare(b.metadata.name)));
-      setPolicies(((policiesData || []) as ScalingConfig[]).sort((a, b) => a.spec.targetNamespace.localeCompare(b.spec.targetNamespace)));
-      const uniqueNamespaces = Array.from(new Set((nsData as NamespaceFinOps[]).map(n => n.spec.targetNamespace || n.metadata.name)));
+      setGroups((groupsData || []).sort((a, b) => a.metadata.name.localeCompare(b.metadata.name)));
+      setPolicies((policiesData || []).sort((a, b) => a.spec.targetNamespace.localeCompare(b.spec.targetNamespace)));
+      const uniqueNamespaces = Array.from(new Set((nsData || []).map(n => n.spec.targetNamespace || n.metadata.name)));
       uniqueNamespaces.sort((a, b) => a.localeCompare(b));
       setNamespaces(uniqueNamespaces);
+      setLoadError(null);
     } catch (err) {
-      console.error("Failed to fetch scaling data", err);
+      // A failed refresh keeps what is shown and says why it may be stale.
+      setLoadError(`Could not load the schedules: ${errorMessage(err)}`);
     } finally {
       setLoading(false);
     }
@@ -100,7 +102,8 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ active, ...(active !== null && until && until !== 'forever' ? { until } : {}) })
       });
-      if (!res.ok) throw new Error(await res.text());
+      if (!res.ok) throw new Error(await apiError(res));
+      toast.success(describeOverride(name, active, until));
       fetchData();
       // Poll quickly for a while so the transition shows up without waiting for the
       // regular refresh.
@@ -113,7 +116,7 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
         }
       }, 2000);
     } catch (err) {
-      setError(`Could not change ${name}: ${errorMessage(err)}`);
+      toast.error(`Could not change ${name}: ${errorMessage(err)}`);
       setIsScalingMap(prev => ({ ...prev, [key]: false }));
     }
   };
@@ -128,27 +131,29 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ metadata: { name: ordering.name }, spec })
       });
-      if (!res.ok) throw new Error((await res.text()) || res.statusText);
+      if (!res.ok) throw new Error(await apiError(res));
       setOrdering(null);
-      setError(null);
+      toast.success(`Saved the start order of ${ordering.name}`);
       fetchData();
     } catch (err) {
-      setError(`Could not save the start order: ${errorMessage(err)}`);
+      // The start order dialog stays open, so the error goes in a toast above it.
+      toast.error(`Could not save the start order: ${errorMessage(err)}`);
     }
   };
 
   const deleteSchedule = async (kind: 'group' | 'config', name: string) => {
     try {
       const res = await fetch(`/api/scaling/${kind === 'group' ? 'groups' : 'configs'}/${name}`, { method: 'DELETE' });
-      if (!res.ok) throw new Error(await res.text());
+      if (!res.ok) throw new Error(await apiError(res));
       setDetails(null);
+      toast.success(`Deleted the schedule ${name}`);
       fetchData();
     } catch (err) {
-      setError(`Could not delete ${name}: ${errorMessage(err)}`);
+      toast.error(`Could not delete ${name}: ${errorMessage(err)}`);
     }
   };
 
-  const grouped = new Set(groups.flatMap(g => g.spec.namespaces));
+  const grouped = new Set(groups.flatMap(groupNamespaces));
   // A config whose namespace belongs to a group only fine-tunes workloads for that group;
   // a config on its own is a single-namespace schedule.
   const standaloneConfigs = policies.filter(p => !grouped.has(p.spec.targetNamespace));
@@ -167,7 +172,7 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
     <ScheduleCard
       key={group.metadata.name}
       name={group.metadata.name}
-      namespaces={group.spec.namespaces}
+      namespaces={groupNamespaces(group)}
       spec={group.spec}
       generation={group.metadata.generation}
       status={group.status}
@@ -222,11 +227,8 @@ const ScalingPage: React.FC<{ onSelectNamespace: (ns: string) => void }> = ({ on
         )}
       </div>
 
-      {error && (
-        <div className="mb-6 p-4 bg-rose-50 border border-rose-100 rounded-xl flex items-center gap-3 text-rose-600">
-          <div className="flex-1 text-sm font-bold">{error}</div>
-          <button onClick={() => setError(null)} className="p-1 hover:bg-rose-100 rounded-full text-rose-400"><Plus size={16} className="rotate-45" /></button>
-        </div>
+      {loadError && (
+        <div role="alert" className="mb-6 p-4 bg-rose-50 border border-rose-100 rounded-xl text-sm font-semibold text-rose-700">{loadError}</div>
       )}
 
       {loading ? (

@@ -14,8 +14,10 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
+	"github.com/migalsp/costdeck-operator/internal/config"
 	"github.com/migalsp/costdeck-operator/internal/pricing"
 	"github.com/migalsp/costdeck-operator/internal/scaling"
 )
@@ -32,7 +34,79 @@ const (
 	// ConditionNamespaceConflict is True when the group skips namespaces that an older
 	// group already manages.
 	ConditionNamespaceConflict = "NamespaceConflict"
+	// ConditionExceptionsApplied is False while an exception or calendar cannot be applied
+	// (a calendar that does not exist, an end before the start). It is absent otherwise.
+	ConditionExceptionsApplied = "ExceptionsApplied"
+	// ConditionDryRun is True while spec.dryRun is set and says what would change.
+	ConditionDryRun = "DryRun"
 )
+
+// wouldChange counts the workloads and hibernated services a schedule would change in a
+// namespace now.
+func wouldChange(ctx context.Context, engine *scaling.Engine, ns string, active bool, exclusions []string, hibernate []finopsv1.HibernateRule) (int, error) {
+	n, err := engine.WouldChange(ctx, ns, active, exclusions)
+	if err != nil {
+		return 0, err
+	}
+	services, err := engine.ServicesToChange(ctx, ns, active, hibernate)
+	return n + services, err
+}
+
+// dryRunMessage says what a schedule would change now, for the DryRun condition.
+func dryRunMessage(kind string, active bool, workloads, namespaces, cloud int, waitingFor []string) string {
+	verb := "scale down"
+	if active {
+		verb = "start"
+	}
+	var parts []string
+	if workloads > 0 {
+		parts = append(parts, fmt.Sprintf("%s %d workload(s) in %d namespace(s)", verb, workloads, namespaces))
+	}
+	if cloud > 0 {
+		parts = append(parts, fmt.Sprintf("%s %d cloud resource(s)", verb, cloud))
+	}
+	msg := "Nothing to change: everything is already " + map[bool]string{true: "up", false: "down"}[active] + "."
+	if len(parts) > 0 {
+		msg = "Would " + strings.Join(parts, " and ") + " now."
+	}
+	if len(waitingFor) > 0 {
+		msg += " It would first wait for " + strings.Join(waitingFor, ", ") + "."
+	}
+	return msg + fmt.Sprintf(" Nothing is scaled while the %s's spec.dryRun is true.", kind)
+}
+
+// setDryRunCondition records a dry run; with message "" it removes the condition.
+func setDryRunCondition(conds *[]metav1.Condition, message string, generation int64) {
+	if message == "" {
+		meta.RemoveStatusCondition(conds, ConditionDryRun)
+		return
+	}
+	meta.SetStatusCondition(conds, metav1.Condition{Type: ConditionDryRun, Status: metav1.ConditionTrue, Reason: "DryRun", ObservedGeneration: generation, Message: message})
+	meta.SetStatusCondition(conds, metav1.Condition{Type: ConditionReady, Status: metav1.ConditionFalse, Reason: "DryRun", ObservedGeneration: generation, Message: "Nothing is scaled in a dry run."})
+}
+
+// setExceptionsCondition reports exceptions that cannot be applied; the others still do.
+func setExceptionsCondition(conds *[]metav1.Condition, problems []string, generation int64) {
+	if len(problems) == 0 {
+		meta.RemoveStatusCondition(conds, ConditionExceptionsApplied)
+		return
+	}
+	meta.SetStatusCondition(conds, metav1.Condition{
+		Type: ConditionExceptionsApplied, Status: metav1.ConditionFalse, Reason: "Invalid", ObservedGeneration: generation,
+		Message: "Not applied: " + strings.Join(problems, "; ") + ".",
+	})
+}
+
+// calendars returns the shared holiday calendars of the CostDeckConfig. Without one,
+// schedules naming a calendar report it as missing.
+func calendars(ctx context.Context, c client.Reader) []finopsv1.HolidayCalendar {
+	cfg, err := config.Get(ctx, c)
+	if err != nil {
+		logf.FromContext(ctx).Error(err, "Could not read the holiday calendars")
+		return nil
+	}
+	return cfg.Spec.Calendars
+}
 
 // updateStatus writes an object's status unless the reconcile left it as it was found:
 // a settled schedule would otherwise send an identical status every minute.
@@ -62,6 +136,11 @@ func settledRequeue(d scaling.Decision, now time.Time) time.Duration {
 func applyDecision(st *finopsv1.ScheduleStatus, conds *[]metav1.Condition, d scaling.Decision, generation int64, kind string) {
 	st.Mode = d.Mode
 	st.DesiredState = d.State()
+	st.Exception, st.ExceptionEndsAt = d.Exception, nil
+	if d.ExceptionEndsAt != nil {
+		t := metav1.NewTime(*d.ExceptionEndsAt)
+		st.ExceptionEndsAt = &t
+	}
 	st.OverrideExpiresAt = nil
 	if d.OverrideExpiresAt != nil {
 		t := metav1.NewTime(*d.OverrideExpiresAt)
@@ -94,6 +173,12 @@ func applyDecision(st *finopsv1.ScheduleStatus, conds *[]metav1.Condition, d sca
 	case scaling.ModeAlwaysOn:
 		cond.Status, cond.Reason = metav1.ConditionFalse, "NoSchedule"
 		cond.Message = fmt.Sprintf("The %s has no usable schedule and is kept up as a fail-safe.", kind)
+	case scaling.ModeIdle:
+		cond.Status, cond.Reason = metav1.ConditionFalse, "Idle"
+		cond.Message = fmt.Sprintf("The %s sleeps for being unused (status.idleUntil); a manual start wakes it.", kind)
+	case scaling.ModeException:
+		cond.Status, cond.Reason = metav1.ConditionFalse, "Exception"
+		cond.Message = fmt.Sprintf("The %s is kept %s for %q until %s; then the schedule takes over.", kind, strings.ToLower(d.State()), d.Exception, d.ExceptionEndsAt.UTC().Format(time.RFC3339))
 	default:
 		cond.Status, cond.Reason = metav1.ConditionFalse, "ScheduleInControl"
 		cond.Message = "The schedule decides the desired state."
@@ -184,6 +269,13 @@ func transitionMessage(kind, name, phase string, st finopsv1.ScheduleStatus, req
 		why = "because nothing needs it"
 	case scaling.ModeAlwaysOn:
 		why = "(no schedule)"
+	case scaling.ModeIdle:
+		why = "because nobody used it"
+	case scaling.ModeException:
+		why = "for " + st.Exception
+		if st.ExceptionEndsAt != nil {
+			why += " until " + st.ExceptionEndsAt.UTC().Format("Mon 2 Jan 15:04 MST")
+		}
 	}
 	msg := fmt.Sprintf("%s %s `%s` %s %s.", icon, kind, name, state, why)
 	if st.NextTransition != nil {
