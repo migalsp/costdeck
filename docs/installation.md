@@ -601,6 +601,31 @@ that is up from 8 to 18 but nobody touched after lunch stops paying for the afte
 - **What it does not override.** Manual starts and stops, exceptions and the fail-safe
   keep their say, and a group stays up while groups that depend on it need it.
 
+### Preview cleanup
+
+Preview environments (a namespace per pull request or branch) are often left behind
+after the review. **Settings → Preview cleanup** (`spec.namespaceTTL` of the
+`CostDeckConfig`) deletes the namespaces a label selector picks, such as `env=preview`,
+some time after they were created. Unlike sleeping, it also removes their volumes, load
+balancers and IP addresses.
+
+It is off twice over: install with `--set namespaceTTL.enabled=true`, which grants patch
+and delete on namespaces, and switch it on in the dashboard. Turning it on asks you to
+confirm that deleted namespaces cannot be restored, and the first save starts in a dry
+run that only lists what would be deleted and when.
+
+- **Never deleted**: `kube-*`, `default`, the operator's namespace, namespaces a schedule
+  lists by name (`spec.namespaces` of a ScalingGroup, the target of a ScalingConfig), and
+  namespaces labelled `costdeck.io/ttl=off`. An empty selector is refused.
+- **Per namespace**: CI can give a namespace its own time with the label
+  `costdeck.io/ttl=3d` (or `36h`).
+- **Warnings**: by default a day before, the notification channels that take alerts are
+  told which namespace goes when. **Keep 3 more days** in the dashboard moves the time
+  (annotation `costdeck.io/expires-at`) and warns again.
+- **Pace and record**: at most 20 namespaces go in one run, every 30 seconds, each only
+  if it is still the namespace that was planned (by UID). Deletions are recorded in the
+  ConfigMap `costdeck-namespace-ttl` and shown in the dashboard.
+
 ### Realized savings
 
 The saving a schedule shows is what the stopped workloads request. The bill drops only
@@ -706,6 +731,7 @@ helm upgrade costdeck-operator oci://ghcr.io/migalsp/costdeck/charts/costdeck-op
 | `hibernation.enabled` | `false` | Lets hibernate rules stop CloudNativePG and Zalando Postgres clusters and Strimzi Connect, MirrorMaker 2 and Bridge (cluster-wide read and patch on them) |
 | `hibernation.extraRules` | `[]` | `apiGroups` and `resources` of other operators' kinds that hibernate rules stop |
 | `sleepPage.enabled` | `false` | Lets schedules with `spec.sleepPage` point their HTTPRoutes at the sleep page (read and patch on HTTPRoutes, ReferenceGrants in the release namespace) |
+| `namespaceTTL.enabled` | `false` | Lets preview cleanup delete namespaces past their time to live (patch and delete on namespaces) |
 
 `values.schema.json` rejects malformed values at install time.
 

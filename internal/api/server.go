@@ -236,6 +236,8 @@ func (s *Server) routes() *http.ServeMux {
 	viewer("GET /api/scaling/groups/{name}/realized", s.handleGroupRealized)
 	viewer("GET /api/finops/ai", s.handleAICosts)
 	viewer("GET /api/wake/{ns}", s.handleWakeStatus)
+	viewer("GET /api/namespace-ttl", s.handleNamespaceTTL)
+	operator("POST /api/namespace-ttl/{ns}/extend", s.handleExtendNamespace)
 	viewer("GET /api/scaling/configs", s.listScalingConfigs)
 	admin("POST /api/scaling/configs", s.createScalingConfig)
 	viewer("GET /api/scaling/configs/{name}", s.getScalingConfig)

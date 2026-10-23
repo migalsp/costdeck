@@ -170,6 +170,53 @@ YAML
   api PUT /api/settings "$body" >/dev/null || fail "enabling VictoriaMetrics"
 }
 
+# start_webhook_receiver runs a webhook receiver in smoke-hooks (once): busybox httpd with a
+# CGI script that keeps every request body in /tmp/<query string>-<pid>.json, so one
+# receiver stands in for several channels told apart by their query string. HOOK_URL is
+# its address inside the cluster.
+# shellcheck disable=SC2034
+HOOK_URL="http://hook.smoke-hooks.svc:8080/cgi-bin/hook"
+start_webhook_receiver() {
+  kubectl get deploy hook -n smoke-hooks >/dev/null 2>&1 && return 0
+  new_namespace smoke-hooks
+  kubectl apply -f - >/dev/null <<YAML || fail "applying the webhook receiver"
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: hook, namespace: smoke-hooks}
+data:
+  hook: |
+    #!/bin/sh
+    head -c "\${CONTENT_LENGTH:-0}" > "/tmp/\${QUERY_STRING:-hook}-\$\$.json"
+    printf 'Content-Type: text/plain\r\n\r\nok\n'
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: hook, namespace: smoke-hooks}
+spec:
+  selector: {matchLabels: {app: hook}}
+  template:
+    metadata: {labels: {app: hook}}
+    spec:
+      containers:
+        - name: httpd
+          image: $BUSYBOX_IMAGE
+          command: [sh, -c, "mkdir -p /www/cgi-bin && cp /cfg/hook /www/cgi-bin/hook && chmod +x /www/cgi-bin/hook && exec httpd -f -p 8080 -h /www"]
+          volumeMounts: [{name: cfg, mountPath: /cfg}]
+          readinessProbe: {tcpSocket: {port: 8080}, periodSeconds: 2}
+      volumes: [{name: cfg, configMap: {name: hook}}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: hook, namespace: smoke-hooks}
+spec: {selector: {app: hook}, ports: [{port: 8080}]}
+YAML
+  kubectl rollout status deploy/hook -n smoke-hooks --timeout=120s >/dev/null || fail "the webhook receiver did not start"
+}
+# hook_requests <name>: every body the receiver got at $HOOK_URL?<name>.
+hook_requests() { kubectl exec -n smoke-hooks deploy/hook -- sh -c "cat /tmp/$1-*.json 2>/dev/null"; }
+hook_has() { hook_requests "$1" | grep -q "$2"; }
+hook_count() { kubectl exec -n smoke-hooks deploy/hook -- sh -c "ls /tmp/$1-*.json 2>/dev/null | wc -l" | tr -d ' '; }
+
 # track_cleanup <command>: a shell command that undoes a change outside the smoke-*
 # namespaces (a node's status, say), run on exit.
 CLEANUP_COMMANDS=()

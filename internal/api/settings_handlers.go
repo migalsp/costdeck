@@ -39,6 +39,7 @@ import (
 type SettingsResponse struct {
 	// DashboardURL is the address people open Cost Deck at.
 	DashboardURL string                       `json:"dashboardUrl,omitempty"`
+	NamespaceTTL NamespaceTTLSettings         `json:"namespaceTTL"`
 	Providers    ProvidersSettingsResponse    `json:"providers"`
 	Integrations IntegrationsSettingsResponse `json:"integrations"`
 	Features     *FeaturesSettingsResponse    `json:"features,omitempty"`
@@ -194,6 +195,7 @@ type VictoriaMetricsSettingsResponse struct {
 // Credentials are provided here in plaintext and then stored in K8s Secrets.
 type SettingsUpdateRequest struct {
 	DashboardURL *string                    `json:"dashboardUrl,omitempty"`
+	NamespaceTTL *NamespaceTTLUpdateRequest `json:"namespaceTTL,omitempty"`
 	Providers    *ProvidersUpdateRequest    `json:"providers,omitempty"`
 	Integrations *IntegrationsUpdateRequest `json:"integrations,omitempty"`
 	Features     *FeaturesUpdateRequest     `json:"features,omitempty"`
@@ -520,6 +522,7 @@ func (s *Server) buildSettingsResponse(ctx context.Context, cfg *finopsv1.CostDe
 	// Sign-in
 	resp.Auth.DisableLocalLogin = cfg.Spec.Auth.DisableLocalLogin
 	resp.DashboardURL = cfg.Spec.DashboardURL
+	resp.NamespaceTTL = namespaceTTLSettings(cfg.Spec.NamespaceTTL)
 	if e := cfg.Spec.Auth.Entra; e != nil {
 		resp.Auth.Entra = &EntraSettingsResponse{
 			Enabled:          e.Enabled,
@@ -559,7 +562,7 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 
 	appliers := []func(context.Context, *finopsv1.CostDeckConfig, *SettingsUpdateRequest) error{
 		s.applyAWSSettings, s.applyAzureSettings, s.applyGCPSettings, s.applyAISettings,
-		s.applyWebexSettings, s.applyNotificationSettings, s.applyVictoriaMetricsSettings, applyMCPSettings, applyFeatureSettings, applyPricingSettings, applyReportSettings, applyBudgetSettings, applyBillingSettings, applyCalendarSettings, s.applyAuthSettings, applyDashboardURL,
+		s.applyWebexSettings, s.applyNotificationSettings, s.applyVictoriaMetricsSettings, applyMCPSettings, applyFeatureSettings, applyPricingSettings, applyReportSettings, applyBudgetSettings, applyBillingSettings, applyCalendarSettings, s.applyAuthSettings, applyDashboardURL, applyNamespaceTTLSettings,
 	}
 
 	var cfg *finopsv1.CostDeckConfig

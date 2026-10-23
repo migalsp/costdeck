@@ -558,6 +558,21 @@ spec:
         ],
       },
       {
+        id: 'preview-cleanup',
+        title: 'Delete preview namespaces',
+        blocks: [
+          { p: '**Settings → Preview cleanup** deletes the namespaces a label picks (for example `env=preview`) some time after they were created, so environments left over from finished pull requests stop costing money, volumes and load balancers included.' },
+          { warn: 'It deletes whole namespaces, and a deleted namespace cannot be restored. It is off unless the chart is installed with `namespaceTTL.enabled=true` and you switch it on; turning it on asks for a confirmation, and the first save is a dry run that only lists what would go.' },
+          {
+            list: [
+              'Never deleted: `kube-*`, `default`, Cost Deck\'s own namespace, namespaces a schedule lists by name, and those labelled `costdeck.io/ttl=off`.',
+              'CI can set a namespace\'s own time with the label `costdeck.io/ttl=3d`.',
+              'The channels that take alerts are warned a day before; **Keep 3 more days** moves the time and warns again.',
+            ],
+          },
+        ],
+      },
+      {
         id: 'realized',
         title: 'Realized savings',
         blocks: [

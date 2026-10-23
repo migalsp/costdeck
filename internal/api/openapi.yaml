@@ -1057,6 +1057,78 @@ paths:
                   hostnames: { type: array, items: { type: string } }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
+  /api/namespace-ttl:
+    get:
+      x-role: viewer
+      tags: [Scaling]
+      summary: Preview cleanup
+      description: >-
+        The preview cleanup setting (spec.namespaceTTL), every namespace its selector picks with
+        when it is deleted (soonest first; protected ones say why they never are), the namespaces it
+        deleted, and whether the operator may delete namespaces at all (namespaceTTL.enabled in the
+        Helm chart). selector and ttl work the plan out for unsaved values.
+      parameters:
+        - { name: selector, in: query, schema: { type: string }, example: env=preview }
+        - { name: ttl, in: query, schema: { type: string }, example: 7d }
+      responses:
+        "200":
+          description: The setting, the plan and the record
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enabled: { type: boolean }
+                  dryRun: { type: boolean }
+                  selector: { type: string }
+                  ttl: { type: string, example: 168h0m0s }
+                  warnBefore: { type: string, example: 24h0m0s }
+                  permitted: { type: boolean }
+                  error: { type: string }
+                  namespaces:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        namespace: { type: string }
+                        createdAt: { type: string, format: date-time }
+                        expiresAt: { type: string, format: date-time }
+                        source: { type: string, enum: [ttl, label, extended] }
+                        warned: { type: boolean }
+                        protected: { type: string }
+                  deleted:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        namespace: { type: string }
+                        createdAt: { type: string, format: date-time }
+                        expiresAt: { type: string, format: date-time }
+                        deletedAt: { type: string, format: date-time }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/namespace-ttl/{ns}/extend:
+    post:
+      x-role: operator
+      tags: [Scaling]
+      summary: Keep a preview namespace longer
+      description: >-
+        Moves the namespace's deletion that long after its current time, or after now when that has
+        passed (annotation costdeck.io/expires-at), and announces the new time again.
+      parameters:
+        - { name: ns, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [by], properties: { by: { type: string, example: 3d } } }
+      responses:
+        "200": { description: The namespace with its new time }
+        "400": { description: Not a duration, or the namespace is never deleted }
+        "403": { description: The operator may not change namespaces }
+        "404": { description: Preview cleanup does not select the namespace }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
   /api/finops/ai:
     get:
       x-role: viewer

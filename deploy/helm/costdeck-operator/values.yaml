@@ -116,6 +116,12 @@ hibernation:
 sleepPage:
   enabled: false
 
+# Lets preview cleanup (Settings → Preview cleanup, spec.namespaceTTL) delete namespaces
+# past their time to live: patch and delete on namespaces cluster-wide. Off by default,
+# because deleting a namespace deletes everything in it; the setting itself is off too.
+namespaceTTL:
+  enabled: false
+
 # Created automatically when replicaCount > 1 (a PDB on a single replica would block node
 # drains); set enabled to force it.
 podDisruptionBudget:

@@ -82,6 +82,9 @@ them back on time. There is no external service: one operator in your cluster do
 - **Sleep when unused.** An environment nobody has sent a request to for an hour (Envoy
   Gateway, Istio or ingress-nginx metrics), or whose GPUs sat idle (DCGM), goes down
   inside its schedule's hours too.
+- **Preview cleanup.** Namespaces of preview environments are deleted some time after
+  they were created, with a warning first and a way to keep one longer. Off unless you
+  turn it on, twice.
 - **Savings that reach the bill.** After a scale-down, each schedule shows which nodes the
   autoscaler removed and what keeps the others: a PodDisruptionBudget, `do-not-disrupt`,
   `safe-to-evict: "false"`, local storage, or other namespaces still using them.

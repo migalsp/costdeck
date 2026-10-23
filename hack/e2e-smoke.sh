@@ -26,6 +26,7 @@
 #  992 idle auto-sleep from Envoy Gateway request counters (disposable clusters only)
 #  993 notifications to Slack, Teams and email             (disposable clusters only)
 #  994 Argo Rollouts, also with workloadRef                 (disposable clusters only)
+#  995 preview cleanup deletes namespaces past their TTL    (disposable clusters only)
 #
 # Run it against a disposable cluster (Kind in CI, `make test-e2e` locally): it installs
 # CRDs, metrics-server and changes settings. IMAGE must already be loadable by the cluster
@@ -86,6 +87,7 @@ if [[ -z "${SKIP_INSTALL:-}" ]]; then
     --set gitops.pause=true \
     --set hibernation.enabled=true \
     --set sleepPage.enabled=true \
+    --set namespaceTTL.enabled=true \
     --wait --timeout 3m
   if ! kubectl get apiservice v1beta1.metrics.k8s.io >/dev/null 2>&1; then
     log "Installing metrics-server $METRICS_SERVER_VERSION"

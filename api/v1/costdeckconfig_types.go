@@ -837,6 +837,40 @@ type CostDeckConfigSpec struct {
 	// +listMapKey=name
 	// +optional
 	Calendars []HolidayCalendar `json:"calendars,omitempty"`
+
+	// NamespaceTTL deletes preview namespaces some time after they were created. Off by
+	// default; it also needs namespaceTTL.enabled in the Helm chart.
+	// +optional
+	NamespaceTTL NamespaceTTLConfig `json:"namespaceTTL,omitempty"`
+}
+
+// NamespaceTTLConfig deletes the namespaces a label selector picks once they are older
+// than a time to live. A namespace's costdeck.io/ttl label overrides the time ("3d",
+// "36h") or keeps it ("off"); kube-*, default, the operator's namespace and namespaces a
+// schedule lists by name are never deleted.
+type NamespaceTTLConfig struct {
+	// Enabled turns deleting on.
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+
+	// DryRun works out what would be deleted and when, and deletes and sends nothing.
+	// +optional
+	DryRun bool `json:"dryRun,omitempty"`
+
+	// Selector picks the namespaces, such as env=preview. Required: an empty selector
+	// would match every namespace.
+	// +kubebuilder:validation:MaxLength=1024
+	// +optional
+	Selector string `json:"selector,omitempty"`
+
+	// TTL is how long after its creation a namespace is deleted, such as 168h.
+	// +optional
+	TTL *metav1.Duration `json:"ttl,omitempty"`
+
+	// WarnBefore sends an alert to the notification channels this long before a
+	// deletion. Defaults to 24h; 0s sends none.
+	// +optional
+	WarnBefore *metav1.Duration `json:"warnBefore,omitempty"`
 }
 
 // HolidayCalendar is a named list of days on which the schedules that use it keep their

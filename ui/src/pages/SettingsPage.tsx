@@ -10,6 +10,8 @@ import CalendarsEditor from '../components/settings/CalendarsEditor'
 import ModelPricesEditor from '../components/settings/ModelPricesEditor'
 import OIDCSettings from '../components/settings/OIDCSettings'
 import NotificationChannels from '../components/settings/NotificationChannels'
+import PreviewCleanup from '../components/settings/PreviewCleanup'
+import { cleanupForm, cleanupProblem, cleanupRequest, type CleanupForm, type TTLSettings } from '../lib/cleanup'
 import { SecretInput } from '../components/settings/fields'
 import { channelsForm, channelsProblem, channelsRequest, type ChannelsForm, type NotificationsSettings } from '../lib/notifications'
 import { emptyOIDC, oidcProblem, oidcRequest, type OIDCForm } from '../lib/oidc'
@@ -162,14 +164,15 @@ interface SettingsData {
   }
   billing?: { enabled?: boolean }
   calendars?: HolidayCalendar[]
+  namespaceTTL?: TTLSettings
 }
 
 // ─── Navigation ─────────────────────────────────────────────────────────────
 
-type Section = 'users' | 'sso' | 'tokens' | 'pricing' | 'billing' | 'metrics' | 'calendars' | 'clouds' | 'notifications' | 'ai' | 'mcp'
+type Section = 'users' | 'sso' | 'tokens' | 'pricing' | 'billing' | 'metrics' | 'calendars' | 'cleanup' | 'clouds' | 'notifications' | 'ai' | 'mcp'
 // Sections whose form is saved with their Save button; the others act at once.
-type SavedSection = 'sso' | 'pricing' | 'metrics' | 'calendars' | 'clouds' | 'notifications' | 'ai' | 'mcp'
-const savedSections: Section[] = ['sso', 'pricing', 'metrics', 'calendars', 'clouds', 'notifications', 'ai', 'mcp']
+type SavedSection = 'sso' | 'pricing' | 'metrics' | 'calendars' | 'cleanup' | 'clouds' | 'notifications' | 'ai' | 'mcp'
+const savedSections: Section[] = ['sso', 'pricing', 'metrics', 'calendars', 'cleanup', 'clouds', 'notifications', 'ai', 'mcp']
 const isSaved = (s: Section): s is SavedSection => savedSections.includes(s)
 
 const navGroups: { title: string; items: { id: Section; label: string; icon: ReactNode }[] }[] = [
@@ -185,6 +188,7 @@ const navGroups: { title: string; items: { id: Section; label: string; icon: Rea
   ] },
   { title: 'Scheduling', items: [
     { id: 'calendars', label: 'Holiday calendars', icon: <CalendarDays size={16} /> },
+    { id: 'cleanup', label: 'Preview cleanup', icon: <Trash2 size={16} /> },
   ] },
   { title: 'Integrations', items: [
     { id: 'clouds', label: 'Cloud accounts', icon: <Cloud size={16} /> },
@@ -229,6 +233,7 @@ function navStatus(st: SettingsData | null): Partial<Record<Section, NavStatus>>
     billing: onOff(st.billing?.enabled),
     metrics: { text: st.integrations.victoriaMetrics?.enabled ? 'VictoriaMetrics' : 'metrics-server' },
     calendars: { text: st.calendars?.length ? String(st.calendars.length) : 'None', on: !!st.calendars?.length },
+    cleanup: { text: !st.namespaceTTL?.enabled ? 'Off' : st.namespaceTTL.dryRun ? 'Dry run' : 'On', on: !!st.namespaceTTL?.enabled },
     clouds: { text: clouds.length ? clouds.join(', ') : 'None', on: clouds.length > 0 },
     notifications: onOff(st.integrations.messenger?.webex?.enabled || channels?.slack.enabled || channels?.teams.enabled || channels?.email.enabled),
     ai: onOff(st.integrations.ai?.enabled),
@@ -718,6 +723,7 @@ export default function SettingsPage({ section: requested }: { section?: string 
   const [entraEnabled, setEntraEnabled] = useState(false)
   const [oidc, setOIDC] = useState<OIDCForm>(emptyOIDC)
   const [channels, setChannels] = useState<ChannelsForm>(() => channelsForm())
+  const [cleanup, setCleanup] = useState<CleanupForm>(() => cleanupForm())
   const [dashboardUrl, setDashboardUrl] = useState('')
   const [entraTenant, setEntraTenant] = useState('')
   const [entraClient, setEntraClient] = useState('')
@@ -795,6 +801,7 @@ export default function SettingsPage({ section: requested }: { section?: string 
           setLLMModels(data.pricing.llmModels || [])
         }
         setChannels(channelsForm(data.integrations?.notifications))
+        setCleanup(cleanupForm(data.namespaceTTL))
         if (data.auth) {
           setDisableLocalLogin(data.auth.disableLocalLogin)
           setDashboardUrl(data.dashboardUrl || '')
@@ -832,7 +839,7 @@ export default function SettingsPage({ section: requested }: { section?: string 
 
   const handleSave = async (sec: SavedSection) => {
     const invalid = sec === 'calendars' ? calendarProblem(calendars) : sec === 'pricing' ? llmModelProblem(llmModels) : sec === 'sso' ? oidcProblem(oidc)
-      : sec === 'notifications' ? channelsProblem(channels) : null
+      : sec === 'notifications' ? channelsProblem(channels) : sec === 'cleanup' ? cleanupProblem(cleanup, settings?.namespaceTTL) : null
     if (invalid) {
       setSaveMessage({ section: sec, text: `Not saved: ${invalid}`, ok: false })
       return
@@ -936,6 +943,7 @@ export default function SettingsPage({ section: requested }: { section?: string 
         pricing: { features: full.features, pricing: full.pricing },
         sso: { auth: full.auth, dashboardUrl: dashboardUrl.trim() },
         calendars: { calendars },
+        cleanup: { namespaceTTL: cleanupRequest(cleanup) },
       }
       const res = await fetch('/api/settings', {
         method: 'PUT',
@@ -960,6 +968,7 @@ export default function SettingsPage({ section: requested }: { section?: string 
         setEntraSecret('')
         if (sec === 'calendars') setCalendars(data.calendars || [])
         if (sec === 'notifications') setChannels(channelsForm(data.integrations?.notifications))
+        if (sec === 'cleanup') setCleanup(cleanupForm(data.namespaceTTL))
         setDirty(d => ({ ...d, [sec]: false }))
         setSaveMessage({ section: sec, text: 'Saved', ok: true })
         setTimeout(() => setSaveMessage(m => (m?.section === sec && m.ok ? null : m)), 3000)
@@ -1650,6 +1659,18 @@ export default function SettingsPage({ section: requested }: { section?: string 
       )}
 
       {/* ─── Messengers Section ──────────────────────────────────────────── */}
+      {section === 'cleanup' && (
+        <div className="space-y-4 animate-rise">
+          <SectionHeader
+            icon={<Trash2 className="text-brand-500" size={20} />}
+            title="Preview cleanup"
+            subtitle="Delete the namespaces of preview environments some time after they were created"
+            action={saveAction('cleanup')}
+          />
+          <PreviewCleanup value={cleanup} onChange={setCleanup} saved={settings?.namespaceTTL} />
+        </div>
+      )}
+
       {section === 'notifications' && (
         <div className="space-y-4 animate-rise">
           <SectionHeader

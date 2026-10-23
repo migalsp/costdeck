@@ -10,46 +10,13 @@ fi
 
 MAILPIT_IMAGE=${MAILPIT_IMAGE:-axllent/mailpit:v1.30.7}
 MAILPIT_PORT=${MAILPIT_PORT:-18025}
-HOOK_URL="http://hook.smoke-notify.svc:8080/cgi-bin/hook"
-hook_requests() { kubectl exec -n smoke-notify deploy/hook -- sh -c "cat /tmp/$1-*.json 2>/dev/null"; }
-hook_has() { hook_requests "$1" | grep -q "$2"; }
-hook_count() { kubectl exec -n smoke-notify deploy/hook -- sh -c "ls /tmp/$1-*.json 2>/dev/null | wc -l" | tr -d ' '; }
 mail_subjects() { curl -sf "localhost:$MAILPIT_PORT/api/v1/messages" | jq -r '.messages[].Subject'; }
 mail_has() { mail_subjects | grep -q "$1"; }
 
 log "A webhook receiver and an SMTP server stand in for Slack, Teams and email"
+start_webhook_receiver
 new_namespace smoke-notify
-kubectl apply -f - >/dev/null <<YAML || fail "applying the receivers"
-apiVersion: v1
-kind: ConfigMap
-metadata: {name: hook, namespace: smoke-notify}
-data:
-  hook: |
-    #!/bin/sh
-    head -c "\${CONTENT_LENGTH:-0}" > "/tmp/\${QUERY_STRING:-hook}-\$\$.json"
-    printf 'Content-Type: text/plain\r\n\r\nok\n'
----
-apiVersion: apps/v1
-kind: Deployment
-metadata: {name: hook, namespace: smoke-notify}
-spec:
-  selector: {matchLabels: {app: hook}}
-  template:
-    metadata: {labels: {app: hook}}
-    spec:
-      containers:
-        - name: httpd
-          image: $BUSYBOX_IMAGE
-          command: [sh, -c, "mkdir -p /www/cgi-bin && cp /cfg/hook /www/cgi-bin/hook && chmod +x /www/cgi-bin/hook && exec httpd -f -p 8080 -h /www"]
-          volumeMounts: [{name: cfg, mountPath: /cfg}]
-          readinessProbe: {tcpSocket: {port: 8080}, periodSeconds: 2}
-      volumes: [{name: cfg, configMap: {name: hook}}]
----
-apiVersion: v1
-kind: Service
-metadata: {name: hook, namespace: smoke-notify}
-spec: {selector: {app: hook}, ports: [{port: 8080}]}
----
+kubectl apply -f - >/dev/null <<YAML || fail "applying Mailpit"
 apiVersion: apps/v1
 kind: Deployment
 metadata: {name: mailpit, namespace: smoke-notify}
@@ -68,7 +35,6 @@ kind: Service
 metadata: {name: mailpit, namespace: smoke-notify}
 spec: {selector: {app: mailpit}, ports: [{name: smtp, port: 1025}, {name: http, port: 8025}]}
 YAML
-kubectl rollout status deploy/hook -n smoke-notify --timeout=120s >/dev/null || fail "the webhook receiver did not start"
 kubectl rollout status deploy/mailpit -n smoke-notify --timeout=180s >/dev/null || fail "Mailpit did not start"
 kubectl port-forward -n smoke-notify svc/mailpit "$MAILPIT_PORT:8025" >/dev/null 2>&1 &
 PF_PIDS="$PF_PIDS $!"

@@ -46,6 +46,7 @@ import (
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
 	"github.com/migalsp/costdeck-operator/internal/api"
+	"github.com/migalsp/costdeck-operator/internal/cleanup"
 	cdconfig "github.com/migalsp/costdeck-operator/internal/config"
 	"github.com/migalsp/costdeck-operator/internal/controller"
 	"github.com/migalsp/costdeck-operator/internal/finops"
@@ -204,6 +205,12 @@ func main() {
 	}
 	if err := mgr.Add(alerter); err != nil {
 		setupLog.Error(err, "Failed to add the budget alerter to manager")
+		os.Exit(1)
+	}
+
+	// Preview namespaces past their time to live are deleted; the leader does it.
+	if err := mgr.Add(&cleanup.Reaper{Client: mgr.GetClient(), Notify: dispatcher}); err != nil {
+		setupLog.Error(err, "Failed to add the namespace cleanup to manager")
 		os.Exit(1)
 	}
 

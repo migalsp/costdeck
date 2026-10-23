@@ -692,6 +692,34 @@ spec:
                         type: boolean
                     type: object
                 type: object
+              namespaceTTL:
+                description: |-
+                  NamespaceTTL deletes preview namespaces some time after they were created. Off by
+                  default; it also needs namespaceTTL.enabled in the Helm chart.
+                properties:
+                  dryRun:
+                    description: DryRun works out what would be deleted and when,
+                      and deletes and sends nothing.
+                    type: boolean
+                  enabled:
+                    description: Enabled turns deleting on.
+                    type: boolean
+                  selector:
+                    description: |-
+                      Selector picks the namespaces, such as env=preview. Required: an empty selector
+                      would match every namespace.
+                    maxLength: 1024
+                    type: string
+                  ttl:
+                    description: TTL is how long after its creation a namespace is
+                      deleted, such as 168h.
+                    type: string
+                  warnBefore:
+                    description: |-
+                      WarnBefore sends an alert to the notification channels this long before a
+                      deletion. Defaults to 24h; 0s sends none.
+                    type: string
+                type: object
               pricing:
                 description: Pricing sets custom cost rates.
                 properties:
