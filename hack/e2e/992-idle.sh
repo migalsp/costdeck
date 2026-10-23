@@ -50,7 +50,7 @@ wait_for "the schedules are up" up_and_scheduled smoke-idle-quiet
 
 log "The unused namespace sleeps, the others stay up"
 TIMEOUT=240 wait_for "the unused namespace is scaled down" replicas_are smoke-idle-quiet web 0
-group_field_is smoke-idle-quiet mode Idle || fail "mode is $(kubectl get scalinggroup smoke-idle-quiet -n "$NS" -o jsonpath='{.status.mode}')"
+wait_for "it reports mode Idle" group_field_is smoke-idle-quiet mode Idle
 group_field_is_not smoke-idle-quiet idleUntil "" || fail "no status.idleUntil"
 idle_reason_is smoke-idle-quiet Unused || fail "the Idle condition does not say Unused"
 api GET /api/wake/smoke-idle-quiet | jq -e '.mode == "Idle" and .desiredState == "Down"' >/dev/null ||
@@ -64,7 +64,7 @@ up_and_scheduled smoke-idle-busy && up_and_scheduled smoke-idle-dark || fail "bu
 
 log "GPUs keep a namespace awake while they work, and let it sleep once they idle"
 TIMEOUT=240 wait_for "the namespace whose GPU idles is scaled down" replicas_are smoke-idle-gpu web 0
-group_field_is smoke-idle-gpu mode Idle || fail "smoke-idle-gpu is not asleep in mode Idle"
+wait_for "smoke-idle-gpu reports mode Idle" group_field_is smoke-idle-gpu mode Idle
 kubectl get scalinggroup smoke-idle-gpu -n "$NS" -o jsonpath='{.status.conditions[?(@.type=="Idle")].message}' | grep -q 'GPUs of smoke-idle-gpu stayed idle' ||
   fail "the Idle condition does not name the idle GPUs"
 wait_for "the busy GPU keeps its namespace in use" idle_reason_is smoke-idle-gpu-busy InUse
@@ -80,5 +80,5 @@ idle_reason_is smoke-idle-quiet Watching || fail "the Idle condition does not sa
 ok "the sleep is over"
 api POST /api/scaling/groups/smoke-idle-quiet/manual '{"active":null}' >/dev/null || fail "handing back to the schedule"
 TIMEOUT=180 wait_for "unused again, it sleeps again" replicas_are smoke-idle-quiet web 0
-group_field_is smoke-idle-quiet mode Idle || fail "not asleep in mode Idle"
+wait_for "it reports mode Idle again" group_field_is smoke-idle-quiet mode Idle
 ok "asleep again"

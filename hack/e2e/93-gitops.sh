@@ -46,7 +46,7 @@ pause_mark_is kustomization smoke-apps suspend || fail "the Kustomization is not
 pause_mark_is application smoke-shop self-heal || fail "the Application is not marked as paused by CostDeck"
 ok "both are marked as paused by CostDeck"
 wait_for "the workloads are scaled to zero" replicas_are smoke-gitops flux-app 0
-group_field_is smoke-gitops 'conditions[?(@.type=="GitOps")].reason' Paused || fail "the GitOps condition does not say Paused"
+wait_for "the GitOps condition says Paused" group_field_is smoke-gitops 'conditions[?(@.type=="GitOps")].reason' Paused
 ok "the GitOps condition says they are paused"
 
 log "Once everything is up again, both are resumed"
