@@ -13,6 +13,7 @@ import (
 	"github.com/migalsp/costdeck-operator/internal/config"
 	"github.com/migalsp/costdeck-operator/internal/finops"
 	"github.com/migalsp/costdeck-operator/internal/metrics"
+	"github.com/migalsp/costdeck-operator/internal/notify"
 	"github.com/migalsp/costdeck-operator/internal/pricing"
 )
 
@@ -298,6 +299,7 @@ func (s *Server) handleBudgets(w http.ResponseWriter, r *http.Request) {
 		"anomalies":  cfg.Spec.Alerts.Anomalies,
 		"events":     events,
 		"webexReady": wx != nil && wx.Webex != nil && wx.Webex.Enabled && wx.Webex.RoomID != "",
+		"channels":   notify.Ready(cfg, notify.EventAlerts),
 		"scopes":     map[string]any{"namespaces": names, "teams": teamList},
 	})
 }

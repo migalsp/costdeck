@@ -92,7 +92,8 @@ them back on time. There is no external service: one operator in your cluster do
   workloads. Cost Deck never edits your requests or nodes.
 - **Budgets and alerts.** Monthly budgets per cluster, team, environment or any set of
   namespaces, alerting at thresholds and when the month is heading over; daily cost
-  anomaly alerts; and a weekly or monthly cost digest, all posted to Webex.
+  anomaly alerts; and a weekly or monthly cost digest, sent to Webex, Slack, Microsoft
+  Teams or email.
 
 ### Fits your team
 
@@ -100,7 +101,8 @@ them back on time. There is no external service: one operator in your cluster do
   Microsoft Entra ID, Keycloak or any OpenID Connect provider with group-to-role mapping,
   API tokens, and least-privilege RBAC: Secrets are
   only read in the operator's own namespace.
-- **Where you already work.** A Webex bot, an AI assistant (Claude, OpenAI-compatible or
+- **Where you already work.** Notifications in Slack, Microsoft Teams, email and Webex, a
+  Webex bot, an AI assistant (Claude, OpenAI-compatible or
   Gemini) that proposes actions for you to confirm, an MCP server for AI clients, and
   Prometheus metrics.
 

@@ -144,6 +144,7 @@ type IntegrationsSettingsResponse struct {
 	Messenger       *MessengerSettingsResponse       `json:"messenger,omitempty"`
 	VictoriaMetrics *VictoriaMetricsSettingsResponse `json:"victoriaMetrics,omitempty"`
 	MCP             MCPSettingsResponse              `json:"mcp"`
+	Notifications   *NotificationsSettingsResponse   `json:"notifications"`
 }
 
 // MCPSettingsResponse describes the MCP endpoint.
@@ -312,6 +313,7 @@ type IntegrationsUpdateRequest struct {
 	Messenger       *MessengerUpdateRequest       `json:"messenger,omitempty"`
 	VictoriaMetrics *VictoriaMetricsUpdateRequest `json:"victoriaMetrics,omitempty"`
 	MCP             *MCPUpdateRequest             `json:"mcp,omitempty"`
+	Notifications   *NotificationsUpdateRequest   `json:"notifications,omitempty"`
 }
 
 // MCPUpdateRequest toggles the MCP endpoint.
@@ -447,6 +449,8 @@ func (s *Server) buildSettingsResponse(ctx context.Context, cfg *finopsv1.CostDe
 		}
 	}
 
+	resp.Integrations.Notifications = notificationsResponse(cfg.Spec.Integrations.Notifications)
+
 	// Messenger / Webex
 	if cfg.Spec.Integrations.Messenger != nil && cfg.Spec.Integrations.Messenger.Webex != nil {
 		resp.Integrations.Messenger = &MessengerSettingsResponse{
@@ -555,7 +559,7 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 
 	appliers := []func(context.Context, *finopsv1.CostDeckConfig, *SettingsUpdateRequest) error{
 		s.applyAWSSettings, s.applyAzureSettings, s.applyGCPSettings, s.applyAISettings,
-		s.applyWebexSettings, s.applyVictoriaMetricsSettings, applyMCPSettings, applyFeatureSettings, applyPricingSettings, applyReportSettings, applyBudgetSettings, applyBillingSettings, applyCalendarSettings, s.applyAuthSettings, applyDashboardURL,
+		s.applyWebexSettings, s.applyNotificationSettings, s.applyVictoriaMetricsSettings, applyMCPSettings, applyFeatureSettings, applyPricingSettings, applyReportSettings, applyBudgetSettings, applyBillingSettings, applyCalendarSettings, s.applyAuthSettings, applyDashboardURL,
 	}
 
 	var cfg *finopsv1.CostDeckConfig
@@ -1219,6 +1223,8 @@ func (s *Server) handleTestProvider(w http.ResponseWriter, r *http.Request) {
 		s.testVictoriaMetrics(w, ctx, cfg, r)
 	case "webex":
 		s.testWebex(w, ctx, r)
+	case channelSlack, channelTeams, channelEmail:
+		s.testNotificationChannel(w, r, cfg, providerName)
 	case "entra":
 		s.testEntra(w, ctx, cfg, r)
 	case "oidc":

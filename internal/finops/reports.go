@@ -198,9 +198,9 @@ func DigestLastSent(ctx context.Context, c client.Reader, namespace string) time
 	return t
 }
 
-// Poster delivers a digest, for example to the Webex space.
+// Poster delivers a digest or an alert and says where it went, such as "Webex, Slack".
 type Poster interface {
-	Post(ctx context.Context, markdown string) error
+	Post(ctx context.Context, markdown string) (string, error)
 }
 
 // DigestScheduler sends the cost digest when the schedule in the CostDeckConfig says so.
@@ -303,11 +303,12 @@ func (d *DigestScheduler) Send(ctx context.Context, period, by string) (ReportEn
 		return ReportEntry{}, err
 	}
 	md := digest.Markdown()
-	if err := d.Poster.Post(ctx, md); err != nil {
+	delivered, err := d.Poster.Post(ctx, md)
+	if err != nil {
 		return ReportEntry{}, err
 	}
 	return SaveReport(ctx, d.Client, d.Namespace, ReportEntry{
-		Kind: ReportDigest, Title: digest.Title, Period: period, GeneratedAt: now, By: by, Delivered: DeliveredWebex,
+		Kind: ReportDigest, Title: digest.Title, Period: period, GeneratedAt: now, By: by, Delivered: delivered,
 	}, md)
 }
 

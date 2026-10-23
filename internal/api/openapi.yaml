@@ -1235,6 +1235,7 @@ paths:
                         detail: { type: string }
                         delivered: { type: string }
                   webexReady: { type: boolean }
+                  channels: { type: array, items: { type: string }, description: The channels that take alerts, such as Webex, Slack, Teams or email. }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
   /api/billing/reconcile:
@@ -1328,6 +1329,7 @@ paths:
                   reports: { type: array, items: { $ref: "#/components/schemas/ReportEntry" } }
                   schedule: { $ref: "#/components/schemas/DigestSchedule" }
                   webexReady: { type: boolean, description: Webex is enabled with a space to post to. }
+                  channels: { type: array, items: { type: string }, description: The channels that take digests, such as Webex, Slack, Teams or email. }
                   lastSent: { type: string, format: date-time }
                   nextDue: { type: string, format: date-time }
         "401": { $ref: "#/components/responses/Unauthorized" }
@@ -1360,7 +1362,7 @@ paths:
     post:
       x-role: operator
       tags: [Reports]
-      summary: Post the digest to Webex now
+      summary: Send the digest to the notification channels now
       requestBody:
         content:
           application/json:
@@ -1375,8 +1377,8 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ReportEntry" }
-        "400": { description: Webex is not enabled or has no space }
-        "502": { description: Webex rejected the message }
+        "400": { description: No notification channel takes digests }
+        "502": { description: Every channel rejected the message }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
   /api/reports/{id}:
@@ -1598,9 +1600,12 @@ paths:
       x-role: admin
       tags: [Settings]
       summary: Test a connection
-      description: Tests unsaved credentials or settings. For cloud providers it also reports how many resources discovery finds.
+      description: >-
+        Tests unsaved credentials or settings. For cloud providers it also reports how many
+        resources discovery finds. For slack, teams and email it sends a test message, with
+        the body shaped like integrations.notifications of the settings update.
       parameters:
-        - { name: provider, in: path, required: true, schema: { type: string, enum: [aws, azure, gcp, ai, entra, webex, victoriametrics] } }
+        - { name: provider, in: path, required: true, schema: { type: string, enum: [aws, azure, gcp, ai, entra, oidc, webex, slack, teams, email, victoriametrics] } }
       requestBody:
         content:
           application/json:

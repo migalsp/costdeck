@@ -121,12 +121,12 @@ type stubPoster struct {
 	sent []string
 }
 
-func (s *stubPoster) Post(_ context.Context, md string) error {
+func (s *stubPoster) Post(_ context.Context, md string) (string, error) {
 	if s.err != nil {
-		return s.err
+		return "", s.err
 	}
 	s.sent = append(s.sent, md)
-	return nil
+	return deliveredTo, nil
 }
 
 func TestAlerterFiresOnce(t *testing.T) {
@@ -159,7 +159,7 @@ func TestAlerterFiresOnce(t *testing.T) {
 		t.Fatalf("an alert fires once: %v %d", err, len(poster.sent))
 	}
 	ev, _ := AlertEvents(ctx, c, "costdeck")
-	if len(ev) != 1 || ev[0].Delivered != "webex" || ev[0].Budget != "cluster" {
+	if len(ev) != 1 || ev[0].Delivered != deliveredTo || ev[0].Budget != "cluster" {
 		t.Errorf("feed: %+v", ev)
 	}
 

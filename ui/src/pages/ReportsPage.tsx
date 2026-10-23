@@ -13,6 +13,7 @@ import {
 } from '../lib/finops'
 import { formatMoney } from '../lib/format'
 import { usePolling } from '../lib/usePolling'
+import { channelList } from '../lib/notifications'
 
 const audiences: { id: Audience; label: string; hint: string }[] = [
   { id: 'executive', label: 'Executive', hint: 'One page for leadership and finance: run rate, trend, savings, three decisions.' },
@@ -125,11 +126,11 @@ function ScheduleCard({ index, onSaved }: { index: ReportsIndex; onSaved: () => 
         {index.nextDue && index.schedule.enabled && <div>Next: {when(index.nextDue)}</div>}
         {index.lastSent && <div>Last sent: {when(index.lastSent)}</div>}
       </div>
-      {!index.webexReady && (
+      {(index.channels || []).length === 0 ? (
         <p className="mt-3 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-          The digest is posted to Webex. Enable Webex with a space ID under Settings → Notifications first.
+          Nothing receives the digest yet: set up Webex, Slack, Teams or email under Settings → Notifications.
         </p>
-      )}
+      ) : <p className="mt-3 text-xs text-slate-500">Sent to {channelList(index.channels)}.</p>}
       {can('admin') && (
         <div className="mt-4 pt-4 border-t border-slate-100 space-y-3">
           <label className="flex items-center gap-2 text-sm text-slate-700">
@@ -185,10 +186,11 @@ export default function ReportsPage() {
     try {
       const res = await fetch('/api/reports/digest/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ period }) })
       if (!res.ok) throw new Error(await apiError(res))
-      toast.success('Posted the digest to the Webex space and saved it in the history')
+      const entry: ReportEntry = await res.json()
+      toast.success(`Sent the digest to ${entry.delivered || 'the notification channels'} and saved it in the history`)
       loadIndex()
     } catch (e) {
-      toast.error(`Could not post the digest: ${errorMessage(e)}`)
+      toast.error(`Could not send the digest: ${errorMessage(e)}`)
     } finally {
       setSending(false)
     }
@@ -283,8 +285,10 @@ export default function ReportsPage() {
             <Button size="sm" onClick={copy} disabled={!digest} icon={copied ? <Check size={14} /> : <Copy size={14} />}>{copied ? 'Copied' : 'Copy as Markdown'}</Button>
             <Button size="sm" onClick={() => digest && downloadText(`cost-digest-${digest.digest.to}.md`, digest.markdown)} disabled={!digest} icon={<Download size={14} />}>Download</Button>
             {can('operator') && (
-              <span title={index?.webexReady ? undefined : 'Enable Webex with a space ID under Settings → Notifications'}>
-                <Button size="sm" variant="primary" onClick={sendDigest} disabled={!digest || sending || !index?.webexReady} icon={sending ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}>Send to Webex now</Button>
+              <span title={index?.channels?.length ? undefined : 'Set up Webex, Slack, Teams or email under Settings → Notifications'}>
+                <Button size="sm" variant="primary" onClick={sendDigest} disabled={!digest || sending || !index?.channels?.length} icon={sending ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}>
+                  {index?.channels?.length ? `Send to ${channelList(index.channels)} now` : 'Send now'}
+                </Button>
               </span>
             )}
           </div>

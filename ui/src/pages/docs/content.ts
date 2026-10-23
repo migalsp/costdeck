@@ -127,8 +127,8 @@ kubectl port-forward -n costdeck svc/costdeck-operator-api 8082:8082`,
                 ['Budgets & Alerts', 'Monthly budgets for teams, namespaces and environments, and alerts when they are reached or spending jumps.'],
                 ['Cost Deck Health', 'The operator itself: resource use, connections and logs.'],
                 ['Scaling Schedules', 'Create schedules, start or stop environments now, and follow progress.'],
-                ['Reports', 'The weekly or monthly cost digest (also posted to Webex) and AI-written reports for leadership, engineers and teams.'],
-                ['Settings', 'Cloud accounts, monitoring, AI, Webex, MCP, sign-in and prices. Admins only.'],
+                ['Reports', 'The weekly or monthly cost digest (also sent to Webex, Slack, Teams or email) and AI-written reports for leadership, engineers and teams.'],
+                ['Settings', 'Cloud accounts, monitoring, AI, notifications, MCP, sign-in and prices. Admins only.'],
               ],
             },
           },
@@ -1022,7 +1022,7 @@ spec:
             list: [
               '**Budget alerts** fire once per threshold per month. Reaching 100% first never sends the 80% alert afterwards.',
               '**Anomaly alerts** compare each namespace\'s cost for the day before with its average over the seven days before that, and fire when it is the chosen percentage higher and at least the minimum amount more.',
-              'Alerts go to the Webex space when one is connected, and are always listed under **Recent alerts**.',
+              'Alerts go to the Webex space and to Slack, Teams or email when they take alerts (Settings → Notifications), and are always listed under **Recent alerts**.',
             ],
           },
           { code: `# Prometheus: budgets heading over
@@ -1043,7 +1043,7 @@ costdeck_budget_forecast_ratio > 1`, label: 'Alert from your own monitoring' },
         title: 'The cost digest',
         blocks: [
           { p: 'The digest compares the last seven days, or the last calendar month, with the period before: what the nodes cost, what pods requested and used, what the schedules saved, the most expensive namespaces and teams, and the actions worth taking. It comes from the cost history, not from a model, so engineers and finance read the same numbers.' },
-          { p: 'Open **Reports**, pick **Last 7 days** or **Last month**, then copy it as Markdown, download it, or send it to the Webex space now.' },
+          { p: 'Open **Reports**, pick **Last 7 days** or **Last month**, then copy it as Markdown, download it, or send it now to the notification channels that take digests.' },
           { ways: { api: `curl -H "Authorization: Bearer $TOKEN" "$COSTDECK/api/reports/digest?period=week"` } },
         ],
       },
@@ -1053,7 +1053,7 @@ costdeck_budget_forecast_ratio > 1`, label: 'Alert from your own monitoring' },
         blocks: [
           {
             steps: [
-              'Connect Webex with a space ID (Settings → Notifications → Webex).',
+              'Set up a channel under Settings → Notifications: Webex with a space ID, Slack, Teams or email.',
               'In **Reports** → **Scheduled digest**, switch it on and choose weekly (Mondays) or monthly (the 1st), the time and the time zone.',
               'Save. The digest is posted at that time and kept in the history.',
             ],
@@ -1300,6 +1300,30 @@ claude mcp add --transport http costdeck https://costdeck.example.com/mcp \\
             },
           },
           { warn: 'Action tools change the cluster immediately. Give clients a viewer token unless they need to scale.' },
+        ],
+      },
+    ],
+  },
+
+  {
+    id: 'notifications',
+    title: 'Slack, Teams and email',
+    icon: 'webex',
+    summary: 'Scaling changes, alerts and digests in the chat and mailboxes your teams already read.',
+    topics: [
+      {
+        id: 'channels',
+        title: 'Set up a channel',
+        blocks: [
+          {
+            steps: [
+              'Open **Settings** → **Notifications** and switch on Slack, Microsoft Teams or Email.',
+              'Slack: paste the URL of an incoming webhook. Teams: the URL of a workflow "Post to a channel when a webhook request is received". Email: the SMTP server, the sender and the recipients.',
+              'Tick what the channel should get: scaling changes, alerts, digests.',
+              'Press **Send test message**, then **Save**.',
+            ],
+          },
+          { p: 'Webhook URLs and the SMTP password are kept in Secrets and never shown again. A password is only sent over TLS. When one channel is down the others still get the message, and reports and alerts say where they went.' },
         ],
       },
     ],

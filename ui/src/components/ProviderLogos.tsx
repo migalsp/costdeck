@@ -58,5 +58,27 @@ export const WebexLogo = ({ className = "" }: { className?: string }) => (
 );
 
 // ProviderLogo picks the logo of a cloud provider name ("aws", "azure", "gcp").
+export const SlackLogo = ({ className = "" }: { className?: string }) => (
+  <LogoWrapper bgColor="bg-[#4A154B]/10" className={className}>
+    <svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" className="w-full h-full">
+      <rect x="13" y="3" width="6" height="12" rx="3" fill="#36C5F0" />
+      <rect x="17" y="13" width="12" height="6" rx="3" fill="#2EB67D" />
+      <rect x="13" y="17" width="6" height="12" rx="3" fill="#ECB22E" />
+      <rect x="3" y="13" width="12" height="6" rx="3" fill="#E01E5A" />
+    </svg>
+  </LogoWrapper>
+);
+
+export const TeamsLogo = ({ className = "" }: { className?: string }) => (
+  <LogoWrapper bgColor="bg-[#5059C9]/10" className={className}>
+    <svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" className="w-full h-full">
+      <circle cx="23" cy="9" r="4" fill="#7B83EB" />
+      <rect x="18" y="14" width="11" height="12" rx="3" fill="#7B83EB" />
+      <rect x="3" y="7" width="18" height="18" rx="3" fill="#5059C9" />
+      <path d="M8 12h8v2.4h-2.8V21h-2.4v-6.6H8z" fill="#fff" />
+    </svg>
+  </LogoWrapper>
+);
+
 export const ProviderLogo = ({ provider, className = "" }: { provider?: string; className?: string }) =>
   provider === 'azure' ? <AzureLogo className={className} /> : provider === 'gcp' ? <GCPLogo className={className} /> : <AWSLogo className={className} />

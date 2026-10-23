@@ -101,17 +101,20 @@ func TestNextDigest(t *testing.T) {
 	}
 }
 
+// deliveredTo is where the fake posters say messages went.
+const deliveredTo = "Webex"
+
 type fakePoster struct {
 	sent []string
 	err  error
 }
 
-func (f *fakePoster) Post(_ context.Context, md string) error {
+func (f *fakePoster) Post(_ context.Context, md string) (string, error) {
 	if f.err != nil {
-		return f.err
+		return "", f.err
 	}
 	f.sent = append(f.sent, md)
-	return nil
+	return deliveredTo, nil
 }
 
 func testClient(objs ...client.Object) client.Client {
@@ -183,7 +186,7 @@ func TestDigestScheduler(t *testing.T) {
 	if err := s.Tick(ctx); err != nil || len(poster.sent) != 1 {
 		t.Fatalf("on Monday: %v, sent %d", err, len(poster.sent))
 	}
-	if list, _ := ListReports(ctx, c, "costdeck"); len(list) != 1 || list[0].Kind != ReportDigest || list[0].Delivered != "webex" {
+	if list, _ := ListReports(ctx, c, "costdeck"); len(list) != 1 || list[0].Kind != ReportDigest || list[0].Delivered != deliveredTo {
 		t.Errorf("the digest should be kept in the history: %+v", list)
 	}
 	// A minute later nothing is sent again.

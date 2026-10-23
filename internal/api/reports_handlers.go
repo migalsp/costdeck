@@ -8,6 +8,7 @@ import (
 	"github.com/migalsp/costdeck-operator/internal/auth"
 	"github.com/migalsp/costdeck-operator/internal/config"
 	"github.com/migalsp/costdeck-operator/internal/finops"
+	"github.com/migalsp/costdeck-operator/internal/notify"
 	"github.com/migalsp/costdeck-operator/internal/webex"
 )
 
@@ -16,7 +17,7 @@ func (s *Server) poster() finops.Poster {
 	if s.Poster != nil {
 		return s.Poster
 	}
-	return &webex.Notifier{Client: s.Client}
+	return notify.Poster{Dispatcher: &notify.Dispatcher{Client: s.Client, Webex: &webex.Notifier{Client: s.Client}}, Event: notify.EventDigests}
 }
 
 // handleListReports lists stored reports with the digest schedule.
@@ -37,6 +38,7 @@ func (s *Server) handleListReports(w http.ResponseWriter, r *http.Request) {
 	out := map[string]any{"reports": reports, "schedule": sched}
 	wx := cfg.Spec.Integrations.Messenger
 	out["webexReady"] = wx != nil && wx.Webex != nil && wx.Webex.Enabled && wx.Webex.RoomID != ""
+	out["channels"] = notify.Ready(cfg, notify.EventDigests)
 	if last := finops.DigestLastSent(ctx, s.Client, ns); !last.IsZero() {
 		out["lastSent"] = last
 	}
@@ -102,7 +104,8 @@ func (s *Server) handleDigest(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"digest": d, "markdown": d.Markdown()})
 }
 
-// handleSendDigest posts the digest to the Webex space now and keeps it in the history.
+// handleSendDigest sends the digest to the notification channels now and keeps it in the
+// history.
 func (s *Server) handleSendDigest(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Period string `json:"period"`
@@ -122,9 +125,10 @@ func (s *Server) handleSendDigest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	md := d.Markdown()
-	if err := s.poster().Post(r.Context(), md); err != nil {
+	delivered, err := s.poster().Post(r.Context(), md)
+	if err != nil {
 		status := http.StatusBadGateway
-		if errors.Is(err, webex.ErrNoSpace) {
+		if errors.Is(err, finops.ErrNoDestination) {
 			status = http.StatusBadRequest
 		}
 		writeError(w, status, "Could not post the digest: "+err.Error())
@@ -135,7 +139,7 @@ func (s *Server) handleSendDigest(w http.ResponseWriter, r *http.Request) {
 		by = id.Name
 	}
 	entry, err := finops.SaveReport(r.Context(), s.Client, config.OperatorNamespace(), finops.ReportEntry{
-		Kind: finops.ReportDigest, Title: d.Title, Period: d.Period, By: by, Delivered: "webex",
+		Kind: finops.ReportDigest, Title: d.Title, Period: d.Period, By: by, Delivered: delivered,
 	}, md)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "The digest was posted but could not be saved: "+err.Error())

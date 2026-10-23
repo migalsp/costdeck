@@ -319,10 +319,10 @@ export default function BudgetsPage() {
       <PageHeader title="Budgets & Alerts" subtitle="Monthly limits for teams, namespaces and environments, and alerts when spending jumps"
         actions={can('admin') ? <Button variant="primary" icon={<Plus size={16} />} onClick={() => setEditing('new')}>New budget</Button> : undefined} />
 
-      {!data.webexReady && (
+      {(data.channels || []).length === 0 && (
         <div className="mb-4 flex gap-2 p-3 rounded-xl border border-slate-200 bg-slate-50 text-sm text-slate-600">
           <AlertTriangle size={16} className="mt-0.5 shrink-0 text-slate-400" />
-          <span>Alerts are listed below and exported as Prometheus metrics. To receive them in Webex, connect it with a space ID under Settings → Notifications.</span>
+          <span>Alerts are listed below and exported as Prometheus metrics. To receive them in Webex, Slack, Teams or by email, set one up under Settings → Notifications.</span>
         </div>
       )}
 

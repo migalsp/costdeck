@@ -262,6 +262,98 @@ type IntegrationsConfig struct {
 	// MCP Server configuration
 	// +optional
 	MCP *MCPConfig `json:"mcp,omitempty"`
+
+	// Notifications sends alerts, digests and scaling changes to Slack, Microsoft Teams or
+	// email, besides the Webex space.
+	// +optional
+	Notifications *NotificationsConfig `json:"notifications,omitempty"`
+}
+
+// NotificationEvent is a kind of message Cost Deck sends: schedules (a schedule finished
+// scaling up or down), alerts (budgets, cost anomalies, namespaces about to be deleted) or
+// digests (the scheduled cost summary).
+// +kubebuilder:validation:Enum=schedules;alerts;digests
+type NotificationEvent string
+
+// NotificationsConfig lists the channels besides Webex.
+type NotificationsConfig struct {
+	// Slack posts through an incoming webhook.
+	// +optional
+	Slack *WebhookChannelConfig `json:"slack,omitempty"`
+
+	// Teams posts through a Microsoft Teams Workflows webhook ("Post to a channel when a
+	// webhook request is received"), as an Adaptive Card.
+	// +optional
+	Teams *WebhookChannelConfig `json:"teams,omitempty"`
+
+	// Email sends through an SMTP server.
+	// +optional
+	Email *EmailChannelConfig `json:"email,omitempty"`
+}
+
+// WebhookChannelConfig is a chat channel reached through an incoming webhook.
+type WebhookChannelConfig struct {
+	// Enabled turns the channel on.
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+
+	// SecretRef names the Secret holding the webhook URL under WEBHOOK_URL: whoever has
+	// the URL can post to the channel, so it is kept out of the CR.
+	// +optional
+	SecretRef string `json:"secretRef,omitempty"`
+
+	// Events limits what the channel receives; empty sends everything.
+	// +listType=set
+	// +optional
+	Events []NotificationEvent `json:"events,omitempty"`
+}
+
+// EmailChannelConfig sends notifications by email.
+type EmailChannelConfig struct {
+	// Enabled turns the channel on.
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+
+	// Host is the SMTP server, such as smtp.example.com.
+	// +kubebuilder:validation:MaxLength=253
+	// +optional
+	Host string `json:"host,omitempty"`
+
+	// Port of the SMTP server. Defaults to 587, or 465 with Security tls.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	// +optional
+	Port int32 `json:"port,omitempty"`
+
+	// Security is starttls (the default: upgrade the connection before signing in), tls
+	// (TLS from the start, usually port 465) or none (a relay inside the cluster; no
+	// password is sent without TLS).
+	// +kubebuilder:validation:Enum=starttls;tls;none
+	// +optional
+	Security string `json:"security,omitempty"`
+
+	// From is the sender address.
+	// +optional
+	From string `json:"from,omitempty"`
+
+	// To lists the recipients.
+	// +kubebuilder:validation:MaxItems=50
+	// +listType=atomic
+	// +optional
+	To []string `json:"to,omitempty"`
+
+	// Username signs in to the SMTP server; empty sends without signing in.
+	// +optional
+	Username string `json:"username,omitempty"`
+
+	// SecretRef names the Secret holding the SMTP password under PASSWORD.
+	// +optional
+	SecretRef string `json:"secretRef,omitempty"`
+
+	// Events limits what is sent; empty sends everything.
+	// +listType=set
+	// +optional
+	Events []NotificationEvent `json:"events,omitempty"`
 }
 
 // ─── Authentication ──────────────────────────────────────────────────────────
@@ -502,14 +594,15 @@ type LLMModelPrice struct {
 
 // ReportsConfig schedules the reports CostDeck sends by itself.
 type ReportsConfig struct {
-	// Digest posts a cost summary to the Webex space on a schedule.
+	// Digest posts a cost summary to the notification channels on a schedule.
 	// +optional
 	Digest DigestSchedule `json:"digest,omitempty"`
 }
 
 // DigestSchedule says when the cost digest is sent.
 type DigestSchedule struct {
-	// Enabled turns the scheduled digest on. It needs Webex with a space ID.
+	// Enabled turns the scheduled digest on. It needs a notification channel: Webex
+	// with a space ID, Slack, Teams or email.
 	// +optional
 	Enabled bool `json:"enabled,omitempty"`
 

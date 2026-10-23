@@ -68,7 +68,9 @@ type Server struct {
 	ledger   *finops.Ledger
 	ledgerAt time.Time
 
-	// Poster delivers cost digests; nil means the Webex space.
+	// HTTPClient sends test notifications; nil uses one that refuses metadata addresses.
+	HTTPClient *http.Client
+	// Poster delivers cost digests; nil means every configured notification channel.
 	Poster finops.Poster
 
 	// rootCtx lives as long as the server; background work started by a request uses it.

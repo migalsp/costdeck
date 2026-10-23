@@ -1,7 +1,7 @@
 import { useState, useCallback, type ReactNode } from 'react'
 import {
   Cloud, Bot, MessageSquare, Plus, Trash2, RefreshCw,
-  CheckCircle2, XCircle, AlertTriangle, Eye, EyeOff, ChevronDown,
+  CheckCircle2, XCircle, AlertTriangle, ChevronDown,
   ChevronUp, Sparkles, ExternalLink, Activity, Plug, Shield, Info, Users as UsersIcon, KeyRound, Coins, Receipt, CalendarDays
 } from 'lucide-react'
 import { AWSLogo, AzureLogo, GCPLogo, WebexLogo } from '../components/ProviderLogos'
@@ -9,6 +9,9 @@ import ApiTokens from '../components/ApiTokens'
 import CalendarsEditor from '../components/settings/CalendarsEditor'
 import ModelPricesEditor from '../components/settings/ModelPricesEditor'
 import OIDCSettings from '../components/settings/OIDCSettings'
+import NotificationChannels from '../components/settings/NotificationChannels'
+import { SecretInput } from '../components/settings/fields'
+import { channelsForm, channelsProblem, channelsRequest, type ChannelsForm, type NotificationsSettings } from '../lib/notifications'
 import { emptyOIDC, oidcProblem, oidcRequest, type OIDCForm } from '../lib/oidc'
 import { llmModelProblem } from '../lib/llm'
 import { tokens } from '../lib/finops'
@@ -137,6 +140,7 @@ interface SettingsData {
     }
     victoriaMetrics?: VictoriaMetricsSettings
     mcp?: MCPSettings
+    notifications?: NotificationsSettings
   }
   features?: {
     cloudPricingApi?: boolean;
@@ -218,6 +222,7 @@ function navStatus(st: SettingsData | null): Partial<Record<Section, NavStatus>>
   const onOff = (on?: boolean): NavStatus => ({ text: on ? 'On' : 'Off', on: !!on })
   const clouds = [st.providers.aws?.enabled && 'AWS', st.providers.azure?.enabled && 'Azure', st.providers.gcp?.enabled && 'GCP'].filter(Boolean)
   const basis = st.pricing?.effective?.basis?.toLowerCase() || ''
+  const channels = st.integrations.notifications
   return {
     sso: onOff(st.auth?.entra?.enabled || st.auth?.oidc?.enabled),
     pricing: { text: basis.startsWith('custom') ? 'Custom' : basis.includes('aws') || basis.includes('azure') ? 'List' : 'Estimate' },
@@ -225,7 +230,7 @@ function navStatus(st: SettingsData | null): Partial<Record<Section, NavStatus>>
     metrics: { text: st.integrations.victoriaMetrics?.enabled ? 'VictoriaMetrics' : 'metrics-server' },
     calendars: { text: st.calendars?.length ? String(st.calendars.length) : 'None', on: !!st.calendars?.length },
     clouds: { text: clouds.length ? clouds.join(', ') : 'None', on: clouds.length > 0 },
-    notifications: onOff(st.integrations.messenger?.webex?.enabled),
+    notifications: onOff(st.integrations.messenger?.webex?.enabled || channels?.slack.enabled || channels?.teams.enabled || channels?.email.enabled),
     ai: onOff(st.integrations.ai?.enabled),
     mcp: onOff(st.integrations.mcp?.enabled),
   }
@@ -416,28 +421,6 @@ const ComingSoonBadge = () => (
     Coming Soon
   </span>
 )
-
-const SecretInput = ({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder: string }) => {
-  const [visible, setVisible] = useState(false)
-  return (
-    <div className="relative">
-      <input
-        type={visible ? 'text' : 'password'}
-        value={value}
-        onChange={e => onChange(e.target.value)}
-        placeholder={placeholder}
-        className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-400 transition-all pr-10 font-mono"
-      />
-      <button
-        type="button"
-        onClick={() => setVisible(!visible)}
-        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors"
-      >
-        {visible ? <EyeOff size={16} /> : <Eye size={16} />}
-      </button>
-    </div>
-  )
-}
 
 const TagEditor = ({ tags, onChange }: { tags: Record<string, string>; onChange: (t: Record<string, string>) => void }) => {
   const [newKey, setNewKey] = useState('')
@@ -734,6 +717,7 @@ export default function SettingsPage({ section: requested }: { section?: string 
   const [disableLocalLogin, setDisableLocalLogin] = useState(false)
   const [entraEnabled, setEntraEnabled] = useState(false)
   const [oidc, setOIDC] = useState<OIDCForm>(emptyOIDC)
+  const [channels, setChannels] = useState<ChannelsForm>(() => channelsForm())
   const [dashboardUrl, setDashboardUrl] = useState('')
   const [entraTenant, setEntraTenant] = useState('')
   const [entraClient, setEntraClient] = useState('')
@@ -810,6 +794,7 @@ export default function SettingsPage({ section: requested }: { section?: string 
           setPriceGPU(data.pricing.gpuHour || '')
           setLLMModels(data.pricing.llmModels || [])
         }
+        setChannels(channelsForm(data.integrations?.notifications))
         if (data.auth) {
           setDisableLocalLogin(data.auth.disableLocalLogin)
           setDashboardUrl(data.dashboardUrl || '')
@@ -846,7 +831,8 @@ export default function SettingsPage({ section: requested }: { section?: string 
   usePolling(fetchSettings, null)
 
   const handleSave = async (sec: SavedSection) => {
-    const invalid = sec === 'calendars' ? calendarProblem(calendars) : sec === 'pricing' ? llmModelProblem(llmModels) : sec === 'sso' ? oidcProblem(oidc) : null
+    const invalid = sec === 'calendars' ? calendarProblem(calendars) : sec === 'pricing' ? llmModelProblem(llmModels) : sec === 'sso' ? oidcProblem(oidc)
+      : sec === 'notifications' ? channelsProblem(channels) : null
     if (invalid) {
       setSaveMessage({ section: sec, text: `Not saved: ${invalid}`, ok: false })
       return
@@ -944,7 +930,7 @@ export default function SettingsPage({ section: requested }: { section?: string 
       const parts: Record<SavedSection, object> = {
         clouds: { providers: full.providers },
         ai: { integrations: { ai: full.integrations.ai } },
-        notifications: { integrations: { messenger: full.integrations.messenger } },
+        notifications: { integrations: { messenger: full.integrations.messenger, notifications: channelsRequest(channels) } },
         metrics: { integrations: { victoriaMetrics: full.integrations.victoriaMetrics } },
         mcp: { integrations: { mcp: full.integrations.mcp } },
         pricing: { features: full.features, pricing: full.pricing },
@@ -973,6 +959,7 @@ export default function SettingsPage({ section: requested }: { section?: string 
         setVmCaCert('')
         setEntraSecret('')
         if (sec === 'calendars') setCalendars(data.calendars || [])
+        if (sec === 'notifications') setChannels(channelsForm(data.integrations?.notifications))
         setDirty(d => ({ ...d, [sec]: false }))
         setSaveMessage({ section: sec, text: 'Saved', ok: true })
         setTimeout(() => setSaveMessage(m => (m?.section === sec && m.ok ? null : m)), 3000)
@@ -1772,6 +1759,8 @@ export default function SettingsPage({ section: requested }: { section?: string 
               </div>
             )}
           </div>
+
+          <NotificationChannels value={channels} onChange={setChannels} />
         </div>
       )}
 

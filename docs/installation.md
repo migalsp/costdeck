@@ -361,6 +361,32 @@ or custom roles with `compute.instances.list|get|start|stop`, `compute.projects.
 Cloud SQL has no start/stop call: CostDeck sets the instance's activation policy to
 `NEVER` to stop it and `ALWAYS` to start it.
 
+## Slack, Microsoft Teams and email
+
+Besides the Webex space, **Settings → Notifications** sends Cost Deck's messages to Slack,
+Microsoft Teams and email. Each channel picks what it receives:
+
+- **Scaling changes**: a schedule finished scaling up or down.
+- **Alerts**: budgets, cost anomalies and namespaces about to be deleted.
+- **Digests**: the scheduled cost summary.
+
+**Send test message** checks a channel with the values in the form before you save.
+
+| Channel | What to enter |
+|---|---|
+| Slack | The URL of an incoming webhook: a Slack app with **Incoming Webhooks** on, added to one channel. |
+| Microsoft Teams | The URL of a Teams workflow **Post to a channel when a webhook request is received**. Messages arrive as Adaptive Cards. The old Office 365 connectors are retired. |
+| Email | The SMTP server, port and security, the sender and the recipients. **STARTTLS** (port 587) is the default. **TLS** is for port 465. **None** is for a relay inside the cluster. |
+
+- **Secrets.** The webhook URLs and the SMTP password are stored in Secrets in the operator
+  namespace (`costdeck-slack-webhook`, `costdeck-teams-webhook`,
+  `costdeck-smtp-credentials`). They are never sent back to the dashboard.
+- **No password in clear.** A password is only sent over TLS, so **None** works without a
+  username only.
+- **Delivery.** When one channel fails, the others still get the message, and reports and
+  alerts say where they were sent. Outbound connections refuse link-local and cloud
+  metadata addresses.
+
 ## Webex
 
 **Settings → Notifications → Webex**: a bot token from
@@ -379,11 +405,11 @@ Webex can message a bot directly.
   Needs a space ID.
 - **Budget and anomaly alerts**: budgets (under **Budgets & Alerts**, stored in
   `spec.budgets`) alert at their thresholds and when the month is heading over, and
-  anomaly alerts when a namespace's daily cost jumps. They are posted to the space when
-  there is one and always listed in the dashboard.
+  anomaly alerts when a namespace's daily cost jumps. They go to every notification
+  channel that takes alerts, and are always listed in the dashboard.
 - **Cost digest**: under **Reports → Scheduled digest**, a weekly (Mondays) or monthly
-  (the 1st) summary of cost, savings and the top opportunities is posted to the same
-  space. It is stored in `spec.reports.digest` of the `CostDeckConfig`.
+  (the 1st) summary of cost, savings and the top opportunities goes to every channel that
+  takes digests. It is stored in `spec.reports.digest` of the `CostDeckConfig`.
 
 Commands (`help` lists them):
 

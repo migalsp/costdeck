@@ -529,6 +529,128 @@ spec:
                             type: string
                         type: object
                     type: object
+                  notifications:
+                    description: |-
+                      Notifications sends alerts, digests and scaling changes to Slack, Microsoft Teams or
+                      email, besides the Webex space.
+                    properties:
+                      email:
+                        description: Email sends through an SMTP server.
+                        properties:
+                          enabled:
+                            description: Enabled turns the channel on.
+                            type: boolean
+                          events:
+                            description: Events limits what is sent; empty sends everything.
+                            items:
+                              description: |-
+                                NotificationEvent is a kind of message Cost Deck sends: schedules (a schedule finished
+                                scaling up or down), alerts (budgets, cost anomalies, namespaces about to be deleted) or
+                                digests (the scheduled cost summary).
+                              enum:
+                              - schedules
+                              - alerts
+                              - digests
+                              type: string
+                            type: array
+                            x-kubernetes-list-type: set
+                          from:
+                            description: From is the sender address.
+                            type: string
+                          host:
+                            description: Host is the SMTP server, such as smtp.example.com.
+                            maxLength: 253
+                            type: string
+                          port:
+                            description: Port of the SMTP server. Defaults to 587,
+                              or 465 with Security tls.
+                            format: int32
+                            maximum: 65535
+                            minimum: 1
+                            type: integer
+                          secretRef:
+                            description: SecretRef names the Secret holding the SMTP
+                              password under PASSWORD.
+                            type: string
+                          security:
+                            description: |-
+                              Security is starttls (the default: upgrade the connection before signing in), tls
+                              (TLS from the start, usually port 465) or none (a relay inside the cluster; no
+                              password is sent without TLS).
+                            enum:
+                            - starttls
+                            - tls
+                            - none
+                            type: string
+                          to:
+                            description: To lists the recipients.
+                            items:
+                              type: string
+                            maxItems: 50
+                            type: array
+                            x-kubernetes-list-type: atomic
+                          username:
+                            description: Username signs in to the SMTP server; empty
+                              sends without signing in.
+                            type: string
+                        type: object
+                      slack:
+                        description: Slack posts through an incoming webhook.
+                        properties:
+                          enabled:
+                            description: Enabled turns the channel on.
+                            type: boolean
+                          events:
+                            description: Events limits what the channel receives;
+                              empty sends everything.
+                            items:
+                              description: |-
+                                NotificationEvent is a kind of message Cost Deck sends: schedules (a schedule finished
+                                scaling up or down), alerts (budgets, cost anomalies, namespaces about to be deleted) or
+                                digests (the scheduled cost summary).
+                              enum:
+                              - schedules
+                              - alerts
+                              - digests
+                              type: string
+                            type: array
+                            x-kubernetes-list-type: set
+                          secretRef:
+                            description: |-
+                              SecretRef names the Secret holding the webhook URL under WEBHOOK_URL: whoever has
+                              the URL can post to the channel, so it is kept out of the CR.
+                            type: string
+                        type: object
+                      teams:
+                        description: |-
+                          Teams posts through a Microsoft Teams Workflows webhook ("Post to a channel when a
+                          webhook request is received"), as an Adaptive Card.
+                        properties:
+                          enabled:
+                            description: Enabled turns the channel on.
+                            type: boolean
+                          events:
+                            description: Events limits what the channel receives;
+                              empty sends everything.
+                            items:
+                              description: |-
+                                NotificationEvent is a kind of message Cost Deck sends: schedules (a schedule finished
+                                scaling up or down), alerts (budgets, cost anomalies, namespaces about to be deleted) or
+                                digests (the scheduled cost summary).
+                              enum:
+                              - schedules
+                              - alerts
+                              - digests
+                              type: string
+                            type: array
+                            x-kubernetes-list-type: set
+                          secretRef:
+                            description: |-
+                              SecretRef names the Secret holding the webhook URL under WEBHOOK_URL: whoever has
+                              the URL can post to the channel, so it is kept out of the CR.
+                            type: string
+                        type: object
+                    type: object
                   victoriaMetrics:
                     description: VictoriaMetrics metrics integration
                     properties:
@@ -747,12 +869,13 @@ spec:
                 description: Reports schedules the cost digest.
                 properties:
                   digest:
-                    description: Digest posts a cost summary to the Webex space on
-                      a schedule.
+                    description: Digest posts a cost summary to the notification channels
+                      on a schedule.
                     properties:
                       enabled:
-                        description: Enabled turns the scheduled digest on. It needs
-                          Webex with a space ID.
+                        description: |-
+                          Enabled turns the scheduled digest on. It needs a notification channel: Webex
+                          with a space ID, Slack, Teams or email.
                         type: boolean
                       frequency:
                         description: |-

@@ -256,6 +256,8 @@ export interface ReportsIndex {
   reports: ReportEntry[]
   schedule: DigestSchedule
   webexReady: boolean
+  // channels take digests: Webex, Slack, Teams, email.
+  channels?: string[]
   lastSent?: string
   nextDue?: string
 }
@@ -414,6 +416,8 @@ export interface BudgetsResponse {
   anomalies: AnomalySettings
   events: AlertEvent[]
   webexReady: boolean
+  // channels take alerts: Webex, Slack, Teams, email.
+  channels?: string[]
   scopes: { namespaces: string[]; teams: string[] }
 }
 
