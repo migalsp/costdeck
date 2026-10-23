@@ -113,6 +113,13 @@ type ScalingGroupSpec struct {
 	// schedules that depend on it, a group in dry run counts as up.
 	// +optional
 	DryRun bool `json:"dryRun,omitempty"`
+
+	// PauseGitOps pauses the GitOps tools that would bring the workloads back while the
+	// schedule keeps them down: Flux Kustomizations and HelmReleases are suspended and Argo CD
+	// Applications lose self-heal, and they are resumed once everything is up again. Only
+	// what CostDeck paused itself is resumed. Needs gitops.pause in the Helm chart.
+	// +optional
+	PauseGitOps bool `json:"pauseGitOps,omitempty"`
 }
 
 // Activation modes for ScalingGroupSpec.Activation.

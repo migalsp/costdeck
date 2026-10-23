@@ -96,6 +96,11 @@
     "podLabels": { "type": "object" },
     "podSecurityContext": { "type": "object" },
     "securityContext": { "type": "object" },
+    "gitops": {
+      "type": "object",
+      "description": "Pause Flux and Argo CD for schedules with spec.pauseGitOps (needs cluster-wide read and patch on their objects).",
+      "properties": { "pause": { "type": "boolean" } }
+    },
     "podDisruptionBudget": {
       "type": "object",
       "properties": {

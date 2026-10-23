@@ -93,6 +93,13 @@ securityContext:
     drop:
       - ALL
 
+# GitOps: schedules with spec.pauseGitOps suspend the Flux Kustomizations and HelmReleases
+# and turn off self-heal of the Argo CD Applications that manage their workloads while they
+# are down. That needs permission to read and patch those objects cluster-wide, which this
+# grants. Off by default; without it CostDeck still names the GitOps tools it finds.
+gitops:
+  pause: false
+
 # Created automatically when replicaCount > 1 (a PDB on a single replica would block node
 # drains); set enabled to force it.
 podDisruptionBudget:

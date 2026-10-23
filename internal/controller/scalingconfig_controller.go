@@ -105,11 +105,18 @@ func (r *ScalingConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	previousPhase := config.Status.Phase
 	timeoutPassed := r.updateStatusPhase(ctx, config, targetActive)
 
-	// 3. Execute Scaling if needed
+	// 3. Execute Scaling if needed; GitOps is paused first, so it cannot race the scale-down.
+	exclusionsOf := func(string) []string { return config.Spec.Exclusions }
+	namespaces := []string{config.Spec.TargetNamespace}
+	reconcileGitOps(ctx, r.Engine, &config.Status.Conditions, config.Generation, namespaces, exclusionsOf, config.Spec.PauseGitOps, targetActive)
 	newReplicas, ready, err := r.Engine.ScaleTarget(ctx, config.Spec.TargetNamespace, targetActive, config.Spec.Sequence, config.Spec.Exclusions, config.Status.OriginalReplicas, timeoutPassed)
 	if err != nil {
 		l.Error(err, "failed to execute scaling")
 		return ctrl.Result{RequeueAfter: time.Minute}, err
+	}
+
+	if targetActive && ready {
+		resumeGitOps(ctx, r.Engine, namespaces, exclusionsOf)
 	}
 
 	// 4. Update Status

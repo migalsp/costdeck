@@ -1992,6 +1992,12 @@ components:
               description: >-
                 Work out what the schedule would do and report it (phase DryRun and the DryRun
                 condition) without scaling anything.
+            pauseGitOps:
+              type: boolean
+              description: >-
+                Suspend the Flux Kustomizations and HelmReleases and turn off self-heal of the Argo
+                CD Applications that manage the workloads while they are down, and resume them
+                afterwards. Needs gitops.pause in the Helm chart.
             activation:
               type: string
               enum: [Schedule, OnDemand]
@@ -2075,6 +2081,12 @@ components:
               description: >-
                 Work out what the schedule would do and report it (phase DryRun and the DryRun
                 condition) without scaling anything.
+            pauseGitOps:
+              type: boolean
+              description: >-
+                Suspend the Flux Kustomizations and HelmReleases and turn off self-heal of the Argo
+                CD Applications that manage the workloads while they are down, and resume them
+                afterwards. Needs gitops.pause in the Helm chart.
             exclusions:
               type: array
               items: { type: string }

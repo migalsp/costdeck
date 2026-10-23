@@ -98,7 +98,7 @@ func (e *Engine) setCronJobsSuspended(ctx context.Context, ns string, exclusions
 			cj.Spec.Suspend = new(false)
 			delete(cj.Annotations, AnnotationSuspended)
 		}
-		if err := e.Client.Patch(ctx, cj, patch); err != nil {
+		if err := e.Client.Patch(ctx, cj, patch, client.FieldOwner(FieldManager)); err != nil {
 			return fmt.Errorf("update CronJob %s/%s: %w", ns, cj.Name, err)
 		}
 		log.FromContext(ctx).Info("Updated CronJob", "namespace", ns, "name", cj.Name, "suspended", suspend)
@@ -141,7 +141,7 @@ func (e *Engine) setScaledObjectsPaused(ctx context.Context, ns string, exclusio
 			delete(annotations, AnnotationKEDAPaused)
 		}
 		so.SetAnnotations(annotations)
-		if err := e.Client.Patch(ctx, so, patch); err != nil {
+		if err := e.Client.Patch(ctx, so, patch, client.FieldOwner(FieldManager)); err != nil {
 			return fmt.Errorf("update ScaledObject %s/%s: %w", ns, so.GetName(), err)
 		}
 		log.FromContext(ctx).Info("Updated ScaledObject", "namespace", ns, "name", so.GetName(), "paused", pause)

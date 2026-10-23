@@ -38,6 +38,11 @@ const (
 	PhaseDryRun = "DryRun"
 )
 
+// FieldManager is the field manager of every change CostDeck makes to a workload, a
+// CronJob, a ScaledObject or a GitOps object, so a GitOps tool can be told to leave those
+// fields alone (Argo CD: ignoreDifferences managedFieldsManagers: [costdeck]).
+const FieldManager = "costdeck"
+
 func (e *Engine) listScalableResources(ctx context.Context, ns string, exclusions []string) ([]client.Object, error) {
 	deployments := &appsv1.DeploymentList{}
 	if err := e.Client.List(ctx, deployments, client.InNamespace(ns)); err != nil {
@@ -307,7 +312,7 @@ func (e *Engine) setReplicas(ctx context.Context, obj client.Object, count, reco
 		delete(annotations, OriginalReplicasAnnotation)
 	}
 	obj.SetAnnotations(annotations)
-	return e.Client.Patch(ctx, obj, patch)
+	return e.Client.Patch(ctx, obj, patch, client.FieldOwner(FieldManager))
 }
 
 // hasRemainingPods reports whether any pod selected by the workload is still running or

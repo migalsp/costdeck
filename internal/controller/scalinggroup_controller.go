@@ -116,6 +116,7 @@ func (r *ScalingGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request
 
 	// 3. Define stages from group.Spec.Sequence, skipping namespaces an older group owns.
 	stages := r.getScalingStages(group, targetActive, plan.ConflictingNamespaces)
+	namespaces, exclusionsOf := r.gitOpsBeforeStages(ctx, group, stages, targetActive)
 
 	// A transition starts whenever the group is not already moving towards the target
 	// state. It begins at the first stage; while it runs, status.currentStage and
@@ -185,6 +186,9 @@ func (r *ScalingGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		if !passed {
 			currentStage, stageStarted = i+1, time.Now()
 		}
+	}
+	if targetActive && allReady {
+		resumeGitOps(ctx, r.Engine, namespaces, exclusionsOf)
 	}
 	// A settled group keeps no stage state, so its status stays unchanged between reconciles.
 	group.Status.CurrentStage, group.Status.SkippedNamespaces = 0, skippedNamespaces
@@ -427,6 +431,24 @@ func (r *ScalingGroupReconciler) workloadRules(ctx context.Context, group *finop
 		}
 	}
 	return nil, nil
+}
+
+// gitOpsBeforeStages pauses GitOps, when the group asks for it, before anything scales down,
+// so it cannot race the scale-down, and reports it in the GitOps condition. It returns the
+// namespaces the stages scale and how to find their workload rules, to resume GitOps once
+// everything is up.
+func (r *ScalingGroupReconciler) gitOpsBeforeStages(ctx context.Context, group *finopsv1.ScalingGroup, stages [][]string, targetActive bool) ([]string, func(string) []string) {
+	var namespaces []string
+	for _, stage := range stages {
+		for _, ns := range stage {
+			if !strings.HasPrefix(ns, "ext:") {
+				namespaces = append(namespaces, ns)
+			}
+		}
+	}
+	exclusionsOf := func(ns string) []string { e, _ := r.workloadRules(ctx, group, ns); return e }
+	reconcileGitOps(ctx, r.Engine, &group.Status.Conditions, group.Generation, namespaces, exclusionsOf, group.Spec.PauseGitOps, targetActive)
+	return namespaces, exclusionsOf
 }
 
 // dryRun reports what the group would do now, without scaling or notifying anything.

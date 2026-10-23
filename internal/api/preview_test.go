@@ -13,6 +13,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
 	"github.com/migalsp/costdeck-operator/internal/pricing"
@@ -176,5 +177,38 @@ func TestPreviewTool(t *testing.T) {
 	}
 	if _, err := server.toolPreview(ctx, "group", "missing"); err == nil {
 		t.Error("previewing a missing group did not fail")
+	}
+}
+
+func TestPreviewWarnsAboutGitOps(t *testing.T) {
+	t.Setenv("POD_NAMESPACE", "costdeck")
+	server := buildMockServerWithK8s()
+	seedCalendars(t, server)
+	ctx := context.Background()
+	if err := server.Client.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "shop-dev"}}); err != nil {
+		t.Fatal(err)
+	}
+	seedWorkload(t, server, "shop-dev", "api", 1, "100m", "128Mi")
+	d := &appsv1.Deployment{}
+	_ = server.Client.Get(ctx, client.ObjectKey{Namespace: "shop-dev", Name: "api"}, d)
+	d.Annotations = map[string]string{"argocd.argoproj.io/tracking-id": "shop:apps/Deployment:shop-dev/api"}
+	if err := server.Client.Update(ctx, d); err != nil {
+		t.Fatal(err)
+	}
+	preview := func(pause bool) previewResponse {
+		body := `{"kind":"group","spec":{"namespaces":["shop-dev"],"pauseGitOps":` + map[bool]string{true: "true", false: "false"}[pause] + `}}`
+		var got previewResponse
+		_ = json.Unmarshal(send(t, server, "POST", "/api/scaling/preview", body).Body.Bytes(), &got)
+		return got
+	}
+	got := preview(false)
+	if w := got.Namespaces[0].Workloads[0].GitOps; w == nil || w.Name != "shop" {
+		t.Errorf("workload owner = %+v", w)
+	}
+	if !strings.Contains(strings.Join(got.Warnings, " "), "managed by Argo CD application shop") {
+		t.Errorf("warnings = %q, want the Argo CD application named", got.Warnings)
+	}
+	if strings.Contains(strings.Join(preview(true).Warnings, " "), "managed by") {
+		t.Error("a schedule that pauses GitOps still warns about it")
 	}
 }

@@ -73,6 +73,7 @@ export default function ScheduleWizard(props: Props) {
   const [giveUpMinutes, setGiveUpMinutes] = useState(existingGroup?.spec.featureFlags?.timeoutMinutes || 10)
   const [exceptions, setExceptions] = useState<ScheduleException[]>(existing?.spec.exceptions || [])
   const [dryRun, setDryRun] = useState(!!existing?.spec.dryRun)
+  const [pauseGitOps, setPauseGitOps] = useState(!!existing?.spec.pauseGitOps)
   const [calendarNames, setCalendarNames] = useState<string[]>(existing?.spec.calendars || [])
   const [available, setAvailable] = useState<HolidayCalendar[] | undefined>(undefined)
   const [saving, setSaving] = useState(false)
@@ -132,6 +133,7 @@ export default function ScheduleWizard(props: Props) {
         exceptions: exceptions.length ? exceptions : undefined,
         calendars: calendarNames.length ? calendarNames : undefined,
         dryRun: dryRun || undefined,
+        pauseGitOps: pauseGitOps || undefined,
       }
     } else {
       spec = {
@@ -139,6 +141,7 @@ export default function ScheduleWizard(props: Props) {
         exceptions: exceptions.length ? exceptions : undefined,
         calendars: calendarNames.length ? calendarNames : undefined,
         dryRun: dryRun || undefined,
+        pauseGitOps: pauseGitOps || undefined,
       }
     }
     // A new schedule is meant to take effect, so it ends a manual override.
@@ -241,6 +244,10 @@ export default function ScheduleWizard(props: Props) {
         <label className="flex items-start gap-2 text-sm text-slate-600">
           <input type="checkbox" checked={dryRun} onChange={e => setDryRun(e.target.checked)} className="mt-0.5 accent-brand-600" />
           <span><b className="text-slate-800">Dry run</b>: work out what the schedule would do and show it on its card, but scale nothing. Untick it to let the schedule act.</span>
+        </label>
+        <label className="flex items-start gap-2 text-sm text-slate-600 mt-2">
+          <input type="checkbox" checked={pauseGitOps} onChange={e => setPauseGitOps(e.target.checked)} className="mt-0.5 accent-brand-600" />
+          <span><b className="text-slate-800">Pause GitOps while down</b>: suspend the Flux Kustomizations and HelmReleases and turn off self-heal of the Argo CD applications that manage these workloads, so they do not bring them back; they are resumed once everything is up. Needs <code>gitops.pause</code> in the Helm chart.</span>
         </label>
       </section>
 

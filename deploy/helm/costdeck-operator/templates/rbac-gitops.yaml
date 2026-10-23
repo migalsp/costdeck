@@ -1,0 +1,35 @@
+{{- if .Values.gitops.pause }}
+# Lets schedules with spec.pauseGitOps suspend Flux Kustomizations and HelmReleases and turn
+# off self-heal of Argo CD Applications while their workloads are down (gitops.pause).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "costdeck-operator.fullname" . }}-gitops
+  labels:
+    {{- include "costdeck-operator.labels" . | nindent 4 }}
+rules:
+- apiGroups: ["kustomize.toolkit.fluxcd.io"]
+  resources: ["kustomizations"]
+  verbs: ["get", "list", "patch"]
+- apiGroups: ["helm.toolkit.fluxcd.io"]
+  resources: ["helmreleases"]
+  verbs: ["get", "list", "patch"]
+- apiGroups: ["argoproj.io"]
+  resources: ["applications"]
+  verbs: ["get", "list", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "costdeck-operator.fullname" . }}-gitops
+  labels:
+    {{- include "costdeck-operator.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "costdeck-operator.fullname" . }}-gitops
+subjects:
+- kind: ServiceAccount
+  name: {{ include "costdeck-operator.serviceAccountName" . }}
+  namespace: {{ .Release.Namespace }}
+{{- end }}

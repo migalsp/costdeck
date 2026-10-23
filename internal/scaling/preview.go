@@ -22,6 +22,8 @@ type WorkloadPreview struct {
 	// CPU and Memory are the requests of one replica.
 	CPU    string `json:"cpu"`
 	Memory string `json:"memory"`
+	// GitOps is the GitOps object managing the workload, if any.
+	GitOps *GitOpsOwner `json:"gitOps,omitempty"`
 }
 
 // NamespacePreview is what a schedule would scale in one namespace.
@@ -53,7 +55,8 @@ func (e *Engine) PreviewNamespace(ctx context.Context, ns string, exclusions []s
 		// The count a scale-up gives it, so a workload that is down shows what it returns to.
 		replicas := targetReplicas(true, getReplicas(obj), recordedReplicas(obj, nil))
 		cpu, mem := PodRequests(tmpl.Spec)
-		w := WorkloadPreview{Kind: workloadKind(obj), Name: obj.GetName(), Replicas: replicas, Excluded: isExcluded(obj.GetName(), exclusions), CPU: cpu.String(), Memory: mem.String()}
+		w := WorkloadPreview{Kind: workloadKind(obj), Name: obj.GetName(), Replicas: replicas, Excluded: isExcluded(obj.GetName(), exclusions),
+			CPU: cpu.String(), Memory: mem.String(), GitOps: GitOpsOwnerOf(obj)}
 		out.Workloads = append(out.Workloads, w)
 		if !w.Excluded {
 			cpu.Mul(int64(replicas))

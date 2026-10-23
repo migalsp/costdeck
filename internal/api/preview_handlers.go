@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -42,6 +43,7 @@ type previewRequest struct {
 		Activation        string                       `json:"activation,omitempty"`
 		Exclusions        []string                     `json:"exclusions,omitempty"`
 		ExternalTargets   []finopsv1.ExternalTarget    `json:"externalTargets,omitempty"`
+		PauseGitOps       bool                         `json:"pauseGitOps,omitempty"`
 	} `json:"spec"`
 }
 
@@ -193,6 +195,10 @@ func (s *Server) previewSchedule(ctx context.Context, req previewRequest, now ti
 			return nil, err
 		}
 		np.NamespacePreview = pv
+		if owners := gitOpsOwners(pv); len(owners) > 0 && !sp.PauseGitOps {
+			resp.Warnings = append(resp.Warnings, fmt.Sprintf("Workloads in %s are managed by %s: unless it ignores the replicas, its sync brings them back. Pausing GitOps while down prevents that.",
+				np.Name, strings.Join(owners, ", ")))
+		}
 		if np.OwnedBy == "" {
 			freed.CPU.Add(pv.CPU)
 			freed.Memory.Add(pv.Memory)
@@ -203,6 +209,17 @@ func (s *Server) previewSchedule(ctx context.Context, req previewRequest, now ti
 	resp.Savings.Monthly = resp.Savings.Hourly * hoursPerMonth * (1 - resp.UpShare)
 	resp.Savings.Currency, resp.Savings.Basis = rates.Currency, rates.Basis
 	return resp, nil
+}
+
+// gitOpsOwners names the GitOps objects managing the workloads a preview would stop.
+func gitOpsOwners(pv scaling.NamespacePreview) []string {
+	var out []string
+	for _, w := range pv.Workloads {
+		if w.GitOps != nil && !w.Excluded && !slices.Contains(out, w.GitOps.String()) {
+			out = append(out, w.GitOps.String())
+		}
+	}
+	return out
 }
 
 // workloadRules returns the exclusions a namespace's own ScalingConfig sets, which a group
@@ -233,6 +250,7 @@ func (s *Server) toolPreview(ctx context.Context, target, name string) (string, 
 		req.Kind, req.Name = targetGroup, g.Name
 		req.Spec.Namespaces, req.Spec.NamespaceSelector, req.Spec.Activation = g.Spec.Namespaces, g.Spec.NamespaceSelector, g.Spec.Activation
 		req.Spec.Schedules, req.Spec.Exceptions, req.Spec.Calendars, req.Spec.ExternalTargets = g.Spec.Schedules, g.Spec.Exceptions, g.Spec.Calendars, g.Spec.ExternalTargets
+		req.Spec.PauseGitOps = g.Spec.PauseGitOps
 	case targetNamespace:
 		c, err := s.configForNamespace(ctx, name)
 		if err != nil {
@@ -241,6 +259,7 @@ func (s *Server) toolPreview(ctx context.Context, target, name string) (string, 
 		req.Kind, req.Name = kindConfig, c.Name
 		req.Spec.TargetNamespace, req.Spec.Exclusions = c.Spec.TargetNamespace, c.Spec.Exclusions
 		req.Spec.Schedules, req.Spec.Exceptions, req.Spec.Calendars = c.Spec.Schedules, c.Spec.Exceptions, c.Spec.Calendars
+		req.Spec.PauseGitOps = c.Spec.PauseGitOps
 	default:
 		return "", fmt.Errorf("target must be group or namespace")
 	}

@@ -77,7 +77,7 @@ export default function SchedulePreview({ kind, name, spec }: { kind: 'group' | 
                 {ns.missing ? <span className="text-xs text-rose-600">does not exist</span>
                   : ns.ownedBy && kind === 'group' ? <span className="text-xs text-amber-700">scaled by {ns.ownedBy}</span>
                   : <span className="text-xs text-slate-500">
-                      {w.filter(x => !x.excluded).map(x => `${x.name} ×${x.replicas}`).join(', ') || 'no workloads'}
+                      {w.filter(x => !x.excluded).map(x => `${x.name} ×${x.replicas}${x.gitOps ? ` (${x.gitOps.kind === 'Application' ? 'Argo CD' : 'Flux'} ${x.gitOps.name})` : ''}`).join(', ') || 'no workloads'}
                       {w.some(x => x.excluded) && ` · kept running: ${w.filter(x => x.excluded).map(x => x.name).join(', ')}`}
                       {ns.cronJobs > 0 && ` · ${ns.cronJobs} CronJob${ns.cronJobs === 1 ? '' : 's'} paused`}
                     </span>}

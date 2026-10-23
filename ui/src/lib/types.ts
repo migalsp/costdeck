@@ -111,6 +111,8 @@ export interface ScalingGroupSpec {
   activation?: 'Schedule' | 'OnDemand'
   // dryRun works out what the schedule would do without scaling anything.
   dryRun?: boolean
+  // pauseGitOps pauses Flux and Argo CD while the schedule keeps the workloads down.
+  pauseGitOps?: boolean
 }
 
 // Condition is a metav1.Condition as the API returns it.
@@ -153,6 +155,7 @@ export interface ScalingConfigSpec {
   sequence?: string[]
   exclusions?: string[]
   dryRun?: boolean
+  pauseGitOps?: boolean
 }
 
 export interface ScalingConfig {
@@ -236,7 +239,7 @@ export interface SchedulePreview {
     source: 'listed' | 'selected'
     ownedBy?: string
     missing?: boolean
-    workloads: { kind: string; name: string; replicas: number; excluded?: boolean; cpu: string; memory: string }[] | null
+    workloads: { kind: string; name: string; replicas: number; excluded?: boolean; cpu: string; memory: string; gitOps?: { kind: string; name: string; namespace?: string } }[] | null
     cronJobs: number
   }[]
   cloudTargets: ExternalTarget[]

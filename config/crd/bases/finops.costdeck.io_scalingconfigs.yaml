@@ -145,6 +145,13 @@ spec:
                   type: string
                 type: array
                 x-kubernetes-list-type: atomic
+              pauseGitOps:
+                description: |-
+                  PauseGitOps pauses the GitOps tools that would bring the workloads back while the
+                  schedule keeps them down: Flux Kustomizations and HelmReleases are suspended and Argo CD
+                  Applications lose self-heal, and they are resumed once everything is up again. Only
+                  what CostDeck paused itself is resumed. Needs gitops.pause in the Helm chart.
+                type: boolean
               schedules:
                 description: Schedules define periodic scaling events
                 items:

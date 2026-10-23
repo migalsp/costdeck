@@ -44,6 +44,7 @@ export default function ScheduleDetails(p: Props) {
   const name = p.target.kind === 'group' ? obj.metadata.name : p.target.config.spec.targetNamespace
   const [confirmDelete, setConfirmDelete] = useState(false)
 
+  const gitOps = status?.conditions?.find(c => c.type === 'GitOps')
   const line = statusLine({ phase: status?.phase, status, dependsOn: spec.dependsOn, activeUntil: spec.activeUntil, generation: obj.metadata.generation })
   const manual = status?.mode === 'ManualUp' || status?.mode === 'ManualDown' || (spec.active !== undefined && spec.active !== null)
   const up = status?.desiredState ? status.desiredState === 'Up' : status?.phase === 'ScaledUp'
@@ -94,6 +95,12 @@ export default function ScheduleDetails(p: Props) {
           {saving > 0 && (
             <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
               Saving about <b>{formatMoney(saving, status?.currency)}/h</b> right now while workloads are scaled down.
+            </div>
+          )}
+
+          {gitOps && (
+            <div className={`rounded-xl border px-4 py-3 text-sm ${gitOps.reason === 'Paused' ? 'border-slate-200 bg-slate-50 text-slate-600' : 'border-amber-200 bg-amber-50 text-amber-800'}`} data-testid="gitops-note">
+              <b>GitOps:</b> {gitOps.message}
             </div>
           )}
 
