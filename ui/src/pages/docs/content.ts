@@ -554,7 +554,7 @@ spec:
         title: 'Sleep when unused',
         blocks: [
           { p: '**Sleep when unused for** in the schedule editor scales the namespaces down inside the schedule\'s hours once no request reached them for that long, and keeps them down until the schedule next starts them (at most a week) or someone starts them by hand. The card then says **Asleep, unused**.' },
-          { p: 'Requests are counted in VictoriaMetrics from Envoy Gateway, Istio or ingress-nginx. Namespaces without those metrics are never treated as unused; the schedule\'s details say so. Manual starts, exceptions and groups that depend on this one keep it up. With the sleep page on, whoever opens the application can wake it.' },
+          { p: 'Use is measured in VictoriaMetrics: requests from Envoy Gateway, Istio or ingress-nginx, and GPUs busier than 5% (DCGM), so a notebook or a model server nobody calls goes to sleep while a training job does not. Namespaces without those metrics are never treated as unused; the schedule\'s details say so. Manual starts, exceptions and groups that depend on this one keep it up. With the sleep page on, whoever opens the application can wake it.' },
         ],
       },
       {

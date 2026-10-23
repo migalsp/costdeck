@@ -50,22 +50,22 @@ func TestIdleFor(t *testing.T) {
 	now := time.Date(2026, 10, 22, 14, 0, 0, 0, time.UTC)
 	h2 := 2 * time.Hour
 	cases := []struct {
-		name     string
-		period   time.Duration
-		upSince  time.Time
-		requests float64
-		known    bool
-		want     bool
+		name    string
+		period  time.Duration
+		upSince time.Time
+		used    bool
+		known   bool
+		want    bool
 	}{
-		{"unused for the whole period", h2, now.Add(-3 * time.Hour), 0, true, true},
-		{"one request", h2, now.Add(-3 * time.Hour), 1, true, false},
-		{"up for less than the period", h2, now.Add(-time.Hour), 0, true, false},
-		{"traffic unknown", h2, now.Add(-3 * time.Hour), 0, false, false},
-		{"switched off", 0, now.Add(-3 * time.Hour), 0, true, false},
-		{"never up", h2, time.Time{}, 0, true, false},
+		{"unused for the whole period", h2, now.Add(-3 * time.Hour), false, true, true},
+		{"used", h2, now.Add(-3 * time.Hour), true, true, false},
+		{"up for less than the period", h2, now.Add(-time.Hour), false, true, false},
+		{"use unknown", h2, now.Add(-3 * time.Hour), false, false, false},
+		{"switched off", 0, now.Add(-3 * time.Hour), false, true, false},
+		{"never up", h2, time.Time{}, false, true, false},
 	}
 	for _, c := range cases {
-		if got := IdleFor(c.period, c.upSince, now, c.requests, c.known); got != c.want {
+		if got := IdleFor(c.period, c.upSince, now, c.used, c.known); got != c.want {
 			t.Errorf("%s: %v", c.name, got)
 		}
 	}

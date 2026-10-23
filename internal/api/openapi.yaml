@@ -2204,9 +2204,10 @@ components:
               example: 1h
               description: >-
                 Scale the namespaces down inside the schedule's hours once no request reached them
-                for this long (a duration such as 30m or 2h), counted from Envoy Gateway, Istio or
-                ingress-nginx metrics in VictoriaMetrics. They stay down until the schedule next
-                starts them, at most a week, or a manual start.
+                and no GPU was busier than 5% for this long (a duration such as 30m or 2h),
+                counted from Envoy Gateway, Istio or ingress-nginx and DCGM metrics in
+                VictoriaMetrics. They stay down until the schedule next starts them, at most a
+                week, or a manual start.
             hibernate:
               type: array
               description: >-
@@ -2314,9 +2315,10 @@ components:
               example: 1h
               description: >-
                 Scale the namespaces down inside the schedule's hours once no request reached them
-                for this long (a duration such as 30m or 2h), counted from Envoy Gateway, Istio or
-                ingress-nginx metrics in VictoriaMetrics. They stay down until the schedule next
-                starts them, at most a week, or a manual start.
+                and no GPU was busier than 5% for this long (a duration such as 30m or 2h),
+                counted from Envoy Gateway, Istio or ingress-nginx and DCGM metrics in
+                VictoriaMetrics. They stay down until the schedule next starts them, at most a
+                week, or a manual start.
             hibernate:
               type: array
               description: >-

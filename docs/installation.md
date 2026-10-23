@@ -571,13 +571,17 @@ run.
 inside the schedule's hours once nobody has used them for that long. A test environment
 that is up from 8 to 18 but nobody touched after lunch stops paying for the afternoon.
 
-- **What counts as use.** Requests in VictoriaMetrics from the gateway or the mesh: Envoy
-  Gateway (`envoy_cluster_upstream_rq_total`, by the `httproute/<namespace>/…` cluster),
-  Istio (`istio_requests_total` from the callers' side) and ingress-nginx
-  (`nginx_ingress_controller_requests`). The namespaces must have been up for the whole
-  period. In a group, any of its namespaces having metrics is enough, and their requests
-  are added up. Namespaces without such metrics are never treated as unused (condition
-  `Idle`, reason `NoTrafficData`).
+- **What counts as use.** Two signals in VictoriaMetrics:
+  - requests from the gateway or the mesh: Envoy Gateway (`envoy_cluster_upstream_rq_total`,
+    by the `httproute/<namespace>/…` cluster), Istio (`istio_requests_total` from the
+    callers' side) and ingress-nginx (`nginx_ingress_controller_requests`);
+  - GPUs: any GPU of the namespace busier than 5% (`DCGM_FI_DEV_GPU_UTIL` from NVIDIA's
+    DCGM exporter). A notebook or a model server nobody calls keeps its GPUs under that.
+- **When it counts as unused.** The namespaces must have been up for the whole period, and
+  every signal that is known must say unused. A training job that sends no requests but
+  keeps a GPU busy stays up. In a group, the signals of its namespaces are combined.
+  Namespaces with neither signal are never treated as unused (condition `Idle`, reason
+  `NoTrafficData`).
 - **How long it sleeps.** Until the schedule next starts the namespaces, at most a week,
   with mode `Idle` and `status.idleUntil`. A manual start wakes them at once. Combined with
   the sleep page, whoever opens the application can wake it. Once the manual start is

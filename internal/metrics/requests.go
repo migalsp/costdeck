@@ -66,3 +66,52 @@ func (p *Provider) NamespaceRequests(ctx context.Context, ns string, window time
 	}
 	return vm.NamespaceRequests(ctx, ns, window)
 }
+
+// NamespaceGPUPeak is the highest utilization, in percent, that any GPU of a namespace
+// reached over the window, from DCGM. known is false when DCGM reports no GPU for it. The
+// namespace label follows GPUUsage: exported_namespace when a scrape renamed it.
+func (c *VMClient) NamespaceGPUPeak(ctx context.Context, ns string, window time.Duration) (peak float64, known bool, err error) {
+	sel := ""
+	if c.labelSelector != "" {
+		sel = "," + c.labelSelector
+	}
+	labels := []string{"namespace", "pod_namespace"}
+	exported, err := c.scalar(ctx, `count(DCGM_FI_DEV_GPU_UTIL{exported_namespace!=""`+sel+`})`)
+	if err != nil {
+		return 0, false, err
+	}
+	if exported > 0 {
+		labels = []string{"exported_namespace", "pod_namespace"}
+	}
+	rng := promDuration(window)
+	for _, label := range labels {
+		selector := fmt.Sprintf(`DCGM_FI_DEV_GPU_UTIL{%s=%q%s}`, label, ns, sel)
+		n, err := c.scalar(ctx, fmt.Sprintf("count(last_over_time(%s[%s]))", selector, rng))
+		if err != nil {
+			return 0, false, err
+		}
+		if n == 0 {
+			continue
+		}
+		known = true
+		v, err := c.scalar(ctx, fmt.Sprintf("max(max_over_time(%s[%s]))", selector, rng))
+		if err != nil {
+			return 0, false, err
+		}
+		peak = max(peak, v)
+	}
+	return peak, known, nil
+}
+
+// NamespaceGPUPeak is VMClient.NamespaceGPUPeak through the live settings; ErrNoHistory
+// when VictoriaMetrics is not enabled.
+func (p *Provider) NamespaceGPUPeak(ctx context.Context, ns string, window time.Duration) (float64, bool, error) {
+	vm, _, err := p.resolve(ctx)
+	if vm == nil {
+		if err == nil {
+			err = ErrNoHistory
+		}
+		return 0, false, err
+	}
+	return vm.NamespaceGPUPeak(ctx, ns, window)
+}

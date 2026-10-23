@@ -137,10 +137,11 @@ type ScalingGroupSpec struct {
 	SleepPage bool `json:"sleepPage,omitempty"`
 
 	// IdleAfter puts the namespaces to sleep inside the schedule's hours once nobody has
-	// used them for this long: no requests through Envoy Gateway, Istio or ingress-nginx in
-	// VictoriaMetrics, counted once they have been up that long. They stay down until the
-	// schedule next starts them, at most a week, or until someone starts them by hand.
-	// Namespaces without such metrics are never treated as unused.
+	// used them for this long: no requests through Envoy Gateway, Istio or ingress-nginx and
+	// no GPU busier than 5% (DCGM) in VictoriaMetrics, counted once they have been up that
+	// long. They stay down until the schedule next starts them, at most a week, or until
+	// someone starts them by hand. Namespaces without such metrics are never treated as
+	// unused.
 	// +optional
 	IdleAfter *metav1.Duration `json:"idleAfter,omitempty"`
 }

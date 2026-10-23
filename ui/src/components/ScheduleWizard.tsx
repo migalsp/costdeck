@@ -275,7 +275,7 @@ export default function ScheduleWizard(props: Props) {
             <option value="">never</option>
             {(IDLE_CHOICES.includes(idleAfter) || !idleAfter ? IDLE_CHOICES : [idleAfter, ...IDLE_CHOICES]).map(d => <option key={d} value={d}>{d}</option>)}
           </select>
-          <span className="basis-full">Within the schedule's hours, scale the namespaces down once no request reached them for that long, until the schedule next starts them or someone does. Counts Envoy Gateway, Istio or ingress-nginx requests in VictoriaMetrics; without them nothing is treated as unused.</span>
+          <span className="basis-full">Within the schedule's hours, scale the namespaces down once no request reached them for that long, until the schedule next starts them or someone does. Counts Envoy Gateway, Istio or ingress-nginx requests and GPU use (DCGM) in VictoriaMetrics; without them nothing is treated as unused.</span>
         </label>
       </section>
 

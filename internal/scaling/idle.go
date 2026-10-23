@@ -7,8 +7,8 @@ import (
 )
 
 // Idle auto-sleep takes a namespace down inside its schedule's hours once nobody has used
-// it for a while: no requests through gateways or the mesh for the idle period, counted
-// only after it has been up that long. It stays down until the schedule's next change,
+// it for a while: no requests through gateways or the mesh and no busy GPU for the idle
+// period, counted only after it has been up that long. It stays down until the schedule's next change,
 // unless someone wakes it with a manual override.
 
 // ModeIdle is a schedule's hours with the namespaces put to sleep for being unused.
@@ -39,9 +39,13 @@ func IdleUntil(st *finopsv1.ScheduleStatus) *time.Time {
 	return &t
 }
 
+// GPUIdlePercent is the utilization below which a GPU counts as idle: a model kept loaded
+// for nobody stays under it, any real work goes over.
+const GPUIdlePercent = 5.0
+
 // IdleFor reports whether a namespace up since upSince has been unused long enough to
-// sleep: up for the whole period with no requests in it. Unknown traffic never counts as
-// idle.
-func IdleFor(period time.Duration, upSince, now time.Time, requests float64, known bool) bool {
-	return period > 0 && known && requests == 0 && !upSince.IsZero() && now.Sub(upSince) >= period
+// sleep: up for the whole period, with something known about its use and nothing used.
+// A namespace nothing is known about never counts as idle.
+func IdleFor(period time.Duration, upSince, now time.Time, used, known bool) bool {
+	return period > 0 && known && !used && !upSince.IsZero() && now.Sub(upSince) >= period
 }

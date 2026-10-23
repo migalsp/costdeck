@@ -19,10 +19,12 @@ import (
 	"github.com/migalsp/costdeck-operator/internal/scaling"
 )
 
-// fakeRequests answers every namespace with the same traffic.
+// fakeRequests answers every namespace with the same traffic and GPU use.
 type fakeRequests struct {
 	requests float64
 	known    bool
+	gpuPeak  float64
+	gpuKnown bool
 	err      error
 	asked    []string
 }
@@ -30,6 +32,10 @@ type fakeRequests struct {
 func (f *fakeRequests) NamespaceRequests(_ context.Context, ns string, _ time.Duration) (float64, bool, error) {
 	f.asked = append(f.asked, ns)
 	return f.requests, f.known, f.err
+}
+
+func (f *fakeRequests) NamespaceGPUPeak(_ context.Context, _ string, _ time.Duration) (float64, bool, error) {
+	return f.gpuPeak, f.gpuKnown, f.err
 }
 
 var _ = Describe("Idle auto-sleep", func() {
@@ -137,6 +143,23 @@ var _ = Describe("Idle auto-sleep", func() {
 			Expect(g.Status.IdleUntil).To(BeNil(), c.reason)
 			Expect(idle(g.Status.Conditions).Reason).To(Equal(c.reason))
 		}
+	})
+
+	It("puts a namespace whose GPUs sit idle to sleep, and keeps one with busy GPUs up", func() {
+		newNamespace("idle-train")
+		key := newGroup("idle-train", finopsv1.ScalingGroupSpec{Category: "Test", Namespaces: []string{"idle-train"}, Schedules: open, IdleAfter: minute})
+		g := reconcileGroup(key, nil)
+		upFor(g, 2*time.Minute)
+
+		By("staying up while a GPU works, even without requests")
+		g = reconcileGroup(key, &fakeRequests{known: true, gpuPeak: 40, gpuKnown: true})
+		Expect(g.Status.Mode).To(Equal(scaling.ModeSchedule))
+		Expect(idle(g.Status.Conditions).Message).To(Equal("Their GPUs were busy in the last 1m0s."))
+
+		By("sleeping once its GPUs stay idle, with no request metrics at all")
+		g = reconcileGroup(key, &fakeRequests{gpuPeak: 2, gpuKnown: true})
+		Expect(g.Status.Mode).To(Equal(scaling.ModeIdle))
+		Expect(idle(g.Status.Conditions).Message).To(HavePrefix("The GPUs of idle-train stayed idle for 1m0s"))
 	})
 
 	It("keeps a group up while groups that depend on it need it", func() {
