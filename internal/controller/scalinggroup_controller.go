@@ -93,6 +93,7 @@ func (r *ScalingGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	group.Status.RequiredBy = plan.RequiredBy
 	group.Status.ConflictingNamespaces = plan.ConflictingNamespaces
 	setDependencyConditions(group, plan)
+	setExceptionsCondition(&group.Status.Conditions, plan.ExceptionProblems, group.Generation)
 
 	// 2.5 A group that wants to come up holds back until its dependencies are ScaledUp.
 	// One that is already up keeps running even if a dependency briefly degrades.
@@ -243,7 +244,7 @@ func (r *ScalingGroupReconciler) planFor(ctx context.Context, group *finopsv1.Sc
 	if !found {
 		all.Items = append(all.Items, *group.DeepCopy())
 	}
-	return r.Engine.PlanGroups(time.Now(), all.Items)[group.Name], nil
+	return r.Engine.PlanGroups(time.Now(), all.Items, calendars(ctx, r.Client))[group.Name], nil
 }
 
 // waitForDependencies records that the group is held back and checks again shortly.
@@ -504,8 +505,25 @@ func (r *ScalingGroupReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		// A group's desired state depends on its dependents' and dependencies' state, and
 		// namespace ownership on the other groups listing the same namespace.
 		Watches(&finopsv1.ScalingGroup{}, handler.EnqueueRequestsFromMapFunc(r.relatedGroups)).
+		// A changed holiday calendar applies at once to the groups that use one.
+		Watches(&finopsv1.CostDeckConfig{}, handler.EnqueueRequestsFromMapFunc(r.groupsWithCalendars)).
 		Named("scalinggroup").
 		Complete(r)
+}
+
+// groupsWithCalendars maps a CostDeckConfig event to the groups that name a calendar.
+func (r *ScalingGroupReconciler) groupsWithCalendars(ctx context.Context, obj client.Object) []reconcile.Request {
+	var groups finopsv1.ScalingGroupList
+	if err := r.List(ctx, &groups, client.InNamespace(obj.GetNamespace())); err != nil {
+		return nil
+	}
+	var out []reconcile.Request
+	for _, g := range groups.Items {
+		if len(g.Spec.Calendars) > 0 {
+			out = append(out, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&g)})
+		}
+	}
+	return out
 }
 
 // relatedGroups maps a ScalingGroup event to the groups whose plan it can change: its

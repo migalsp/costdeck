@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Activity, ArrowRight, LayoutList, ListOrdered, Link2, Pencil, Play, RotateCcw, PowerOff, Trash2 } from 'lucide-react'
 import { formatMoney } from '../lib/format'
 import { describeSpec, statusLine } from '../lib/schedule'
+import { describeException, isPast } from '../lib/exceptions'
 import { targetLabel } from '../lib/cloud'
 import type { ScalingConfig, ScalingGroup, ScalingSpec } from '../lib/types'
 import ScheduleActivity from './ScheduleActivity'
@@ -99,6 +100,23 @@ export default function ScheduleDetails(p: Props) {
             <h3 className="text-sm font-semibold text-slate-800 mb-3">Week</h3>
             <WeekTimeline schedules={spec.schedules} onDemand={spec.activation === 'OnDemand'} />
           </section>
+
+          {(spec.exceptions?.some(e => !isPast(e)) || !!spec.calendars?.length) && (
+            <section>
+              <h3 className="text-sm font-semibold text-slate-800 mb-2">Exceptions</h3>
+              <ul className="space-y-1 text-sm text-slate-600">
+                {spec.calendars?.map(c => (
+                  <li key={`cal-${c}`}>Every day of the calendar <b className="font-semibold text-slate-800">{c}</b></li>
+                ))}
+                {spec.exceptions?.filter(e => !isPast(e)).map((e, i) => (
+                  <li key={i}>
+                    <Badge tone={e.state === 'Up' ? 'success' : 'neutral'}>{e.state === 'Up' ? 'Up' : 'Down'}</Badge>{' '}
+                    {describeException(e)}{e.name ? ` · ${e.name}` : ''}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
 
           <section>
             <h3 className="text-sm font-semibold text-slate-800 mb-2">Namespaces</h3>

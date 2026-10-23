@@ -38,6 +38,25 @@ export interface ScalingSchedule {
   timezone?: string
 }
 
+// ScheduleException keeps a target up or down on given dates, whatever the schedules
+// say: "2026-12-24" (a whole day) or "2026-12-24T18:00". A manual override still wins.
+export interface ScheduleException {
+  name?: string
+  start: string
+  end?: string
+  state: DesiredState
+  timezone?: string
+}
+
+// HolidayCalendar is a shared list of days (Settings → Holiday calendars) that schedules
+// name in spec.calendars.
+export interface HolidayCalendar {
+  name: string
+  timezone?: string
+  state?: DesiredState
+  days: { date: string; name?: string }[]
+}
+
 // ExternalTarget is a cloud resource scaled alongside a group; the discovery endpoints
 // return the same shape.
 export interface ExternalTarget {
@@ -54,8 +73,11 @@ export type DesiredState = 'Up' | 'Down'
 
 // ScheduleStatus mirrors what the operator reports about who is in control.
 export interface ScheduleStatus {
-  mode?: 'Schedule' | 'ManualUp' | 'ManualDown' | 'AlwaysOn' | 'Dependency' | 'OnDemand'
+  mode?: 'Schedule' | 'ManualUp' | 'ManualDown' | 'Exception' | 'AlwaysOn' | 'Dependency' | 'OnDemand'
   desiredState?: DesiredState
+  // The exception or calendar day in force while mode is Exception, and when it ends.
+  exception?: string
+  exceptionEndsAt?: string
   overrideExpiresAt?: string
   nextTransition?: { time: string; desiredState: DesiredState }
   estimatedHourlySavings?: string
@@ -68,6 +90,8 @@ export interface ScalingGroupSpec {
   active?: boolean
   activeUntil?: string
   schedules?: ScalingSchedule[]
+  exceptions?: ScheduleException[]
+  calendars?: string[]
   sequence?: string[]
   exclusions?: string[]
   externalTargets?: ExternalTarget[]
@@ -112,6 +136,8 @@ export interface ScalingConfigSpec {
   active?: boolean
   activeUntil?: string
   schedules?: ScalingSchedule[]
+  exceptions?: ScheduleException[]
+  calendars?: string[]
   sequence?: string[]
   exclusions?: string[]
 }

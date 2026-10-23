@@ -49,6 +49,19 @@ type ScalingGroupSpec struct {
 	// +listType=atomic
 	Schedules []ScalingSchedule `json:"schedules,omitempty"`
 
+	// Exceptions override the schedules on given dates (holidays, release weekends).
+	// +kubebuilder:validation:MaxItems=100
+	// +optional
+	// +listType=atomic
+	Exceptions []ScheduleException `json:"exceptions,omitempty"`
+
+	// Calendars names shared holiday calendars (CostDeckConfig spec.calendars) whose days
+	// apply as exceptions too.
+	// +kubebuilder:validation:MaxItems=10
+	// +optional
+	// +listType=set
+	Calendars []string `json:"calendars,omitempty"`
+
 	// Sequence defines the order of scaling namespaces.
 	// Each element can be a single namespace or multiple namespaces separated by spaces (a "stage").
 	// Stages are executed sequentially, waiting for all namespaces in a stage to reach the target state.

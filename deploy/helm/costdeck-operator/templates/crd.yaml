@@ -276,6 +276,60 @@ spec:
                 x-kubernetes-list-map-keys:
                 - name
                 x-kubernetes-list-type: map
+              calendars:
+                description: |-
+                  Calendars are shared lists of days, such as public holidays, that schedules name in
+                  spec.calendars to apply them as exceptions.
+                items:
+                  description: |-
+                    HolidayCalendar is a named list of days on which the schedules that use it keep their
+                    targets in State, typically down for public holidays.
+                  properties:
+                    days:
+                      description: Days of the calendar.
+                      items:
+                        description: CalendarDay is one day of a HolidayCalendar.
+                        properties:
+                          date:
+                            description: Date is the day, "2026-12-25".
+                            pattern: ^[0-9]{4}-[0-9]{2}-[0-9]{2}$
+                            type: string
+                          name:
+                            description: Name of the day, such as "Christmas Day".
+                            maxLength: 100
+                            type: string
+                        required:
+                        - date
+                        type: object
+                      maxItems: 400
+                      type: array
+                      x-kubernetes-list-type: atomic
+                    name:
+                      description: Name schedules use to refer to the calendar.
+                      maxLength: 63
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                    state:
+                      description: State targets are kept in on these days. Defaults
+                        to Down.
+                      enum:
+                      - Up
+                      - Down
+                      type: string
+                    timezone:
+                      description: |-
+                        Timezone the days are counted in. Defaults to the timezone of the schedule that
+                        uses the calendar.
+                      type: string
+                  required:
+                  - days
+                  - name
+                  type: object
+                maxItems: 50
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
               clusterName:
                 description: |-
                   ClusterName defines an optional identifier for this cluster.
@@ -1196,6 +1250,60 @@ spec:
                   to clear the override by hand. Ignored when Active is null.
                 format: date-time
                 type: string
+              calendars:
+                description: |-
+                  Calendars names shared holiday calendars (CostDeckConfig spec.calendars) whose days
+                  apply as exceptions too.
+                items:
+                  type: string
+                maxItems: 10
+                type: array
+                x-kubernetes-list-type: set
+              exceptions:
+                description: Exceptions override the schedules on given dates (holidays,
+                  release weekends).
+                items:
+                  description: |-
+                    ScheduleException overrides the weekly schedules on given dates: a public holiday the
+                    environment stays down, or a release weekend it stays up. A manual override (spec.active)
+                    still beats it. When exceptions overlap, the one that began last wins, so a release
+                    weekend inside a holiday break keeps the environment up.
+                  properties:
+                    end:
+                      description: |-
+                        End is the last day it applies (the whole day) or the moment it stops applying.
+                        Defaults to the end of the Start day.
+                      pattern: ^[0-9]{4}-[0-9]{2}-[0-9]{2}(T([01][0-9]|2[0-3]):[0-5][0-9])?$
+                      type: string
+                    name:
+                      description: Name says what the exception is for, such as "New
+                        Year" or "Release 2.4".
+                      maxLength: 100
+                      type: string
+                    start:
+                      description: Start is the first day ("2026-12-24") or the moment
+                        ("2026-12-24T18:00") it applies.
+                      pattern: ^[0-9]{4}-[0-9]{2}-[0-9]{2}(T([01][0-9]|2[0-3]):[0-5][0-9])?$
+                      type: string
+                    state:
+                      description: State the target is kept in while the exception
+                        applies.
+                      enum:
+                      - Up
+                      - Down
+                      type: string
+                    timezone:
+                      description: |-
+                        Timezone of Start and End (e.g. "Europe/Berlin"). Defaults to the timezone of the
+                        first schedule, then to UTC.
+                      type: string
+                  required:
+                  - start
+                  - state
+                  type: object
+                maxItems: 100
+                type: array
+                x-kubernetes-list-type: atomic
               exclusions:
                 description: |-
                   Exclusions lists workloads that are never scaled down, by name or prefix glob
@@ -1364,6 +1472,15 @@ spec:
                   EstimatedHourlySavings is what the workloads CostDeck keeps scaled down would cost
                   per hour at the current rates (requests x missing replicas), e.g. "1.2400".
                 type: string
+              exception:
+                description: Exception names the exception or calendar day in force
+                  while Mode is Exception.
+                type: string
+              exceptionEndsAt:
+                description: ExceptionEndsAt is when the exception in force stops
+                  applying.
+                format: date-time
+                type: string
               lastAction:
                 description: LastAction is the timestamp of the last scaling event
                 format: date-time
@@ -1372,8 +1489,9 @@ spec:
                 description: |-
                   Mode is what currently decides the desired state:
                   Schedule (spec.schedules), ManualUp / ManualDown (spec.active is set and the
-                  schedule is ignored), AlwaysOn (no usable schedule, kept up as a fail-safe) or
-                  Dependency (a ScalingGroup kept up for a group that depends on it).
+                  schedule is ignored), Exception (a dated exception or calendar day), AlwaysOn (no
+                  usable schedule, kept up as a fail-safe) or Dependency (a ScalingGroup kept up for a
+                  group that depends on it).
                 type: string
               nextTransition:
                 description: |-
@@ -1514,6 +1632,15 @@ spec:
                   to clear the override by hand. Ignored when Active is null.
                 format: date-time
                 type: string
+              calendars:
+                description: |-
+                  Calendars names shared holiday calendars (CostDeckConfig spec.calendars) whose days
+                  apply as exceptions too.
+                items:
+                  type: string
+                maxItems: 10
+                type: array
+                x-kubernetes-list-type: set
               category:
                 description: Category is the group classification (e.g. Solution,
                   Platform)
@@ -1530,6 +1657,51 @@ spec:
                 maxItems: 32
                 type: array
                 x-kubernetes-list-type: set
+              exceptions:
+                description: Exceptions override the schedules on given dates (holidays,
+                  release weekends).
+                items:
+                  description: |-
+                    ScheduleException overrides the weekly schedules on given dates: a public holiday the
+                    environment stays down, or a release weekend it stays up. A manual override (spec.active)
+                    still beats it. When exceptions overlap, the one that began last wins, so a release
+                    weekend inside a holiday break keeps the environment up.
+                  properties:
+                    end:
+                      description: |-
+                        End is the last day it applies (the whole day) or the moment it stops applying.
+                        Defaults to the end of the Start day.
+                      pattern: ^[0-9]{4}-[0-9]{2}-[0-9]{2}(T([01][0-9]|2[0-3]):[0-5][0-9])?$
+                      type: string
+                    name:
+                      description: Name says what the exception is for, such as "New
+                        Year" or "Release 2.4".
+                      maxLength: 100
+                      type: string
+                    start:
+                      description: Start is the first day ("2026-12-24") or the moment
+                        ("2026-12-24T18:00") it applies.
+                      pattern: ^[0-9]{4}-[0-9]{2}-[0-9]{2}(T([01][0-9]|2[0-3]):[0-5][0-9])?$
+                      type: string
+                    state:
+                      description: State the target is kept in while the exception
+                        applies.
+                      enum:
+                      - Up
+                      - Down
+                      type: string
+                    timezone:
+                      description: |-
+                        Timezone of Start and End (e.g. "Europe/Berlin"). Defaults to the timezone of the
+                        first schedule, then to UTC.
+                      type: string
+                  required:
+                  - start
+                  - state
+                  type: object
+                maxItems: 100
+                type: array
+                x-kubernetes-list-type: atomic
               externalTargets:
                 description: ExternalTargets allows you to manage 3rd party cloud
                   resources alongside Kubernetes resources.
@@ -1763,6 +1935,15 @@ spec:
                   EstimatedHourlySavings is what the workloads CostDeck keeps scaled down would cost
                   per hour at the current rates (requests x missing replicas), e.g. "1.2400".
                 type: string
+              exception:
+                description: Exception names the exception or calendar day in force
+                  while Mode is Exception.
+                type: string
+              exceptionEndsAt:
+                description: ExceptionEndsAt is when the exception in force stops
+                  applying.
+                format: date-time
+                type: string
               lastAction:
                 description: LastAction is the timestamp of the last scaling event
                 format: date-time
@@ -1775,8 +1956,9 @@ spec:
                 description: |-
                   Mode is what currently decides the desired state:
                   Schedule (spec.schedules), ManualUp / ManualDown (spec.active is set and the
-                  schedule is ignored), AlwaysOn (no usable schedule, kept up as a fail-safe) or
-                  Dependency (a ScalingGroup kept up for a group that depends on it).
+                  schedule is ignored), Exception (a dated exception or calendar day), AlwaysOn (no
+                  usable schedule, kept up as a fail-safe) or Dependency (a ScalingGroup kept up for a
+                  group that depends on it).
                 type: string
               namespacesReady:
                 description: NamespacesReady is the number of namespaces that have

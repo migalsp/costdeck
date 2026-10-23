@@ -28,7 +28,9 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
 	"github.com/migalsp/costdeck-operator/internal/pricing"
@@ -77,7 +79,8 @@ func (r *ScalingConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	// 2. Determine desired state
-	decision := r.Engine.Decide(time.Now(), config.Spec.Schedules, config.Spec.Active, config.Spec.ActiveUntil, config.Annotations)
+	exceptions, problems := scaling.ResolveExceptions(config.Spec.Exceptions, config.Spec.Calendars, calendars(ctx, r.Client), scaling.ExceptionZone(config.Spec.Schedules))
+	decision := r.Engine.Decide(time.Now(), scaling.Timetable{Schedules: config.Spec.Schedules, Exceptions: exceptions}, config.Spec.Active, config.Spec.ActiveUntil, config.Annotations)
 	targetActive := decision.Active
 
 	l.Info("Reconciling ScalingConfig", "targetNamespace", config.Spec.TargetNamespace, "targetActive", targetActive, "mode", decision.Mode)
@@ -97,6 +100,7 @@ func (r *ScalingConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	config.Status.OriginalReplicas = newReplicas
 	// Phase and LastAction are tracked before ScaleTarget so the timeout window starts immediately.
 	applyDecision(&config.Status.ScheduleStatus, &config.Status.Conditions, decision, config.Generation, "namespace")
+	setExceptionsCondition(&config.Status.Conditions, problems, config.Generation)
 	if ready {
 		config.Status.Phase = scaling.PhaseScaledDown
 		if targetActive {
@@ -182,6 +186,23 @@ func (r *ScalingConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	}
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&finopsv1.ScalingConfig{}).
+		// A changed holiday calendar applies at once to the configs that use one.
+		Watches(&finopsv1.CostDeckConfig{}, handler.EnqueueRequestsFromMapFunc(r.configsWithCalendars)).
 		Named("scalingconfig").
 		Complete(r)
+}
+
+// configsWithCalendars maps a CostDeckConfig event to the configs that name a calendar.
+func (r *ScalingConfigReconciler) configsWithCalendars(ctx context.Context, obj client.Object) []reconcile.Request {
+	var configs finopsv1.ScalingConfigList
+	if err := r.List(ctx, &configs, client.InNamespace(obj.GetNamespace())); err != nil {
+		return nil
+	}
+	var out []reconcile.Request
+	for _, c := range configs.Items {
+		if len(c.Spec.Calendars) > 0 {
+			out = append(out, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&c)})
+		}
+	}
+	return out
 }

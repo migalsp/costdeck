@@ -35,6 +35,9 @@ type Tool struct {
 	// Mutating tools change the cluster. The model never runs them directly: the call is
 	// turned into a confirmation card and the user executes it from the dashboard.
 	Mutating bool
+	// AdminOnly mutating tools change what only admins may edit through the API (a
+	// schedule's definition): they are offered to admins, and refused to anyone else.
+	AdminOnly bool
 	// Run executes a read-only tool. Arguments have been validated against Parameters.
 	Run func(ctx context.Context, args map[string]any) (string, error)
 }

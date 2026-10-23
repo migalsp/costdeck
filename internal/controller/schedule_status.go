@@ -14,8 +14,10 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
+	"github.com/migalsp/costdeck-operator/internal/config"
 	"github.com/migalsp/costdeck-operator/internal/pricing"
 	"github.com/migalsp/costdeck-operator/internal/scaling"
 )
@@ -32,7 +34,33 @@ const (
 	// ConditionNamespaceConflict is True when the group skips namespaces that an older
 	// group already manages.
 	ConditionNamespaceConflict = "NamespaceConflict"
+	// ConditionExceptionsApplied is False while an exception or calendar cannot be applied
+	// (a calendar that does not exist, an end before the start). It is absent otherwise.
+	ConditionExceptionsApplied = "ExceptionsApplied"
 )
+
+// setExceptionsCondition reports exceptions that cannot be applied; the others still do.
+func setExceptionsCondition(conds *[]metav1.Condition, problems []string, generation int64) {
+	if len(problems) == 0 {
+		meta.RemoveStatusCondition(conds, ConditionExceptionsApplied)
+		return
+	}
+	meta.SetStatusCondition(conds, metav1.Condition{
+		Type: ConditionExceptionsApplied, Status: metav1.ConditionFalse, Reason: "Invalid", ObservedGeneration: generation,
+		Message: "Not applied: " + strings.Join(problems, "; ") + ".",
+	})
+}
+
+// calendars returns the shared holiday calendars of the CostDeckConfig. Without one,
+// schedules naming a calendar report it as missing.
+func calendars(ctx context.Context, c client.Reader) []finopsv1.HolidayCalendar {
+	cfg, err := config.Get(ctx, c)
+	if err != nil {
+		logf.FromContext(ctx).Error(err, "Could not read the holiday calendars")
+		return nil
+	}
+	return cfg.Spec.Calendars
+}
 
 // updateStatus writes an object's status unless the reconcile left it as it was found:
 // a settled schedule would otherwise send an identical status every minute.
@@ -62,6 +90,11 @@ func settledRequeue(d scaling.Decision, now time.Time) time.Duration {
 func applyDecision(st *finopsv1.ScheduleStatus, conds *[]metav1.Condition, d scaling.Decision, generation int64, kind string) {
 	st.Mode = d.Mode
 	st.DesiredState = d.State()
+	st.Exception, st.ExceptionEndsAt = d.Exception, nil
+	if d.ExceptionEndsAt != nil {
+		t := metav1.NewTime(*d.ExceptionEndsAt)
+		st.ExceptionEndsAt = &t
+	}
 	st.OverrideExpiresAt = nil
 	if d.OverrideExpiresAt != nil {
 		t := metav1.NewTime(*d.OverrideExpiresAt)
@@ -94,6 +127,9 @@ func applyDecision(st *finopsv1.ScheduleStatus, conds *[]metav1.Condition, d sca
 	case scaling.ModeAlwaysOn:
 		cond.Status, cond.Reason = metav1.ConditionFalse, "NoSchedule"
 		cond.Message = fmt.Sprintf("The %s has no usable schedule and is kept up as a fail-safe.", kind)
+	case scaling.ModeException:
+		cond.Status, cond.Reason = metav1.ConditionFalse, "Exception"
+		cond.Message = fmt.Sprintf("The %s is kept %s for %q until %s; then the schedule takes over.", kind, strings.ToLower(d.State()), d.Exception, d.ExceptionEndsAt.UTC().Format(time.RFC3339))
 	default:
 		cond.Status, cond.Reason = metav1.ConditionFalse, "ScheduleInControl"
 		cond.Message = "The schedule decides the desired state."
@@ -184,6 +220,11 @@ func transitionMessage(kind, name, phase string, st finopsv1.ScheduleStatus, req
 		why = "because nothing needs it"
 	case scaling.ModeAlwaysOn:
 		why = "(no schedule)"
+	case scaling.ModeException:
+		why = "for " + st.Exception
+		if st.ExceptionEndsAt != nil {
+			why += " until " + st.ExceptionEndsAt.UTC().Format("Mon 2 Jan 15:04 MST")
+		}
 	}
 	msg := fmt.Sprintf("%s %s `%s` %s %s.", icon, kind, name, state, why)
 	if st.NextTransition != nil {

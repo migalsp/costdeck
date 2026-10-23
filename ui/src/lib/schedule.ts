@@ -259,6 +259,12 @@ export function statusLine({ phase, status, dependsOn, activeUntil, generation }
         title: `Kept ${status.mode === 'ManualUp' ? 'up' : 'down'} manually`,
         detail: expiry ? `until ${when(expiry)}, then the schedule takes over` : 'until you hand it back to the schedule',
       }
+    case 'Exception':
+      return {
+        tone: up ? 'up' : 'down',
+        title: `${up ? 'Up' : 'Down'} for ${status.exception || 'an exception'}`,
+        detail: status.exceptionEndsAt ? `until ${when(status.exceptionEndsAt)}, then the schedule takes over` : undefined,
+      }
     case 'Dependency':
       return { tone: 'up', title: 'Up', detail: `needed by ${(status.requiredBy || []).join(', ')}` }
     case 'OnDemand':

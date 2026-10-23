@@ -1267,7 +1267,8 @@ paths:
       summary: Update settings
       description: >-
         Updates the sections present in the body (providers, integrations, features, pricing,
-        auth). Omitted credential fields keep the stored Secret. Requires the admin role.
+        auth, budgets, alerts, billing, reports, calendars). Omitted credential fields keep the
+        stored Secret. Requires the admin role.
       requestBody:
         required: true
         content:
@@ -1290,6 +1291,13 @@ paths:
                     - { name: payments, scope: team, value: payments, monthlyLimit: "1200", thresholds: [80, 100], forecast: true }
                   alerts:
                     anomalies: { enabled: true, percent: 30, minimumDaily: "5" }
+              calendars:
+                summary: Public holidays that schedules name in spec.calendars
+                value:
+                  calendars:
+                    - name: de-holidays
+                      timezone: Europe/Berlin
+                      days: [{ date: "2026-12-25", name: Christmas Day }, { date: "2026-12-26", name: Boxing Day }]
               billing:
                 summary: Reconcile with AWS Cost Explorer
                 value:
@@ -1872,6 +1880,17 @@ components:
               type: array
               description: When the namespaces run. Windows are OR-ed; outside all of them everything is scaled down.
               items: { $ref: "#/components/schemas/ScalingSchedule" }
+            exceptions:
+              type: array
+              description: >-
+                Dates on which the schedules do not apply: a holiday the target stays down, or a
+                release weekend it stays up. A manual override still wins; of overlapping
+                exceptions the one that began last applies.
+              items: { $ref: "#/components/schemas/ScheduleException" }
+            calendars:
+              type: array
+              items: { type: string }
+              description: Shared holiday calendars (settings, calendars) whose days apply as exceptions too.
             activation:
               type: string
               enum: [Schedule, OnDemand]
@@ -1908,7 +1927,11 @@ components:
               description: When the manual override ends by itself.
         status:
           type: object
-          description: Written by the operator. phase is ScaledUp, ScalingUp, ScalingDown, ScaledDown or WaitingForDependencies; mode says what decides the state (Schedule, ManualUp, ManualDown, AlwaysOn, Dependency, OnDemand).
+          description: >-
+            Written by the operator. phase is ScaledUp, ScalingUp, ScalingDown, ScaledDown or
+            WaitingForDependencies; mode says what decides the state (Schedule, ManualUp,
+            ManualDown, Exception, AlwaysOn, Dependency, OnDemand). While mode is Exception,
+            exception names it and exceptionEndsAt says when it ends.
 
     ScalingConfig:
       type: object
@@ -1935,6 +1958,17 @@ components:
             schedules:
               type: array
               items: { $ref: "#/components/schemas/ScalingSchedule" }
+            exceptions:
+              type: array
+              description: >-
+                Dates on which the schedules do not apply: a holiday the target stays down, or a
+                release weekend it stays up. A manual override still wins; of overlapping
+                exceptions the one that began last applies.
+              items: { $ref: "#/components/schemas/ScheduleException" }
+            calendars:
+              type: array
+              items: { type: string }
+              description: Shared holiday calendars (settings, calendars) whose days apply as exceptions too.
             exclusions:
               type: array
               items: { type: string }
@@ -2077,6 +2111,23 @@ components:
           description: "AWS: cluster identifier or instance ID. Azure: full resource ID. Google Cloud: <zone>/<name> for Compute Engine, the instance name for Cloud SQL."
         region: { type: string }
         name: { type: string, description: Display name. }
+
+    ScheduleException:
+      type: object
+      required: [start, state]
+      example: { name: Christmas break, start: "2026-12-24", end: "2027-01-01", state: Down }
+      properties:
+        name: { type: string, description: What the exception is for. }
+        start:
+          type: string
+          description: First day ("2026-12-24") or moment ("2026-12-24T18:00") it applies.
+          pattern: '^[0-9]{4}-[0-9]{2}-[0-9]{2}(T([01][0-9]|2[0-3]):[0-5][0-9])?$'
+        end:
+          type: string
+          description: Last day it applies (the whole day) or the moment it stops. Defaults to the end of the start day.
+          pattern: '^[0-9]{4}-[0-9]{2}-[0-9]{2}(T([01][0-9]|2[0-3]):[0-5][0-9])?$'
+        state: { type: string, enum: [Up, Down] }
+        timezone: { type: string, description: "Zone of start and end; defaults to the first schedule's, then UTC." }
 
     ScalingSchedule:
       type: object

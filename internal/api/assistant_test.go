@@ -14,27 +14,44 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
+	"github.com/migalsp/costdeck-operator/internal/auth"
 	"github.com/migalsp/costdeck-operator/internal/scaling"
 )
 
+func as(role auth.Role) context.Context {
+	return auth.WithIdentity(context.Background(), &auth.Identity{Subject: "user:" + string(role), Role: role})
+}
+
 func TestToolsForViewerHideMutatingActions(t *testing.T) {
 	server := buildMockServer()
-	for _, tool := range server.toolsFor(false) {
+	for _, tool := range server.toolsFor(as(auth.RoleViewer)) {
 		if tool.Mutating {
 			t.Errorf("viewer was offered mutating tool %s", tool.Name)
 		}
 	}
 	var mutating int
-	for _, tool := range server.toolsFor(true) {
+	for _, tool := range server.toolsFor(as(auth.RoleOperator)) {
 		if tool.Mutating {
 			mutating++
 			if tool.Run != nil {
 				t.Errorf("mutating tool %s must not be runnable by the model", tool.Name)
 			}
 		}
+		if tool.AdminOnly {
+			t.Errorf("operator was offered admin tool %s", tool.Name)
+		}
 	}
 	if mutating == 0 {
 		t.Error("operators must be offered the mutating tools")
+	}
+	var admin int
+	for _, tool := range server.toolsFor(as(auth.RoleAdmin)) {
+		if tool.AdminOnly {
+			admin++
+		}
+	}
+	if admin == 0 {
+		t.Error("admins must be offered the tools that change schedules")
 	}
 }
 

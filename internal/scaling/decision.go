@@ -16,6 +16,9 @@ const (
 	// ignored until it expires or is removed.
 	ModeManualUp   = "ManualUp"
 	ModeManualDown = "ManualDown"
+	// ModeException: a dated exception or a calendar day (spec.exceptions,
+	// spec.calendars) overrides the schedules.
+	ModeException = "Exception"
 	// ModeAlwaysOn: no usable schedule and no override, so the fail-safe keeps it up.
 	ModeAlwaysOn = "AlwaysOn"
 	// ModeDependency: a ScalingGroup kept up because a group that depends on it is up.
@@ -43,9 +46,13 @@ type Decision struct {
 	Mode   string
 	// OverrideExpiresAt is set while a time-bounded manual override is in force.
 	OverrideExpiresAt *time.Time
-	// NextTransition is when Active next changes on its own: a schedule boundary or the
-	// expiry of an override. Nil when it never does.
+	// NextTransition is when Active next changes on its own: a schedule boundary, the
+	// start or end of an exception, or the expiry of an override. Nil when it never does.
 	NextTransition *time.Time
+	// Exception names the exception in force while Mode is ModeException, and
+	// ExceptionEndsAt is when it stops applying.
+	Exception       string
+	ExceptionEndsAt *time.Time
 }
 
 // State renders Active as StateUp or StateDown.
@@ -56,9 +63,10 @@ func (d Decision) State() string {
 	return StateDown
 }
 
-// Decide resolves the desired state from the override, its deadline and the schedules.
-// annotations may carry the legacy override annotation, which wins over everything else.
-func (e *Engine) Decide(now time.Time, schedules []finopsv1.ScalingSchedule, active *bool, activeUntil *metav1.Time, annotations map[string]string) Decision {
+// Decide resolves the desired state from the override, its deadline and the timetable
+// (schedules and exceptions), in that order. annotations may carry the legacy override
+// annotation, which wins over everything else.
+func (e *Engine) Decide(now time.Time, tt Timetable, active *bool, activeUntil *metav1.Time, annotations map[string]string) Decision {
 	if legacy, ok := legacyOverride(annotations); ok {
 		return Decision{Active: legacy, Mode: manualMode(legacy)}
 	}
@@ -68,39 +76,32 @@ func (e *Engine) Decide(now time.Time, schedules []finopsv1.ScalingSchedule, act
 		if activeUntil != nil && !activeUntil.IsZero() {
 			expiry := activeUntil.Time
 			d.OverrideExpiresAt = &expiry
-			if e.IsActiveAt(expiry, schedules, nil) != *override {
+			if tt.ActiveAt(expiry) != *override {
 				d.NextTransition = &expiry
 			} else {
-				d.NextTransition = e.NextScheduleChange(expiry, schedules)
+				d.NextTransition = tt.NextChange(expiry)
 			}
 		}
 		return d
 	}
 
-	d := Decision{Active: e.IsActiveAt(now, schedules, nil), Mode: ModeSchedule}
-	if !hasUsableSchedule(schedules) {
-		d.Mode = ModeAlwaysOn
-		return d
+	if ex := tt.exceptionAt(now); ex != nil {
+		ends := ex.To
+		return Decision{Active: ex.Active, Mode: ModeException, Exception: ex.Name, ExceptionEndsAt: &ends, NextTransition: tt.NextChange(now)}
 	}
-	d.NextTransition = e.NextScheduleChange(now, schedules)
+
+	d := Decision{Active: tt.ActiveAt(now), Mode: ModeSchedule, NextTransition: tt.NextChange(now)}
+	if !hasUsableSchedule(tt.Schedules) {
+		// Kept up as a fail-safe; only an upcoming exception changes that.
+		d.Mode = ModeAlwaysOn
+	}
 	return d
 }
 
 // NextScheduleChange returns the first minute after now at which the schedules flip the
 // desired state, or nil if they never do (for example a 24/7 window).
 func (e *Engine) NextScheduleChange(now time.Time, schedules []finopsv1.ScalingSchedule) *time.Time {
-	if !hasUsableSchedule(schedules) {
-		return nil
-	}
-	current := e.IsActiveAt(now, schedules, nil)
-	t := now.Truncate(time.Minute)
-	for range scanHorizon {
-		t = t.Add(time.Minute)
-		if e.IsActiveAt(t, schedules, nil) != current {
-			return &t
-		}
-	}
-	return nil
+	return Timetable{Schedules: schedules}.NextChange(now)
 }
 
 func hasUsableSchedule(schedules []finopsv1.ScalingSchedule) bool {

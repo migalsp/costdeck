@@ -35,6 +35,9 @@ type GroupPlan struct {
 	ConflictingNamespaces []string
 	// NamespaceOwners maps each conflicting namespace to the group that owns it.
 	NamespaceOwners map[string]string
+	// ExceptionProblems lists exceptions and calendars that could not be applied, such as a
+	// calendar that does not exist.
+	ExceptionProblems []string
 }
 
 // BlockedOnDependencies reports whether the group wants to be up but must wait.
@@ -45,12 +48,13 @@ func (p GroupPlan) BlockedOnDependencies() bool {
 // PlanGroups resolves the desired state of every ScalingGroup in one namespace, taking
 // dependsOn edges into account:
 //
-//   - a group's own desire comes from its override or schedules (nothing for OnDemand);
+//   - a group's own desire comes from its override, its exceptions and calendar days, or
+//     its schedules (OnDemand groups only from an override or an Up exception);
 //   - a dependency is brought up while any dependent wants to be up, and a running
 //     dependency is kept up until its dependents are fully down, so it stops after them;
 //     a dependent on its way down never starts a dependency that is already down;
 //   - a manual override on the dependency itself always wins.
-func (e *Engine) PlanGroups(now time.Time, groups []finopsv1.ScalingGroup) map[string]GroupPlan {
+func (e *Engine) PlanGroups(now time.Time, groups []finopsv1.ScalingGroup, calendars []finopsv1.HolidayCalendar) map[string]GroupPlan {
 	byName := make(map[string]*finopsv1.ScalingGroup, len(groups))
 	for i := range groups {
 		byName[groups[i].Name] = &groups[i]
@@ -76,7 +80,8 @@ func (e *Engine) PlanGroups(now time.Time, groups []finopsv1.ScalingGroup) map[s
 			return p
 		}
 		g := byName[name]
-		plan := GroupPlan{Decision: e.ownDecision(now, g), InCycle: inCycle[name]}
+		own, problems := e.ownDecision(now, g, calendars)
+		plan := GroupPlan{Decision: own, InCycle: inCycle[name], ExceptionProblems: problems}
 		for _, d := range dependents[name] {
 			dp := resolve(d)
 			// A dependent that wants to be up needs this group up. One that is still on its
@@ -133,13 +138,16 @@ func isRunning(phase string) bool {
 	return phase == PhaseScaledUp || phase == PhaseScalingUp
 }
 
-// ownDecision is the group's desired state before dependents are considered.
-func (e *Engine) ownDecision(now time.Time, g *finopsv1.ScalingGroup) Decision {
-	d := e.Decide(now, g.Spec.Schedules, g.Spec.Active, g.Spec.ActiveUntil, g.Annotations)
-	if g.Spec.Activation == finopsv1.ActivationOnDemand && d.Mode != ModeManualUp && d.Mode != ModeManualDown {
-		return Decision{Active: false, Mode: ModeOnDemand}
+// ownDecision is the group's desired state before dependents are considered, and the
+// exceptions it could not apply.
+func (e *Engine) ownDecision(now time.Time, g *finopsv1.ScalingGroup, calendars []finopsv1.HolidayCalendar) (Decision, []string) {
+	exceptions, problems := ResolveExceptions(g.Spec.Exceptions, g.Spec.Calendars, calendars, ExceptionZone(g.Spec.Schedules))
+	d := e.Decide(now, Timetable{Schedules: g.Spec.Schedules, Exceptions: exceptions}, g.Spec.Active, g.Spec.ActiveUntil, g.Annotations)
+	keeps := d.Mode == ModeManualUp || d.Mode == ModeManualDown || (d.Mode == ModeException && d.Active)
+	if g.Spec.Activation == finopsv1.ActivationOnDemand && !keeps {
+		return Decision{Active: false, Mode: ModeOnDemand}, problems
 	}
-	return d
+	return d, problems
 }
 
 // namespaceOwners assigns every namespace to the oldest group that lists it (ties broken

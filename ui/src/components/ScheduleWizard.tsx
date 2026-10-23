@@ -1,9 +1,12 @@
 import { useMemo, useState } from 'react'
-import { Search, Check, CalendarClock, ListOrdered, SlidersHorizontal } from 'lucide-react'
-import { apiError, errorMessage } from '../lib/api'
+import { Search, Check, CalendarClock, CalendarOff, ListOrdered, SlidersHorizontal } from 'lucide-react'
+import { apiError, errorMessage, getJSON } from '../lib/api'
 import { toast } from '../lib/toast'
+import { exceptionProblem } from '../lib/exceptions'
 import { planFromSpec, planProblem, specFromPlan, type SchedulePlan } from '../lib/schedule'
-import type { ExternalTarget, ScalingConfig, ScalingGroup, ScalingGroupSpec, ScalingSpec } from '../lib/types'
+import type { ExternalTarget, HolidayCalendar, ScalingConfig, ScalingGroup, ScalingGroupSpec, ScalingSpec, ScheduleException } from '../lib/types'
+import { usePolling } from '../lib/usePolling'
+import ExceptionsEditor from './ExceptionsEditor'
 import ScheduleEditor from './ScheduleEditor'
 import StartOrderEditor, { type StartOrder } from './StartOrderEditor'
 import { Button, Modal, Tabs } from './ui'
@@ -26,7 +29,7 @@ function suggestName(namespaces: string[]): string {
 const sameSchedule = (a: Pick<ScalingSpec, 'schedules' | 'activation'>, b: Pick<ScalingSpec, 'schedules' | 'activation'>) =>
   JSON.stringify(a.schedules || []) === JSON.stringify(b.schedules || []) && (a.activation || '') === (b.activation || '')
 
-export type WizardTab = 'schedule' | 'order' | 'advanced'
+export type WizardTab = 'schedule' | 'exceptions' | 'order' | 'advanced'
 
 type Props = {
   namespaces: string[]
@@ -42,8 +45,8 @@ type Props = {
 )
 
 // ScheduleWizard creates or edits a schedule: which namespaces, when they run and a name
-// (Schedule), the order they start in (Start order), and dependencies and timeouts
-// (Advanced). One Save stores all of it.
+// (Schedule), dates the schedule does not apply (Exceptions), the order they start in
+// (Start order), and dependencies and timeouts (Advanced). One Save stores all of it.
 export default function ScheduleWizard(props: Props) {
   const { namespaces, groups, onClose, onSaved, discovered } = props
   const isGroup = props.kind === 'group'
@@ -63,8 +66,15 @@ export default function ScheduleWizard(props: Props) {
   const [category, setCategory] = useState(existingGroup?.spec.category || '')
   const [giveUp, setGiveUp] = useState(existingGroup?.spec.featureFlags?.skipOnTimeout || false)
   const [giveUpMinutes, setGiveUpMinutes] = useState(existingGroup?.spec.featureFlags?.timeoutMinutes || 10)
+  const [exceptions, setExceptions] = useState<ScheduleException[]>(existing?.spec.exceptions || [])
+  const [calendarNames, setCalendarNames] = useState<string[]>(existing?.spec.calendars || [])
+  const [available, setAvailable] = useState<HolidayCalendar[] | undefined>(undefined)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  usePolling(() => {
+    getJSON<{ calendars?: HolidayCalendar[] }>('/api/settings').then(d => setAvailable(d.calendars || [])).catch(() => setAvailable([]))
+  }, null)
 
   const finalName = nameTouched ? sanitize(name) : sanitize(suggestName(selected))
   const ownerOf = useMemo(() => {
@@ -76,9 +86,11 @@ export default function ScheduleWizard(props: Props) {
   const scheduleChanged = !sameSchedule(specFromPlan(plan), existing?.spec || {})
   const overrideActive = existing?.spec.active !== undefined && existing?.spec.active !== null
 
+  const exceptionIssue = exceptions.map(exceptionProblem).find(Boolean)
   const problem = planProblem(plan)
     || (selected.length === 0 ? 'Pick at least one namespace.' : null)
     || (!K8S_NAME.test(finalName) ? 'Name must use lowercase letters, digits and dashes.' : null)
+    || (exceptionIssue ? `Exceptions: ${exceptionIssue}` : null)
 
   const save = async () => {
     if (problem) return
@@ -99,11 +111,17 @@ export default function ScheduleWizard(props: Props) {
           externalTargets: order.externalTargets,
           dependsOn: dependsOn.length ? dependsOn : undefined,
           featureFlags: giveUp ? { skipOnTimeout: true, timeoutMinutes: giveUpMinutes } : undefined,
+          exceptions: exceptions.length ? exceptions : undefined,
+          calendars: calendarNames.length ? calendarNames : undefined,
         }
         url = editing ? `/api/scaling/groups/${existing!.metadata.name}` : '/api/scaling/groups'
         method = editing ? 'PUT' : 'POST'
       } else {
-        spec = { ...props.existing.spec, schedules: schedule.schedules }
+        spec = {
+          ...props.existing.spec, schedules: schedule.schedules,
+          exceptions: exceptions.length ? exceptions : undefined,
+          calendars: calendarNames.length ? calendarNames : undefined,
+        }
         url = `/api/scaling/configs/${props.existing.metadata.name}`
         method = 'PUT'
       }
@@ -236,19 +254,22 @@ export default function ScheduleWizard(props: Props) {
       title={editing ? `Edit ${existing!.metadata.name}` : 'New schedule'}
       subtitle="Workloads are scaled to zero outside the hours you choose and restored afterwards."
       onClose={onClose}
-      headerExtra={isGroup ? (
+      headerExtra={
         <div className="mt-3">
           <Tabs<WizardTab>
             value={tab}
             onChange={setTab}
             tabs={[
               { id: 'schedule', label: <span className="inline-flex items-center gap-1.5"><CalendarClock size={14} /> Schedule</span> },
-              { id: 'order', label: <span className="inline-flex items-center gap-1.5"><ListOrdered size={14} /> Start order{order.sequence?.length ? ` (${order.sequence.length})` : ''}</span> },
-              { id: 'advanced', label: <span className="inline-flex items-center gap-1.5"><SlidersHorizontal size={14} /> Advanced{dependsOn.length || giveUp ? ' ·' : ''}</span> },
+              { id: 'exceptions', label: <span className="inline-flex items-center gap-1.5"><CalendarOff size={14} /> Exceptions{exceptions.length + calendarNames.length ? ` (${exceptions.length + calendarNames.length})` : ''}</span> },
+              ...(isGroup ? [
+                { id: 'order' as const, label: <span className="inline-flex items-center gap-1.5"><ListOrdered size={14} /> Start order{order.sequence?.length ? ` (${order.sequence.length})` : ''}</span> },
+                { id: 'advanced' as const, label: <span className="inline-flex items-center gap-1.5"><SlidersHorizontal size={14} /> Advanced{dependsOn.length || giveUp ? ' ·' : ''}</span> },
+              ] : []),
             ]}
           />
         </div>
-      ) : undefined}
+      }
       footer={
         <>
           <span className="flex-1 text-xs font-medium text-rose-600">{error || (problem && selected.length > 0 ? problem : '')}</span>
@@ -259,7 +280,11 @@ export default function ScheduleWizard(props: Props) {
         </>
       }
     >
-      {(!isGroup || tab === 'schedule') && scheduleTab}
+      {tab === 'schedule' && scheduleTab}
+      {tab === 'exceptions' && (
+        <ExceptionsEditor exceptions={exceptions} calendars={calendarNames} available={available} timezone={plan.timezone}
+          onChange={(e, c) => { setExceptions(e); setCalendarNames(c) }} />
+      )}
       {isGroup && tab === 'order' && (
         selected.length === 0
           ? <p className="text-sm text-slate-500">Pick namespaces on the Schedule tab first.</p>

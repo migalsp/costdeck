@@ -128,3 +128,15 @@ describe('describeOverride', () => {
     [null, undefined, 'shop-dev follows its schedule again'],
   ] as const)('active=%s until=%s', (active, until, text) => expect(describeOverride('shop-dev', active, until)).toBe(text))
 })
+
+describe('statusLine for exceptions', () => {
+  it('names the exception and when the schedule takes over', () => {
+    const line = statusLine({ phase: 'ScaledDown', status: { mode: 'Exception', desiredState: 'Down', exception: 'Christmas Day', exceptionEndsAt: '2026-12-26T00:00:00Z' } as never })
+    expect(line.tone).toBe('down')
+    expect(line.title).toBe('Down for Christmas Day')
+    expect(line.detail).toMatch(/^until .*, then the schedule takes over$/)
+  })
+  it('works for an Up exception without a name', () => {
+    expect(statusLine({ phase: 'ScaledUp', status: { mode: 'Exception', desiredState: 'Up' } as never })).toEqual({ tone: 'up', title: 'Up for an exception', detail: undefined })
+  })
+})

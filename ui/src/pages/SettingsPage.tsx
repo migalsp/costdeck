@@ -2,10 +2,13 @@ import { useState, useCallback, type ReactNode } from 'react'
 import {
   Cloud, Bot, MessageSquare, Plus, Trash2, RefreshCw,
   CheckCircle2, XCircle, AlertTriangle, Eye, EyeOff, ChevronDown,
-  ChevronUp, Sparkles, ExternalLink, Activity, Plug, Shield, Info, Users as UsersIcon, KeyRound, Coins, Receipt
+  ChevronUp, Sparkles, ExternalLink, Activity, Plug, Shield, Info, Users as UsersIcon, KeyRound, Coins, Receipt, CalendarDays
 } from 'lucide-react'
 import { AWSLogo, AzureLogo, GCPLogo, WebexLogo } from '../components/ProviderLogos'
 import ApiTokens from '../components/ApiTokens'
+import CalendarsEditor from '../components/settings/CalendarsEditor'
+import { calendarProblem } from '../lib/exceptions'
+import type { HolidayCalendar } from '../lib/types'
 import UsersSettings from '../components/settings/UsersSettings'
 import { usePolling } from '../lib/usePolling'
 import { navigate, segment, useLeaveGuard } from '../lib/router'
@@ -125,14 +128,15 @@ interface SettingsData {
     effective: { cpuCoreHour: number; memoryGiBHour: number; currency: string; basis: string }
   }
   billing?: { enabled?: boolean }
+  calendars?: HolidayCalendar[]
 }
 
 // ─── Navigation ─────────────────────────────────────────────────────────────
 
-type Section = 'users' | 'sso' | 'tokens' | 'pricing' | 'billing' | 'metrics' | 'clouds' | 'notifications' | 'ai' | 'mcp'
+type Section = 'users' | 'sso' | 'tokens' | 'pricing' | 'billing' | 'metrics' | 'calendars' | 'clouds' | 'notifications' | 'ai' | 'mcp'
 // Sections whose form is saved with their Save button; the others act at once.
-type SavedSection = 'sso' | 'pricing' | 'metrics' | 'clouds' | 'notifications' | 'ai' | 'mcp'
-const savedSections: Section[] = ['sso', 'pricing', 'metrics', 'clouds', 'notifications', 'ai', 'mcp']
+type SavedSection = 'sso' | 'pricing' | 'metrics' | 'calendars' | 'clouds' | 'notifications' | 'ai' | 'mcp'
+const savedSections: Section[] = ['sso', 'pricing', 'metrics', 'calendars', 'clouds', 'notifications', 'ai', 'mcp']
 const isSaved = (s: Section): s is SavedSection => savedSections.includes(s)
 
 const navGroups: { title: string; items: { id: Section; label: string; icon: ReactNode }[] }[] = [
@@ -145,6 +149,9 @@ const navGroups: { title: string; items: { id: Section; label: string; icon: Rea
     { id: 'pricing', label: 'Prices', icon: <Coins size={16} /> },
     { id: 'billing', label: 'Cloud bill', icon: <Receipt size={16} /> },
     { id: 'metrics', label: 'Usage metrics', icon: <Activity size={16} /> },
+  ] },
+  { title: 'Scheduling', items: [
+    { id: 'calendars', label: 'Holiday calendars', icon: <CalendarDays size={16} /> },
   ] },
   { title: 'Integrations', items: [
     { id: 'clouds', label: 'Cloud accounts', icon: <Cloud size={16} /> },
@@ -187,6 +194,7 @@ function navStatus(st: SettingsData | null): Partial<Record<Section, NavStatus>>
     pricing: { text: basis.startsWith('custom') ? 'Custom' : basis.includes('aws') || basis.includes('azure') ? 'List' : 'Estimate' },
     billing: onOff(st.billing?.enabled),
     metrics: { text: st.integrations.victoriaMetrics?.enabled ? 'VictoriaMetrics' : 'metrics-server' },
+    calendars: { text: st.calendars?.length ? String(st.calendars.length) : 'None', on: !!st.calendars?.length },
     clouds: { text: clouds.length ? clouds.join(', ') : 'None', on: clouds.length > 0 },
     notifications: onOff(st.integrations.messenger?.webex?.enabled),
     ai: onOff(st.integrations.ai?.enabled),
@@ -659,6 +667,7 @@ export default function SettingsPage({ section: requested }: { section?: string 
 
   // Features state
   const [cloudPricingApi, setCloudPricingApi] = useState(false)
+  const [calendars, setCalendars] = useState<HolidayCalendar[]>([])
   const [priceCpu, setPriceCpu] = useState('')
   const [priceMem, setPriceMem] = useState('')
   const [priceCurrency, setPriceCurrency] = useState('')
@@ -756,6 +765,7 @@ export default function SettingsPage({ section: requested }: { section?: string 
         if (data.features) {
           setCloudPricingApi(data.features.cloudPricingApi || false)
         }
+        setCalendars(data.calendars || [])
         if (data.pricing) {
           setPriceCpu(data.pricing.cpuCoreHour || '')
           setPriceMem(data.pricing.memoryGiBHour || '')
@@ -789,6 +799,11 @@ export default function SettingsPage({ section: requested }: { section?: string 
   usePolling(fetchSettings, null)
 
   const handleSave = async (sec: SavedSection) => {
+    const invalid = sec === 'calendars' ? calendarProblem(calendars) : null
+    if (invalid) {
+      setSaveMessage({ section: sec, text: `Not saved: ${invalid}`, ok: false })
+      return
+    }
     setSaving(true)
     setSaveMessage(null)
     try {
@@ -883,6 +898,7 @@ export default function SettingsPage({ section: requested }: { section?: string 
         mcp: { integrations: { mcp: full.integrations.mcp } },
         pricing: { features: full.features, pricing: full.pricing },
         sso: { auth: full.auth },
+        calendars: { calendars },
       }
       const res = await fetch('/api/settings', {
         method: 'PUT',
@@ -905,6 +921,7 @@ export default function SettingsPage({ section: requested }: { section?: string 
         setVmPassword('')
         setVmCaCert('')
         setEntraSecret('')
+        if (sec === 'calendars') setCalendars(data.calendars || [])
         setDirty(d => ({ ...d, [sec]: false }))
         setSaveMessage({ section: sec, text: 'Saved', ok: true })
         setTimeout(() => setSaveMessage(m => (m?.section === sec && m.ok ? null : m)), 3000)
@@ -1890,6 +1907,18 @@ export default function SettingsPage({ section: requested }: { section?: string 
       )}
 
       {/* ─── Features Section ────────────────────────────────────────────── */}
+      {section === 'calendars' && (
+        <div className="space-y-4 animate-rise">
+          <SectionHeader
+            icon={<CalendarDays className="text-brand-600" size={20} />}
+            title="Holiday calendars"
+            subtitle="Days such as public holidays that schedules apply as exceptions"
+            action={saveAction('calendars')}
+          />
+          <CalendarsEditor value={calendars} onChange={c => { setCalendars(c); setDirty(d => ({ ...d, calendars: true })) }} />
+        </div>
+      )}
+
       {section === 'pricing' && (
         <div className="space-y-4 animate-rise">
           <SectionHeader

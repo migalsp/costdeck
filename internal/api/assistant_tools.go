@@ -3,9 +3,11 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -17,6 +19,7 @@ import (
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
 	"github.com/migalsp/costdeck-operator/internal/ai"
+	"github.com/migalsp/costdeck-operator/internal/auth"
 	"github.com/migalsp/costdeck-operator/internal/config"
 	"github.com/migalsp/costdeck-operator/internal/pricing"
 	"github.com/migalsp/costdeck-operator/internal/rightsizing"
@@ -29,9 +32,9 @@ const assistantSystemPrompt = `You are CostDeck Assistant, the FinOps assistant 
 
 CostDeck scales non-production namespaces up and down on schedules (ScalingGroups for sets of namespaces, ScalingConfigs for single namespaces), tracks namespace resource usage, and estimates cost from configured rates.
 
-Look up live data with the tools instead of guessing, and never invent numbers. Cost figures are estimates; say so when you quote them. A group's mode tells who is in control: Schedule, ManualUp/ManualDown (a manual override that ignores the schedule), AlwaysOn (no schedule), Dependency or OnDemand (driven by groups that depend on it).
+Look up live data with the tools instead of guessing, and never invent numbers. Cost figures are estimates; say so when you quote them. A group's mode tells who is in control: Schedule, ManualUp/ManualDown (a manual override that ignores the schedule), Exception (a dated exception or a holiday calendar day keeps it up or down), AlwaysOn (no schedule), Dependency or OnDemand (driven by groups that depend on it).
 
-When the user asks to change something (scale a group or namespace, hand control back to the schedule, revert an earlier right-sizing), call the matching tool. CostDeck then asks the user to confirm before anything changes. CostDeck does not change resource requests itself: for right-sizing, present the recommendations and the YAML values the user should apply.
+When the user asks to change something (scale a group or namespace, hand control back to the schedule, keep a schedule up or down on given dates, revert an earlier right-sizing), call the matching tool. For a one-off "keep it up until tonight" use a manual override; for dates in the future (a holiday, a release weekend) add an exception. CostDeck then asks the user to confirm before anything changes. CostDeck does not change resource requests itself: for right-sizing, present the recommendations and the YAML values the user should apply.
 
 Answer in concise Markdown. Prefer short tables for lists.`
 
@@ -53,6 +56,13 @@ func (s *Server) toolRegistry() []ai.Tool {
 		"description": "up or down forces the state; resume removes the override so the schedule decides again",
 	}
 	duration := str(`How long an up/down override holds: "nextTransition" (until the schedule would change state on its own; the default when there is a schedule), a duration such as "4h", or "forever"`)
+	target := map[string]any{
+		"type": "string", "enum": []string{"group", "namespace"},
+		"description": "group: name is a ScalingGroup; namespace: name is a namespace with its own ScalingConfig",
+	}
+	bound := func(what string) map[string]any {
+		return str(what + `: a date "2026-12-24" (the whole day) or a date and time "2026-12-24T18:00", in the schedule's timezone`)
+	}
 
 	return []ai.Tool{
 		{
@@ -82,6 +92,12 @@ func (s *Server) toolRegistry() []ai.Tool {
 			Run: func(ctx context.Context, args map[string]any) (string, error) {
 				return s.toolGetGroup(ctx, args["name"].(string))
 			},
+		},
+		{
+			Name:        "list_calendars",
+			Description: "The shared holiday calendars schedules can use, with the days still to come.",
+			Parameters:  obj(map[string]any{}),
+			Run:         func(ctx context.Context, _ map[string]any) (string, error) { return s.toolListCalendars(ctx) },
 		},
 		{
 			Name:        "list_namespace_configs",
@@ -124,6 +140,28 @@ func (s *Server) toolRegistry() []ai.Tool {
 			Parameters:  obj(map[string]any{"namespace": str("Kubernetes namespace"), "action": action, "duration": duration}, "namespace", "action"),
 		},
 		{
+			Name: "add_schedule_exception",
+			Description: "Keep a schedule's namespaces up or down on given dates whatever its hours say, for a holiday or a release " +
+				"weekend. Changes the schedule, so only admins can run it. Requires the user's confirmation.",
+			Mutating:  true,
+			AdminOnly: true,
+			Parameters: obj(map[string]any{
+				"target": target, "name": str("ScalingGroup name or namespace"),
+				"state": map[string]any{"type": "string", "enum": []string{"Up", "Down"}, "description": "Keep the namespaces up or down"},
+				"start": bound("First day or moment"), "end": bound("Last day (included) or the moment it stops; defaults to the end of the start day"),
+				"label": str("What the exception is for, such as Christmas break"),
+			}, "target", "name", "state", "start"),
+		},
+		{
+			Name:        "remove_schedule_exception",
+			Description: "Remove a dated exception from a schedule, by its label or start. Only admins can run it. Requires the user's confirmation.",
+			Mutating:    true,
+			AdminOnly:   true,
+			Parameters: obj(map[string]any{
+				"target": target, "name": str("ScalingGroup name or namespace"), "exception": str("The exception's label or start date"),
+			}, "target", "name", "exception"),
+		},
+		{
 			Name:        "revert_optimization",
 			Description: "Restore the requests and limits a namespace had before it was right-sized. Requires the user's confirmation.",
 			Mutating:    true,
@@ -133,16 +171,29 @@ func (s *Server) toolRegistry() []ai.Tool {
 }
 
 // toolsFor filters the registry for a caller: read-only tools for everyone, mutating ones
-// only when the caller may confirm them.
-func (s *Server) toolsFor(canMutate bool) []ai.Tool {
+// for operators, and the ones that change a schedule's definition for admins.
+func (s *Server) toolsFor(ctx context.Context) []ai.Tool {
 	var out []ai.Tool
 	for _, t := range s.toolRegistry() {
-		if !t.Mutating || canMutate {
+		if toolAllowed(ctx, t) {
 			out = append(out, t)
 		}
 	}
 	return out
 }
+
+func toolAllowed(ctx context.Context, t ai.Tool) bool {
+	switch {
+	case t.AdminOnly:
+		return roleAllows(ctx, auth.RoleAdmin)
+	case t.Mutating:
+		return roleAllows(ctx, auth.RoleOperator)
+	}
+	return true
+}
+
+// errAdminOnly refuses a tool that changes a schedule to a caller who is not an admin.
+var errAdminOnly = errors.New("this action changes a schedule and needs the admin role")
 
 // executeMutatingTool runs a confirmed action. It returns a human-readable result.
 func (s *Server) executeMutatingTool(ctx context.Context, name string, args map[string]any) (string, error) {
@@ -155,6 +206,12 @@ func (s *Server) executeMutatingTool(ctx context.Context, name string, args map[
 	}
 	if tool == nil {
 		return "", fmt.Errorf("unknown action %q", name)
+	}
+	if !toolAllowed(ctx, *tool) {
+		if tool.AdminOnly {
+			return "", errAdminOnly
+		}
+		return "", fmt.Errorf("this action needs the operator role")
 	}
 	if err := ai.ValidateArgs(tool.Parameters, args); err != nil {
 		return "", err
@@ -172,6 +229,22 @@ func (s *Server) executeMutatingTool(ctx context.Context, name string, args map[
 			return "", err
 		}
 		return s.applyOverride(ctx, client.ObjectKeyFromObject(cfg), cfg, arg("action"), arg("duration"))
+	case "add_schedule_exception":
+		ex := finopsv1.ScheduleException{Name: arg("label"), Start: arg("start"), End: arg("end"), State: arg("state")}
+		return s.changeExceptions(ctx, arg("target"), arg("name"), func(own []finopsv1.ScheduleException) ([]finopsv1.ScheduleException, string, error) {
+			return append(own, ex), fmt.Sprintf("added: kept %s %s", strings.ToLower(ex.State), describeExceptionDates(ex)), nil
+		})
+	case "remove_schedule_exception":
+		which := arg("exception")
+		return s.changeExceptions(ctx, arg("target"), arg("name"), func(own []finopsv1.ScheduleException) ([]finopsv1.ScheduleException, string, error) {
+			kept := slices.DeleteFunc(slices.Clone(own), func(e finopsv1.ScheduleException) bool {
+				return strings.EqualFold(e.Name, which) || e.Start == which
+			})
+			if len(kept) == len(own) {
+				return nil, "", errBadOverride{fmt.Errorf("no exception is labelled or starts %q", which)}
+			}
+			return kept, fmt.Sprintf("removed %d exception(s) matching %q", len(own)-len(kept), which), nil
+		})
 	case "revert_optimization":
 		if err := s.revertNamespace(ctx, arg("namespace")); err != nil {
 			return "", err
@@ -195,15 +268,16 @@ func (s *Server) applyOverride(ctx context.Context, key client.ObjectKey, obj cl
 		if err := s.Client.Get(ctx, key, obj); err != nil {
 			return err
 		}
-		schedules, activeField, untilField := overrideFields(obj)
+		activeField, untilField := overrideFields(obj)
+		tt := s.timetableOf(ctx, obj)
 		d := duration
 		switch {
 		case d == "forever":
 			d = ""
-		case d == "" && len(schedules) > 0:
+		case d == "" && tt.NextChange(time.Now()) != nil:
 			d = UntilNextTransition
 		}
-		resolved, deadline, err := ResolveOverride(active, nil, d, schedules, time.Now())
+		resolved, deadline, err := ResolveOverride(active, nil, d, tt, time.Now())
 		if err != nil {
 			return errBadOverride{err}
 		}
@@ -228,13 +302,13 @@ func (s *Server) applyOverride(ctx context.Context, key client.ObjectKey, obj cl
 	}
 }
 
-// overrideFields exposes the schedule and override fields of a group or config.
-func overrideFields(obj client.Object) ([]finopsv1.ScalingSchedule, **bool, **metav1.Time) {
+// overrideFields exposes the manual override fields of a group or config.
+func overrideFields(obj client.Object) (**bool, **metav1.Time) {
 	switch o := obj.(type) {
 	case *finopsv1.ScalingGroup:
-		return o.Spec.Schedules, &o.Spec.Active, &o.Spec.ActiveUntil
+		return &o.Spec.Active, &o.Spec.ActiveUntil
 	case *finopsv1.ScalingConfig:
-		return o.Spec.Schedules, &o.Spec.Active, &o.Spec.ActiveUntil
+		return &o.Spec.Active, &o.Spec.ActiveUntil
 	}
 	panic(fmt.Sprintf("unexpected override target %T", obj))
 }
@@ -377,7 +451,7 @@ func (s *Server) toolListGroups(ctx context.Context) (string, error) {
 	for _, g := range list.Items {
 		out = append(out, map[string]any{
 			"name": g.Name, "category": g.Spec.Category, "mode": g.Status.Mode, "desired": g.Status.DesiredState,
-			"phase": g.Status.Phase, "ready": fmt.Sprintf("%d/%d", g.Status.NamespacesReady, g.Status.NamespacesTotal),
+			"phase": g.Status.Phase, "ready": fmt.Sprintf("%d/%d", g.Status.NamespacesReady, g.Status.NamespacesTotal), "exception": g.Status.Exception,
 			"nextChange": describeTransition(g.Status.NextTransition), "dependsOn": g.Spec.DependsOn,
 			"requiredBy": g.Status.RequiredBy, "namespaces": len(g.Spec.Namespaces),
 		})
@@ -397,8 +471,9 @@ func (s *Server) toolGetGroup(ctx context.Context, name string) (string, error) 
 	return toJSON(map[string]any{
 		"name": g.Name, "namespaces": g.Spec.Namespaces, "sequence": g.Spec.Sequence, "schedules": g.Spec.Schedules,
 		"activation": g.Spec.Activation, "dependsOn": g.Spec.DependsOn, "override": g.Spec.Active,
-		"overrideUntil": g.Spec.ActiveUntil, "status": map[string]any{
+		"overrideUntil": g.Spec.ActiveUntil, "exceptions": g.Spec.Exceptions, "calendars": g.Spec.Calendars, "status": map[string]any{
 			"mode": g.Status.Mode, "desired": g.Status.DesiredState, "phase": g.Status.Phase,
+			"exception": g.Status.Exception, "exceptionEndsAt": g.Status.ExceptionEndsAt,
 			"readyNamespaces": g.Status.ReadyNamespaces, "skippedNamespaces": g.Status.SkippedNamespaces,
 			"nextChange": describeTransition(g.Status.NextTransition),
 			"requiredBy": g.Status.RequiredBy, "conflictingNamespaces": g.Status.ConflictingNamespaces, "conditions": conds,
@@ -416,6 +491,7 @@ func (s *Server) toolListConfigs(ctx context.Context) (string, error) {
 		out = append(out, map[string]any{
 			"name": c.Name, "namespace": c.Spec.TargetNamespace, "mode": c.Status.Mode,
 			"desired": c.Status.DesiredState, "phase": c.Status.Phase, "nextChange": describeTransition(c.Status.NextTransition),
+			"exception": c.Status.Exception, "exceptions": c.Spec.Exceptions, "calendars": c.Spec.Calendars,
 		})
 	}
 	return toJSON(out)

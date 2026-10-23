@@ -216,6 +216,7 @@ kubectl port-forward -n costdeck svc/costdeck-operator-api 8082:8082`,
                 ['Kept up manually / Kept down manually', 'Someone clicked Start now or Scale down now. It says until when.'],
                 ['Up · needed by dev', 'On demand or otherwise down, but another schedule depends on it.'],
                 ['Up · no schedule set', 'No usable hours, so it stays up to be safe.'],
+                ['Down for Christmas Day / Up for Release', 'A date exception or a holiday calendar day applies. It says until when.'],
                 ['Applying changes…', 'You just saved; Cost Deck has not processed the change yet.'],
               ],
             },
@@ -261,6 +262,39 @@ kubectl patch scalinggroup dev -n costdeck --type merge \\
             },
           },
           { warn: '`active: false` does not mean "follow the schedule": it keeps the namespaces down until the field is removed. To hand control back, set it to `null`.' },
+        ],
+      },
+      {
+        id: 'exceptions',
+        title: 'Holidays and other exceptions',
+        blocks: [
+          { p: 'Some days the hours do not fit: nobody works on a public holiday, but a release weekend needs staging. Open the schedule, go to **Exceptions**, and add the dates with **Keep down** or **Keep up**. Whole days, or a time on the first and last day; times are in the schedule\'s timezone.' },
+          {
+            list: [
+              'A **holiday calendar** keeps the public holidays once for every schedule. Create it under **Settings → Holiday calendars**, type the days or import an `.ics` file, and pick it on the Exceptions tab of each schedule that should follow it.',
+              'A manual **Start now** or **Scale down now** still wins over an exception.',
+              'Where dates overlap, the one that starts last applies, so a release weekend inside a holiday break keeps the environment up.',
+              'The card says **Down for Christmas Day** and when the schedule takes over again, and *the next change* counts exceptions, also weeks ahead.',
+              'Cloud databases stay stopped for long breaks too: AWS starts a stopped Aurora cluster again after seven days, and Cost Deck stops it again within a minute.',
+            ],
+          },
+          {
+            ways: {
+              api: `# Keep dev down over Christmas and up for a release on a Saturday
+curl -X PUT "$COSTDECK/api/scaling/groups/dev" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"spec": {"category": "Environments", "namespaces": ["dev-frontend", "dev-backend"],
+       "schedules": [{"days": [1,2,3,4,5], "startTime": "08:00", "endTime": "19:00", "timezone": "Europe/Berlin"}],
+       "calendars": ["de-holidays"],
+       "exceptions": [
+         {"name": "Christmas break", "start": "2026-12-24", "end": "2027-01-01", "state": "Down"},
+         {"name": "Release", "start": "2026-11-07T06:00", "end": "2026-11-07T22:00", "state": "Up"}]}}'`,
+              kubectl: `kubectl patch scalinggroup dev -n costdeck --type merge -p '{"spec":{
+  "exceptions":[{"name":"Christmas break","start":"2026-12-24","end":"2027-01-01","state":"Down"}],
+  "calendars":["de-holidays"]}}'`,
+            },
+          },
+          { tip: 'Ask the assistant: "keep dev up on Saturday from 6 to 22 for the release". It adds the exception after you confirm; changing a schedule needs the admin role.' },
         ],
       },
       {
@@ -1113,6 +1147,8 @@ claude mcp add --transport http costdeck https://costdeck.example.com/mcp \\
                 ['get_cluster_overview', 'Nodes, cost and the biggest namespaces'],
                 ['list_scaling_groups, get_scaling_group', 'Schedules and their state'],
                 ['list_namespace_configs', 'Per-namespace configs and workload rules'],
+                ['list_calendars', 'Shared holiday calendars and their days to come'],
+                ['add_schedule_exception, remove_schedule_exception', 'Keep a schedule up or down on given dates (admin)'],
                 ['list_namespaces, get_namespace_status', 'Usage and cost per namespace'],
                 ['get_cost_overview', 'Run rate, efficiency, month to date, savings and the ranked opportunities'],
                 ['get_rightsizing_recommendations', 'What can be reduced in a namespace'],

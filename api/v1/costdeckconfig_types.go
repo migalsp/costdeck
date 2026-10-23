@@ -608,6 +608,50 @@ type CostDeckConfigSpec struct {
 	// Billing reconciles estimates with the cloud bill.
 	// +optional
 	Billing BillingConfig `json:"billing,omitempty"`
+
+	// Calendars are shared lists of days, such as public holidays, that schedules name in
+	// spec.calendars to apply them as exceptions.
+	// +kubebuilder:validation:MaxItems=50
+	// +listType=map
+	// +listMapKey=name
+	// +optional
+	Calendars []HolidayCalendar `json:"calendars,omitempty"`
+}
+
+// HolidayCalendar is a named list of days on which the schedules that use it keep their
+// targets in State, typically down for public holidays.
+type HolidayCalendar struct {
+	// Name schedules use to refer to the calendar.
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=63
+	Name string `json:"name"`
+
+	// Timezone the days are counted in. Defaults to the timezone of the schedule that
+	// uses the calendar.
+	// +optional
+	Timezone string `json:"timezone,omitempty"`
+
+	// State targets are kept in on these days. Defaults to Down.
+	// +kubebuilder:validation:Enum=Up;Down
+	// +optional
+	State string `json:"state,omitempty"`
+
+	// Days of the calendar.
+	// +kubebuilder:validation:MaxItems=400
+	// +listType=atomic
+	Days []CalendarDay `json:"days"`
+}
+
+// CalendarDay is one day of a HolidayCalendar.
+type CalendarDay struct {
+	// Date is the day, "2026-12-25".
+	// +kubebuilder:validation:Pattern=`^[0-9]{4}-[0-9]{2}-[0-9]{2}$`
+	Date string `json:"date"`
+
+	// Name of the day, such as "Christmas Day".
+	// +kubebuilder:validation:MaxLength=100
+	// +optional
+	Name string `json:"name,omitempty"`
 }
 
 // ProviderStatus represents the connection status of a single provider.

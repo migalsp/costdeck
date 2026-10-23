@@ -44,6 +44,7 @@ type SettingsResponse struct {
 	Budgets      []finopsv1.Budget            `json:"budgets"`
 	Alerts       finopsv1.AlertsConfig        `json:"alerts"`
 	Billing      BillingSettingsResponse      `json:"billing"`
+	Calendars    []finopsv1.HolidayCalendar   `json:"calendars"`
 }
 
 // PricingSettingsResponse shows the configured custom rates and the rates in effect.
@@ -173,6 +174,8 @@ type SettingsUpdateRequest struct {
 	Alerts  *finopsv1.AlertsConfig `json:"alerts,omitempty"`
 	// Billing replaces the reconciliation setup when present.
 	Billing *finopsv1.BillingConfig `json:"billing,omitempty"`
+	// Calendars replaces the holiday calendars when present.
+	Calendars *[]finopsv1.HolidayCalendar `json:"calendars,omitempty"`
 }
 
 // BillingSettingsResponse is the reconciliation setup and its last result.
@@ -439,6 +442,10 @@ func (s *Server) buildSettingsResponse(ctx context.Context, cfg *finopsv1.CostDe
 	}
 
 	resp.Reports = cfg.Spec.Reports
+	resp.Calendars = cfg.Spec.Calendars
+	if resp.Calendars == nil {
+		resp.Calendars = []finopsv1.HolidayCalendar{}
+	}
 	resp.Budgets = cfg.Spec.Budgets
 	if resp.Budgets == nil {
 		resp.Budgets = []finopsv1.Budget{}
@@ -479,7 +486,7 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 
 	appliers := []func(context.Context, *finopsv1.CostDeckConfig, *SettingsUpdateRequest) error{
 		s.applyAWSSettings, s.applyAzureSettings, s.applyGCPSettings, s.applyAISettings,
-		s.applyWebexSettings, s.applyVictoriaMetricsSettings, applyMCPSettings, applyFeatureSettings, applyPricingSettings, applyReportSettings, applyBudgetSettings, applyBillingSettings, s.applyAuthSettings,
+		s.applyWebexSettings, s.applyVictoriaMetricsSettings, applyMCPSettings, applyFeatureSettings, applyPricingSettings, applyReportSettings, applyBudgetSettings, applyBillingSettings, applyCalendarSettings, s.applyAuthSettings,
 	}
 
 	var cfg *finopsv1.CostDeckConfig

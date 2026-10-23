@@ -69,15 +69,54 @@ type ScalingSchedule struct {
 	Timezone string `json:"timezone,omitempty"`
 }
 
+// ScheduleException overrides the weekly schedules on given dates: a public holiday the
+// environment stays down, or a release weekend it stays up. A manual override (spec.active)
+// still beats it. When exceptions overlap, the one that began last wins, so a release
+// weekend inside a holiday break keeps the environment up.
+type ScheduleException struct {
+	// Name says what the exception is for, such as "New Year" or "Release 2.4".
+	// +kubebuilder:validation:MaxLength=100
+	// +optional
+	Name string `json:"name,omitempty"`
+
+	// Start is the first day ("2026-12-24") or the moment ("2026-12-24T18:00") it applies.
+	// +kubebuilder:validation:Pattern=`^[0-9]{4}-[0-9]{2}-[0-9]{2}(T([01][0-9]|2[0-3]):[0-5][0-9])?$`
+	Start string `json:"start"`
+
+	// End is the last day it applies (the whole day) or the moment it stops applying.
+	// Defaults to the end of the Start day.
+	// +kubebuilder:validation:Pattern=`^[0-9]{4}-[0-9]{2}-[0-9]{2}(T([01][0-9]|2[0-3]):[0-5][0-9])?$`
+	// +optional
+	End string `json:"end,omitempty"`
+
+	// State the target is kept in while the exception applies.
+	// +kubebuilder:validation:Enum=Up;Down
+	State string `json:"state"`
+
+	// Timezone of Start and End (e.g. "Europe/Berlin"). Defaults to the timezone of the
+	// first schedule, then to UTC.
+	// +optional
+	Timezone string `json:"timezone,omitempty"`
+}
+
 // ScheduleStatus explains what drives the desired state of a ScalingGroup or ScalingConfig,
 // so that `kubectl get` answers "why is this up right now, and until when?".
 type ScheduleStatus struct {
 	// Mode is what currently decides the desired state:
 	// Schedule (spec.schedules), ManualUp / ManualDown (spec.active is set and the
-	// schedule is ignored), AlwaysOn (no usable schedule, kept up as a fail-safe) or
-	// Dependency (a ScalingGroup kept up for a group that depends on it).
+	// schedule is ignored), Exception (a dated exception or calendar day), AlwaysOn (no
+	// usable schedule, kept up as a fail-safe) or Dependency (a ScalingGroup kept up for a
+	// group that depends on it).
 	// +optional
 	Mode string `json:"mode,omitempty"`
+
+	// Exception names the exception or calendar day in force while Mode is Exception.
+	// +optional
+	Exception string `json:"exception,omitempty"`
+
+	// ExceptionEndsAt is when the exception in force stops applying.
+	// +optional
+	ExceptionEndsAt *metav1.Time `json:"exceptionEndsAt,omitempty"`
 
 	// DesiredState is Up or Down.
 	// +optional
@@ -134,6 +173,19 @@ type ScalingConfigSpec struct {
 	// +optional
 	// +listType=atomic
 	Schedules []ScalingSchedule `json:"schedules,omitempty"`
+
+	// Exceptions override the schedules on given dates (holidays, release weekends).
+	// +kubebuilder:validation:MaxItems=100
+	// +optional
+	// +listType=atomic
+	Exceptions []ScheduleException `json:"exceptions,omitempty"`
+
+	// Calendars names shared holiday calendars (CostDeckConfig spec.calendars) whose days
+	// apply as exceptions too.
+	// +kubebuilder:validation:MaxItems=10
+	// +optional
+	// +listType=set
+	Calendars []string `json:"calendars,omitempty"`
 
 	// Sequence orders the namespace's workloads in stages that start first to last and stop
 	// last to first; workloads in no stage start last and stop first. Each entry is a stage:
