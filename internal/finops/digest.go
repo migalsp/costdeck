@@ -93,9 +93,10 @@ func periodRange(period string, now time.Time) (from, to, prevFrom, prevTo time.
 
 // NewDigest builds the digest of the last complete week or month. The overview supplies
 // today's run rate, the namespaces' teams and the opportunities.
-func NewDigest(o Overview, l *Ledger, period string, now time.Time) Digest {
-	if period != PeriodMonth {
-		period = PeriodWeek
+func NewDigest(o Overview, l *Ledger, requested string, now time.Time) Digest {
+	period := PeriodWeek
+	if requested == PeriodMonth {
+		period = PeriodMonth
 	}
 	from, to, prevFrom, prevTo := periodRange(period, now)
 	d := Digest{
