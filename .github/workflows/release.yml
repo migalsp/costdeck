@@ -49,9 +49,10 @@ jobs:
     outputs:
       digest: ${{ steps.build.outputs.digest }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.release-please.outputs.tag }}
+          persist-credentials: false
 
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
@@ -88,9 +89,11 @@ jobs:
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
 
       - name: Sign image
-        run: cosign sign --yes "${IMAGE}@${{ steps.build.outputs.digest }}"
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: cosign sign --yes "${IMAGE}@${DIGEST}"
 
-      - uses: actions/attest-build-provenance@v4
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-name: ${{ env.IMAGE }}
           subject-digest: ${{ steps.build.outputs.digest }}
@@ -104,7 +107,7 @@ jobs:
           output: trivy.sarif
           ignore-unfixed: true
 
-      - uses: github/codeql-action/upload-sarif@v4
+      - uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         with:
           sarif_file: trivy.sarif
           category: trivy-image
@@ -118,15 +121,16 @@ jobs:
       packages: write
       id-token: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.release-please.outputs.tag }}
+          persist-credentials: false
 
       - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
           version: ${{ env.HELM_VERSION }}
 
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
 
@@ -136,16 +140,19 @@ jobs:
         env:
           VERSION: ${{ needs.release-please.outputs.version }}
           REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
         run: |
           helm package deploy/helm/costdeck-operator --version "$VERSION" --app-version "$VERSION"
-          echo "$REGISTRY_PASSWORD" | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
+          echo "$REGISTRY_PASSWORD" | helm registry login ghcr.io -u "$ACTOR" --password-stdin
           helm push "costdeck-operator-${VERSION}.tgz" "$CHART_REPO" 2>&1 | tee push.log
           digest=$(sed -n 's/^Digest: //p' push.log)
-          echo "$REGISTRY_PASSWORD" | cosign login ghcr.io -u "${{ github.actor }}" --password-stdin
+          echo "$REGISTRY_PASSWORD" | cosign login ghcr.io -u "$ACTOR" --password-stdin
           cosign sign --yes "${CHART_REPO#oci://}/costdeck-operator@${digest}"
 
       - name: Build install bundle
-        run: make build-installer IMG="${IMAGE}:${{ needs.release-please.outputs.version }}"
+        env:
+          VERSION: ${{ needs.release-please.outputs.version }}
+        run: make build-installer IMG="${IMAGE}:${VERSION}"
 
       - name: Attach assets to the release
         env:

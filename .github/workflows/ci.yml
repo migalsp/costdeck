@@ -9,7 +9,6 @@ on:
 permissions:
   contents: read
 
-# A new push to a pull request supersedes the run for the previous commit.
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -19,19 +18,26 @@ jobs:
     name: Go · generate, lint, test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # setup-go pins GOTOOLCHAIN=local, so the version must come from go.mod rather than
-          # drift below its go directive.
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
           go-version-file: go.mod
 
       - name: Cache tools
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: bin
           key: tools-${{ runner.os }}-${{ hashFiles('Makefile', '.custom-gcl.yml', 'go.mod') }}
+
+      - name: Modules are tidy
+        run: |
+          if ! go mod tidy -diff; then
+            echo "::error::go.mod or go.sum is not tidy. Run 'go mod tidy' and commit the result."
+            exit 1
+          fi
 
       - name: Generated code and manifests are committed
         run: |
@@ -50,7 +56,7 @@ jobs:
       - name: Formatting is clean
         run: |
           if ! git diff --exit-code; then
-            echo "::error::Run 'make fmt' and commit the result."
+            echo "::error::Run 'go fmt ./...' and commit the result."
             exit 1
           fi
 
@@ -61,7 +67,6 @@ jobs:
           files: cover.out
           flags: unittests
           token: ${{ secrets.CODECOV_TOKEN }}
-          # Coverage is informative; a Codecov outage must not fail the build.
           fail_ci_if_error: false
 
   ui:
@@ -71,8 +76,10 @@ jobs:
       run:
         working-directory: ui
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           cache: npm
@@ -89,7 +96,9 @@ jobs:
     env:
       KUBECONFORM_VERSION: v0.8.0
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
           version: v4.3.0
@@ -98,9 +107,14 @@ jobs:
           helm lint deploy/helm/costdeck-operator --strict
           helm lint deploy/helm/costdeck-operator --strict \
             --set metrics.secure=true,metrics.serviceMonitor.enabled=true,ingress.enabled=true,podDisruptionBudget.enabled=true,replicaCount=2
+      - name: Install kubeconform
+        run: |
+          base="https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}"
+          curl -sSfLO "$base/kubeconform-linux-amd64.tar.gz"
+          curl -sSfL "$base/CHECKSUMS" | grep ' kubeconform-linux-amd64.tar.gz$' | sha256sum -c -
+          tar xzf kubeconform-linux-amd64.tar.gz kubeconform
       - name: Validate rendered manifests
         run: |
-          curl -sSL "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" | tar xz kubeconform
           helm template costdeck deploy/helm/costdeck-operator -n costdeck \
             | ./kubeconform -strict -summary -ignore-missing-schemas
           helm template costdeck deploy/helm/costdeck-operator -n costdeck \
@@ -111,12 +125,14 @@ jobs:
     name: Kustomize install bundle
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
       - name: Build dist/install.yaml
-        run: make build-installer IMG=ghcr.io/${{ github.repository }}/costdeck-operator:ci
+        run: make build-installer IMG="ghcr.io/${GITHUB_REPOSITORY}/costdeck-operator:ci"
       - name: Every generated CRD is in the bundle
         run: |
           want=$(ls config/crd/bases/*.yaml | wc -l)
@@ -130,31 +146,86 @@ jobs:
     name: Known vulnerabilities
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: govulncheck
         uses: golang/govulncheck-action@032d45514ae346b1db93c04b0c90b841c370344f # v1.1.0
         with:
           go-version-file: go.mod
           go-package: ./...
           repo-checkout: false
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
       - name: npm audit (runtime dependencies)
         working-directory: ui
-        # Only runtime packages end up in the embedded bundle; build tooling never reaches the
-        # image, so dev-only advisories are left to Dependabot.
         run: npm audit --omit=dev --audit-level=high
 
-  e2e:
-    name: E2E · Kind regression suite
+  dependency-review:
+    name: Dependency review
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    needs: [go, ui, helm]
-    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
-      - name: Lint e2e scripts
-        run: shellcheck -x -S warning hack/e2e-smoke.sh hack/e2e/*.sh
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: high
+          comment-summary-in-pr: never
+
+  commits:
+    name: Commits · conventional messages
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Every commit is a conventional commit
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          pattern='^(feat|fix|perf|refactor|docs|test|build|ci|chore|revert|style)(\([a-z0-9._/-]+\))?!?: .+'
+          bad=0
+          while IFS= read -r line; do
+            subject=${line#* }
+            if ! [[ "$subject" =~ $pattern ]]; then
+              echo "::error::${line%% *} is not a conventional commit, which release-please needs for the release notes: $subject"
+              bad=1
+            fi
+          done < <(git log --no-merges --format='%h %s' "$BASE..$HEAD")
+          exit "$bad"
+
+  workflows:
+    name: Workflows · zizmor
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482 # v0.6.4
+        with:
+          version: 1.30.1
+          advanced-security: false
+          min-severity: medium
+
+  scripts:
+    name: E2E scripts · shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: shellcheck -x -S warning hack/e2e-smoke.sh hack/e2e/*.sh
+
+  image:
+    name: Image · build and scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: Build image
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
@@ -172,6 +243,34 @@ jobs:
           severity: CRITICAL,HIGH
           ignore-unfixed: true
           exit-code: "1"
+      - name: Save image
+        run: docker save costdeck-operator:e2e -o "$RUNNER_TEMP/costdeck-image.tar"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: costdeck-image
+          path: ${{ runner.temp }}/costdeck-image.tar
+          retention-days: 1
+          if-no-files-found: error
+
+  e2e:
+    name: E2E · part ${{ matrix.part }} of 3
+    runs-on: ubuntu-latest
+    needs: [go, ui, helm, scripts, image]
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: costdeck-image
+          path: ${{ runner.temp }}
+      - name: Load image into Docker
+        run: docker load -i "$RUNNER_TEMP/costdeck-image.tar"
       - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
           version: v4.3.0
@@ -179,10 +278,15 @@ jobs:
         uses: helm/kind-action@ef37e7f390d99f746eb8b610417061a60e82a6cc # v1.14.0
         with:
           cluster_name: costdeck-e2e
-      - name: Load image
+          version: v0.31.0
+          node_image: kindest/node:v1.35.0@sha256:452d707d4862f52530247495d180205e029056831160e22870e37e3f6c1ac31f
+      - name: Load image into Kind
         run: kind load docker-image costdeck-operator:e2e --name costdeck-e2e
       - name: E2E scenarios (hack/e2e)
-        run: IMAGE=costdeck-operator:e2e ./hack/e2e-smoke.sh
+        env:
+          IMAGE: costdeck-operator:e2e
+          E2E_PART: ${{ matrix.part }}/3
+        run: ./hack/e2e-smoke.sh
       - name: Cluster state on failure
         if: failure()
         run: |
@@ -190,3 +294,21 @@ jobs:
           kubectl get scalinggroups,scalingconfigs,namespacefinops -n costdeck -o wide
           kubectl get events -A --sort-by=.lastTimestamp | tail -80
           kubectl logs -n costdeck deploy/costdeck-operator --tail=400
+
+  result:
+    name: CI result
+    if: always()
+    needs: [go, ui, helm, install-bundle, vulnerabilities, dependency-review, commits, workflows, scripts, image, e2e]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every job passed or was skipped
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "Job results: $RESULTS"
+          case " $RESULTS " in
+            *" failure "* | *" cancelled "*)
+              echo "::error::A job of this run did not pass."
+              exit 1
+              ;;
+          esac

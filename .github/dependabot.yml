@@ -3,10 +3,10 @@ version: 2
 # Dependabot alerts were already enabled, but with no configuration every advisory opened
 # its own pull request.
 #
-# This file exists purely to group those security pull requests. Routine version updates
-# stay off: `open-pull-requests-limit: 0` disables them, and that limit does not apply to
-# security updates, so an advisory still produces a PR. Nothing is proposed unless there is
-# an actual vulnerability to fix.
+# This file groups those security pull requests. Routine version updates stay off for Go,
+# npm and Docker: `open-pull-requests-limit: 0` disables them, and that limit does not apply
+# to security updates, so an advisory still produces a PR. GitHub Actions get monthly
+# version updates as well, since every action is pinned by commit SHA.
 updates:
   - package-ecosystem: gomod
     directory: /
@@ -14,6 +14,8 @@ updates:
       interval: weekly
       day: monday
     open-pull-requests-limit: 0
+    cooldown:
+      default-days: 14
     commit-message:
       prefix: "chore(deps)"
     groups:
@@ -36,6 +38,8 @@ updates:
       interval: weekly
       day: monday
     open-pull-requests-limit: 0
+    cooldown:
+      default-days: 14
     commit-message:
       prefix: "chore(deps)"
     groups:
@@ -47,20 +51,22 @@ updates:
         patterns:
           - "*"
 
-  # Workflows pin third-party actions by commit SHA, with the version in a comment that
-  # Dependabot keeps in step, and the Dockerfile pins base images by tag. Both stay on the
-  # same security-only policy: a PR appears only for an advisory.
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: weekly
-      day: monday
-    open-pull-requests-limit: 0
+      interval: monthly
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 14
     commit-message:
       prefix: "ci(deps)"
     groups:
       actions-security:
         applies-to: security-updates
+        patterns:
+          - "*"
+      actions:
+        applies-to: version-updates
         patterns:
           - "*"
 
@@ -70,6 +76,8 @@ updates:
       interval: weekly
       day: monday
     open-pull-requests-limit: 0
+    cooldown:
+      default-days: 14
     commit-message:
       prefix: "build(deps)"
     groups:
