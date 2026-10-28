@@ -45,7 +45,7 @@ group_field_is_not() { ! group_field_is "$@"; }
 cronjob_suspended_is() { [[ "$(kubectl get cronjob "$2" -n "$1" -o jsonpath='{.spec.suspend}')" == "$3" ]]; }
 exists() { kubectl get "$@" >/dev/null 2>&1; }
 missing() { ! exists "$@"; }
-event_seen() { kubectl get events -n "$NS" --field-selector "involvedObject.name=$1,reason=$2" -o name | grep -q .; }
+event_seen() { [[ -n "$(kubectl get events -n "$NS" --field-selector "involvedObject.name=$1,reason=$2" -o name)" ]]; }
 
 # api <method> <path> [json]: calls the API as the signed-in admin and prints the body.
 api() {

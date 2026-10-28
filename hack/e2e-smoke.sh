@@ -56,6 +56,36 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 # shellcheck source=hack/e2e/lib.sh
 source "$HERE/e2e/lib.sh"
 
+part_scenarios() {
+  local part=$1 parts=$2 f
+  for f in "$HERE"/e2e/[0-9]*.sh; do basename "$f" .sh; done |
+    awk -v part="$part" -v parts="$parts" -v weights="$HERE/e2e/durations.txt" '
+      BEGIN { while ((getline line < weights) > 0) { split(line, w, " "); seconds[w[1]] = w[2] } }
+      { name[NR] = $0; cost[NR] = ($0 in seconds) ? seconds[$0] : 60; order[NR] = NR }
+      END {
+        for (i = 1; i <= NR; i++) for (j = i + 1; j <= NR; j++)
+          if (cost[order[j]] > cost[order[i]]) { t = order[i]; order[i] = order[j]; order[j] = t }
+        for (p = 1; p <= parts; p++) load[p] = 0
+        for (i = 1; i <= NR; i++) {
+          best = 1
+          for (p = 2; p <= parts; p++) if (load[p] < load[best]) best = p
+          load[best] += cost[order[i]]
+          owner[order[i]] = best
+        }
+        for (i = 1; i <= NR; i++) if (owner[i] == part) print name[i]
+      }'
+}
+
+PART_SCENARIOS=""
+if [[ -n "${E2E_PART:-}" ]]; then
+  [[ "$E2E_PART" =~ ^([0-9]+)/([0-9]+)$ ]] && ((BASH_REMATCH[1] >= 1 && BASH_REMATCH[1] <= BASH_REMATCH[2])) || {
+    printf 'E2E_PART must be part/parts, such as 2/3, not %s\n' "$E2E_PART" >&2
+    exit 2
+  }
+  PART_SCENARIOS=$(part_scenarios "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" | tr '\n' ' ')
+  log "Part $E2E_PART: $PART_SCENARIOS"
+fi
+
 cleanup() {
   # A run that did not reach the end failed, whatever $? says: bash 3.2 reports 0 to an
   # EXIT trap after an unbound-variable error, so a scenario that stopped on a shell error
@@ -121,6 +151,7 @@ ok "signed in as $ADMIN_USER"
 for scenario in "$HERE"/e2e/[0-9]*.sh; do
   name=$(basename "$scenario" .sh)
   [[ -z "${E2E_ONLY:-}" || "$name" =~ $E2E_ONLY ]] || continue
+  [[ -z "${E2E_PART:-}" || " $PART_SCENARIOS " == *" $name "* ]] || continue
   printf '\n\033[1;34m### %s\033[0m\n' "$name"
   # shellcheck source=/dev/null
   source "$scenario"

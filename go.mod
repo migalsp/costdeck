@@ -15,7 +15,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/rds v1.117.1
 	github.com/aws/aws-sdk-go-v2/service/sts v1.41.10
 	github.com/coreos/go-oidc/v3 v3.21.0
-	github.com/go-jose/go-jose/v4 v4.1.4
+	github.com/go-jose/go-jose/v4 v4.1.6
 	github.com/go-logr/logr v1.4.4
 	github.com/mark3labs/mcp-go v0.54.1
 	github.com/onsi/ginkgo/v2 v2.27.2

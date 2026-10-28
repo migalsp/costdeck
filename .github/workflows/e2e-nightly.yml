@@ -1,0 +1,65 @@
+name: E2E nightly
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-nightly
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    name: E2E · Kubernetes ${{ matrix.kubernetes }}, whole suite in order
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - kubernetes: "1.31"
+            kind: v0.31.0
+            node-image: kindest/node:v1.31.14@sha256:6f86cf509dbb42767b6e79debc3f2c32e4ee01386f0489b3b2be24b0a55aac2b
+          - kubernetes: "1.37"
+            kind: v0.33.0
+            node-image: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          load: true
+          tags: costdeck-operator:e2e
+          build-args: VERSION=nightly-${{ github.sha }}
+          cache-from: type=gha
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v4.3.0
+      - name: Create Kind cluster
+        uses: helm/kind-action@ef37e7f390d99f746eb8b610417061a60e82a6cc # v1.14.0
+        with:
+          cluster_name: costdeck-e2e
+          version: ${{ matrix.kind }}
+          node_image: ${{ matrix.node-image }}
+      - name: Load image into Kind
+        run: kind load docker-image costdeck-operator:e2e --name costdeck-e2e
+      - name: E2E scenarios (hack/e2e)
+        env:
+          IMAGE: costdeck-operator:e2e
+        run: ./hack/e2e-smoke.sh
+      - name: Cluster state on failure
+        if: failure()
+        run: |
+          set +e
+          kubectl get pods -A -o wide
+          kubectl get scalinggroups,scalingconfigs,namespacefinops -n costdeck -o wide
+          kubectl get events -A --sort-by=.lastTimestamp | tail -80
+          kubectl logs -n costdeck deploy/costdeck-operator --tail=400

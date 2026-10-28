@@ -272,7 +272,16 @@ of a new Kind cluster:
 ```bash
 SKIP_INSTALL=1 ./hack/e2e-smoke.sh                 # skips the settings-changing scenarios
 SKIP_INSTALL=1 DISPOSABLE=1 E2E_ONLY='30|40' ./hack/e2e-smoke.sh
+SKIP_INSTALL=1 DISPOSABLE=1 E2E_PART=2/3 ./hack/e2e-smoke.sh   # one of the three parts CI runs
 ```
+
+Pull requests run the suite in three parts at once, each in its own Kind cluster on
+Kubernetes 1.35; `hack/e2e/durations.txt` keeps the parts the same length, and a new
+scenario joins one by itself. Every night the whole suite runs in order on Kubernetes 1.31
+and 1.37. The pull request check to require is **CI result**, which fails when any job of
+the run fails: Go, UI, Helm, the install bundle, known vulnerabilities, dependency review,
+conventional commit messages, zizmor on the workflows, shellcheck, the image scan and the
+end-to-end parts.
 
 ## License
 
