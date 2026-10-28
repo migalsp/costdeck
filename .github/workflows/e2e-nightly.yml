@@ -58,6 +58,7 @@ jobs:
       - name: Cluster state on failure
         if: failure()
         run: |
+          set +e
           kubectl get pods -A -o wide
           kubectl get scalinggroups,scalingconfigs,namespacefinops -n costdeck -o wide
           kubectl get events -A --sort-by=.lastTimestamp | tail -80

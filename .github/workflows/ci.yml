@@ -290,6 +290,7 @@ jobs:
       - name: Cluster state on failure
         if: failure()
         run: |
+          set +e
           kubectl get pods -A -o wide
           kubectl get scalinggroups,scalingconfigs,namespacefinops -n costdeck -o wide
           kubectl get events -A --sort-by=.lastTimestamp | tail -80
@@ -298,6 +299,7 @@ jobs:
   result:
     name: CI result
     if: always()
+    permissions: {}
     needs: [go, ui, helm, install-bundle, vulnerabilities, dependency-review, commits, workflows, scripts, image, e2e]
     runs-on: ubuntu-latest
     steps:
