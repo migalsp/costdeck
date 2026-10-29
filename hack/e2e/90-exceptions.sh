@@ -63,7 +63,7 @@ expect_code 200 "a night window with a nine-day Up exception from today" PUT /ap
 wait_for "status says the exception is in control" group_field_is smoke-exc exception "Long freeze"
 wait_for "the next change is when the night window closes after the exception" group_field_is smoke-exc nextTransition.time "${AFTER_FREEZE}T06:01:00Z"
 group_field_is smoke-exc nextTransition.desiredState Down || fail "the next change does not take the namespace down"
-replicas_are smoke-exc app 2 || fail "the namespace did not stay up during the exception"
+holds_for 10 "the namespace stays up during the exception" replicas_are smoke-exc app 2
 ok "the namespace goes down at 06:01 after the exception"
 
 if [[ -z "$DISPOSABLE" ]]; then
