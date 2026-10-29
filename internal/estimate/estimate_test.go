@@ -180,6 +180,44 @@ spec: {resources: {requests: {storage: -10Gi}}}
 	}
 }
 
+func TestEstimateWarnsAboutNegativeValuesItDoesNotPrice(t *testing.T) {
+	for _, tc := range []struct{ name, manifest string }{
+		{"a negative claim of a StatefulSet with no replicas", `
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: {name: db, namespace: shop}
+spec:
+  replicas: 0
+  template: {spec: {containers: [{name: db, image: db}]}}
+  volumeClaimTemplates: [{metadata: {name: data}, spec: {resources: {requests: {storage: -10Gi}}}}]
+`},
+		{"a negative ephemeral-storage request", `
+apiVersion: v1
+kind: Pod
+metadata: {name: job, namespace: shop}
+spec: {containers: [{name: main, image: app, resources: {requests: {cpu: 500m, memory: 1Gi, ephemeral-storage: -1Gi}}}]}
+`},
+		{"a negative memory limit of an init container", `
+apiVersion: v1
+kind: Pod
+metadata: {name: init, namespace: shop}
+spec:
+  initContainers: [{name: setup, image: app, resources: {limits: {memory: -1Gi}}}]
+  containers: [{name: main, image: app, resources: {requests: {cpu: 500m, memory: 1Gi}}}]
+`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, err := Estimate(nil, []byte(tc.manifest), "default", prices)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if r.After < 0 || len(r.Warnings) != 1 || !strings.Contains(r.Warnings[0], "asks for negative") {
+				t.Errorf("after = %v, warnings = %q, want a cost of at least zero and one warning", r.After, r.Warnings)
+			}
+		})
+	}
+}
+
 func TestEstimateWithoutChanges(t *testing.T) {
 	r, err := Estimate([]byte(base), []byte(base), "shop", prices)
 	if err != nil || len(r.Items) != 0 || r.Delta != 0 {
