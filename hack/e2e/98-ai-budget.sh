@@ -55,7 +55,9 @@ kubectl rollout status deploy/fakeai -n smoke-ai-budget --timeout=120s >/dev/nul
 track_call PUT /api/settings '{"integrations":{"ai":{"enabled":false,"monthlyTokenBudget":0}}}'
 api PUT /api/settings "$AI_NO_BUDGET" >/dev/null || fail "enabling the assistant"
 # Usage is kept for the month across runs: the budget leaves room for 200 more tokens.
-before=$(used_tokens)
+before=""
+usage_known() { before=$(used_tokens) && [[ "$before" =~ ^[0-9]+$ ]]; }
+wait_for "the settings show this month's token usage" usage_known
 AI_ON='{"integrations":{"ai":{"enabled":true,"provider":"local","model":"fake","baseUrl":"'"$FAKE_URL"'","monthlyTokenBudget":'"$((before + 200))"'}}}'
 api PUT /api/settings "$AI_ON" >/dev/null || fail "setting the budget"
 
