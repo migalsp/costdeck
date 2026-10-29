@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.6.2](https://github.com/migalsp/costdeck/compare/v1.6.1...v1.6.2) (2026-10-29)
+
+
+### Bug Fixes
+
+* address the OpenSSF Scorecard findings and the AI budget scenario race ([#66](https://github.com/migalsp/costdeck/issues/66)) ([b4077d5](https://github.com/migalsp/costdeck/commit/b4077d51f148d416e5f90a25725aa3c4347dd8ef))
+* **deps:** update go-jose to 4.1.6 for GHSA-mgcc-cww5-fp2q ([265e831](https://github.com/migalsp/costdeck/commit/265e831f0dc6b1f154d9238d7d7f83cf436f9ad4))
+
 ## [1.6.1](https://github.com/migalsp/costdeck/compare/v1.6.0...v1.6.1) (2026-10-27)
 
 
