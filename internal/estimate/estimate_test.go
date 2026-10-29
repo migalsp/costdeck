@@ -1,6 +1,7 @@
 package estimate
 
 import (
+	"math"
 	"strconv"
 	"strings"
 	"testing"
@@ -215,6 +216,33 @@ spec:
 				t.Errorf("after = %v, warnings = %q, want a cost of at least zero and one warning", r.After, r.Warnings)
 			}
 		})
+	}
+}
+
+func TestEstimateClampsRolloutReplicas(t *testing.T) {
+	rollout := func(replicas string) []byte {
+		return []byte("apiVersion: argoproj.io/v1alpha1\nkind: Rollout\nmetadata: {name: web, namespace: shop}\nspec:\n  replicas: " + replicas + "\n  template:" + pod + "\n")
+	}
+	for _, tc := range []struct {
+		replicas string
+		want     int32
+		warns    bool
+	}{
+		{"-3", 0, true},
+		{"4294967297", math.MaxInt32, false},
+		{"2", 2, false},
+	} {
+		r, err := Estimate(nil, rollout(tc.replicas), "default", prices)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(r.Items) != 1 || r.Items[0].After.Replicas != tc.want {
+			t.Errorf("replicas %s: items = %+v, want %d replicas", tc.replicas, r.Items, tc.want)
+			continue
+		}
+		if warned := len(r.Warnings) > 0; warned != tc.warns {
+			t.Errorf("replicas %s: warnings = %q, want a warning: %v", tc.replicas, r.Warnings, tc.warns)
+		}
 	}
 }
 

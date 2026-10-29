@@ -236,8 +236,8 @@ func priceObject(u *unstructured.Unstructured, ns string, p Prices, floors map[s
 	case "Rollout":
 		raw, _, _ := unstructured.NestedMap(u.Object, "spec", "template")
 		_ = runtime.DefaultUnstructuredConverter.FromUnstructured(raw, &tmpl)
-		if n, found, _ := unstructured.NestedInt64(u.Object, "spec", "replicas"); found {
-			replicas = int32(max(min(n, math.MaxInt32), math.MinInt32))
+		if n, ok := replicasField(u.Object); ok {
+			replicas = n
 		}
 	case "DaemonSet":
 		var d appsv1.DaemonSet
@@ -360,6 +360,21 @@ func hasNegativeQuantity(spec corev1.PodSpec) bool {
 	}
 	return false
 }
+
+func replicasField(obj map[string]any) (int32, bool) {
+	value, _, _ := unstructured.NestedFieldNoCopy(obj, "spec", "replicas")
+	var n float64
+	switch v := value.(type) {
+	case int64:
+		n = float64(v)
+	case float64:
+		n = v
+	default:
+		return 0, false
+	}
+	return int32(max(min(n, math.MaxInt32), math.MinInt32)), true
+}
+
 // podGPUs counts the GPUs a pod's containers ask for, by limit as the device plugins do.
 func podGPUs(spec corev1.PodSpec) float64 {
 	var n float64

@@ -57,6 +57,21 @@ echo "$EST_NEGATIVE_RESULT" | jq -e '.warnings | any(test("smoke-estimate-unsche
   fail "no warning about the negative values: $(echo "$EST_NEGATIVE_RESULT" | jq -c .warnings)"
 ok "they count as zero, with a warning"
 
+log "A Rollout is priced with its replicas"
+EST_ROLLOUT='apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata: {name: canary, namespace: smoke-estimate-unscheduled}
+spec:
+  replicas: 3
+  template:
+    spec:
+      containers: [{name: main, image: canary, resources: {requests: {cpu: "1", memory: 2Gi}}}]'
+body=$(jq -n --arg head "$EST_ROLLOUT" '{base: "", head: $head}')
+EST_ROLLOUT_RESULT=$(api POST /api/estimate "$body") || fail "the estimate: $EST_ROLLOUT_RESULT"
+echo "$EST_ROLLOUT_RESULT" | jq -e '.items | length == 1 and .[0].after.replicas == 3' >/dev/null ||
+  fail "the Rollout is not priced with its three replicas: $(echo "$EST_ROLLOUT_RESULT" | jq -c .items)"
+ok "its three replicas are counted"
+
 log "The estimate command in the operator image asks the API with a viewer token"
 EST_TOKEN=$(api POST /api/tokens '{"name":"smoke-estimate","role":"viewer","expiresInDays":1}' | jq -r .token)
 track_call DELETE /api/tokens/smoke-estimate
