@@ -3,6 +3,7 @@ package scaling
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -99,6 +100,7 @@ func FuzzTimetableNextChange(f *testing.F) {
 	f.Add(uint8(0), uint16(0), uint16(0), uint16(20*minutesPerDay), uint16(3*minutesPerDay), false, uint32(0))
 	f.Add(uint8(0b1111111), uint16(0), uint16(23*60+59), uint16(9*minutesPerDay), uint16(60), false, uint32(7))
 	f.Add(uint8(0b0000001), uint16(22*60), uint16(6*60), uint16(minutesPerDay-30), uint16(90), true, uint32(23*3600+59*60+59))
+	f.Add(uint8(0b0111110), uint16(8*60), uint16(18*60), uint16(0), uint16(16*minutesPerDay), false, uint32(36*3600))
 	f.Fuzz(func(t *testing.T, dayMask uint8, start, end, exceptionStart, exceptionLength uint16, exceptionUp bool, offsetSeconds uint32) {
 		var tt Timetable
 		if days := weekdaysIn(dayMask); len(days) > 0 {
@@ -109,39 +111,54 @@ func FuzzTimetableNextChange(f *testing.F) {
 				Timezone:  "UTC",
 			}}
 		}
-		var probes []time.Time
 		if exceptionLength > 0 {
 			from := fuzzWeekStart.Add(time.Duration(exceptionStart) * time.Minute)
-			to := from.Add(time.Duration(exceptionLength) * time.Minute)
-			tt.Exceptions = []Exception{{Name: "fuzz", From: from, To: to, Active: exceptionUp}}
-			probes = append(probes, from, to, to.Add(time.Minute))
+			tt.Exceptions = []Exception{{Name: "fuzz", From: from, To: from.Add(time.Duration(exceptionLength) * time.Minute), Active: exceptionUp}}
 		}
 		now := fuzzWeekStart.Add(time.Duration(offsetSeconds%(14*24*3600)) * time.Second)
-		current := tt.ActiveAt(now)
-		next := tt.NextChange(now)
-		if next == nil {
-			for _, later := range []time.Duration{time.Minute, time.Hour, 24 * time.Hour, 7 * 24 * time.Hour, 100 * 24 * time.Hour} {
-				probes = append(probes, now.Add(later))
-			}
-			for _, p := range probes {
-				if p.After(now) && tt.ActiveAt(p) != current {
-					t.Fatalf("NextChange(%s) is nil, but the state is %v at %s instead of %v", now, tt.ActiveAt(p), p, current)
-				}
-			}
-			return
-		}
-		if !next.After(now) {
-			t.Fatalf("NextChange(%s) = %s, not after it", now, next)
-		}
-		if tt.ActiveAt(*next) == current {
-			t.Fatalf("NextChange(%s) = %s, but the state stays %v there", now, next, current)
-		}
-		for _, before := range []time.Time{next.Add(-time.Second), now.Add(next.Sub(now) / 2)} {
-			if before.After(now) && tt.ActiveAt(before) != current {
-				t.Fatalf("NextChange(%s) = %s, but the state already changes at %s", now, next, before)
-			}
+		got, want := tt.NextChange(now), nextChangeAmongCandidates(tt, now)
+		if (got == nil) != (want == nil) || (got != nil && !got.Equal(*want)) {
+			t.Fatalf("%+v from %s: NextChange = %s, want %s", tt, now, describeTime(got), describeTime(want))
 		}
 	})
+}
+
+func nextChangeAmongCandidates(tt Timetable, now time.Time) *time.Time {
+	const week = 7 * 24 * time.Hour
+	horizon := now
+	var candidates []time.Time
+	for _, ex := range tt.Exceptions {
+		candidates = append(candidates, ex.From, ex.To)
+		if ex.To.After(horizon) {
+			horizon = ex.To
+		}
+	}
+	horizon = horizon.Add(week)
+	weekly := Timetable{Schedules: tt.Schedules}
+	for m := range minutesPerWeek {
+		flip := fuzzWeekStart.Add(time.Duration(m) * time.Minute)
+		if weekly.ActiveAt(flip) == weekly.ActiveAt(flip.Add(-time.Minute)) {
+			continue
+		}
+		for at := flip; !at.After(horizon); at = at.Add(week) {
+			candidates = append(candidates, at)
+		}
+	}
+	slices.SortFunc(candidates, func(a, b time.Time) int { return a.Compare(b) })
+	current := tt.ActiveAt(now)
+	for _, c := range candidates {
+		if c.After(now) && !c.After(horizon) && tt.ActiveAt(c) != current {
+			return &c
+		}
+	}
+	return nil
+}
+
+func describeTime(t *time.Time) string {
+	if t == nil {
+		return "never"
+	}
+	return t.Format(time.RFC3339)
 }
 
 func FuzzResolveException(f *testing.F) {

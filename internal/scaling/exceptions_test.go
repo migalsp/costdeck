@@ -205,6 +205,13 @@ func TestDecideWithExceptions(t *testing.T) {
 			t.Errorf("next transition = %v, want the end of the release window", d.NextTransition)
 		}
 	})
+	t.Run("a break longer than a week hands back to office hours", func(t *testing.T) {
+		d := e.Decide(utc(21, 12, 0), Timetable{Schedules: officeHoursUTC, Exceptions: resolve(holiday("2026-12-20", "2027-01-04"))}, nil, nil, nil)
+		want := time.Date(2027, time.January, 5, 8, 0, 0, 0, time.UTC)
+		if d.NextTransition == nil || !d.NextTransition.Equal(want) {
+			t.Errorf("next transition = %v, want Tue 5 January 08:00, when office hours resume after the break", d.NextTransition)
+		}
+	})
 	t.Run("an exception that does not change the state is no transition", func(t *testing.T) {
 		// Down on Saturday is what the schedule does anyway; the next change is Monday 08:00.
 		d := e.Decide(utc(26, 10, 0), Timetable{Schedules: officeHoursUTC, Exceptions: resolve(holiday("2026-12-26", ""))}, nil, nil, nil)
