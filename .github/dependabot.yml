@@ -8,6 +8,10 @@ version: 2
 # security updates, so an advisory still produces a PR. GitHub Actions and the Docker base
 # images get monthly version updates as well, since they are pinned by commit SHA and by
 # digest and would otherwise never receive fixes.
+#
+# The 14-day cooldown only holds back Docker Hub images: Dependabot has publication dates
+# for no other registry, so it proposes a new gcr.io/distroless digest at once. Merge such
+# an update only once that image has been published for at least 14 days.
 updates:
   - package-ecosystem: gomod
     directory: /
