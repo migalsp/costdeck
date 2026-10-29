@@ -283,6 +283,15 @@ the run fails: Go, UI, Helm, the install bundle, known vulnerabilities, dependen
 conventional commit messages, zizmor on the workflows, shellcheck, the image scan and the
 end-to-end parts.
 
+Schedule windows, the next schedule change, holiday exceptions and cost estimates also
+have Go fuzz tests. `go test` runs their seed inputs, and every night each one is fuzzed
+for ten minutes; a failing input is kept as a workflow artifact, to be copied into
+`testdata/fuzz` as a regression test. To fuzz one locally:
+
+```bash
+go test ./internal/scaling -run '^$' -fuzz '^FuzzScheduleWindow$' -fuzztime 1m
+```
+
 ## License
 
 [Apache 2.0](LICENSE)
