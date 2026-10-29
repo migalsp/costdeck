@@ -1,0 +1,13 @@
+[[IgnoredVulns]]
+id = "GO-2026-5932"
+reason = "Cost Deck does not import golang.org/x/crypto/openpgp (govulncheck), and the advisory has no fixed version."
+
+[[IgnoredVulns]]
+id = "GO-2026-6860"
+ignoreUntil = 2026-11-11T00:00:00Z
+reason = "Cost Deck does not import golang.org/x/net/html (govulncheck). Update to golang.org/x/net v0.62.0 once that release is two weeks old."
+
+[[IgnoredVulns]]
+id = "GO-2026-6866"
+ignoreUntil = 2026-11-11T00:00:00Z
+reason = "Cost Deck does not import golang.org/x/net/html (govulncheck). Update to golang.org/x/net v0.62.0 once that release is two weeks old."

@@ -1,21 +1,29 @@
 # Security Policy
 
-## Supported Versions
+## Supported versions
 
-Use this section to tell people about which versions of your project are
-currently being supported with security updates.
+Security fixes go into the latest minor release, published as a new patch release of the
+operator image, the Helm chart and `install.yaml`. Older minor releases receive no fixes:
+upgrade to the latest release to get them.
 
-| Version | Supported          |
-| ------- | ------------------ |
-| 5.1.x   | :white_check_mark: |
-| 5.0.x   | :x:                |
-| 4.0.x   | :white_check_mark: |
-| < 4.0   | :x:                |
+| Version | Supported |
+| ------- | --------- |
+| 1.6.x   | Yes       |
+| < 1.6   | No        |
 
-## Reporting a Vulnerability
+## Reporting a vulnerability
 
-Use this section to tell people how to report a vulnerability.
+Report vulnerabilities privately through GitHub:
+<https://github.com/migalsp/costdeck/security/advisories/new>. Do not open a public issue,
+pull request or discussion for them.
 
-Tell them where to go, how often they can expect to get an update on a
-reported vulnerability, what to expect if the vulnerability is accepted or
-declined, etc.
+Include what you can of:
+
+- the Cost Deck version and how it is installed (Helm chart, `install.yaml`);
+- the component involved: the operator, the REST API, the dashboard, the MCP server, the
+  Webex bot or the Helm chart;
+- steps to reproduce, and what an attacker gains.
+
+You get an acknowledgement within five working days. Once the report is confirmed, the fix
+is released as a patch release and published as a GitHub security advisory that credits you,
+unless you ask not to be named. A report that is not accepted gets an answer that says why.
