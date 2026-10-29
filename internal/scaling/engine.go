@@ -2,8 +2,8 @@ package scaling
 
 import (
 	"context"
-	"fmt"
-	"strings"
+	"regexp"
+	"strconv"
 	"sync"
 	"time"
 
@@ -177,15 +177,16 @@ func isWeekday(d int) bool { return d >= 0 && d <= 6 }
 // it cannot parse, so a malformed schedule is skipped rather than silently treated as
 // midnight.
 func parseMinutes(hhmm string) (int, bool) {
-	h, m := 0, 0
-	if n, err := fmt.Sscanf(strings.TrimSpace(hhmm), "%d:%d", &h, &m); err != nil || n != 2 {
+	match := crdClockTime.FindStringSubmatch(hhmm)
+	if match == nil {
 		return 0, false
 	}
-	if h < 0 || h > 23 || m < 0 || m > 59 {
-		return 0, false
-	}
+	h, _ := strconv.Atoi(match[1])
+	m, _ := strconv.Atoi(match[2])
 	return h*60 + m, true
 }
+
+var crdClockTime = regexp.MustCompile(`^([0-1]?[0-9]|2[0-3]):([0-5][0-9])$`)
 
 // locationCache memoises time.LoadLocation. It is called on every reconcile of every
 // group, and LoadLocation re-reads the embedded tzdata on each call.

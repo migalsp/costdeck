@@ -63,6 +63,12 @@
       "schedules": [{ "days": [1, 9], "startTime": "08:00", "endTime": "09:00" }],
       "up": ["Mon 08:30"],
       "down": ["Tue 08:30", "Mon 10:00"]
+    },
+    {
+      "name": "a time the CRD refuses makes no window, so the target stays up",
+      "schedules": [{ "days": [1], "startTime": "08:00junk", "endTime": "09:00" }, { "days": [2], "startTime": " 08:00", "endTime": "09:00" }],
+      "up": ["Mon 07:00", "Tue 07:00", "Sun 12:00"],
+      "down": []
     }
   ]
 }

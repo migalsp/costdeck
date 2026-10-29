@@ -35,19 +35,17 @@ func FuzzParseMinutes(f *testing.F) {
 	}
 	f.Fuzz(func(t *testing.T, s string) {
 		minutes, ok := parseMinutes(s)
-		if crdTimePattern.MatchString(s) {
-			hours, mins, _ := strings.Cut(s, ":")
-			h, _ := strconv.Atoi(hours)
-			m, _ := strconv.Atoi(mins)
-			if !ok || minutes != h*60+m {
-				t.Fatalf("parseMinutes(%q) = %d, %v; the CRD accepts it as %d", s, minutes, ok, h*60+m)
-			}
+		if ok != crdTimePattern.MatchString(s) {
+			t.Fatalf("parseMinutes(%q) accepted it: %v, but the CRD pattern accepts it: %v", s, ok, !ok)
 		}
 		if !ok {
 			return
 		}
-		if minutes < 0 || minutes >= minutesPerDay {
-			t.Fatalf("parseMinutes(%q) = %d, outside one day", s, minutes)
+		hours, mins, _ := strings.Cut(s, ":")
+		h, _ := strconv.Atoi(hours)
+		m, _ := strconv.Atoi(mins)
+		if minutes != h*60+m {
+			t.Fatalf("parseMinutes(%q) = %d, want %d", s, minutes, h*60+m)
 		}
 		if again, ok := parseMinutes(clockTime(minutes)); !ok || again != minutes {
 			t.Fatalf("parseMinutes(%q) = %d, but %q reads back as %d, %v", s, minutes, clockTime(minutes), again, ok)
