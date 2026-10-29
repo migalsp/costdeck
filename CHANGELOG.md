@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.6.3](https://github.com/migalsp/costdeck/compare/v1.6.2...v1.6.3) (2026-10-29)
+
+
+### Bug Fixes
+
+* **estimate:** count negative replicas, requests and storage as zero ([ea60912](https://github.com/migalsp/costdeck/commit/ea6091274639b3fee7e34e939976d53a9869144f))
+* **estimate:** read a Rollout's replica count ([8c16368](https://github.com/migalsp/costdeck/commit/8c163682800abda4bba172a070d7ee91c7e38a81))
+* **estimate:** warn about every negative quantity Kubernetes rejects ([85bc8ea](https://github.com/migalsp/costdeck/commit/85bc8ea0deb8bf7d5949c715d573852b1ea6780c))
+* fuzz the schedules and estimates, and fix what the fuzzing found ([6a9bb03](https://github.com/migalsp/costdeck/commit/6a9bb034593d413ebf169a2d9535151e8ff951a4))
+* **scaling:** find the next change after an exception longer than a week ([2ea793e](https://github.com/migalsp/costdeck/commit/2ea793ee1f4a8b9eebdde53a562a3bc4cfcb66f4))
+* **scaling:** read only the HH:MM times the CRD and the dashboard accept ([24297d2](https://github.com/migalsp/costdeck/commit/24297d2c226f1c0266b08be4fac926dbf2ed39a6))
+
 ## [1.6.2](https://github.com/migalsp/costdeck/compare/v1.6.1...v1.6.2) (2026-10-29)
 
 
