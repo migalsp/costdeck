@@ -16,6 +16,10 @@ OFFICE_MOVE=",\"exceptions\":[{\"name\":\"Office move\",\"start\":\"$TODAY\",\"e
 BACKWARDS=",\"exceptions\":[{\"start\":\"$TOMORROW\",\"end\":\"$TODAY\",\"state\":\"Down\"}]"
 RELEASE_WEEKEND=",\"exceptions\":[{\"name\":\"Release\",\"start\":\"$TODAY\",\"end\":\"$TOMORROW\",\"state\":\"Up\"}]"
 CALENDARS="{\"calendars\":[{\"name\":\"e2e-holidays\",\"days\":[{\"date\":\"$TODAY\",\"name\":\"E2E day\"},{\"date\":\"$TOMORROW\",\"name\":\"E2E day\"}]}]}"
+FREEZE_LAST_DAY=$(date -u -d '+8 days' +%F 2>/dev/null || date -u -v+8d +%F)
+AFTER_FREEZE=$(date -u -d '+9 days' +%F 2>/dev/null || date -u -v+9d +%F)
+NIGHT_SCHEDULE_JSON='[{"days":[0,1,2,3,4,5,6],"startTime":"00:00","endTime":"06:00","timezone":"UTC"}]'
+LONG_FREEZE=",\"exceptions\":[{\"name\":\"Long freeze\",\"start\":\"$TODAY\",\"end\":\"$FREEZE_LAST_DAY\",\"state\":\"Up\"}]"
 
 log "An exception keeps a namespace down on its dates, whatever the hours say"
 new_namespace smoke-exc
@@ -52,6 +56,15 @@ body=$(group_body "$CLOSED_SCHEDULE_JSON" "$RELEASE_WEEKEND")
 expect_code 200 "closed hours with an Up exception for today" PUT /api/scaling/groups/smoke-exc "$body" -b "$JAR"
 wait_for "status says the release keeps it up" group_field_is smoke-exc exception Release
 holds_for 10 "the namespace stays up" replicas_are smoke-exc app 2
+
+log "After an exception longer than a week the status still names the next change"
+body=$(group_body "$NIGHT_SCHEDULE_JSON" "$LONG_FREEZE")
+expect_code 200 "a night window with a nine-day Up exception from today" PUT /api/scaling/groups/smoke-exc "$body" -b "$JAR"
+wait_for "status says the exception is in control" group_field_is smoke-exc exception "Long freeze"
+wait_for "the next change is when the night window closes after the exception" group_field_is smoke-exc nextTransition.time "${AFTER_FREEZE}T06:01:00Z"
+group_field_is smoke-exc nextTransition.desiredState Down || fail "the next change does not take the namespace down"
+holds_for 10 "the namespace stays up during the exception" replicas_are smoke-exc app 2
+ok "the namespace goes down at 06:01 after the exception"
 
 if [[ -z "$DISPOSABLE" ]]; then
   echo "skip: holiday calendars change the settings of the installed release"

@@ -242,6 +242,7 @@ jobs:
           image-ref: costdeck-operator:e2e
           severity: CRITICAL,HIGH
           ignore-unfixed: true
+          trivyignores: .trivyignore.yaml
           exit-code: "1"
       - name: Save image
         run: docker save costdeck-operator:e2e -o "$RUNNER_TEMP/costdeck-image.tar"

@@ -172,23 +172,13 @@ func (tt Timetable) ActiveAt(t time.Time) bool {
 }
 
 // NextChange is the first minute after t at which ActiveAt flips, or nil if it never
-// does. The weekly schedules repeat, so a change they cause shows within a week; beyond
-// that only the start or end of an exception can still change the state.
+// does.
 func (tt Timetable) NextChange(t time.Time) *time.Time {
 	usable := hasUsableSchedule(tt.Schedules)
 	if !usable && len(tt.Exceptions) == 0 {
 		return nil
 	}
 	current := tt.ActiveAt(t)
-	if usable {
-		at := t.Truncate(time.Minute)
-		for range scanHorizon {
-			at = at.Add(time.Minute)
-			if tt.ActiveAt(at) != current {
-				return &at
-			}
-		}
-	}
 	var bounds []time.Time
 	for _, ex := range tt.Exceptions {
 		for _, b := range []time.Time{ex.From, ex.To} {
@@ -198,12 +188,42 @@ func (tt Timetable) NextChange(t time.Time) *time.Time {
 		}
 	}
 	slices.SortFunc(bounds, func(a, b time.Time) int { return a.Compare(b) })
-	for _, b := range bounds {
-		if tt.ActiveAt(b) != current {
-			return &b
+	scheduleSteady := !usable
+	from := t
+	for i := 0; ; i++ {
+		var until *time.Time
+		if i < len(bounds) {
+			until = &bounds[i]
+		}
+		if !scheduleSteady && tt.exceptionAt(from) == nil {
+			change, scannedWholeWeek := tt.scheduleChangeBefore(from, until, current)
+			if change != nil {
+				return change
+			}
+			scheduleSteady = scannedWholeWeek
+		}
+		if until == nil {
+			return nil
+		}
+		if tt.ActiveAt(*until) != current {
+			return until
+		}
+		from = *until
+	}
+}
+
+func (tt Timetable) scheduleChangeBefore(from time.Time, until *time.Time, current bool) (*time.Time, bool) {
+	at := from.Truncate(time.Minute)
+	for range scanHorizon {
+		at = at.Add(time.Minute)
+		if until != nil && !at.Before(*until) {
+			return nil, false
+		}
+		if tt.ActiveAt(at) != current {
+			return &at, false
 		}
 	}
-	return nil
+	return nil, true
 }
 
 // Interval is a stretch of time in which a timetable keeps a target in one state, and why:

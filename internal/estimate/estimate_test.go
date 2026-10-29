@@ -1,6 +1,7 @@
 package estimate
 
 import (
+	"math"
 	"strconv"
 	"strings"
 	"testing"
@@ -141,6 +142,106 @@ func TestEstimate(t *testing.T) {
 		"StatefulSet `shop/db` (new)", "**−$18.25**", "1 more object(s) unchanged", "> shop-dev/web scales between 3 and 9 replicas", "at custom rates"} {
 		if !strings.Contains(md, s) {
 			t.Errorf("markdown has no %q:\n%s", s, md)
+		}
+	}
+}
+
+func TestEstimateCountsNegativeValuesAsZero(t *testing.T) {
+	negative := deployment("shop", "offset", -5) + `
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: half, namespace: shop}
+spec:
+  template:
+    spec:
+      containers:
+        - {name: main, image: app, resources: {requests: {cpu: 500m, memory: 1Gi}}}
+        - {name: side, image: app, resources: {requests: {cpu: "-4", memory: -8Gi}, limits: {nvidia.com/gpu: "-2"}}}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: {name: data, namespace: shop}
+spec: {resources: {requests: {storage: -10Gi}}}
+`
+	r, err := Estimate(nil, []byte(negative), "default", prices)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.After != 18.25 || r.Delta != 18.25 {
+		t.Errorf("after = %v, delta = %v, want 18.25: only the valid container of half costs anything", r.After, r.Delta)
+	}
+	for _, it := range r.Items {
+		if it.After.Monthly < 0 || it.After.Replicas < 0 || it.After.StorageGiB < 0 || it.After.GPU < 0 {
+			t.Errorf("%s/%s is priced below zero: %+v", it.Kind, it.Name, *it.After)
+		}
+	}
+	if len(r.Warnings) != 3 || !strings.Contains(strings.Join(r.Warnings, "\n"), "Deployment shop/offset asks for negative") {
+		t.Errorf("warnings = %q, want one for each of the three objects", r.Warnings)
+	}
+}
+
+func TestEstimateWarnsAboutNegativeValuesItDoesNotPrice(t *testing.T) {
+	for _, tc := range []struct{ name, manifest string }{
+		{"a negative claim of a StatefulSet with no replicas", `
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: {name: db, namespace: shop}
+spec:
+  replicas: 0
+  template: {spec: {containers: [{name: db, image: db}]}}
+  volumeClaimTemplates: [{metadata: {name: data}, spec: {resources: {requests: {storage: -10Gi}}}}]
+`},
+		{"a negative ephemeral-storage request", `
+apiVersion: v1
+kind: Pod
+metadata: {name: job, namespace: shop}
+spec: {containers: [{name: main, image: app, resources: {requests: {cpu: 500m, memory: 1Gi, ephemeral-storage: -1Gi}}}]}
+`},
+		{"a negative memory limit of an init container", `
+apiVersion: v1
+kind: Pod
+metadata: {name: init, namespace: shop}
+spec:
+  initContainers: [{name: setup, image: app, resources: {limits: {memory: -1Gi}}}]
+  containers: [{name: main, image: app, resources: {requests: {cpu: 500m, memory: 1Gi}}}]
+`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, err := Estimate(nil, []byte(tc.manifest), "default", prices)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if r.After < 0 || len(r.Warnings) != 1 || !strings.Contains(r.Warnings[0], "asks for negative") {
+				t.Errorf("after = %v, warnings = %q, want a cost of at least zero and one warning", r.After, r.Warnings)
+			}
+		})
+	}
+}
+
+func TestEstimateClampsRolloutReplicas(t *testing.T) {
+	rollout := func(replicas string) []byte {
+		return []byte("apiVersion: argoproj.io/v1alpha1\nkind: Rollout\nmetadata: {name: web, namespace: shop}\nspec:\n  replicas: " + replicas + "\n  template:" + pod + "\n")
+	}
+	for _, tc := range []struct {
+		replicas string
+		want     int32
+		warns    bool
+	}{
+		{"-3", 0, true},
+		{"4294967297", math.MaxInt32, false},
+		{"2", 2, false},
+	} {
+		r, err := Estimate(nil, rollout(tc.replicas), "default", prices)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(r.Items) != 1 || r.Items[0].After.Replicas != tc.want {
+			t.Errorf("replicas %s: items = %+v, want %d replicas", tc.replicas, r.Items, tc.want)
+			continue
+		}
+		if warned := len(r.Warnings) > 0; warned != tc.warns {
+			t.Errorf("replicas %s: warnings = %q, want a warning: %v", tc.replicas, r.Warnings, tc.warns)
 		}
 	}
 }

@@ -1,0 +1,7 @@
+vulnerabilities:
+  - id: CVE-2026-78661
+    statement: GO-2026-6860. The manager does not import golang.org/x/net/html (govulncheck), so the code is not in the image. Update to golang.org/x/net v0.62.0 once that release is two weeks old.
+    expired_at: 2026-11-11
+  - id: CVE-2026-97045
+    statement: GO-2026-6866. The manager does not import golang.org/x/net/html (govulncheck), so the code is not in the image. Update to golang.org/x/net v0.62.0 once that release is two weeks old.
+    expired_at: 2026-11-11

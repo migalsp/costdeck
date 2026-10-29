@@ -6,7 +6,7 @@
 60-single-namespace 13
 70-victoriametrics 6
 80-mcp 1
-90-exceptions 19
+90-exceptions 33
 91-namespace-selector 44
 92-preview-dryrun 22
 93-gitops 14
