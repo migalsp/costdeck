@@ -76,6 +76,7 @@ type object struct {
 	kind, namespace, name string
 	usage                 Usage
 	note                  string
+	negative              bool
 }
 
 func (o object) key() string { return o.kind + "/" + o.namespace + "/" + o.name }
@@ -194,8 +195,12 @@ func price(raw []byte, defaultNamespace string, p Prices) (map[string]object, []
 	out := map[string]object{}
 	for _, u := range objs {
 		o, ok := priceObject(u, namespaceOf(u, defaultNamespace), p, floors)
-		if ok {
-			out[o.key()] = o
+		if !ok {
+			continue
+		}
+		out[o.key()] = o
+		if o.negative {
+			warnings = append(warnings, fmt.Sprintf("%s %s/%s asks for negative replicas, resources or storage, which Kubernetes rejects: the estimate counts them as zero.", o.kind, o.namespace, o.name))
 		}
 	}
 	return out, warnings, nil
@@ -231,7 +236,7 @@ func priceObject(u *unstructured.Unstructured, ns string, p Prices, floors map[s
 		raw, _, _ := unstructured.NestedMap(u.Object, "spec", "template")
 		_ = runtime.DefaultUnstructuredConverter.FromUnstructured(raw, &tmpl)
 		if n, found, _ := unstructured.NestedInt64(u.Object, "spec", "replicas"); found {
-			replicas = int32(n)
+			replicas = int32(max(min(n, math.MaxInt32), math.MinInt32))
 		}
 	case "DaemonSet":
 		var d appsv1.DaemonSet
@@ -252,6 +257,9 @@ func priceObject(u *unstructured.Unstructured, ns string, p Prices, floors map[s
 			return o, false
 		}
 		gib := gibOf(c.Spec.Resources.Requests.Storage())
+		if gib < 0 {
+			gib, o.negative = 0, true
+		}
 		o.usage = Usage{StorageGiB: gib, Monthly: round(gib * p.storage(className(c.Spec.StorageClassName)))}
 		return o, true
 	case "Service":
@@ -264,11 +272,15 @@ func priceObject(u *unstructured.Unstructured, ns string, p Prices, floors map[s
 	default:
 		return o, false
 	}
+	if replicas < 0 {
+		replicas, o.negative = 0, true
+	}
 	if floor, ok := floors[o.kind+"/"+ns+"/"+o.name]; ok && floor > replicas {
 		replicas = floor
 	}
-	cpu, mem := podRequests(tmpl.Spec)
-	gpu := podGPUs(tmpl.Spec)
+	cpu, mem, negativeRequests := podRequests(tmpl.Spec)
+	gpu, negativeGPUs := podGPUs(tmpl.Spec)
+	o.negative = o.negative || negativeRequests || negativeGPUs
 	share, note := 1.0, ""
 	if p.UpShare != nil {
 		share, note = p.UpShare(ns)
@@ -281,6 +293,9 @@ func priceObject(u *unstructured.Unstructured, ns string, p Prices, floors map[s
 	var storage float64
 	for _, c := range claims {
 		gib := gibOf(c.Spec.Resources.Requests.Storage()) * float64(replicas)
+		if gib < 0 {
+			gib, o.negative = 0, true
+		}
 		o.usage.StorageGiB += gib
 		storage += gib * p.storage(className(c.Spec.StorageClassName))
 	}
@@ -313,34 +328,45 @@ func replicasOf(r *int32) int32 {
 
 // podRequests sums a pod's container requests, or its largest init container when that is
 // bigger, as the scheduler counts them.
-func podRequests(spec corev1.PodSpec) (resource.Quantity, resource.Quantity) {
-	var cpu, mem resource.Quantity
+func podRequests(spec corev1.PodSpec) (cpu, mem resource.Quantity, negative bool) {
+	add := func(total, q *resource.Quantity) {
+		if q.Sign() < 0 {
+			negative = true
+			return
+		}
+		total.Add(*q)
+	}
 	for _, c := range spec.Containers {
-		cpu.Add(*c.Resources.Requests.Cpu())
-		mem.Add(*c.Resources.Requests.Memory())
+		add(&cpu, c.Resources.Requests.Cpu())
+		add(&mem, c.Resources.Requests.Memory())
 	}
 	for _, c := range spec.InitContainers {
-		if q := c.Resources.Requests.Cpu(); q.Cmp(cpu) > 0 {
-			cpu = q.DeepCopy()
-		}
-		if q := c.Resources.Requests.Memory(); q.Cmp(mem) > 0 {
-			mem = q.DeepCopy()
-		}
-	}
-	return cpu, mem
-}
-
-// podGPUs counts the GPUs a pod's containers ask for, by limit as the device plugins do.
-func podGPUs(spec corev1.PodSpec) float64 {
-	var n float64
-	for _, c := range spec.Containers {
-		for name, q := range c.Resources.Limits {
-			if strings.HasSuffix(string(name), "/gpu") {
-				n += q.AsApproximateFloat64()
+		for _, pair := range []struct{ total, q *resource.Quantity }{{&cpu, c.Resources.Requests.Cpu()}, {&mem, c.Resources.Requests.Memory()}} {
+			if pair.q.Sign() < 0 {
+				negative = true
+			} else if pair.q.Cmp(*pair.total) > 0 {
+				*pair.total = pair.q.DeepCopy()
 			}
 		}
 	}
-	return n
+	return cpu, mem, negative
+}
+
+// podGPUs counts the GPUs a pod's containers ask for, by limit as the device plugins do.
+func podGPUs(spec corev1.PodSpec) (n float64, negative bool) {
+	for _, c := range spec.Containers {
+		for name, q := range c.Resources.Limits {
+			if !strings.HasSuffix(string(name), "/gpu") {
+				continue
+			}
+			if q.Sign() < 0 {
+				negative = true
+				continue
+			}
+			n += q.AsApproximateFloat64()
+		}
+	}
+	return n, negative
 }
 
 func gibOf(q *resource.Quantity) float64 { return q.AsApproximateFloat64() / (1 << 30) }

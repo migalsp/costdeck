@@ -38,6 +38,25 @@ echo "$est" | jq -e '.items[] | select(.kind == "Deployment") | .after.replicas 
 echo "$est" | jq -e '.markdown | startswith("<!-- costdeck-estimate -->\n### Cost estimate")' >/dev/null || fail "no pull request comment"
 ok "two changes priced; the deployment, kept down, adds next to nothing"
 
+log "Negative replicas or requests, which Kubernetes rejects, cannot lower an estimate"
+EST_NEGATIVE='apiVersion: apps/v1
+kind: Deployment
+metadata: {name: offset, namespace: smoke-estimate-unscheduled}
+spec:
+  replicas: -50
+  selector: {matchLabels: {app: offset}}
+  template:
+    metadata: {labels: {app: offset}}
+    spec:
+      containers: [{name: main, image: offset, resources: {requests: {cpu: "-4", memory: -8Gi}}}]'
+body=$(jq -n --arg head "$EST_NEGATIVE" '{base: "", head: $head}')
+EST_NEGATIVE_RESULT=$(api POST /api/estimate "$body") || fail "the estimate: $EST_NEGATIVE_RESULT"
+echo "$EST_NEGATIVE_RESULT" | jq -e '.after == 0 and .delta == 0' >/dev/null ||
+  fail "negative values changed the estimate: $(echo "$EST_NEGATIVE_RESULT" | jq -c '{after, delta}')"
+echo "$EST_NEGATIVE_RESULT" | jq -e '.warnings | any(test("smoke-estimate-unscheduled/offset asks for negative"))' >/dev/null ||
+  fail "no warning about the negative values: $(echo "$EST_NEGATIVE_RESULT" | jq -c .warnings)"
+ok "they count as zero, with a warning"
+
 log "The estimate command in the operator image asks the API with a viewer token"
 EST_TOKEN=$(api POST /api/tokens '{"name":"smoke-estimate","role":"viewer","expiresInDays":1}' | jq -r .token)
 track_call DELETE /api/tokens/smoke-estimate

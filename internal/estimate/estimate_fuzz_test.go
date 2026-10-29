@@ -17,12 +17,23 @@ func FuzzEstimate(f *testing.F) {
 			return
 		}
 		totals := []float64{r.Before, r.After, r.Delta}
+		costs := []float64{r.Before, r.After}
 		for _, it := range r.Items {
 			totals = append(totals, it.Delta)
+			for _, side := range []*Usage{it.Before, it.After} {
+				if side != nil {
+					costs = append(costs, side.Monthly, side.StorageGiB, side.GPU, float64(side.Replicas))
+				}
+			}
 		}
 		for _, v := range totals {
 			if math.IsNaN(v) || math.IsInf(v, 0) {
 				t.Fatalf("estimate is not a number: %+v", r)
+			}
+		}
+		for _, v := range costs {
+			if v < 0 {
+				t.Fatalf("estimate counts something below zero: %+v", r)
 			}
 		}
 	})

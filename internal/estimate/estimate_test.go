@@ -145,6 +145,41 @@ func TestEstimate(t *testing.T) {
 	}
 }
 
+func TestEstimateCountsNegativeValuesAsZero(t *testing.T) {
+	negative := deployment("shop", "offset", -5) + `
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: half, namespace: shop}
+spec:
+  template:
+    spec:
+      containers:
+        - {name: main, image: app, resources: {requests: {cpu: 500m, memory: 1Gi}}}
+        - {name: side, image: app, resources: {requests: {cpu: "-4", memory: -8Gi}, limits: {nvidia.com/gpu: "-2"}}}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: {name: data, namespace: shop}
+spec: {resources: {requests: {storage: -10Gi}}}
+`
+	r, err := Estimate(nil, []byte(negative), "default", prices)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.After != 18.25 || r.Delta != 18.25 {
+		t.Errorf("after = %v, delta = %v, want 18.25: only the valid container of half costs anything", r.After, r.Delta)
+	}
+	for _, it := range r.Items {
+		if it.After.Monthly < 0 || it.After.Replicas < 0 || it.After.StorageGiB < 0 || it.After.GPU < 0 {
+			t.Errorf("%s/%s is priced below zero: %+v", it.Kind, it.Name, *it.After)
+		}
+	}
+	if len(r.Warnings) != 3 || !strings.Contains(strings.Join(r.Warnings, "\n"), "Deployment shop/offset asks for negative") {
+		t.Errorf("warnings = %q, want one for each of the three objects", r.Warnings)
+	}
+}
+
 func TestEstimateWithoutChanges(t *testing.T) {
 	r, err := Estimate([]byte(base), []byte(base), "shop", prices)
 	if err != nil || len(r.Items) != 0 || r.Delta != 0 {
