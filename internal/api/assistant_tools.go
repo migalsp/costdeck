@@ -212,7 +212,7 @@ func (s *Server) toolRegistry() []ai.Tool {
 		},
 		{
 			Name:        "get_rightsizing_recommendations",
-			Description: "Per-workload CPU and memory request recommendations for a namespace, from observed demand (p95 CPU and peak memory when history is available), with the estimated monthly saving. Advice only: nothing is changed.",
+			Description: "Per-workload CPU and memory request recommendations for a namespace, from observed demand (p95 CPU and peak memory when history is available), with the estimated monthly saving. For Java containers it also reads the JVM flags and, when VictoriaMetrics has JVM metrics, the heap: findings such as a heap at the memory limit or the default 25% heap, and a recommended heap with its saving. Advice only: nothing is changed.",
 			Parameters:  obj(map[string]any{"namespace": str("Kubernetes namespace")}, "namespace"),
 			Run: func(ctx context.Context, args map[string]any) (string, error) {
 				return s.toolRecommendations(ctx, args["namespace"].(string))
@@ -734,7 +734,7 @@ func (s *Server) toolRecommendations(ctx context.Context, ns string) (string, er
 	for _, w := range report.Workloads {
 		var containers []rightsizing.ContainerAdvice
 		for _, c := range w.Containers {
-			if c.CPU.Action != rightsizing.ActionKeep || c.Memory.Action != rightsizing.ActionKeep {
+			if c.CPU.Action != rightsizing.ActionKeep || c.Memory.Action != rightsizing.ActionKeep || (c.JVM != nil && len(c.JVM.Findings) > 0) {
 				containers = append(containers, c)
 			}
 		}
@@ -746,6 +746,7 @@ func (s *Server) toolRecommendations(ctx context.Context, ns string) (string, er
 	}
 	report.Workloads = workloads
 	report.MonthlySavings = round2(report.MonthlySavings)
+	report.JavaMonthlySavings = round2(report.JavaMonthlySavings)
 	return toJSON(report)
 }
 

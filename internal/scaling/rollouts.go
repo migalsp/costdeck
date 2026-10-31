@@ -122,11 +122,12 @@ func rolloutTemplate(u *unstructured.Unstructured) corev1.PodTemplateSpec {
 
 // WorkloadInfo is a scalable workload as the dashboard and right-sizing advice see it.
 type WorkloadInfo struct {
-	Kind     string
-	Name     string
-	Replicas int32
-	Ready    int32
-	Template corev1.PodTemplateSpec
+	Kind        string
+	Name        string
+	Replicas    int32
+	Ready       int32
+	Annotations map[string]string
+	Template    corev1.PodTemplateSpec
 }
 
 // Workloads lists the Deployments, StatefulSets and Argo Rollouts of a namespace as
@@ -139,7 +140,7 @@ func (e *Engine) Workloads(ctx context.Context, ns string) ([]WorkloadInfo, erro
 	out := make([]WorkloadInfo, 0, len(objs))
 	for _, obj := range objs {
 		st, _ := stateOf(obj)
-		out = append(out, WorkloadInfo{Kind: workloadKind(obj), Name: obj.GetName(), Replicas: getReplicas(obj), Ready: st.ready, Template: podTemplate(obj)})
+		out = append(out, WorkloadInfo{Kind: workloadKind(obj), Name: obj.GetName(), Replicas: getReplicas(obj), Ready: st.ready, Annotations: obj.GetAnnotations(), Template: podTemplate(obj)})
 	}
 	return out, nil
 }

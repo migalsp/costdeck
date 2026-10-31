@@ -242,10 +242,32 @@ export interface ResourceAdvice {
   action: AdviceAction
 }
 
+export interface JVMFinding {
+  severity: 'risk' | 'waste' | 'note'
+  code: string
+  message: string
+}
+
+export interface JVMAdvice {
+  detectedBy: 'annotation' | 'command' | 'options' | 'image' | 'metrics'
+  options?: string[]
+  heap?: string
+  heapSource: string
+  heapUsed?: string
+  heapAfterGC?: string
+  nonHeap?: string
+  recommendedHeap?: string
+  recommendedMemory?: string
+  recommendedOptions?: string
+  monthlySavings?: number
+  findings: JVMFinding[]
+}
+
 export interface ContainerAdvice {
   name: string
   cpu: ResourceAdvice
   memory: ResourceAdvice
+  jvm?: JVMAdvice
 }
 
 export interface WorkloadAdvice {
@@ -266,6 +288,7 @@ export interface Recommendations {
   warning?: string
   currency: string
   monthlySavings: number
+  javaMonthlySavings?: number
   workloads: WorkloadAdvice[]
 }
 

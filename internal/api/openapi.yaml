@@ -2352,12 +2352,13 @@ components:
         warning: { type: string }
         currency: { type: string, example: USD }
         monthlySavings: { type: number }
+        javaMonthlySavings: { type: number, description: "What lowering oversized JVM heaps would save, a separate change from the request advice" }
         workloads:
           type: array
           items:
             type: object
             properties:
-              kind: { type: string, enum: [Deployment, StatefulSet] }
+              kind: { type: string, enum: [Deployment, StatefulSet, Rollout] }
               name: { type: string }
               replicas: { type: integer }
               monthlySavings: { type: number }
@@ -2369,6 +2370,37 @@ components:
                     name: { type: string }
                     cpu: { $ref: "#/components/schemas/ResourceAdvice" }
                     memory: { $ref: "#/components/schemas/ResourceAdvice" }
+                    jvm: { $ref: "#/components/schemas/JVMAdvice" }
+    JVMAdvice:
+      type: object
+      description: >
+        How a Java container's JVM is set up and what that means for its memory. Present for
+        containers that run Java: found by the java command, JAVA_TOOL_OPTIONS, JDK_JAVA_OPTIONS,
+        JAVA_OPTS or _JAVA_OPTIONS, a JVM image, JVM metrics in VictoriaMetrics, or the
+        costdeck.io/runtime annotation (java or none) on the workload or its pod template.
+      properties:
+        detectedBy: { type: string, enum: [annotation, command, options, image, metrics] }
+        options: { type: array, items: { type: string }, example: ["-Xmx2g", "-XX:+UseG1GC"] }
+        heap: { type: string, example: 2Gi, description: "The heap the JVM can grow to; absent when it depends on the node" }
+        heapSource: { type: string, example: "set by -Xmx" }
+        heapUsed: { type: string, example: 1800Mi, description: "Peak heap in use, from JVM metrics" }
+        heapAfterGC: { type: string, example: 400Mi, description: "Peak heap left after garbage collection, from JVM metrics" }
+        nonHeap: { type: string, example: 160Mi }
+        recommendedHeap: { type: string, example: 800Mi }
+        recommendedMemory: { type: string, example: 1056Mi, description: "The memory request and limit to pair with the recommended heap" }
+        recommendedOptions: { type: string, example: "-Xmx800m" }
+        monthlySavings: { type: number }
+        findings:
+          type: array
+          items:
+            type: object
+            properties:
+              severity: { type: string, enum: [risk, waste, note] }
+              code:
+                type: string
+                enum: [container-support-off, no-memory-limit, heap-over-limit, no-room-for-native, default-heap,
+                  request-below-heap, heap-tight, heap-oversized, heap-differs, serial-gc, unread-options]
+              message: { type: string }
     User:
       type: object
       properties:

@@ -1,15 +1,18 @@
 package api
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"sync"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
 
+	"github.com/migalsp/costdeck-operator/internal/jvm"
 	"github.com/migalsp/costdeck-operator/internal/metrics"
 	"github.com/migalsp/costdeck-operator/internal/rightsizing"
 	"github.com/migalsp/costdeck-operator/internal/scaling"
@@ -70,13 +73,18 @@ func (c *recommendationCache) drop(ns, kind, name string) {
 	}
 	r := e.report
 	kept := make([]rightsizing.WorkloadAdvice, 0, len(r.Workloads))
-	r.MonthlySavings = 0
+	r.MonthlySavings, r.JavaMonthlySavings = 0, 0
 	for _, w := range r.Workloads {
 		if w.Kind == kind && w.Name == name {
 			continue
 		}
 		kept = append(kept, w)
 		r.MonthlySavings += w.MonthlySavings
+		for _, c := range w.Containers {
+			if c.JVM != nil {
+				r.JavaMonthlySavings += c.JVM.MonthlySavings
+			}
+		}
 	}
 	r.Workloads = kept
 	e.report = r
@@ -117,7 +125,8 @@ func (s *Server) recommendations(ctx context.Context, ns string) (rightsizing.Re
 		return rightsizing.Report{}, fmt.Errorf("no usage data for namespace %s: %w", ns, err)
 	}
 
-	report := rightsizing.Analyze(workloads, demand, s.pricingResolver().Rates(ctx), rightsizing.DefaultSettings(d.Historical))
+	heapDemand, heapErr := s.metricsProvider().HeapDemand(ctx, ns)
+	report := rightsizing.Analyze(workloads, demand, heapDemand, s.pricingResolver().Rates(ctx), rightsizing.DefaultSettings(d.Historical))
 	report.Namespace, report.Source, report.Historical = ns, d.Source, d.Historical
 	if d.Historical {
 		report.Window = promWindow(d.Window)
@@ -126,8 +135,15 @@ func (s *Server) recommendations(ctx context.Context, ns string) (rightsizing.Re
 		report.Basis = "A single current reading from metrics-server, plus 50% headroom. Connect VictoriaMetrics under " +
 			"Settings → Usage metrics for advice based on two weeks of history, which also catches peaks this reading may miss."
 	}
-	if d.Degraded != nil {
+	if hasJavaAdvice(report) {
+		report.Basis += " Java containers: the memory request covers the heap the JVM can grow to plus native memory; " +
+			"heap advice is twice the heap left after garbage collection, from JVM metrics in VictoriaMetrics."
+	}
+	switch {
+	case d.Degraded != nil:
 		report.Warning = "VictoriaMetrics is unavailable, so this falls back to metrics-server: " + d.Degraded.Error()
+	case heapErr != nil:
+		report.Warning = "JVM heap metrics could not be read, so Java advice rests on the JVM flags alone: " + heapErr.Error()
 	}
 	s.recommendationCache.put(ns, report)
 	return report, nil
@@ -143,24 +159,37 @@ func (s *Server) workloadRequests(ctx context.Context, ns string) ([]rightsizing
 	out := make([]rightsizing.Workload, 0, len(workloads))
 	for _, wl := range workloads {
 		replicas := wl.Replicas
-		out = append(out, toWorkload(wl.Kind, wl.Name, &replicas, wl.Template.Spec))
+		runtimeOverride := cmp.Or(wl.Annotations[jvm.RuntimeAnnotation], wl.Template.Annotations[jvm.RuntimeAnnotation])
+		out = append(out, toWorkload(wl.Kind, wl.Name, &replicas, wl.Template.Spec, runtimeOverride))
 	}
 	return out, nil
 }
 
-func toWorkload(kind, name string, replicas *int32, spec corev1.PodSpec) rightsizing.Workload {
+func toWorkload(kind, name string, replicas *int32, spec corev1.PodSpec, runtimeOverride string) rightsizing.Workload {
 	w := rightsizing.Workload{Kind: kind, Name: name, Replicas: 1}
 	if replicas != nil {
 		w.Replicas = *replicas
 	}
 	for _, c := range spec.Containers {
-		w.Containers = append(w.Containers, rightsizing.Container{
+		container := rightsizing.Container{
 			Name:          c.Name,
 			CPURequest:    c.Resources.Requests.Cpu().AsApproximateFloat64(),
 			MemoryRequest: c.Resources.Requests.Memory().AsApproximateFloat64(),
-		})
+			MemoryLimit:   c.Resources.Limits.Memory().AsApproximateFloat64(),
+			CPULimit:      c.Resources.Limits.Cpu().AsApproximateFloat64(),
+		}
+		if java, ok := jvm.Inspect(c, runtimeOverride); ok {
+			container.Java = &java
+		}
+		w.Containers = append(w.Containers, container)
 	}
 	return w
+}
+
+func hasJavaAdvice(r rightsizing.Report) bool {
+	return slices.ContainsFunc(r.Workloads, func(w rightsizing.WorkloadAdvice) bool {
+		return slices.ContainsFunc(w.Containers, func(c rightsizing.ContainerAdvice) bool { return c.JVM != nil })
+	})
 }
 
 // promWindow renders a window the way users read it: "14d", "36h".

@@ -115,6 +115,18 @@ service: one operator in your cluster does it all.
 
 - **Right-sizing advice.** Which requests can shrink (p95 usage when VictoriaMetrics is
   connected), with the saving per workload. Cost Deck never touches nodes.
+- **Java heap advice.** A JVM takes its heap up front, so container metrics alone show a
+  Java service as busy as its heap allows. Cost Deck finds Java containers (the `java`
+  command, `JAVA_TOOL_OPTIONS`, `JDK_JAVA_OPTIONS`, `JAVA_OPTS`, `_JAVA_OPTIONS`, a JVM
+  image, or JVM metrics) and works out the heap their flags give them under the container
+  limit, as the JVM does. It flags a heap at the limit or with no room left for native
+  memory, the default heap of 25% of the limit, no limit at all, a request below the heap
+  and the Serial collector picked on small containers, and keeps memory advice from going
+  below the heap. When VictoriaMetrics has JVM metrics (Micrometer, the Prometheus Java
+  client or JMX exporter, OpenTelemetry), it recommends a heap of twice what was left
+  after garbage collection, the memory to pair with it, the flag to set and the saving.
+  Advice only: nothing changes the JVM. Set the annotation `costdeck.io/runtime` to `java`
+  or `none` on a workload or its pod template to correct the detection.
 - **Applied with a guard, or as a pull request.** If you allow it, operators apply the
   advice from a namespace's page: the new pods are watched, and the old requests come back
   (with an alert) if one is OOMKilled, restarts or crash-loops. Workloads a GitOps tool
@@ -264,8 +276,8 @@ dependencies, stage timeouts, workload rules, holiday exceptions, namespace sele
 preview and dry run, GitOps pausing, operator-run services, realized savings, GPUs, AI
 costs, auth with Keycloak, the API, VictoriaMetrics history, MCP, the sleep page, sleep
 when unused, Slack, Teams and email, Argo Rollouts, preview cleanup, cost allocation,
-several clusters, cost estimates, and right-sizing applied, guarded and proposed in a
-real Gitea. A change that breaks one fails the build. A feature or fix that changes
+several clusters, cost estimates, Java heap advice from JVM flags and metrics, and
+right-sizing applied, guarded and proposed in a real Gitea. A change that breaks one fails the build. A feature or fix that changes
 behaviour adds or extends a scenario. To run it against an existing test cluster instead
 of a new Kind cluster:
 
@@ -283,8 +295,8 @@ the run fails: Go, UI, Helm, the install bundle, known vulnerabilities, dependen
 conventional commit messages, zizmor on the workflows, shellcheck, the image scan and the
 end-to-end parts.
 
-Schedule windows, the next schedule change, holiday exceptions and cost estimates also
-have Go fuzz tests. `go test` runs their seed inputs, and every night each one is fuzzed
+Schedule windows, the next schedule change, holiday exceptions, cost estimates and the
+reading of JVM flags also have Go fuzz tests. `go test` runs their seed inputs, and every night each one is fuzzed
 for ten minutes; a failing input is kept as a workflow artifact, to be copied into
 `testdata/fuzz` as a regression test. To fuzz one locally:
 

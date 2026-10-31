@@ -31,7 +31,7 @@ func TestAnalyzeRecommendsReductionsAndPricesThem(t *testing.T) {
 		{Pod: "api-gateway-5c6b7-klmno", Container: "api"}: usage("4", "8Gi"),
 	}
 
-	r := Analyze(workloads, demand, rates, DefaultSettings(true))
+	r := Analyze(workloads, demand, nil, rates, DefaultSettings(true))
 	c := r.Workloads[0].Containers[0]
 	if c.CPU.Action != ActionReduce || c.CPU.Observed != "100m" || c.CPU.Recommended != "120m" || c.CPU.Request != "1" {
 		t.Errorf("CPU advice = %+v, want reduce 1 -> 120m (100m p95 + 20%%)", c.CPU)
@@ -60,7 +60,7 @@ func TestAnalyzeActions(t *testing.T) {
 		{Pod: "db-0", Container: "pg"}:              usage("5m", "10Mi"),
 	}
 	byName := map[string]ContainerAdvice{}
-	for _, w := range Analyze(workloads, demand, rates, DefaultSettings(true)).Workloads {
+	for _, w := range Analyze(workloads, demand, nil, rates, DefaultSettings(true)).Workloads {
 		byName[w.Name] = w.Containers[0]
 	}
 
@@ -81,7 +81,7 @@ func TestAnalyzeActions(t *testing.T) {
 func TestSnapshotDemandGetsMoreHeadroom(t *testing.T) {
 	workloads := []Workload{{Kind: "Deployment", Name: "api", Replicas: 1, Containers: []Container{{Name: "api", CPURequest: 2}}}}
 	demand := map[metrics.ContainerKey]metrics.Usage{{Pod: "api-1a2b3-ccccc", Container: "api"}: usage("100m", "64Mi")}
-	c := Analyze(workloads, demand, rates, DefaultSettings(false)).Workloads[0].Containers[0]
+	c := Analyze(workloads, demand, nil, rates, DefaultSettings(false)).Workloads[0].Containers[0]
 	if c.CPU.Recommended != "150m" {
 		t.Errorf("snapshot recommendation = %s, want 150m (100m + 50%%)", c.CPU.Recommended)
 	}
@@ -96,7 +96,7 @@ func TestWorkloadsSortBySavings(t *testing.T) {
 		{Pod: "small-1a2b3-aaaaa", Container: "c"}: usage("10m", "10Mi"),
 		{Pod: "big-1a2b3-aaaaa", Container: "c"}:   usage("10m", "10Mi"),
 	}
-	if got := Analyze(workloads, demand, rates, DefaultSettings(true)).Workloads; got[0].Name != "big" {
+	if got := Analyze(workloads, demand, nil, rates, DefaultSettings(true)).Workloads; got[0].Name != "big" {
 		t.Errorf("first workload = %s, want the one that saves most", got[0].Name)
 	}
 }
