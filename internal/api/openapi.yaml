@@ -1543,6 +1543,10 @@ paths:
                         namespaces: { type: array, items: { type: string } }
                         partial: { type: boolean }
                   anomalies: { type: object }
+                  performanceRisks:
+                    type: object
+                    properties:
+                      enabled: { type: boolean }
                   events:
                     type: array
                     items:
@@ -1888,6 +1892,7 @@ paths:
                     - { name: payments, scope: team, value: payments, monthlyLimit: "1200", thresholds: [80, 100], forecast: true }
                   alerts:
                     anomalies: { enabled: true, percent: 30, minimumDaily: "5" }
+                    performanceRisks: { enabled: true }
               calendars:
                 summary: Public holidays that schedules name in spec.calendars
                 value:

@@ -70,6 +70,16 @@ spec:
                         minimum: 5
                         type: integer
                     type: object
+                  performanceRisks:
+                    description: |-
+                      PerformanceRisks alerts the channels that take alerts about new critical performance
+                      risks, such as OOM kills, crash loops, evictions and CPU throttling, at most once a
+                      day per risk, and lists the open ones in the digest.
+                    properties:
+                      enabled:
+                        description: Enabled turns performance risk alerts on.
+                        type: boolean
+                    type: object
                 type: object
               allocation:
                 description: |-

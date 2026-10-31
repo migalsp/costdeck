@@ -54,6 +54,7 @@ type Digest struct {
 	Namespaces    []DigestRow   `json:"namespaces"`
 	Teams         []DigestRow   `json:"teams"`
 	Opportunities []Opportunity `json:"opportunities"`
+	CriticalRisks []OpenRisk    `json:"criticalRisks,omitempty"`
 }
 
 // DigestRow is one namespace or team in a digest.
@@ -193,7 +194,7 @@ func (d Digest) Markdown() string {
 	fmt.Fprintf(&b, "**%s**\n\n", d.Title)
 	if d.Hours == 0 {
 		b.WriteString("The cost history does not cover this period yet; Cost Deck started recording after it ended.\n")
-		return b.String()
+		return b.String() + d.risksMarkdown()
 	}
 	fmt.Fprintf(&b, "The cluster cost **%s**%s. Pods requested %s of compute and used %s.\n",
 		m(d.Cost), changeText(d.Cost, d.PrevCost, "the "+d.Period+" before"), m(d.Requested), m(d.Used))
@@ -223,6 +224,21 @@ func (d Digest) Markdown() string {
 		for _, op := range d.Opportunities {
 			fmt.Fprintf(&b, "- %s: about %s a month\n", op.Title, m(op.MonthlySavings))
 		}
+	}
+	return b.String() + d.risksMarkdown()
+}
+
+func (d Digest) risksMarkdown() string {
+	if len(d.CriticalRisks) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\n**Performance risks**\n")
+	for _, r := range d.CriticalRisks[:min(len(d.CriticalRisks), digestRisks)] {
+		fmt.Fprintf(&b, "- %s: %s\n", r.Subject(), r.Message)
+	}
+	if more := len(d.CriticalRisks) - digestRisks; more > 0 {
+		fmt.Fprintf(&b, "- and %d more on their namespace pages\n", more)
 	}
 	return b.String()
 }

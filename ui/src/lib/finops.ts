@@ -410,10 +410,13 @@ export interface AlertEvent {
 
 export interface AnomalySettings { enabled?: boolean; percent?: number; minimumDaily?: string }
 
+export interface RiskAlertSettings { enabled: boolean }
+
 export interface BudgetsResponse {
   currency: string
   budgets: BudgetStatus[]
   anomalies: AnomalySettings
+  performanceRisks?: RiskAlertSettings
   events: AlertEvent[]
   webexReady: boolean
   // channels take alerts: Webex, Slack, Teams, email.

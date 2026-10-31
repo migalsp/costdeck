@@ -112,4 +112,12 @@ api GET /api/namespaces/smoke-risks/recommendations |
   fail "the CPU request of a throttled workload is still cut: $(api GET /api/namespaces/smoke-risks/recommendations | jq -c '.workloads[] | select(.name == "risk-throttled") | .containers[0].cpu')"
 ok "the throttled workload keeps its CPU request"
 rm -f "$RISKS_REPORT"
+
+log "Alerts about new critical risks are switched on apart from the anomaly alerts"
+RISK_ANOMALIES=$(api GET /api/budgets | jq -c '.anomalies')
+track_call PUT /api/settings '{"alerts":{"performanceRisks":{"enabled":false}}}'
+expect_code 200 "switching performance risk alerts on" PUT /api/settings '{"alerts":{"performanceRisks":{"enabled":true}}}' -b "$JAR"
+api GET /api/budgets | jq -e --argjson anomalies "$RISK_ANOMALIES" '.performanceRisks.enabled == true and .anomalies == $anomalies' >/dev/null ||
+  fail "the setting did not stick or touched the anomaly alerts: $(api GET /api/budgets | jq -c '{performanceRisks, anomalies}')"
+ok "on, and the anomaly alerts are as they were"
 api PUT /api/settings '{"integrations":{"victoriaMetrics":{"enabled":false}}}' >/dev/null

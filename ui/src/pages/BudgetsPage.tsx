@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { AlertTriangle, BellRing, Check, Loader2, Pencil, Plus, Search, Target, TrendingUp, Wallet } from 'lucide-react'
 import { Badge, Button, Card, Modal, PageHeader, SectionTitle, type Tone } from '../components/ui'
 import { useAuth } from '../lib/auth'
-import { environmentLabel, fetchBudgets, saveSettings, type AnomalySettings, type Budget, type BudgetScope, type BudgetStatus, type BudgetsResponse, type Environment } from '../lib/finops'
+import { environmentLabel, fetchBudgets, saveSettings, type AnomalySettings, type Budget, type BudgetScope, type BudgetStatus, type BudgetsResponse, type Environment, type RiskAlertSettings } from '../lib/finops'
 import { formatMoney } from '../lib/format'
 import { errorMessage } from '../lib/api'
 import { toast } from '../lib/toast'
@@ -292,6 +292,40 @@ function AnomalyCard({ settings, onSaved }: { settings: AnomalySettings; onSaved
   )
 }
 
+function RiskAlertCard({ settings, onSaved }: { settings: RiskAlertSettings; onSaved: () => void }) {
+  const { can } = useAuth()
+  const [busy, setBusy] = useState(false)
+  const toggle = async (enabled: boolean) => {
+    setBusy(true)
+    try {
+      await saveSettings({ alerts: { performanceRisks: { enabled } } })
+      toast.success(enabled ? 'Performance risk alerts are on' : 'Performance risk alerts are off')
+      onSaved()
+    } catch (e) {
+      toast.error(errorMessage(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <Card className="p-5">
+      <div className="flex items-center gap-2">
+        <AlertTriangle size={17} className="text-brand-600" />
+        <h2 className="text-base font-semibold text-slate-800">Performance risk alerts</h2>
+        <Badge tone={settings.enabled ? 'success' : 'neutral'}>{settings.enabled ? 'On' : 'Off'}</Badge>
+      </div>
+      <p className="mt-2 text-sm text-slate-600">
+        Every half hour, new critical risks in any namespace (OOM kills, crash loops, evictions, heavy CPU throttling, JVM heaps still full after garbage collection) are sent to the channels that take alerts, at most once a day each. The weekly digest lists the open ones.
+      </p>
+      {can('admin') && (
+        <label className="mt-4 flex items-center gap-2 text-sm text-slate-700">
+          <input type="checkbox" className="accent-brand-600" checked={settings.enabled} disabled={busy} onChange={e => toggle(e.target.checked)} /> Send performance risk alerts
+        </label>
+      )}
+    </Card>
+  )
+}
+
 export default function BudgetsPage() {
   const { can } = useAuth()
   const [data, setData] = useState<BudgetsResponse | null>(null)
@@ -375,6 +409,7 @@ export default function BudgetsPage() {
         <div>
           <SectionTitle>Settings</SectionTitle>
           <AnomalyCard settings={data.anomalies || {}} onSaved={load} />
+          <div className="mt-4"><RiskAlertCard settings={data.performanceRisks || { enabled: false }} onSaved={load} /></div>
         </div>
       </div>
 

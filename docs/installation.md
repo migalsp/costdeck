@@ -459,7 +459,8 @@ Besides the Webex space, **Settings → Notifications** sends Cost Deck's messag
 Microsoft Teams and email. Each channel picks what it receives:
 
 - **Scaling changes**: a schedule finished scaling up or down.
-- **Alerts**: budgets, cost anomalies and namespaces about to be deleted.
+- **Alerts**: budgets, cost anomalies, critical performance risks and namespaces about to
+  be deleted.
 - **Digests**: the scheduled cost summary.
 
 **Send test message** checks a channel with the values in the form before you save.
@@ -499,9 +500,16 @@ Webex can message a bot directly.
   `spec.budgets`) alert at their thresholds and when the month is heading over, and
   anomaly alerts when a namespace's daily cost jumps. They go to every notification
   channel that takes alerts, and are always listed in the dashboard.
+- **Performance risk alerts** (`spec.alerts.performanceRisks.enabled`, off by default):
+  every half hour the leader looks for critical performance risks in every namespace (OOM
+  kills, crash loops, evictions, CPU throttled a quarter of the time or more, JVM heaps
+  still full after garbage collection) and sends the new ones to the channels that take
+  alerts, at most once a day per risk. The open ones are kept in the `costdeck-risk-alerts`
+  ConfigMap and listed in the digest. Saving the anomaly alerts leaves this setting alone,
+  and the other way round.
 - **Cost digest**: under **Reports → Scheduled digest**, a weekly (Mondays) or monthly
-  (the 1st) summary of cost, savings and the top opportunities goes to every channel that
-  takes digests. It is stored in `spec.reports.digest` of the `CostDeckConfig`.
+  (the 1st) summary of cost, savings, the top opportunities and, with performance risk
+  alerts on, the open critical risks goes to every channel that takes digests. It is stored in `spec.reports.digest` of the `CostDeckConfig`.
 
 Commands (`help` lists them):
 

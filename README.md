@@ -151,8 +151,9 @@ service: one operator in your cluster does it all.
 ### Budgets and reports
 
 - **Budgets and alerts.** Monthly budgets per cluster, team, environment or any set of
-  namespaces, alerting at thresholds and when the month is heading over, and daily cost
-  anomaly alerts.
+  namespaces, alerting at thresholds and when the month is heading over, daily cost
+  anomaly alerts, and alerts about new critical performance risks, listed in the digest
+  too.
 - **Showback and chargeback.** A period's cost by team, environment, namespace or any label
   such as `cost-center`, with shared namespaces and idle capacity charged by your policy,
   adding up to the bill, as a table and a CSV for finance.

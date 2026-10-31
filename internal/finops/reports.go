@@ -332,7 +332,7 @@ func (d *DigestScheduler) digest(ctx context.Context, period string, now time.Ti
 	if err != nil {
 		return Digest{}, err
 	}
-	return NewDigest(o, ledger, period, now), nil
+	return WithOpenRisks(ctx, d.Client, d.Namespace, NewDigest(o, ledger, period, now)), nil
 }
 
 // BuildDigest takes a fresh snapshot and builds the digest from it and the ledger.
@@ -345,5 +345,5 @@ func BuildDigest(ctx context.Context, c client.Reader, rates pricing.Rates, name
 	if err != nil {
 		return Digest{}, err
 	}
-	return NewDigest(NewOverview(snap, ledger, nil, 0), ledger, period, now), nil
+	return WithOpenRisks(ctx, c, namespace, NewDigest(NewOverview(snap, ledger, nil, 0), ledger, period, now)), nil
 }

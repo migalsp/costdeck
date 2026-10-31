@@ -213,6 +213,15 @@ func main() {
 		setupLog.Error(err, "Failed to add the budget alerter to manager")
 		os.Exit(1)
 	}
+	riskAlerter := &api.RiskAlerter{
+		Server:    apiServer,
+		Poster:    notify.Poster{Dispatcher: dispatcher, Event: notify.EventAlerts},
+		Namespace: cdconfig.OperatorNamespace(),
+	}
+	if err := mgr.Add(riskAlerter); err != nil {
+		setupLog.Error(err, "Failed to add the performance risk alerter to manager")
+		os.Exit(1)
+	}
 
 	// Right-sized workloads whose new pods fail get their old requests back; the leader watches.
 	if err := mgr.Add(&optimize.Guard{Client: mgr.GetClient(), Notify: dispatcher}); err != nil {

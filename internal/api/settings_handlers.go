@@ -208,8 +208,8 @@ type SettingsUpdateRequest struct {
 	Pricing      *PricingUpdateRequest      `json:"pricing,omitempty"`
 	Reports      *ReportsUpdateRequest      `json:"reports,omitempty"`
 	// Budgets replaces the whole list when present.
-	Budgets *[]finopsv1.Budget     `json:"budgets,omitempty"`
-	Alerts  *finopsv1.AlertsConfig `json:"alerts,omitempty"`
+	Budgets *[]finopsv1.Budget   `json:"budgets,omitempty"`
+	Alerts  *AlertsUpdateRequest `json:"alerts,omitempty"`
 	// Billing replaces the reconciliation setup when present.
 	Billing *finopsv1.BillingConfig `json:"billing,omitempty"`
 	// Calendars replaces the holiday calendars when present.
@@ -926,18 +926,27 @@ func applyReportSettings(_ context.Context, cfg *finopsv1.CostDeckConfig, req *S
 	return nil
 }
 
+type AlertsUpdateRequest struct {
+	Anomalies        *finopsv1.AnomalyAlerts         `json:"anomalies,omitempty"`
+	PerformanceRisks *finopsv1.PerformanceRiskAlerts `json:"performanceRisks,omitempty"`
+}
+
 var budgetName = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
 
 func applyBudgetSettings(_ context.Context, cfg *finopsv1.CostDeckConfig, req *SettingsUpdateRequest) error {
-	if req.Alerts != nil {
-		a := req.Alerts.Anomalies
+	if req.Alerts != nil && req.Alerts.Anomalies != nil {
+		a := *req.Alerts.Anomalies
 		if a.Percent != 0 && (a.Percent < 5 || a.Percent > 1000) {
 			return badRequestf("the anomaly threshold must be between 5 and 1000 percent")
 		}
 		if a.MinimumDaily != "" && !decimalRate.MatchString(a.MinimumDaily) {
 			return badRequestf("the minimum daily increase must be a plain number such as 5")
 		}
-		cfg.Spec.Alerts = *req.Alerts
+		cfg.Spec.Alerts.Anomalies = a
+	}
+	if req.Alerts != nil && req.Alerts.PerformanceRisks != nil {
+		risks := *req.Alerts.PerformanceRisks
+		cfg.Spec.Alerts.PerformanceRisks = &risks
 	}
 	if req.Budgets == nil {
 		return nil

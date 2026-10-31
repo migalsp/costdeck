@@ -668,6 +668,19 @@ type AlertsConfig struct {
 	// Anomalies alerts when a namespace's daily cost jumps above its recent average.
 	// +optional
 	Anomalies AnomalyAlerts `json:"anomalies,omitempty"`
+
+	// PerformanceRisks alerts the channels that take alerts about new critical performance
+	// risks, such as OOM kills, crash loops, evictions and CPU throttling, at most once a
+	// day per risk, and lists the open ones in the digest.
+	// +optional
+	PerformanceRisks *PerformanceRiskAlerts `json:"performanceRisks,omitempty"`
+}
+
+// PerformanceRiskAlerts configures alerts about critical performance risks.
+type PerformanceRiskAlerts struct {
+	// Enabled turns performance risk alerts on.
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
 }
 
 // AnomalyAlerts configures daily cost anomaly alerts.
