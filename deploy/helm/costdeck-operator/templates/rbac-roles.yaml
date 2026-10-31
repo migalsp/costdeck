@@ -63,6 +63,13 @@ rules:
   - list
   - watch
 - apiGroups:
+  - finops.costdeck.io
+  resources:
+  - rightsizingpolicies
+  verbs:
+  - get
+  - list
+- apiGroups:
   - keda.sh
   resources:
   - scaledobjects

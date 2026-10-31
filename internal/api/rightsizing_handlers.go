@@ -11,12 +11,19 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
+	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
 	"github.com/migalsp/costdeck-operator/internal/jvm"
 	"github.com/migalsp/costdeck-operator/internal/metrics"
 	"github.com/migalsp/costdeck-operator/internal/rightsizing"
 	"github.com/migalsp/costdeck-operator/internal/scaling"
 )
+
+// +kubebuilder:rbac:groups=finops.costdeck.io,resources=rightsizingpolicies,verbs=get;list
 
 // recommendationTTL bounds how often one namespace's demand is recomputed. A two-week p95
 // barely moves in minutes, and every dashboard card asks for its namespace.
@@ -157,13 +164,63 @@ func (s *Server) workloadRequests(ctx context.Context, ns string) ([]rightsizing
 	if err != nil {
 		return nil, err
 	}
+	var policies finopsv1.RightsizingPolicyList
+	if err := s.Client.List(ctx, &policies, client.InNamespace(ns)); err != nil {
+		logf.FromContext(ctx).V(1).Info("Could not read right-sizing policies", "namespace", ns, "err", err.Error())
+	}
+	slices.SortStableFunc(policies.Items, func(a, b finopsv1.RightsizingPolicy) int {
+		return cmp.Or(a.CreationTimestamp.Compare(b.CreationTimestamp.Time), cmp.Compare(a.Name, b.Name))
+	})
 	out := make([]rightsizing.Workload, 0, len(workloads))
 	for _, wl := range workloads {
+		policy := policyFor(policies.Items, wl.Template.Labels)
+		if policy != nil && policy.Spec.Exclude {
+			continue
+		}
 		replicas := wl.Replicas
 		runtimeOverride := cmp.Or(wl.Annotations[jvm.RuntimeAnnotation], wl.Template.Annotations[jvm.RuntimeAnnotation])
-		out = append(out, toWorkload(wl.Kind, wl.Name, &replicas, wl.Template.Spec, runtimeOverride))
+		w := toWorkload(wl.Kind, wl.Name, &replicas, wl.Template.Spec, runtimeOverride)
+		if policy != nil {
+			w.Policy = toPolicy(*policy)
+		}
+		out = append(out, w)
 	}
 	return out, nil
+}
+
+func policyFor(policies []finopsv1.RightsizingPolicy, podLabels map[string]string) *finopsv1.RightsizingPolicy {
+	for i := range policies {
+		sel := policies[i].Spec.Selector
+		if sel == nil {
+			return &policies[i]
+		}
+		selector, err := metav1.LabelSelectorAsSelector(sel)
+		if err == nil && selector.Matches(labels.Set(podLabels)) {
+			return &policies[i]
+		}
+	}
+	return nil
+}
+
+func toPolicy(p finopsv1.RightsizingPolicy) *rightsizing.Policy {
+	bounds := func(r finopsv1.ResourcePolicy) rightsizing.Bounds {
+		var b rightsizing.Bounds
+		if r.Min != nil {
+			b.Min = r.Min.AsApproximateFloat64()
+		}
+		if r.Max != nil {
+			b.Max = r.Max.AsApproximateFloat64()
+		}
+		if r.HeadroomPercent != nil {
+			multiplier := 1 + float64(*r.HeadroomPercent)/100
+			b.Headroom = &multiplier
+		}
+		return b
+	}
+	return &rightsizing.Policy{
+		Name: p.Name, ApplyForbidden: p.Spec.Apply == finopsv1.RightsizingApplyForbidden,
+		CPU: bounds(p.Spec.CPU), Memory: bounds(p.Spec.Memory),
+	}
 }
 
 func toWorkload(kind, name string, replicas *int32, spec corev1.PodSpec, runtimeOverride string) rightsizing.Workload {

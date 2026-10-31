@@ -2394,6 +2394,8 @@ components:
               name: { type: string }
               replicas: { type: integer }
               monthlySavings: { type: number }
+              policy: { type: string, description: "The RightsizingPolicy that bounds this workload's advice" }
+              applyForbidden: { type: boolean, description: "Its policy forbids applying the advice or proposing it" }
               containers:
                 type: array
                 items:

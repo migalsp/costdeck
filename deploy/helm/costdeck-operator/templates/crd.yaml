@@ -1678,6 +1678,172 @@ metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.20.1
     helm.sh/resource-policy: keep
+  name: rightsizingpolicies.finops.costdeck.io
+spec:
+  group: finops.costdeck.io
+  names:
+    kind: RightsizingPolicy
+    listKind: RightsizingPolicyList
+    plural: rightsizingpolicies
+    shortNames:
+    - rsp
+    singular: rightsizingpolicy
+  scope: Namespaced
+  versions:
+  - name: v1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          RightsizingPolicy sets bounds, headroom and permissions for right-sizing advice on the
+          workloads of its namespace. A workload follows the oldest policy that picks it.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              RightsizingPolicySpec says how right-sizing treats the workloads of its namespace that
+              the selector picks.
+            properties:
+              apply:
+                description: |-
+                  Apply says whether operators may apply the advice to these workloads or open a pull
+                  request with it. The advice is still shown when it is Forbidden.
+                enum:
+                - Allowed
+                - Forbidden
+                type: string
+              cpu:
+                description: CPU bounds and pads the CPU request advice.
+                properties:
+                  headroomPercent:
+                    description: |-
+                      HeadroomPercent is added on top of the observed demand, in place of the default of
+                      20 with history from VictoriaMetrics and 50 with a single reading.
+                    format: int32
+                    maximum: 300
+                    minimum: 0
+                    type: integer
+                  max:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: Max is the largest request the advice recommends.
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                  min:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: Min is the smallest request the advice recommends.
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                type: object
+              exclude:
+                description: Exclude leaves these workloads out of right-sizing advice
+                  altogether.
+                type: boolean
+              memory:
+                description: Memory bounds and pads the memory request advice.
+                properties:
+                  headroomPercent:
+                    description: |-
+                      HeadroomPercent is added on top of the observed demand, in place of the default of
+                      20 with history from VictoriaMetrics and 50 with a single reading.
+                    format: int32
+                    maximum: 300
+                    minimum: 0
+                    type: integer
+                  max:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: Max is the largest request the advice recommends.
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                  min:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: Min is the smallest request the advice recommends.
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                type: object
+              selector:
+                description: |-
+                  Selector picks workloads by the labels of their pod template. Empty picks every
+                  Deployment, StatefulSet and Argo Rollout of the namespace.
+                properties:
+                  matchExpressions:
+                    description: matchExpressions is a list of label selector requirements.
+                      The requirements are ANDed.
+                    items:
+                      description: |-
+                        A label selector requirement is a selector that contains values, a key, and an operator that
+                        relates the key and values.
+                      properties:
+                        key:
+                          description: key is the label key that the selector applies
+                            to.
+                          type: string
+                        operator:
+                          description: |-
+                            operator represents a key's relationship to a set of values.
+                            Valid operators are In, NotIn, Exists and DoesNotExist.
+                          type: string
+                        values:
+                          description: |-
+                            values is an array of string values. If the operator is In or NotIn,
+                            the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                            the values array must be empty. This array is replaced during a strategic
+                            merge patch.
+                          items:
+                            type: string
+                          type: array
+                          x-kubernetes-list-type: atomic
+                      required:
+                      - key
+                      - operator
+                      type: object
+                    type: array
+                    x-kubernetes-list-type: atomic
+                  matchLabels:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                      map is equivalent to an element of matchExpressions, whose key field is "key", the
+                      operator is "In", and the values array contains only "value". The requirements are ANDed.
+                    type: object
+                type: object
+                x-kubernetes-map-type: atomic
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.1
+    helm.sh/resource-policy: keep
   name: scalingconfigs.finops.costdeck.io
 spec:
   group: finops.costdeck.io

@@ -38,6 +38,9 @@ func (s *Server) adviceFor(ctx context.Context, ns string, ref workloadRef) (rig
 	}
 	for _, w := range report.Workloads {
 		if w.Kind == ref.Kind && w.Name == ref.Name {
+			if w.ApplyForbidden {
+				return w, report, errPolicyForbids{policy: w.Policy, workload: w.Name}
+			}
 			return w, report, nil
 		}
 	}
@@ -80,6 +83,12 @@ func (s *Server) applyRightsizing(ctx context.Context, ns string, ref workloadRe
 		s.recommendationCache.drop(ns, ref.Kind, ref.Name)
 	}
 	return rec, err
+}
+
+type errPolicyForbids struct{ policy, workload string }
+
+func (e errPolicyForbids) Error() string {
+	return fmt.Sprintf("the RightsizingPolicy %s forbids applying advice to %s or proposing it", e.policy, e.workload)
 }
 
 // errNoUsage means there is no advice to act on yet: the usage data is missing.
@@ -220,7 +229,7 @@ func writeRightsizing(w http.ResponseWriter, rec finopsv1.WorkloadOptimization, 
 	switch {
 	case err == nil:
 		writeJSON(w, http.StatusOK, rec)
-	case errors.Is(err, errApplyOff), errors.Is(err, errNoRepository):
+	case errors.Is(err, errApplyOff), errors.Is(err, errNoRepository), errors.As(err, new(errPolicyForbids)):
 		writeError(w, http.StatusForbidden, err.Error())
 	case errors.Is(err, optimize.ErrManagedByGitOps):
 		writeError(w, http.StatusConflict, err.Error())

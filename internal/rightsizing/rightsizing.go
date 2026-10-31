@@ -63,6 +63,30 @@ type Workload struct {
 	Name       string
 	Replicas   int32
 	Containers []Container
+	Policy     *Policy
+}
+
+type Policy struct {
+	Name           string
+	ApplyForbidden bool
+	CPU            Bounds
+	Memory         Bounds
+}
+
+type Bounds struct {
+	Min      float64
+	Max      float64
+	Headroom *float64
+}
+
+func (b Bounds) clamp(v float64) float64 {
+	if b.Min > 0 {
+		v = max(v, b.Min)
+	}
+	if b.Max > 0 {
+		v = min(v, b.Max)
+	}
+	return v
 }
 
 // Container holds the requests of one container: cores and bytes, zero when unset.
@@ -102,6 +126,8 @@ type WorkloadAdvice struct {
 	Name           string            `json:"name"`
 	Replicas       int32             `json:"replicas"`
 	MonthlySavings float64           `json:"monthlySavings"`
+	Policy         string            `json:"policy,omitempty"`
+	ApplyForbidden bool              `json:"applyForbidden,omitempty"`
 	Containers     []ContainerAdvice `json:"containers"`
 }
 
@@ -146,10 +172,22 @@ func Analyze(workloads []Workload, demand map[metrics.ContainerKey]metrics.Usage
 		peaks := peakDemand(w, demand)
 		heapPeaks := peakHeapDemand(w, heapDemand)
 		advice := WorkloadAdvice{Kind: w.Kind, Name: w.Name, Replicas: w.Replicas}
+		policy := Policy{}
+		if w.Policy != nil {
+			policy = *w.Policy
+			advice.Policy, advice.ApplyForbidden = policy.Name, policy.ApplyForbidden
+		}
+		cpuHeadroom, memHeadroom := s.CPUHeadroom, s.MemoryHeadroom
+		if policy.CPU.Headroom != nil {
+			cpuHeadroom = *policy.CPU.Headroom
+		}
+		if policy.Memory.Headroom != nil {
+			memHeadroom = *policy.Memory.Headroom
+		}
 		for _, c := range w.Containers {
 			observed, seen := peaks[c.Name]
-			cpuRec := roundCPU(max(observed.cpu*s.CPUHeadroom, s.MinCPU))
-			memRec := roundMemory(max(observed.mem*s.MemoryHeadroom, s.MinMemory))
+			cpuRec := roundCPU(policy.CPU.clamp(max(observed.cpu*cpuHeadroom, s.MinCPU)))
+			memRec := roundMemory(max(observed.mem*memHeadroom, s.MinMemory))
 			var javaAdvice *JVMAdvice
 			var memoryFloor float64
 			if java, heapUse, ok := javaRuntime(w, c, heapPeaks); ok {
@@ -157,6 +195,8 @@ func Analyze(workloads []Workload, demand map[metrics.ContainerKey]metrics.Usage
 				memRec = max(memRec, memoryFloor)
 				report.JavaMonthlySavings += javaAdvice.MonthlySavings
 			}
+			memRec = roundMemory(policy.Memory.clamp(memRec))
+			memoryFloor = min(memoryFloor, memRec)
 			ca := ContainerAdvice{
 				Name:   c.Name,
 				CPU:    advise(c.CPURequest, observed.cpu, cpuRec, seen, s.ReduceThreshold, formatCPU),

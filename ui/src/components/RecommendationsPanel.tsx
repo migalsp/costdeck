@@ -212,6 +212,11 @@ export default function RecommendationsPanel({ namespace }: { namespace: string 
                     <div className="font-bold text-slate-700">{w.name}{w.containers.length > 1 && <span className="font-medium text-slate-400"> / {c.name}</span>}</div>
                     <div className="text-[10px] text-slate-400 uppercase tracking-wider">
                       {w.kind} · {w.replicas} replica{w.replicas === 1 ? '' : 's'}
+                      {w.policy && (
+                        <span className="ml-2 normal-case tracking-normal text-slate-500" title={w.applyForbidden ? 'Its RightsizingPolicy forbids applying the advice or proposing it' : 'Its RightsizingPolicy bounds this advice'}>
+                          policy {w.policy}{w.applyForbidden ? ' · apply forbidden' : ''}
+                        </span>
+                      )}
                       {c.jvm && (
                         <span className="ml-2 inline-flex items-center gap-1 text-orange-700 normal-case tracking-normal" title={c.jvm.heapSource}>
                           <Coffee size={10} /> Java{c.jvm.heap ? ` · heap ${c.jvm.heap}` : ''}
@@ -231,7 +236,7 @@ export default function RecommendationsPanel({ namespace }: { namespace: string 
                       ? `${formatMoney(w.monthlySavings, report.currency)}/mo` : ''}
                   </td>
                   <td className="px-3 py-2.5 text-right whitespace-nowrap">
-                    {canAct && w.containers.indexOf(c) === w.containers.findIndex(hasRequestAdvice) && (() => {
+                    {canAct && !w.applyForbidden && w.containers.indexOf(c) === w.containers.findIndex(hasRequestAdvice) && (() => {
                       const key = `${w.kind}/${w.name}`
                       const ch = latest(changes, w.kind, w.name)
                       const live = ch && (ch.state === 'applied' || ch.state === 'kept')

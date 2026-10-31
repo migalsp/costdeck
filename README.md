@@ -129,6 +129,8 @@ service: one operator in your cluster does it all.
   after garbage collection, the memory to pair with it, the flag to set and the saving.
   Advice only: nothing changes the JVM. Set the annotation `costdeck.io/runtime` to `java`
   or `none` on a workload or its pod template to correct the detection.
+- **Right-sizing policies.** A `RightsizingPolicy` in a team's namespace bounds and pads
+  the advice for its workloads, forbids applying it, or leaves them out.
 - **Performance risks.** What holds workloads back, most severe first, with the fix and
   what it costs: CPU throttling by a limit, OOM kills, restarts and crash loops with their
   reason, evictions, memory close to the limit, autoscalers stuck at their maximum and JVM

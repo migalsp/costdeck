@@ -791,6 +791,35 @@ Every change, applied, proposed or put back, is listed on the namespace page and
 `GET /api/rightsizing/changes`. The assistant and MCP clients have `apply_rightsizing`
 and `propose_rightsizing`, which ask for confirmation.
 
+### Right-sizing policies
+
+A `RightsizingPolicy` in a namespace says how right-sizing treats the workloads it picks:
+bounds and headroom for the advice, whether operators may apply it, or no advice at all. A
+team can keep one next to its manifests:
+
+```yaml
+apiVersion: finops.costdeck.io/v1
+kind: RightsizingPolicy
+metadata: {name: payments, namespace: shop}
+spec:
+  selector: {matchLabels: {app: payments}}   # empty: every workload of the namespace
+  apply: Forbidden                           # Allowed (default) or Forbidden
+  cpu: {min: 250m, headroomPercent: 50}
+  memory: {max: 4Gi}
+```
+
+- **Which policy counts.** A workload follows the oldest policy whose selector matches the
+  labels of its pod template.
+- **Bounds and headroom.** `min` and `max` bound the recommended request, and
+  `headroomPercent` replaces the default headroom (20% with history, 50% with a single
+  reading). A bound wins over the JVM heap floor, which then shows as a risk.
+- **Apply.** With `Forbidden` the advice is still shown, but **Apply**, **Pull request**
+  and the assistant's tools are refused with the policy's name.
+- **Exclude.** `exclude: true` leaves the workloads out of the advice.
+
+The advice is cached for five minutes, so a new policy shows within that time. For this
+the operator reads RightsizingPolicies cluster-wide.
+
 ### Java containers
 
 A container counts as Java when it runs `java`, sets `JAVA_TOOL_OPTIONS`,

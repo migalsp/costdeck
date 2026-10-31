@@ -48,3 +48,23 @@ describe('Performance risks', () => {
     expect(screen.queryByRole('button', { name: 'Apply' })).toBeNull()
   })
 })
+
+describe('Right-sizing policies', () => {
+  it('names the policy and offers no apply when it forbids one', async () => {
+    const operator: User = { sub: 'user:ops', name: 'ops', role: 'operator', provider: 'local' }
+    const reduce = { request: '2', observed: '50m', recommended: '400m', action: 'reduce' }
+    mockFetch(
+      on('GET', '/api/namespaces/shop/recommendations', () => json({
+        namespace: 'shop', source: 'metrics-server', historical: false, basis: 'A reading.', currency: 'USD', monthlySavings: 80,
+        workloads: [
+          { kind: 'Deployment', name: 'api', replicas: 1, monthlySavings: 40, policy: 'payments', applyForbidden: true, containers: [{ name: 'main', cpu: reduce, memory: { request: '1Gi', action: 'keep' } }] },
+          { kind: 'Deployment', name: 'web', replicas: 1, monthlySavings: 40, containers: [{ name: 'main', cpu: reduce, memory: { request: '1Gi', action: 'keep' } }] },
+        ],
+      })),
+      on('GET', '/api/rightsizing/changes', () => json({ applyEnabled: true, guardMinutes: 30, changes: [] })),
+    )
+    render(<AuthContext.Provider value={operator}><RecommendationsPanel namespace="shop" /></AuthContext.Provider>)
+    expect(await screen.findByText(/policy payments · apply forbidden/)).toBeTruthy()
+    expect(screen.getAllByRole('button', { name: 'Apply' })).toHaveLength(1)
+  })
+})

@@ -286,6 +286,8 @@ export interface WorkloadAdvice {
   name: string
   replicas: number
   monthlySavings: number
+  policy?: string
+  applyForbidden?: boolean
   containers: ContainerAdvice[]
 }
 
