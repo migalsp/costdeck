@@ -17,6 +17,7 @@ import (
 	metricsfake "k8s.io/metrics/pkg/client/clientset/versioned/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
 	"github.com/migalsp/costdeck-operator/internal/rightsizing"
 	"github.com/migalsp/costdeck-operator/internal/risks"
 )
@@ -130,4 +131,40 @@ func TestRisksReadPodsAndAutoscalers(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestRisksFlagASlowWakeUp(t *testing.T) {
+	t.Setenv("POD_NAMESPACE", "costdeck")
+	server := buildMockServerWithK8s()
+	ctx := context.Background()
+	group := &finopsv1.ScalingGroup{
+		ObjectMeta: metav1.ObjectMeta{Name: "dev", Namespace: "costdeck"},
+		Spec: finopsv1.ScalingGroupSpec{Category: "e2e", Namespaces: []string{"shop"}, Schedules: []finopsv1.ScalingSchedule{
+			{Days: []int{1, 2, 3, 4, 5}, StartTime: "08:00", EndTime: "18:00", Timezone: "UTC"},
+		}},
+	}
+	group.Status.RecentWakeUps = []finopsv1.WakeUp{{StartedAt: metav1.Now(), Seconds: 420}, {StartedAt: metav1.Now(), Seconds: 200}}
+	if err := server.Client.Create(ctx, group); err != nil {
+		t.Fatal(err)
+	}
+	if err := server.Client.Create(ctx, riskDeployment("api")); err != nil {
+		t.Fatal(err)
+	}
+	server.MetricsClient = metricsfake.NewSimpleClientset() //nolint:staticcheck // k8s.io/metrics generates no NewClientset
+
+	rr := httptest.NewRecorder()
+	server.routes().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/namespaces/shop/risks", nil))
+	var report risks.Report
+	if err := json.Unmarshal(rr.Body.Bytes(), &report); err != nil {
+		t.Fatalf("%v: %s", err, rr.Body.String())
+	}
+	for _, r := range report.Risks {
+		if r.Code == risks.CodeSlowWakeUp {
+			if r.Kind != "ScalingGroup" || r.Workload != "dev" || !strings.Contains(r.Message, "took up to 7m") || !strings.Contains(r.Fix, "about 8m earlier") || r.FixMonthlyCost == nil || *r.FixMonthlyCost <= 0 {
+				t.Errorf("slow wake-up risk = %+v", r)
+			}
+			return
+		}
+	}
+	t.Errorf("no slow wake-up risk in %+v", report.Risks)
 }

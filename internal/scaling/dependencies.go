@@ -144,7 +144,7 @@ func isRunning(phase string) bool {
 // exceptions it could not apply.
 func (e *Engine) ownDecision(now time.Time, g *finopsv1.ScalingGroup, calendars []finopsv1.HolidayCalendar) (Decision, []string) {
 	exceptions, problems := ResolveExceptions(g.Spec.Exceptions, g.Spec.Calendars, calendars, ExceptionZone(g.Spec.Schedules))
-	tt := Timetable{Schedules: g.Spec.Schedules, Exceptions: exceptions}
+	tt := Timetable{Schedules: g.Spec.Schedules, Exceptions: exceptions, Lead: PrewarmLead(g.Spec.Prewarm, g.Status.RecentWakeUps)}
 	d := e.Decide(now, tt, g.Spec.Active, g.Spec.ActiveUntil, g.Annotations)
 	keeps := d.Mode == ModeManualUp || d.Mode == ModeManualDown || (d.Mode == ModeException && d.Active)
 	if g.Spec.Activation == finopsv1.ActivationOnDemand && !keeps {

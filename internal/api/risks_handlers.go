@@ -14,12 +14,20 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
 	"github.com/migalsp/costdeck-operator/internal/metrics"
+	"github.com/migalsp/costdeck-operator/internal/pricing"
 	"github.com/migalsp/costdeck-operator/internal/rightsizing"
 	"github.com/migalsp/costdeck-operator/internal/risks"
+	"github.com/migalsp/costdeck-operator/internal/scaling"
 )
 
 // +kubebuilder:rbac:groups=autoscaling,resources=horizontalpodautoscalers,verbs=get;list
+
+const (
+	kindScalingGroup  = "ScalingGroup"
+	kindScalingConfig = "ScalingConfig"
+)
 
 type containerRef struct {
 	workloadRef
@@ -283,8 +291,66 @@ func (s *Server) risks(ctx context.Context, ns string) (risks.Report, error) {
 		}
 		report.Risks = append(report.Risks, risks.Assess(rw, assess)...)
 	}
+	report.Risks = append(report.Risks, s.wakeUpRisks(ctx, ns, workloads, rates, time.Now())...)
 	risks.Sort(report.Risks)
 	return report, nil
+}
+
+func (s *Server) scheduleOwner(ctx context.Context, ns string) (client.Object, string, *finopsv1.ScheduleStatus, *finopsv1.Prewarm) {
+	var groups finopsv1.ScalingGroupList
+	if err := s.Client.List(ctx, &groups); err == nil {
+		var owner *finopsv1.ScalingGroup
+		for i := range groups.Items {
+			g := &groups.Items[i]
+			if slices.Contains(g.Members(), ns) && (owner == nil || g.CreationTimestamp.Before(&owner.CreationTimestamp)) {
+				owner = g
+			}
+		}
+		if owner != nil {
+			return owner, kindScalingGroup, &owner.Status.ScheduleStatus, owner.Spec.Prewarm
+		}
+	}
+	var configs finopsv1.ScalingConfigList
+	if err := s.Client.List(ctx, &configs); err == nil {
+		for i := range configs.Items {
+			c := &configs.Items[i]
+			if c.Spec.TargetNamespace == ns {
+				return c, kindScalingConfig, &c.Status.ScheduleStatus, c.Spec.Prewarm
+			}
+		}
+	}
+	return nil, "", nil, nil
+}
+
+func (s *Server) wakeUpRisks(ctx context.Context, ns string, workloads []rightsizing.Workload, rates pricing.Rates, now time.Time) []risks.Risk {
+	owner, kind, status, prewarm := s.scheduleOwner(ctx, ns)
+	if owner == nil || len(status.RecentWakeUps) == 0 {
+		return nil
+	}
+	slowest := time.Duration(0)
+	for _, w := range status.RecentWakeUps {
+		slowest = max(slowest, time.Duration(w.Seconds)*time.Second)
+	}
+	bare := s.timetableOf(ctx, owner)
+	bare.Lead = 0
+	intervals := bare.Intervals(now, now.AddDate(0, 0, 7))
+	starts := 0
+	for i := 1; i < len(intervals); i++ {
+		if intervals[i].Active && !intervals[i-1].Active {
+			starts++
+		}
+	}
+	hourly := 0.0
+	for _, w := range workloads {
+		for _, c := range w.Containers {
+			hourly += (c.CPURequest*rates.CPUCoreHour + c.MemoryRequest/(1<<30)*rates.MemoryGBHour) * float64(max(w.Replicas, 1))
+		}
+	}
+	return risks.AssessWakeUp(risks.Wake{
+		Kind: kind, Name: owner.GetName(), Slowest: slowest, Count: len(status.RecentWakeUps),
+		Lead: scaling.PrewarmLead(prewarm, status.RecentWakeUps), SuggestedLead: scaling.PrewarmLead(&finopsv1.Prewarm{Auto: true}, status.RecentWakeUps),
+		StartsPerMonth: float64(starts) * 30 / 7, HourlyCost: hourly,
+	})
 }
 
 func quantityBytes(s string) float64 {

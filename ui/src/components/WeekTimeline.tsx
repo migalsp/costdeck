@@ -4,6 +4,7 @@ import type { ScalingSchedule } from '../lib/types'
 
 interface WeekTimelineProps {
   schedules?: ScalingSchedule[]
+  leadMinutes?: number
   // onDemand groups have no window of their own: everything renders as down.
   onDemand?: boolean
   timezone?: string
@@ -27,9 +28,9 @@ function upWindows(day: boolean[]): string[] {
 // WeekTimeline draws when a schedule keeps workloads up across the week (green) and when
 // they are scaled down, with a marker at the current time in the schedule's time zone.
 // Hovering a day names its up hours.
-export default function WeekTimeline({ schedules, onDemand, timezone, compact }: WeekTimelineProps) {
+export default function WeekTimeline({ schedules, onDemand, timezone, compact, leadMinutes }: WeekTimelineProps) {
   const [hover, setHover] = useState<number | null>(null)
-  const grid = onDemand ? new Array(7 * SLOTS_PER_DAY).fill(false) : weekGrid(schedules)
+  const grid = onDemand ? new Array(7 * SLOTS_PER_DAY).fill(false) : weekGrid(schedules, leadMinutes)
   const tz = timezone || schedules?.[0]?.timezone || 'UTC'
   const now = nowSlot(tz)
   const hours = upHours(grid)

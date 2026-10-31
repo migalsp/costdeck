@@ -45,6 +45,7 @@ type previewRequest struct {
 		ExternalTargets   []finopsv1.ExternalTarget    `json:"externalTargets,omitempty"`
 		PauseGitOps       bool                         `json:"pauseGitOps,omitempty"`
 		Hibernate         []finopsv1.HibernateRule     `json:"hibernate,omitempty"`
+		Prewarm           *finopsv1.Prewarm            `json:"prewarm,omitempty"`
 	} `json:"spec"`
 }
 
@@ -109,7 +110,7 @@ func (s *Server) previewSchedule(ctx context.Context, req previewRequest, now ti
 	calendars := s.calendars(ctx)
 	exceptions, problems := scaling.ResolveExceptions(sp.Exceptions, sp.Calendars, calendars, scaling.ExceptionZone(sp.Schedules))
 	resp.Problems = append(resp.Problems, problems...)
-	tt := scaling.Timetable{Schedules: sp.Schedules, Exceptions: exceptions}
+	tt := scaling.Timetable{Schedules: sp.Schedules, Exceptions: exceptions, Lead: scaling.PrewarmLead(sp.Prewarm, nil)}
 	resp.Intervals = tt.Intervals(now, now.AddDate(0, 0, previewDays))
 	resp.UpShare = tt.ActiveShare(now, now.AddDate(0, 0, shareDays))
 	resp.NextChange = tt.NextChange(now)

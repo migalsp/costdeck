@@ -144,6 +144,11 @@ type ScalingGroupSpec struct {
 	// unused.
 	// +optional
 	IdleAfter *metav1.Duration `json:"idleAfter,omitempty"`
+
+	// Prewarm starts the workloads ahead of each scheduled start, so they are ready when it
+	// comes: by a fixed number of minutes, or by how long recent wake-ups took.
+	// +optional
+	Prewarm *Prewarm `json:"prewarm,omitempty"`
 }
 
 // Activation modes for ScalingGroupSpec.Activation.

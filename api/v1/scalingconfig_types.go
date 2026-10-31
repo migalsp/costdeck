@@ -196,6 +196,47 @@ type ScheduleStatus struct {
 	// while Mode is Idle; a manual start clears it.
 	// +optional
 	IdleUntil *metav1.Time `json:"idleUntil,omitempty"`
+
+	// WakeUpStartedAt is when the running scale-up from zero began. It is cleared once
+	// every target is ready, or when the targets go down again first.
+	// +optional
+	WakeUpStartedAt *metav1.Time `json:"wakeUpStartedAt,omitempty"`
+
+	// RecentWakeUps are the last scale-ups from zero, newest first, with how long each
+	// took until every target was ready.
+	// +kubebuilder:validation:MaxItems=5
+	// +listType=atomic
+	// +optional
+	RecentWakeUps []WakeUp `json:"recentWakeUps,omitempty"`
+
+	// PrewarmMinutes is how far ahead of each scheduled start spec.prewarm starts the
+	// workloads now.
+	// +optional
+	PrewarmMinutes int32 `json:"prewarmMinutes,omitempty"`
+}
+
+// Prewarm starts the workloads ahead of each scheduled start.
+type Prewarm struct {
+	// Auto takes the lead from the slowest of the last five wake-ups (status.recentWakeUps)
+	// plus a minute, at most 30 minutes. Minutes applies until there is a wake-up to measure.
+	// +optional
+	Auto bool `json:"auto,omitempty"`
+
+	// Minutes is the lead when Auto is off, or before the first measured wake-up.
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=120
+	// +optional
+	Minutes int32 `json:"minutes,omitempty"`
+}
+
+// WakeUp is one scale-up from zero and how long it took.
+type WakeUp struct {
+	// StartedAt is when the scale-up began.
+	StartedAt metav1.Time `json:"startedAt"`
+
+	// Seconds is how long it took until every target was ready.
+	// +kubebuilder:validation:Minimum=0
+	Seconds int32 `json:"seconds"`
 }
 
 // ScaleDownNode is a node a scale-down could free.
@@ -305,6 +346,11 @@ type ScalingConfigSpec struct {
 	// unused.
 	// +optional
 	IdleAfter *metav1.Duration `json:"idleAfter,omitempty"`
+
+	// Prewarm starts the workloads ahead of each scheduled start, so they are ready when it
+	// comes: by a fixed number of minutes, or by how long recent wake-ups took.
+	// +optional
+	Prewarm *Prewarm `json:"prewarm,omitempty"`
 }
 
 // ScalingConfigStatus defines the observed state of ScalingConfig.

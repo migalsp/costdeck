@@ -4,7 +4,7 @@ import { apiError, errorMessage, getJSON } from '../lib/api'
 import { toast } from '../lib/toast'
 import { exceptionProblem } from '../lib/exceptions'
 import { hibernateIssue } from '../lib/hibernate'
-import { IDLE_CHOICES, planFromSpec, planProblem, shortDuration, specFromPlan, type SchedulePlan } from '../lib/schedule'
+import { IDLE_CHOICES, PREWARM_MINUTES, planFromSpec, planProblem, prewarmChoice, prewarmSpec, shortDuration, specFromPlan, type SchedulePlan } from '../lib/schedule'
 import type { ExternalTarget, HibernateRule, HolidayCalendar, LabelSelector, ScalingConfig, ScalingGroup, ScalingGroupSpec, ScalingSpec, ScheduleException } from '../lib/types'
 import { usePolling } from '../lib/usePolling'
 import ExceptionsEditor from './ExceptionsEditor'
@@ -79,6 +79,7 @@ export default function ScheduleWizard(props: Props) {
   const [pauseGitOps, setPauseGitOps] = useState(!!existing?.spec.pauseGitOps)
   const [sleepPage, setSleepPage] = useState(!!existing?.spec.sleepPage)
   const [idleAfter, setIdleAfter] = useState(shortDuration(existing?.spec.idleAfter))
+  const [prewarm, setPrewarm] = useState(prewarmChoice(existing?.spec.prewarm))
   const [hibernate, setHibernate] = useState<HibernateRule[]>(existingGroup?.spec.hibernate || [])
   const hibernateProblem = hibernateIssue(hibernate)
   const [calendarNames, setCalendarNames] = useState<string[]>(existing?.spec.calendars || [])
@@ -144,6 +145,7 @@ export default function ScheduleWizard(props: Props) {
         pauseGitOps: pauseGitOps || undefined,
         sleepPage: sleepPage || undefined,
         idleAfter: idleAfter || undefined,
+        prewarm: prewarmSpec(prewarm),
         hibernate: hibernate.length ? hibernate : undefined,
       }
     } else {
@@ -155,6 +157,7 @@ export default function ScheduleWizard(props: Props) {
         pauseGitOps: pauseGitOps || undefined,
         sleepPage: sleepPage || undefined,
         idleAfter: idleAfter || undefined,
+        prewarm: prewarmSpec(prewarm),
       }
     }
     // A new schedule is meant to take effect, so it ends a manual override.
@@ -276,6 +279,15 @@ export default function ScheduleWizard(props: Props) {
             {(IDLE_CHOICES.includes(idleAfter) || !idleAfter ? IDLE_CHOICES : [idleAfter, ...IDLE_CHOICES]).map(d => <option key={d} value={d}>{d}</option>)}
           </select>
           <span className="basis-full">Within the schedule's hours, scale the namespaces down once no request reached them for that long, until the schedule next starts them or someone does. Counts Envoy Gateway, Istio or ingress-nginx requests and GPU use (DCGM) in VictoriaMetrics; without them nothing is treated as unused.</span>
+        </label>
+        <label className="flex flex-wrap items-center gap-2 text-sm text-slate-600 mt-3">
+          <b className="text-slate-800">Start ahead of the schedule</b>
+          <select value={prewarm} onChange={e => setPrewarm(e.target.value)} className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-sm" aria-label="Start ahead of the schedule">
+            <option value="">no</option>
+            <option value="auto">by how long it takes to wake up</option>
+            {PREWARM_MINUTES.map(m => <option key={m} value={String(m)}>{m} minutes</option>)}
+          </select>
+          <span className="basis-full">Start the workloads before each scheduled start, so they are ready when it comes. Measured, the lead is the slowest of the last five wake-ups plus a minute, at most 30 minutes.</span>
         </label>
       </section>
 

@@ -2593,6 +2593,14 @@ components:
                 Point the namespaces' Gateway API HTTPRoutes at Cost Deck's sleep page while the
                 schedule keeps them down, and back once they are up. Needs sleepPage.enabled in the
                 Helm chart.
+            prewarm:
+              type: object
+              description: >-
+                Start the workloads ahead of each scheduled start: by minutes (up to 120), or with
+                auto by the slowest of the last five wake-ups plus a minute, at most 30 minutes.
+              properties:
+                auto: { type: boolean }
+                minutes: { type: integer, minimum: 0, maximum: 120 }
             idleAfter:
               type: string
               example: 1h
@@ -2647,9 +2655,11 @@ components:
           description: >-
             Written by the operator. phase is ScaledUp, ScalingUp, ScalingDown, ScaledDown or
             WaitingForDependencies; mode says what decides the state (Schedule, ManualUp,
-            ManualDown, Exception, AlwaysOn, Dependency, OnDemand, Idle). While mode is
+            ManualDown, Exception, AlwaysOn, Dependency, OnDemand, Idle, Prewarm). While mode is
             Exception, exception names it and exceptionEndsAt says when it ends; while it is
-            Idle, idleUntil says when the schedule takes over again.
+            Idle, idleUntil says when the schedule takes over again. recentWakeUps are the last
+            five scale-ups from zero with how long each took until every target was ready, and
+            prewarmMinutes is how far ahead of each scheduled start spec.prewarm starts them.
 
     ScalingConfig:
       type: object
@@ -2704,6 +2714,14 @@ components:
                 Point the namespaces' Gateway API HTTPRoutes at Cost Deck's sleep page while the
                 schedule keeps them down, and back once they are up. Needs sleepPage.enabled in the
                 Helm chart.
+            prewarm:
+              type: object
+              description: >-
+                Start the workloads ahead of each scheduled start: by minutes (up to 120), or with
+                auto by the slowest of the last five wake-ups plus a minute, at most 30 minutes.
+              properties:
+                auto: { type: boolean }
+                minutes: { type: integer, minimum: 0, maximum: 120 }
             idleAfter:
               type: string
               example: 1h

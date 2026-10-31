@@ -278,6 +278,7 @@ func (r *ScalingGroupReconciler) waitForDependencies(ctx context.Context, group 
 	waiting := append(append([]string{}, plan.WaitingFor...), plan.MissingDependencies...)
 	msg := "Waiting for ScalingGroup(s) to be ScaledUp: " + strings.Join(waiting, ", ")
 	if group.Status.Phase != scaling.PhaseWaitingForDependencies {
+		trackWakeUp(&group.Status.ScheduleStatus, group.Status.Phase, scaling.PhaseWaitingForDependencies, time.Now())
 		group.Status.Phase = scaling.PhaseWaitingForDependencies
 		group.Status.LastAction = metav1.Now()
 		r.Recorder.Eventf(group, nil, corev1.EventTypeNormal, "WaitingForDependencies", "WaitForDependencies", "%s", msg)
@@ -542,7 +543,8 @@ func (r *ScalingGroupReconciler) idleCheck(ctx context.Context, group *finopsv1.
 		Phase: group.Status.Phase, UpSince: group.Status.LastAction.Time, Required: len(plan.RequiredBy) > 0,
 		At: func(t time.Time) scaling.Decision {
 			exceptions, _ := scaling.ResolveExceptions(group.Spec.Exceptions, group.Spec.Calendars, calendars(ctx, r.Client), scaling.ExceptionZone(group.Spec.Schedules))
-			return r.Engine.Decide(t, scaling.Timetable{Schedules: group.Spec.Schedules, Exceptions: exceptions}, group.Spec.Active, group.Spec.ActiveUntil, group.Annotations)
+			tt := scaling.Timetable{Schedules: group.Spec.Schedules, Exceptions: exceptions, Lead: scaling.PrewarmLead(group.Spec.Prewarm, group.Status.RecentWakeUps)}
+			return r.Engine.Decide(t, tt, group.Spec.Active, group.Spec.ActiveUntil, group.Annotations)
 		},
 	}
 }
@@ -567,6 +569,7 @@ func (r *ScalingGroupReconciler) updateStatusAndPhase(ctx context.Context, group
 
 	oldPhase := group.Status.Phase
 	if group.Status.Phase != newPhase {
+		trackWakeUp(&group.Status.ScheduleStatus, oldPhase, newPhase, time.Now())
 		group.Status.Phase = newPhase
 		group.Status.LastAction = metav1.Now()
 		if oldPhase == "" {

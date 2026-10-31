@@ -693,6 +693,21 @@ that is up from 8 to 18 but nobody touched after lunch stops paying for the afte
 - **What it does not override.** Manual starts and stops, exceptions and the fail-safe
   keep their say, and a group stays up while groups that depend on it need it.
 
+### Wake-ups and prewarm
+
+Every scale-up from zero is timed, from leaving `ScaledDown` until every target is ready:
+the last five are in `status.recentWakeUps`, newest first. A namespace whose wake-ups take
+two minutes or more shows a performance risk, since whoever opens it when its schedule
+starts waits that long.
+
+**Start ahead of the schedule** (`spec.prewarm`) starts the workloads before each
+scheduled start, so they are ready when it comes. `minutes` is a fixed lead, up to 120;
+`auto: true` takes the slowest of the last five wake-ups plus a minute, at most 30 minutes,
+and uses `minutes` until there is a wake-up to measure. While it runs early the mode is
+`Prewarm` and `status.prewarmMinutes` says by how much. The lead also counts at the end of
+an exception that keeps the namespace down, in "next change", in previews and in cost
+estimates; the end of a window is left alone.
+
 ### Preview cleanup
 
 Preview environments (a namespace per pull request or branch) are often left behind

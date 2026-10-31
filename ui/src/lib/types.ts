@@ -73,7 +73,7 @@ export type DesiredState = 'Up' | 'Down'
 
 // ScheduleStatus mirrors what the operator reports about who is in control.
 export interface ScheduleStatus {
-  mode?: 'Schedule' | 'ManualUp' | 'ManualDown' | 'Exception' | 'AlwaysOn' | 'Dependency' | 'OnDemand' | 'Idle'
+  mode?: 'Schedule' | 'ManualUp' | 'ManualDown' | 'Exception' | 'AlwaysOn' | 'Dependency' | 'OnDemand' | 'Idle' | 'Prewarm'
   desiredState?: DesiredState
   // The exception or calendar day in force while mode is Exception, and when it ends.
   exception?: string
@@ -88,6 +88,14 @@ export interface ScheduleStatus {
   scaleDownAt?: string
   // When idle auto-sleep hands the namespaces back to the schedule, while mode is Idle.
   idleUntil?: string
+  wakeUpStartedAt?: string
+  recentWakeUps?: { startedAt: string; seconds: number }[]
+  prewarmMinutes?: number
+}
+
+export interface Prewarm {
+  auto?: boolean
+  minutes?: number
 }
 
 // Realized savings: GET /api/scaling/{groups|configs}/{name}/realized checks whether the
@@ -168,6 +176,7 @@ export interface ScalingGroupSpec {
   // idleAfter puts the namespaces to sleep once nobody used them for this long (a Go
   // duration: the API returns "1h0m0s" for "1h").
   idleAfter?: string
+  prewarm?: Prewarm
   // hibernate stops operator-run services in every namespace of the group.
   hibernate?: HibernateRule[]
 }
@@ -215,6 +224,7 @@ export interface ScalingConfigSpec {
   pauseGitOps?: boolean
   sleepPage?: boolean
   idleAfter?: string
+  prewarm?: Prewarm
   hibernate?: HibernateRule[]
 }
 

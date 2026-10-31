@@ -124,7 +124,7 @@ func (s *Server) scheduleShares(ctx context.Context, now time.Time) (map[string]
 			return
 		}
 		exceptions, _ := scaling.ResolveExceptions(sp.Exceptions, sp.Calendars, calendars, scaling.ExceptionZone(sp.Schedules))
-		tt := scaling.Timetable{Schedules: sp.Schedules, Exceptions: exceptions}
+		tt := scaling.Timetable{Schedules: sp.Schedules, Exceptions: exceptions, Lead: scaling.PrewarmLead(sp.Prewarm, nil)}
 		if len(sp.Schedules) == 0 && len(exceptions) == 0 {
 			return
 		}

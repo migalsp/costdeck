@@ -51,7 +51,17 @@ func scheduleOf(obj client.Object) (schedules []finopsv1.ScalingSchedule, except
 func (s *Server) timetableOf(ctx context.Context, obj client.Object) scaling.Timetable {
 	schedules, own, names := scheduleOf(obj)
 	exceptions, _ := scaling.ResolveExceptions(own, names, s.calendars(ctx), scaling.ExceptionZone(schedules))
-	return scaling.Timetable{Schedules: schedules, Exceptions: exceptions}
+	return scaling.Timetable{Schedules: schedules, Exceptions: exceptions, Lead: prewarmLeadOf(obj)}
+}
+
+func prewarmLeadOf(obj client.Object) time.Duration {
+	switch o := obj.(type) {
+	case *finopsv1.ScalingGroup:
+		return scaling.PrewarmLead(o.Spec.Prewarm, o.Status.RecentWakeUps)
+	case *finopsv1.ScalingConfig:
+		return scaling.PrewarmLead(o.Spec.Prewarm, o.Status.RecentWakeUps)
+	}
+	return 0
 }
 
 // validateSchedule rejects selectors, hibernate rules, exceptions and calendar names that

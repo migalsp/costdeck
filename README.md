@@ -96,6 +96,8 @@ service: one operator in your cluster does it all.
   inside its schedule's hours too.
 - **A sleep page while down.** A sleeping environment's Gateway API routes show a page that
   says it is asleep and links to waking it for an hour or two, instead of a gateway error.
+- **Ready when the day starts.** Every wake-up is timed, and prewarm starts an environment
+  that much ahead of its schedule, so nobody waits for it at nine.
 - **Everything that runs in a namespace.** Deployments, StatefulSets and Argo Rollouts
   (canary and blue-green, including those that take their pods from a Deployment); CronJobs
   are suspended and KEDA ScaledObjects paused while the namespace is down. CloudNativePG and
@@ -282,8 +284,8 @@ preview and dry run, GitOps pausing, operator-run services, realized savings, GP
 costs, auth with Keycloak, the API, VictoriaMetrics history, MCP, the sleep page, sleep
 when unused, Slack, Teams and email, Argo Rollouts, preview cleanup, cost allocation,
 several clusters, cost estimates, Java heap advice from JVM flags and metrics, performance
-risks from real OOM kills, crash loops and autoscalers, and right-sizing applied, guarded
-and proposed in a real Gitea. A change that breaks one fails the build. A feature or fix that changes
+risks from real OOM kills, crash loops and autoscalers, timed wake-ups and prewarm, and
+right-sizing applied, guarded and proposed in a real Gitea. A change that breaks one fails the build. A feature or fix that changes
 behaviour adds or extends a scenario. To run it against an existing test cluster instead
 of a new Kind cluster:
 

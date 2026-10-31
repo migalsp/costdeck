@@ -84,7 +84,7 @@ func (r *ScalingConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	// 2. Determine desired state
 	exceptions, problems := scaling.ResolveExceptions(config.Spec.Exceptions, config.Spec.Calendars, calendars(ctx, r.Client), scaling.ExceptionZone(config.Spec.Schedules))
-	timetable := scaling.Timetable{Schedules: config.Spec.Schedules, Exceptions: exceptions}
+	timetable := scaling.Timetable{Schedules: config.Spec.Schedules, Exceptions: exceptions, Lead: scaling.PrewarmLead(config.Spec.Prewarm, config.Status.RecentWakeUps)}
 	at := func(t time.Time) scaling.Decision {
 		return r.Engine.Decide(t, timetable, config.Spec.Active, config.Spec.ActiveUntil, config.Annotations)
 	}
@@ -149,6 +149,7 @@ func (r *ScalingConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		}
 	}
 	setReadyCondition(&config.Status.Conditions, config.Status.Phase, targetActive, config.Generation, "")
+	trackWakeUp(&config.Status.ScheduleStatus, previousPhase, config.Status.Phase, time.Now())
 	var savings float64
 	if cpu, mem, err := r.Engine.KeptDown(ctx, config.Spec.TargetNamespace, config.Status.OriginalReplicas); err == nil {
 		savings = recordSavings(ctx, &config.Status.ScheduleStatus, r.Pricing, cpu, mem)

@@ -143,7 +143,7 @@ export default function NamespaceScalingPanel({ namespace }: { namespace: string
         </div>
         {controller && (
           <div className="w-64 hidden md:block">
-            <WeekTimeline schedules={controller.spec.schedules} onDemand={controller.spec.activation === 'OnDemand'} compact />
+            <WeekTimeline schedules={controller.spec.schedules} onDemand={controller.spec.activation === 'OnDemand'} leadMinutes={controller.status?.prewarmMinutes} compact />
           </div>
         )}
       </div>

@@ -6,6 +6,7 @@ import (
 	"math"
 	"slices"
 	"strings"
+	"time"
 
 	"k8s.io/apimachinery/pkg/api/resource"
 
@@ -27,7 +28,21 @@ const (
 	CodeEvicted         = "evicted"
 	CodeMemoryNearLimit = "memory-near-limit"
 	CodeHPAAtMax        = "hpa-at-max"
+	CodeSlowWakeUp      = "slow-wake-up"
 )
+
+const slowWakeUp = 2 * time.Minute
+
+type Wake struct {
+	Kind           string
+	Name           string
+	Slowest        time.Duration
+	Count          int
+	Lead           time.Duration
+	SuggestedLead  time.Duration
+	StartsPerMonth float64
+	HourlyCost     float64
+}
 
 const (
 	mebibyte          = 1 << 20
@@ -189,6 +204,37 @@ func Assess(w Workload, ctx Context) []Risk {
 		}
 	}
 	return out
+}
+
+func AssessWakeUp(w Wake) []Risk {
+	if w.Count == 0 || w.Slowest < slowWakeUp || w.Lead >= w.Slowest || w.StartsPerMonth <= 0 {
+		return nil
+	}
+	cost := max(w.SuggestedLead-w.Lead, 0).Hours() * w.HourlyCost * w.StartsPerMonth
+	fix := fmt.Sprintf("Start it ahead of its schedule by how long it takes to wake up (spec.prewarm.auto), about %s earlier.", minutes(w.SuggestedLead))
+	if w.Lead > 0 {
+		fix = fmt.Sprintf("Raise the prewarm lead from %s to about %s, or let it follow the wake-ups (spec.prewarm.auto).", minutes(w.Lead), minutes(w.SuggestedLead))
+	}
+	return []Risk{{
+		Kind: w.Kind, Workload: w.Name, Severity: SeverityWarning, Code: CodeSlowWakeUp,
+		Message: fmt.Sprintf("The last %s took up to %s until every workload was ready, so whoever opens it when its schedule starts waits that long.",
+			wakeUps(w.Count), minutes(w.Slowest)),
+		Fix: fix, FixMonthlyCost: &cost,
+	}}
+}
+
+func wakeUps(n int) string {
+	if n == 1 {
+		return "wake-up"
+	}
+	return fmt.Sprintf("%d wake-ups", n)
+}
+
+func minutes(d time.Duration) string {
+	if d < time.Minute {
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	}
+	return fmt.Sprintf("%dm", int(math.Ceil(d.Minutes())))
 }
 
 func Sort(risks []Risk) {

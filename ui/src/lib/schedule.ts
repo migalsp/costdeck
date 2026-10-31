@@ -1,4 +1,4 @@
-import type { Condition, ScalingSchedule, ScalingSpec, ScheduleStatus } from './types'
+import type { Condition, Prewarm, ScalingSchedule, ScalingSpec, ScheduleStatus } from './types'
 import type { OverrideUntil } from '../components/OverrideDialog'
 
 // Day indexes follow the operator: Sunday = 0.
@@ -140,15 +140,16 @@ const inWindow = (minute: number, [a, b]: [number, number]) => (a <= b ? minute 
 // isUpAt says whether the schedules keep a target up at a minute of the week (Sunday
 // 00:00 = 0) in their own time zone. Without a usable window the operator keeps the
 // target up (its fail-safe), and so does this.
-export function isUpAt(schedules: ScalingSchedule[] | undefined, weekMinute: number): boolean {
+export function isUpAt(schedules: ScalingSchedule[] | undefined, weekMinute: number, leadMinutes = 0): boolean {
   const windows = windowsOf(schedules || [])
-  return windows.length === 0 || windows.some(w => inWindow(weekMinute % MINUTES_PER_WEEK, w))
+  const up = (m: number) => windows.some(w => inWindow(m % MINUTES_PER_WEEK, w))
+  return windows.length === 0 || up(weekMinute) || (leadMinutes > 0 && up(weekMinute + leadMinutes))
 }
 
 // weekGrid returns 7 * 48 half-hour slots (Sunday first) that are up, judged at the
 // middle of each slot.
-export function weekGrid(schedules: ScalingSchedule[] | undefined): boolean[] {
-  return Array.from({ length: 7 * SLOTS_PER_DAY }, (_, slot) => isUpAt(schedules, slot * 30 + 15))
+export function weekGrid(schedules: ScalingSchedule[] | undefined, leadMinutes = 0): boolean[] {
+  return Array.from({ length: 7 * SLOTS_PER_DAY }, (_, slot) => isUpAt(schedules, slot * 30 + 15, leadMinutes))
 }
 
 export const upHours = (grid: boolean[]) => grid.filter(Boolean).length / 2
@@ -279,6 +280,8 @@ export function statusLine({ phase, status, dependsOn, activeUntil, generation }
       return { tone: 'up', title: 'Up', detail: 'no schedule set' }
     case 'Idle':
       return { tone: 'down', title: 'Asleep, unused', detail: next ? `starts ${when(next.time)}, or when someone starts it` : 'until someone starts it' }
+    case 'Prewarm':
+      return { tone: 'up', title: 'Up early', detail: `started ${status?.prewarmMinutes ?? 0} min ahead of its schedule to be ready on time` }
   }
   if (up) return { tone: 'up', title: 'Up', detail: next ? `scales down ${when(next.time)}` : undefined }
   return { tone: 'down', title: 'Down', detail: next ? `starts ${when(next.time)}` : undefined }
@@ -286,6 +289,13 @@ export function statusLine({ phase, status, dependsOn, activeUntil, generation }
 
 // IDLE_CHOICES are the idle periods the schedule editor offers.
 export const IDLE_CHOICES = ['30m', '1h', '2h', '4h', '8h']
+
+export const PREWARM_MINUTES = [5, 10, 15, 30]
+
+export const prewarmChoice = (p?: Prewarm): string => p?.auto ? 'auto' : p?.minutes ? String(p.minutes) : ''
+
+export const prewarmSpec = (choice: string): Prewarm | undefined =>
+  choice === 'auto' ? { auto: true } : choice ? { minutes: Number(choice) } : undefined
 
 // shortDuration writes a Go duration as the API returns it ("1h0m0s") the way the editor
 // offers it ("1h"), so that a saved value selects its choice. Anything else is kept.

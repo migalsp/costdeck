@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/migalsp/costdeck-operator/internal/jvm"
 	"github.com/migalsp/costdeck-operator/internal/pricing"
@@ -158,5 +159,32 @@ func TestHoldReductions(t *testing.T) {
 				t.Errorf("held = %q, %q; want %q, %q", cpuHeld, memHeld, tc.cpuHeld, tc.memHeld)
 			}
 		})
+	}
+}
+
+func TestAssessWakeUp(t *testing.T) {
+	slow := Wake{Kind: "ScalingGroup", Name: "dev", Slowest: 7*time.Minute + 20*time.Second, Count: 5, SuggestedLead: 9 * time.Minute, StartsPerMonth: 22, HourlyCost: 0.5}
+	got := AssessWakeUp(slow)
+	if len(got) != 1 || got[0].Code != CodeSlowWakeUp || got[0].Severity != SeverityWarning || got[0].Workload != "dev" {
+		t.Fatalf("risks = %+v", got)
+	}
+	r := got[0]
+	if !strings.Contains(r.Message, "last 5 wake-ups took up to 8m") || !strings.Contains(r.Fix, "about 9m earlier") || math.Abs(*r.FixMonthlyCost-0.15*0.5*22) > 1e-9 {
+		t.Errorf("risk = %+v, cost %v", r, *r.FixMonthlyCost)
+	}
+	short := slow
+	short.Lead = 5 * time.Minute
+	if r := AssessWakeUp(short)[0]; !strings.Contains(r.Fix, "from 5m to about 9m") || math.Abs(*r.FixMonthlyCost-(4.0/60)*0.5*22) > 1e-9 {
+		t.Errorf("a prewarm that is too short = %+v", r)
+	}
+	for name, w := range map[string]Wake{
+		"quick wake-ups":          {Slowest: 90 * time.Second, Count: 3, StartsPerMonth: 22},
+		"prewarm long enough":     {Slowest: 7 * time.Minute, Count: 3, Lead: 9 * time.Minute, StartsPerMonth: 22},
+		"never woken by schedule": {Slowest: 7 * time.Minute, Count: 3},
+		"nothing measured":        {StartsPerMonth: 22},
+	} {
+		if got := AssessWakeUp(w); got != nil {
+			t.Errorf("%s: risks = %+v", name, got)
+		}
 	}
 }
