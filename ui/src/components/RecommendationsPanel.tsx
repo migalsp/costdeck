@@ -15,7 +15,7 @@ const hasRequestAdvice = (c: ContainerAdvice) => actionable.includes(c.cpu.actio
 
 const jvmNeedsAttention = (c: ContainerAdvice) => !!c.jvm && c.jvm.findings.some(f => f.severity !== 'note')
 
-const needsAttention = (c: ContainerAdvice) => hasRequestAdvice(c) || jvmNeedsAttention(c)
+const needsAttention = (c: ContainerAdvice) => hasRequestAdvice(c) || jvmNeedsAttention(c) || !!c.cpu.held || !!c.memory.held
 
 // The values to paste: recommended where there is advice, the current request otherwise.
 const yamlFor = (w: WorkloadAdvice, c: ContainerAdvice) => {
@@ -28,6 +28,9 @@ const yamlFor = (w: WorkloadAdvice, c: ContainerAdvice) => {
 
 function Change({ advice }: { advice: ResourceAdvice }) {
   if (advice.action === 'unknown') return <span className="text-slate-300">no data</span>
+  if (advice.action === 'keep' && advice.held) {
+    return <span className="text-amber-700" title={`Not reduced: ${advice.held}`}>{advice.request} · held: {advice.held}</span>
+  }
   if (advice.action === 'keep') return <span className="text-slate-400">{advice.request} · fits</span>
   const tone = advice.action === 'increase' ? 'text-amber-600' : 'text-emerald-600'
   return (

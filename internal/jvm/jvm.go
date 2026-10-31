@@ -38,6 +38,7 @@ const (
 const (
 	CodeHeapOversized = "heap-oversized"
 	CodeHeapTight     = "heap-tight"
+	CodeHeapOverLimit = "heap-over-limit"
 )
 
 const mebibyte = 1 << 20
@@ -305,7 +306,7 @@ func Audit(o Options, heap Heap, r Resources, u Usage) []Finding {
 			"node the pod lands on: the same image takes a different heap on every node size. Set a memory limit and "+
 			"-XX:MaxRAMPercentage=%d.", recommendedRAMPercentage)
 	case r.MemoryLimit > 0 && heap.Max >= r.MemoryLimit:
-		add(SeverityRisk, "heap-over-limit", "The heap can grow to %s, as much as the %s memory limit or more, so the container is "+
+		add(SeverityRisk, CodeHeapOverLimit, "The heap can grow to %s, as much as the %s memory limit or more, so the container is "+
 			"OOM-killed before the heap fills. Keep the heap at about %d%% of the limit.", quantity(heap.Max), quantity(r.MemoryLimit), recommendedRAMPercentage)
 	case r.MemoryLimit > 0 && r.MemoryLimit-heap.Max < native:
 		add(SeverityRisk, "no-room-for-native", "The heap can grow to %s of the %s limit, which leaves %s for metaspace, thread stacks, "+

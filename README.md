@@ -127,6 +127,11 @@ service: one operator in your cluster does it all.
   after garbage collection, the memory to pair with it, the flag to set and the saving.
   Advice only: nothing changes the JVM. Set the annotation `costdeck.io/runtime` to `java`
   or `none` on a workload or its pod template to correct the detection.
+- **Performance risks.** What holds workloads back, most severe first, with the fix and
+  what it costs: CPU throttling by a limit, OOM kills, restarts and crash loops with their
+  reason, evictions, memory close to the limit, autoscalers stuck at their maximum and JVM
+  heaps still full after garbage collection. Right-sizing never cuts a resource under
+  pressure, and the assistant can explain why a namespace is slow.
 - **Applied with a guard, or as a pull request.** If you allow it, operators apply the
   advice from a namespace's page: the new pods are watched, and the old requests come back
   (with an alert) if one is OOMKilled, restarts or crash-loops. Workloads a GitOps tool
@@ -276,8 +281,9 @@ dependencies, stage timeouts, workload rules, holiday exceptions, namespace sele
 preview and dry run, GitOps pausing, operator-run services, realized savings, GPUs, AI
 costs, auth with Keycloak, the API, VictoriaMetrics history, MCP, the sleep page, sleep
 when unused, Slack, Teams and email, Argo Rollouts, preview cleanup, cost allocation,
-several clusters, cost estimates, Java heap advice from JVM flags and metrics, and
-right-sizing applied, guarded and proposed in a real Gitea. A change that breaks one fails the build. A feature or fix that changes
+several clusters, cost estimates, Java heap advice from JVM flags and metrics, performance
+risks from real OOM kills, crash loops and autoscalers, and right-sizing applied, guarded
+and proposed in a real Gitea. A change that breaks one fails the build. A feature or fix that changes
 behaviour adds or extends a scenario. To run it against an existing test cluster instead
 of a new Kind cluster:
 

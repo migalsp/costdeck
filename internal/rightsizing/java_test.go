@@ -111,3 +111,22 @@ func TestNonJavaContainersGetNoJVMAdvice(t *testing.T) {
 		t.Errorf("container = %+v, report Java savings = %v", c, r.JavaMonthlySavings)
 	}
 }
+
+func TestPressureHoldsReductions(t *testing.T) {
+	workloads := []Workload{{Kind: "Deployment", Name: "api", Replicas: 2, Containers: []Container{{
+		Name: "api", CPURequest: 2, MemoryRequest: 4096 * mi, HoldCPU: "throttled in 30% of CPU periods at busy times", HoldMemory: "OOM-killed",
+	}}}}
+	demand := map[metrics.ContainerKey]metrics.Usage{{Pod: "api-7d9f8c-abcde", Container: "api"}: usage("100m", "300Mi")}
+	r := Analyze(workloads, demand, nil, rates, DefaultSettings(true))
+	c := r.Workloads[0].Containers[0]
+	if c.CPU.Action != ActionKeep || c.CPU.Held != "throttled in 30% of CPU periods at busy times" || c.CPU.Recommended != "" {
+		t.Errorf("CPU advice = %+v, want the reduction held back by the throttling", c.CPU)
+	}
+	if c.Memory.Action != ActionKeep || c.Memory.Held != "OOM-killed" || r.MonthlySavings != 0 {
+		t.Errorf("memory advice = %+v, savings %v; a held reduction saves nothing", c.Memory, r.MonthlySavings)
+	}
+	workloads[0].Containers[0].MemoryRequest = 100 * mi
+	if m := Analyze(workloads, demand, nil, rates, DefaultSettings(true)).Workloads[0].Containers[0].Memory; m.Action != ActionIncrease || m.Held != "" {
+		t.Errorf("memory advice = %+v: pressure holds reductions, never increases", m)
+	}
+}

@@ -58,6 +58,7 @@ type Server struct {
 	healthHistory []map[string]any
 
 	recommendationCache recommendationCache
+	pressureCache       pressureCache
 	warm                warmup
 
 	versionMu sync.Mutex
@@ -210,6 +211,7 @@ func (s *Server) routes() *http.ServeMux {
 	operator("POST /api/namespaces/{ns}/revert", s.handleNamespaceRevert)
 	viewer("GET /api/namespaces/{ns}/optimization", s.handleNamespaceOptimizationInfo)
 	viewer("GET /api/namespaces/{ns}/recommendations", s.handleRecommendations)
+	viewer("GET /api/namespaces/{ns}/risks", s.handleRisks)
 	operator("POST /api/namespaces/{ns}/rightsizing/apply", s.handleApplyRightsizing)
 	operator("POST /api/namespaces/{ns}/rightsizing/revert", s.handleRevertRightsizing)
 	operator("POST /api/namespaces/{ns}/rightsizing/pull-request", s.handleProposeRightsizing)

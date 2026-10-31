@@ -768,6 +768,42 @@ Every change, applied, proposed or put back, is listed on the namespace page and
 `GET /api/rightsizing/changes`. The assistant and MCP clients have `apply_rightsizing`
 and `propose_rightsizing`, which ask for confirmation.
 
+### Java containers
+
+A container counts as Java when it runs `java`, sets `JAVA_TOOL_OPTIONS`,
+`JDK_JAVA_OPTIONS`, `JAVA_OPTS` or `_JAVA_OPTIONS`, uses a JVM image, or has JVM heap
+series in VictoriaMetrics. Set the annotation `costdeck.io/runtime` to `java` or `none` on
+the workload or its pod template to correct that. Cost Deck reads the JVM flags in the order
+the JVM applies them and works out the heap the JVM takes under the container limit. The
+memory advice then never goes below that heap plus native memory, and the namespace page
+lists what is wrong with the setup: a heap at the limit, the default 25% heap, no limit, a
+request below the heap. With JVM heap series (Micrometer `jvm_memory_used_bytes`, the
+Prometheus Java client or JMX exporter, or OpenTelemetry) carrying `namespace` and `pod`
+labels, it also recommends a heap of twice what was left after garbage collection, with the
+memory, the flag and the saving. Nothing is applied to the JVM.
+
+## Performance risks
+
+The namespace page lists, most severe first, what holds the workloads back or makes them
+unstable, with a fix and what the fix adds to the monthly cost (limits are not billed):
+
+- CPU throttling, the p95 of 5-minute shares of throttled CFS periods, from cAdvisor's
+  `container_cpu_cfs_throttled_periods_total`; 10% is a warning, 25% critical;
+- OOM kills, restarts and crash loops with their reason and exit code;
+- evictions, with the kubelet's message when the evicted pod is still there;
+- memory at 90% of its limit or more;
+- HorizontalPodAutoscalers that want more replicas than their maximum, with the number
+  worked out from their current utilization;
+- JVM heaps still full after garbage collection, and JVM setups that risk an OOM kill.
+
+The current state of pods and HorizontalPodAutoscalers is always read; for this the operator
+reads HorizontalPodAutoscalers cluster-wide. CPU throttling and the last 14 days of OOM
+kills, restarts and evictions need VictoriaMetrics with cAdvisor and kube-state-metrics
+series. Right-sizing never cuts a resource under pressure: a throttled container keeps its
+CPU request and one that was OOM-killed, evicted or close to its limit keeps its memory,
+and the advice says why. `GET /api/namespaces/{ns}/risks` serves the list, and the
+assistant and MCP clients have `get_performance_risks`.
+
 ## Prometheus metrics
 
 The manager exports metrics on the `costdeck-operator-metrics` Service (port 8080):

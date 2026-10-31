@@ -28,6 +28,7 @@ import (
 
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -313,13 +314,14 @@ func cacheOptions(operatorNs string) cache.Options {
 	}
 }
 
-// clientOptions makes Secrets and ConfigMaps bypass the cache. CostDeck reads a handful of
-// its own Secrets by name; caching them would start an informer that lists and watches
-// every Secret it can see, which is both a needless privilege and a memory cost.
+// clientOptions makes Secrets, ConfigMaps and HorizontalPodAutoscalers bypass the cache.
+// CostDeck reads a handful of its own Secrets by name; caching them would start an informer
+// that lists and watches every Secret it can see, which is both a needless privilege and a
+// memory cost.
 func clientOptions() client.Options {
 	return client.Options{
 		Cache: &client.CacheOptions{
-			DisableFor: []client.Object{&corev1.Secret{}, &corev1.ConfigMap{}},
+			DisableFor: []client.Object{&corev1.Secret{}, &corev1.ConfigMap{}, &autoscalingv2.HorizontalPodAutoscaler{}},
 		},
 	}
 }

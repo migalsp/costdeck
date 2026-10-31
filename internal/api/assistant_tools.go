@@ -39,6 +39,8 @@ Look up live data with the tools instead of guessing, and never invent numbers. 
 
 When the user asks to change something (scale a group or namespace, hand control back to the schedule, keep a schedule up or down on given dates, revert an earlier right-sizing), call the matching tool. For a one-off "keep it up until tonight" use a manual override; for dates in the future (a holiday, a release weekend) add an exception. CostDeck then asks the user to confirm before anything changes. CostDeck does not change resource requests itself: for right-sizing, present the recommendations and the YAML values the user should apply.
 
+When the user asks why something is slow, keeps restarting or was killed, call get_performance_risks for its namespace and explain the risks with their fixes and what they cost.
+
 Answer in concise Markdown. Prefer short tables for lists.`
 
 // toolRegistry returns every assistant tool. Mutating tools are offered to operators and
@@ -216,6 +218,20 @@ func (s *Server) toolRegistry() []ai.Tool {
 			Parameters:  obj(map[string]any{"namespace": str("Kubernetes namespace")}, "namespace"),
 			Run: func(ctx context.Context, args map[string]any) (string, error) {
 				return s.toolRecommendations(ctx, args["namespace"].(string))
+			},
+		},
+		{
+			Name: "get_performance_risks",
+			Description: "Why a namespace's workloads are slow or unstable, most severe first: CPU throttling by a CPU limit, OOM kills, restarts and crash loops with " +
+				"the reason and exit code, evictions, memory close to the limit, HorizontalPodAutoscalers that want more replicas than their maximum, and " +
+				"JVM heaps still full after garbage collection. Each risk says how to fix it and what the fix adds to the monthly cost. Read-only.",
+			Parameters: obj(map[string]any{"namespace": str("Kubernetes namespace")}, "namespace"),
+			Run: func(ctx context.Context, args map[string]any) (string, error) {
+				report, err := s.risks(ctx, args["namespace"].(string))
+				if err != nil {
+					return "", err
+				}
+				return toJSON(report)
 			},
 		},
 		{

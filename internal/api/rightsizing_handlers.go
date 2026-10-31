@@ -125,6 +125,7 @@ func (s *Server) recommendations(ctx context.Context, ns string) (rightsizing.Re
 		return rightsizing.Report{}, fmt.Errorf("no usage data for namespace %s: %w", ns, err)
 	}
 
+	holdUnderPressure(workloads, s.pressure(ctx, ns, workloads), demand)
 	heapDemand, heapErr := s.metricsProvider().HeapDemand(ctx, ns)
 	report := rightsizing.Analyze(workloads, demand, heapDemand, s.pricingResolver().Rates(ctx), rightsizing.DefaultSettings(d.Historical))
 	report.Namespace, report.Source, report.Historical = ns, d.Source, d.Historical

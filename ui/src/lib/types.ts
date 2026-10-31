@@ -240,6 +240,7 @@ export interface ResourceAdvice {
   observed?: string
   recommended?: string
   action: AdviceAction
+  held?: string
 }
 
 export interface JVMFinding {
@@ -290,6 +291,28 @@ export interface Recommendations {
   monthlySavings: number
   javaMonthlySavings?: number
   workloads: WorkloadAdvice[]
+}
+
+export interface Risk {
+  kind: WorkloadAdvice['kind']
+  workload: string
+  container?: string
+  severity: 'critical' | 'warning'
+  code: string
+  message: string
+  fix?: string
+  fixMonthlyCost?: number
+}
+
+// Risks is GET /api/namespaces/{ns}/risks: what holds the workloads back, most severe first.
+export interface Risks {
+  namespace: string
+  historical: boolean
+  window?: string
+  basis: string
+  warning?: string
+  currency: string
+  risks: Risk[]
 }
 
 // NamespaceFinOps is GET /api/namespaces: the per-minute usage samples of one namespace.

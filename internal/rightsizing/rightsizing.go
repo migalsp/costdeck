@@ -73,6 +73,8 @@ type Container struct {
 	MemoryLimit   float64
 	CPULimit      float64
 	Java          *jvm.Runtime
+	HoldCPU       string
+	HoldMemory    string
 }
 
 // Report is the advice for one namespace.
@@ -133,6 +135,7 @@ type ResourceAdvice struct {
 	Observed    string `json:"observed,omitempty"`
 	Recommended string `json:"recommended,omitempty"`
 	Action      string `json:"action"`
+	Held        string `json:"held,omitempty"`
 }
 
 // Analyze compares each workload's requests with the demand of its pods and prices the
@@ -166,6 +169,8 @@ func Analyze(workloads []Workload, demand map[metrics.ContainerKey]metrics.Usage
 					ca.Memory.Action = ActionSet
 				}
 			}
+			holdReduction(&ca.CPU, c.HoldCPU)
+			holdReduction(&ca.Memory, c.HoldMemory)
 			hourly := 0.0
 			if ca.CPU.Action == ActionReduce {
 				hourly += (c.CPURequest - cpuRec) * rates.CPUCoreHour
@@ -208,6 +213,15 @@ func advise(request, observed, recommended float64, seen bool, threshold float64
 	}
 	return a
 }
+
+func holdReduction(a *ResourceAdvice, reason string) {
+	if reason == "" || a.Action != ActionReduce {
+		return
+	}
+	a.Action, a.Recommended, a.Held = ActionKeep, "", reason
+}
+
+func OwnsPod(kind, name, pod string) bool { return podPattern(kind, name).MatchString(pod) }
 
 type demandPair struct{ cpu, mem float64 }
 
