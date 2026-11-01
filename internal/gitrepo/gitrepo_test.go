@@ -233,7 +233,6 @@ func TestGiteaAndGitLab(t *testing.T) {
 }
 
 func TestEditRequestsUnderEmptyResources(t *testing.T) {
-	t.Skip("bug: ensure returns the null node of an empty resources: or requests: key and set writes into it, so EditRequests reports the workload edited while the output has no new requests")
 	for name, in := range map[string]string{
 		"empty resources": "kind: Deployment\nmetadata:\n  name: api\nspec:\n  template:\n    spec:\n      containers:\n        - name: main\n          resources:\n",
 		"empty requests":  "kind: Deployment\nmetadata:\n  name: api\nspec:\n  template:\n    spec:\n      containers:\n        - name: main\n          resources:\n            requests:\n",
@@ -512,7 +511,6 @@ func (g *changingGitLab) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func TestGitLabProposeRefusesAFileChangedSinceItWasRead(t *testing.T) {
-	t.Skip("bug: the GitLab Propose ignores Proposal.Revision, so a manifest changed on the base branch after Read is overwritten and the merge request silently reverts that change")
 	git := &changingGitLab{lastCommit: "c1"}
 	srv := httptest.NewServer(git)
 	defer srv.Close()
@@ -641,7 +639,7 @@ func TestReadEscapesThePath(t *testing.T) {
 	ghBody, _ := json.Marshal(map[string]string{"content": wrapped, "sha": "gh-sha"})
 	git := &scriptedGit{routes: map[string]gitRoute{
 		"GET /repos/acme/apps/contents/deploy/my%20app.yaml":                       {body: string(ghBody)},
-		"GET /api/v4/projects/acme%2Fapps/repository/files/deploy%2Fmy%20app.yaml": {body: `{"content":"` + content64 + `","blob_id":"gl-blob"}`},
+		"GET /api/v4/projects/acme%2Fapps/repository/files/deploy%2Fmy%20app.yaml": {body: `{"content":"` + content64 + `","blob_id":"gl-blob","last_commit_id":"gl-commit"}`},
 	}}
 	srv := git.serve(t)
 	gh, _ := New(finopsv1.GitRepositoryConfig{Provider: "github", Repository: "acme/apps", APIURL: srv.URL, BaseBranch: "dev"}, "t", srv.Client())
@@ -651,7 +649,7 @@ func TestReadEscapesThePath(t *testing.T) {
 	}
 	gl, _ := New(finopsv1.GitRepositoryConfig{Provider: "gitlab", Repository: "acme/apps", APIURL: srv.URL + "/api/v4", BaseBranch: "dev"}, "t", srv.Client())
 	raw, rev, err = gl.Read(context.Background(), "deploy/my app.yaml")
-	if err != nil || rev != "gl-blob" || string(raw) != file {
+	if err != nil || rev != "gl-commit" || string(raw) != file {
 		t.Errorf("GitLab Read() = %q, %q, %v", raw, rev, err)
 	}
 	for _, uri := range git.uris {
