@@ -31,7 +31,7 @@ service: one operator in your cluster does it all.
     <td width="33%" valign="top"><img src="docs/assets/screenshots/budgets.png" alt="Budgets and alerts"><br><sub><b>Budgets &amp; Alerts</b>: monthly limits, forecasts and alerts sent to Slack and Teams</sub></td>
   </tr>
   <tr>
-    <td width="33%" valign="top"><img src="docs/assets/screenshots/rightsizing.png" alt="Right-sizing"><br><sub><b>Right-sizing</b>: what each workload could request, applied with a guard or as a pull request</sub></td>
+    <td width="33%" valign="top"><img src="docs/assets/screenshots/rightsizing.png" alt="Performance risks and right-sizing"><br><sub><b>Right-sizing</b>: performance risks, what each workload could request and the Java heap it needs, applied with a guard or as a pull request</sub></td>
     <td width="33%" valign="top"><img src="docs/assets/screenshots/allocation.png" alt="Cost allocation"><br><sub><b>Cost allocation</b>: a period's cost by team with shared and idle cost, as CSV</sub></td>
     <td width="33%" valign="top"><img src="docs/assets/screenshots/sleep-page.png" alt="Sleep page"><br><sub><b>Sleep page</b>: what people see on a scaled-down environment, with a way to wake it</sub></td>
   </tr>
