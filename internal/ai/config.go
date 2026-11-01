@@ -126,7 +126,8 @@ func (s *Settings) Validate() error {
 var allowInternalHosts = false
 
 func isInternalHost(host string) bool {
-	if strings.EqualFold(host, "localhost") {
+	name := strings.ToLower(strings.TrimSuffix(host, "."))
+	if name == "localhost" || strings.HasSuffix(name, ".localhost") {
 		return true
 	}
 	ip := net.ParseIP(host)
@@ -145,6 +146,9 @@ func (s *Settings) baseURL() string {
 // stream for minutes. Connection setup and the first response byte are bounded instead.
 func (s *Settings) httpClient() *http.Client {
 	transport := netguard.Transport() // a model server never lives at a metadata address
+	if s.Provider != ProviderLocal && !allowInternalHosts {
+		transport = netguard.ExternalTransport()
+	}
 	transport.ResponseHeaderTimeout = 2 * time.Minute
 	if s.SkipSSLVerify {
 		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // Explicit, admin-controlled opt-in.

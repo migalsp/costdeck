@@ -3,6 +3,8 @@ package ai
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -14,6 +16,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
+	"github.com/migalsp/costdeck-operator/internal/netguard"
 )
 
 func TestSettingsValidate(t *testing.T) {
@@ -63,7 +66,6 @@ func TestSettingsValidate(t *testing.T) {
 }
 
 func TestSettingsValidateRefusesLoopbackHostNamesForCloudProviders(t *testing.T) {
-	t.Skip("bug: isInternalHost only matches the literal name localhost, so http://localhost.:8080 and http://anything.localhost reach loopback through a cloud provider")
 	for _, base := range []string{"http://localhost.:8080/v1", "http://models.localhost:8080/v1"} {
 		if err := (&Settings{Provider: ProviderOpenAI, Model: "m", BaseURL: base}).Validate(); err == nil {
 			t.Errorf("openai with base URL %q was accepted, though the name resolves to loopback", base)
@@ -170,4 +172,20 @@ func TestFromConfigPrefersTheUnsavedKey(t *testing.T) {
 	if got.APIKey != "typed-in-key" || got.Model != DefaultModels[ProviderGemini] {
 		t.Errorf("FromConfig() = %+v", got)
 	}
+}
+
+func TestCloudProvidersCannotDialLoopbackButTheLocalProviderCan(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer srv.Close()
+	for _, provider := range []string{ProviderOpenAI, ProviderAnthropic, ProviderGemini} {
+		_, err := (&Settings{Provider: provider}).httpClient().Get(srv.URL)
+		if !errors.Is(err, netguard.ErrLoopbackAddress) {
+			t.Errorf("%s reached a loopback address: %v", provider, err)
+		}
+	}
+	resp, err := (&Settings{Provider: ProviderLocal}).httpClient().Get(srv.URL)
+	if err != nil {
+		t.Fatalf("the local provider must reach a model server on loopback: %v", err)
+	}
+	_ = resp.Body.Close()
 }
