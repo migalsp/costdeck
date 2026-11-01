@@ -80,7 +80,7 @@ export default function UsersSettings({ onOpenSSO }: { onOpenSSO: () => void }) 
       toast.success(`${u.disabled ? 'Enabled' : 'Disabled'} ${u.username}`)
       await load()
     } catch (e) {
-      setError(errorMessage(e))
+      toast.error(errorMessage(e))
     } finally {
       setBusy(null)
     }
@@ -213,6 +213,7 @@ export default function UsersSettings({ onOpenSSO }: { onOpenSSO: () => void }) 
       )}
       {dialog?.kind === 'reset' && (
         <ResetPassword user={dialog.user} min={data.minPasswordLength} onClose={() => setDialog(null)} onDone={password => {
+          if (!password) toast.success(`Set the new password of ${dialog.user.username}`)
           load()
           setDialog(password ? { kind: 'password', username: dialog.user.username, password, created: false } : null)
         }} />

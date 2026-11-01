@@ -140,7 +140,7 @@ describe('Namespace scaling panel', () => {
     expect(success).not.toHaveBeenCalled()
   })
 
-  it.skip('bug: a refused manual change is wiped by the next poll instead of staying until closed', async () => {
+  it('keeps a refused manual change on screen after the next poll', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     try {
       let held = true

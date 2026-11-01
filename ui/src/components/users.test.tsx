@@ -5,6 +5,7 @@ import { json, mockFetch, on } from '../test/fetch'
 import UsersSettings from './settings/UsersSettings'
 import { AuthContext, type User } from '../lib/auth'
 import { toast } from '../lib/toast'
+import Toaster from './Toaster'
 
 const me: User = { sub: 'user:ops', name: 'ops', role: 'admin', provider: 'local' }
 const created = '2026-10-01T00:00:00Z'
@@ -28,7 +29,7 @@ const listing = (over: Record<string, unknown> = {}) => ({
 })
 
 const show = (onOpenSSO = () => {}) =>
-  render(<AuthContext.Provider value={me}><UsersSettings onOpenSSO={onOpenSSO} /></AuthContext.Provider>)
+  render(<AuthContext.Provider value={me}><UsersSettings onOpenSSO={onOpenSSO} /><Toaster /></AuthContext.Provider>)
 
 const row = (target: string | HTMLElement) => (typeof target === 'string' ? screen.getByText(target) : target).closest('tr') as HTMLElement
 const dialog = (title: string) => screen.getByRole('heading', { name: title }).closest('.rounded-2xl') as HTMLElement
@@ -215,8 +216,10 @@ describe('Users settings', () => {
     expect(bodyOf(fetch, 'PATCH', '/api/users/carol')).toEqual({ disabled: false })
 
     refuse = true
+    const failure = vi.spyOn(toast, 'error')
     await user.click(within(row('Bob')).getByRole('button', { name: /^Disable/ }))
     expect(await screen.findByText('You cannot disable your own account or take away your own admin role')).toBeTruthy()
+    expect(failure).toHaveBeenCalledWith('You cannot disable your own account or take away your own admin role')
     expect(success).toHaveBeenCalledTimes(2)
   })
 
@@ -254,7 +257,7 @@ describe('Users settings', () => {
     expect(screen.queryByRole('heading', { name: /New password/ })).toBeNull()
   })
 
-  it.skip('bug: resetting a password to a typed one closes the dialog without any confirmation', async () => {
+  it('confirms a password reset to a typed one', async () => {
     mockFetch(
       on('GET', '/api/users', () => json(listing())),
       on('POST', '/api/users/bob/password', () => json({ status: 'ok' })),
