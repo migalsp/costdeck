@@ -226,7 +226,6 @@ func TestAnthropicStopReasons(t *testing.T) {
 }
 
 func TestAnthropicMidStreamOverloadIsReportedAsTemporary(t *testing.T) {
-	t.Skip("bug: describeAnthropicError looks only at the HTTP status, so an overloaded_error event inside a 200 stream reads as \"rejected the request (HTTP 200)\"")
 	rec := &recorder{ctype: "text/event-stream", replies: []string{anthropicStream(
 		[]string{anthropicStart("msg_1")},
 		[]string{anthropicEvent("error", `{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}`)},
@@ -261,7 +260,6 @@ func TestAnthropicToolInputMustBeAnObject(t *testing.T) {
 }
 
 func TestAnthropicFlagsCutOffToolInput(t *testing.T) {
-	t.Skip("bug: the SDK replaces tool input that is not valid JSON with {} when the block stops, so Step reports a cut-off call as valid with empty arguments instead of setting Invalid")
 	rec := &recorder{ctype: "text/event-stream", replies: []string{anthropicStream(
 		[]string{anthropicStart("msg_1")},
 		anthropicToolUse(0, "toolu_cut", `{"name": "pp`),
