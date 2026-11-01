@@ -2689,7 +2689,15 @@ components:
           type: object
           required: [targetNamespace]
           properties:
-            targetNamespace: { type: string }
+            targetNamespace: { type: string, description: "The namespace the schedule scales. It cannot change after creation." }
+            featureFlags:
+              type: object
+              description: >-
+                Without skipOnTimeout each stage of the workload sequence waits until its workloads
+                are ready. A group that runs this namespace uses its own setting.
+              properties:
+                skipOnTimeout: { type: boolean, description: "Start the next stage when one is not ready in time." }
+                timeoutMinutes: { type: integer, minimum: 1, maximum: 30, default: 5 }
             schedules:
               type: array
               items: { $ref: "#/components/schemas/ScalingSchedule" }

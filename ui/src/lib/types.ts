@@ -226,6 +226,7 @@ export interface ScalingConfigSpec {
   idleAfter?: string
   prewarm?: Prewarm
   hibernate?: HibernateRule[]
+  featureFlags?: { skipOnTimeout: boolean; timeoutMinutes: number }
 }
 
 export interface ScalingConfig {

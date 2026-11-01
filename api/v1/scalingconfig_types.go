@@ -304,6 +304,12 @@ type ScalingConfigSpec struct {
 	// +listType=atomic
 	Sequence []string `json:"sequence,omitempty"`
 
+	// FeatureFlags.SkipOnTimeout lets a stage of the sequence that is not ready within
+	// TimeoutMinutes stop holding back the next one. Without it each stage waits until its
+	// workloads are ready. A group that runs this namespace uses its own setting.
+	// +optional
+	FeatureFlags *ScalingGroupFeatureFlags `json:"featureFlags,omitempty"`
+
 	// Exclusions lists workloads that are never scaled down, by name or prefix glob
 	// ("redis-*"), or by the kind of their controller ("owner:Elasticsearch") for workloads
 	// an operator manages. They also apply to the CronJobs CostDeck suspends and the KEDA

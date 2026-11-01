@@ -54,6 +54,8 @@ export default function WorkloadRulesDialog({ namespace, spec, onClose, onSave }
   const [exclusions, setExclusions] = useState<string[]>(spec.exclusions || [])
   const [stages, setStages] = useState<string[][]>((spec.sequence || []).map(s => s.split(/\s+/).filter(Boolean)).filter(s => s.length > 0))
   const [hibernate, setHibernate] = useState<HibernateRule[]>(spec.hibernate || [])
+  const [giveUp, setGiveUp] = useState(spec.featureFlags?.skipOnTimeout || false)
+  const [giveUpMinutes, setGiveUpMinutes] = useState(spec.featureFlags?.timeoutMinutes || 5)
   const issue = hibernateIssue(hibernate)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -76,6 +78,7 @@ export default function WorkloadRulesDialog({ namespace, spec, onClose, onSave }
       await onSave({
         ...spec, exclusions: exclusions.length ? exclusions : undefined, sequence: clean.length ? clean.map(s => s.join(' ')) : undefined,
         hibernate: hibernate.length ? hibernate : undefined,
+        featureFlags: giveUp ? { skipOnTimeout: true, timeoutMinutes: giveUpMinutes } : undefined,
       })
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
@@ -139,6 +142,15 @@ export default function WorkloadRulesDialog({ namespace, spec, onClose, onSave }
             <Button size="sm" variant="secondary" icon={<Plus size={13} />} onClick={() => setStages([...stages, []])}>Add stage</Button>
             {stages.some(s => s.length === 0) && <p className="text-xs text-slate-400">Empty stages are dropped when saving.</p>}
           </div>
+          <label className="flex flex-wrap items-center gap-2 text-sm text-slate-600 mt-3">
+            <input type="checkbox" checked={giveUp} onChange={e => setGiveUp(e.target.checked)} className="accent-brand-600" />
+            Start the next stage if one is not ready after
+            <input type="number" min={1} max={30} value={giveUpMinutes} disabled={!giveUp} aria-label="Minutes a stage may take"
+              onChange={e => setGiveUpMinutes(Math.max(1, Math.min(30, Number(e.target.value) || 5)))}
+              className="w-16 px-2 py-1 border border-slate-200 rounded-md text-center disabled:opacity-50" />
+            minutes
+          </label>
+          <p className="text-xs text-slate-400 mt-1">Without it each stage waits until its workloads are ready. A group that runs this namespace uses its own setting.</p>
         </section>
 
         <section>

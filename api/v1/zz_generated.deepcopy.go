@@ -1455,6 +1455,11 @@ func (in *ScalingConfigSpec) DeepCopyInto(out *ScalingConfigSpec) {
 		*out = make([]string, len(*in))
 		copy(*out, *in)
 	}
+	if in.FeatureFlags != nil {
+		in, out := &in.FeatureFlags, &out.FeatureFlags
+		*out = new(ScalingGroupFeatureFlags)
+		**out = **in
+	}
 	if in.Exclusions != nil {
 		in, out := &in.Exclusions, &out.Exclusions
 		*out = make([]string, len(*in))

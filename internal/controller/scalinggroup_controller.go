@@ -254,8 +254,12 @@ func (r *ScalingGroupReconciler) recordGroupSavings(ctx context.Context, group *
 
 // stageTimeoutMinutes returns the configured skip-on-timeout window, defaulting to five.
 func stageTimeoutMinutes(group *finopsv1.ScalingGroup) int {
-	if group.Spec.FeatureFlags != nil && group.Spec.FeatureFlags.TimeoutMinutes > 0 {
-		return group.Spec.FeatureFlags.TimeoutMinutes
+	return timeoutMinutes(group.Spec.FeatureFlags)
+}
+
+func timeoutMinutes(flags *finopsv1.ScalingGroupFeatureFlags) int {
+	if flags != nil && flags.TimeoutMinutes > 0 {
+		return flags.TimeoutMinutes
 	}
 	return 5
 }

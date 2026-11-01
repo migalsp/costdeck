@@ -319,3 +319,83 @@ var _ = Describe("ScalingConfig letting go of its namespace", func() {
 		Expect(err.Error()).To(ContainSubstring("targetNamespace cannot change"))
 	})
 })
+
+var _ = Describe("ScalingConfig workload stages", func() {
+	ctx := context.Background()
+	key := types.NamespacedName{Name: "config-stages", Namespace: "default"}
+	const ns = "config-stages"
+
+	var reconciler *ScalingConfigReconciler
+	replicas := func(name string) int32 {
+		GinkgoHelper()
+		d := &appsv1.Deployment{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: ns}, d)).To(Succeed())
+		return ptr.Deref(d.Spec.Replicas, -1)
+	}
+	reconcileConfig := func() {
+		GinkgoHelper()
+		_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: key})
+		Expect(err).NotTo(HaveOccurred())
+	}
+	ageTheTransition := func() {
+		GinkgoHelper()
+		c := &finopsv1.ScalingConfig{}
+		Expect(k8sClient.Get(ctx, key, c)).To(Succeed())
+		Expect(c.Status.Phase).To(Equal(scaling.PhaseScalingUp))
+		c.Status.LastAction = metav1.NewTime(time.Now().Add(-2 * time.Minute))
+		Expect(k8sClient.Status().Update(ctx, c)).To(Succeed())
+	}
+
+	BeforeEach(func() {
+		reconciler = &ScalingConfigReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), Engine: &scaling.Engine{Client: k8sClient}, Recorder: events.NewFakeRecorder(100)}
+		Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, &corev1.Namespace{Name: ns}))).To(Succeed())
+		for _, name := range []string{"db", "app"} {
+			labels := map[string]string{"app": name}
+			Expect(k8sClient.Create(ctx, &appsv1.Deployment{
+				Name: name, Namespace: ns,
+				Spec: appsv1.DeploymentSpec{
+					Replicas: ptr.To[int32](1), Selector: &metav1.LabelSelector{MatchLabels: labels},
+					Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: labels}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: name, Image: "busybox"}}}},
+				},
+			})).To(Succeed())
+		}
+		Expect(k8sClient.Create(ctx, &finopsv1.ScalingConfig{
+			Name: key.Name, Namespace: key.Namespace,
+			Spec: finopsv1.ScalingConfigSpec{TargetNamespace: ns, Active: new(false), Sequence: []string{"db", "*"}},
+		})).To(Succeed())
+		Eventually(func() int32 {
+			reconcileConfig()
+			return replicas("db") + replicas("app")
+		}).Should(BeZero())
+		c := &finopsv1.ScalingConfig{}
+		Expect(k8sClient.Get(ctx, key, c)).To(Succeed())
+		c.Spec.Active = new(true)
+		Expect(k8sClient.Update(ctx, c)).To(Succeed())
+		reconcileConfig()
+		Expect(replicas("db")).To(Equal(int32(1)))
+		Expect(replicas("app")).To(BeZero())
+	})
+
+	AfterEach(func() {
+		Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, &finopsv1.ScalingConfig{Name: key.Name, Namespace: key.Namespace}))).To(Succeed())
+		for _, name := range []string{"db", "app"} {
+			Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, &appsv1.Deployment{Name: name, Namespace: ns}))).To(Succeed())
+		}
+	})
+
+	It("keeps the apps waiting for a database that is not ready, however long it takes", func() {
+		ageTheTransition()
+		reconcileConfig()
+		Expect(replicas("app")).To(BeZero())
+	})
+
+	It("moves on once the stage misses the timeout the config opted into", func() {
+		c := &finopsv1.ScalingConfig{}
+		Expect(k8sClient.Get(ctx, key, c)).To(Succeed())
+		c.Spec.FeatureFlags = &finopsv1.ScalingGroupFeatureFlags{SkipOnTimeout: true, TimeoutMinutes: 1}
+		Expect(k8sClient.Update(ctx, c)).To(Succeed())
+		ageTheTransition()
+		reconcileConfig()
+		Expect(replicas("app")).To(Equal(int32(1)))
+	})
+})

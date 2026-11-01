@@ -286,11 +286,11 @@ func (r *ScalingConfigReconciler) updateStatusPhase(ctx context.Context, config 
 		config.Status.LastAction = metav1.Now()
 	}
 
-	if config.Status.Phase == "ScalingUp" || config.Status.Phase == "ScalingDown" {
-		if time.Since(config.Status.LastAction.Time) > time.Minute {
-			l.Info("Scaling timeout exceeded", "namespace", config.Spec.TargetNamespace)
-			return true
-		}
+	flags := config.Spec.FeatureFlags
+	moving := config.Status.Phase == scaling.PhaseScalingUp || config.Status.Phase == scaling.PhaseScalingDown
+	if moving && flags != nil && flags.SkipOnTimeout && time.Since(config.Status.LastAction.Time) > time.Duration(timeoutMinutes(flags))*time.Minute {
+		l.Info("Scaling timeout exceeded", "namespace", config.Spec.TargetNamespace)
+		return true
 	}
 	return false
 }
