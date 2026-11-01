@@ -198,3 +198,137 @@ func TestGuard(t *testing.T) {
 		t.Errorf("messages = %v", s.messages)
 	}
 }
+
+func guardedRecord(name string, appliedAt time.Time) finopsv1.WorkloadOptimization {
+	at := metav1.NewTime(appliedAt)
+	return finopsv1.WorkloadOptimization{Name: name, Kind: "Deployment", State: StateApplied, AppliedAt: &at,
+		Containers: []finopsv1.ContainerOptimization{{Name: "main", Original: finopsv1.ResourceValues{CPURequest: "2"}, Optimized: finopsv1.ResourceValues{CPURequest: "100m"}}}}
+}
+
+func guardedNamespace(records ...finopsv1.WorkloadOptimization) *finopsv1.NamespaceOptimization {
+	return &finopsv1.NamespaceOptimization{Name: "shop", Namespace: "costdeck", Spec: finopsv1.NamespaceOptimizationSpec{TargetNamespace: "shop"},
+		Status: finopsv1.NamespaceOptimizationStatus{Active: true, Workloads: records}}
+}
+
+func podWith(name, app string, created time.Time, status corev1.ContainerStatus) *corev1.Pod {
+	status.Name = "main"
+	return &corev1.Pod{Name: name, Namespace: "shop", Labels: map[string]string{"app": app}, CreationTimestamp: metav1.NewTime(created),
+		Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{status}}}
+}
+
+func workloadStates(t *testing.T, c client.Client) map[string]finopsv1.WorkloadOptimization {
+	t.Helper()
+	var opt finopsv1.NamespaceOptimization
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: "costdeck", Name: "shop"}, &opt); err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]finopsv1.WorkloadOptimization{}
+	for _, w := range opt.Status.Workloads {
+		out[w.Name] = w
+	}
+	return out
+}
+
+func TestGuardStartChecksRightAway(t *testing.T) {
+	oom := corev1.ContainerStatus{LastTerminationState: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{Reason: "OOMKilled"}}}
+	c := client_(t, guardedNamespace(guardedRecord("api", now.Add(-10*time.Minute))),
+		deploy("api", container("main", corev1.ResourceList{"cpu": q("100m")}, nil)),
+		podWith("api-7d9f8-x2k4p", "api", now.Add(-5*time.Minute), oom))
+	g := &Guard{Client: c, Now: func() time.Time { return now }}
+	if !g.NeedLeaderElection() {
+		t.Fatal("the guard must run on the leader only, so a change is reverted once")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- g.Start(ctx) }()
+	deadline := time.Now().Add(5 * time.Second)
+	for workloadStates(t, c)["api"].State != StateReverted {
+		if time.Now().After(deadline) {
+			cancel()
+			t.Fatal("the first check did not revert the OOM-killed workload")
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Start returned %v after cancellation, want nil", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Start did not return after its context was cancelled")
+	}
+	var api appsv1.Deployment
+	_ = c.Get(context.Background(), client.ObjectKey{Namespace: "shop", Name: "api"}, &api)
+	if got := api.Spec.Template.Spec.Containers[0].Resources.Requests.Cpu().String(); got != "2" {
+		t.Errorf("cpu request = %s, want the original 2 back", got)
+	}
+}
+
+func TestGuardDecidesFromThePodsTheChangeStarted(t *testing.T) {
+	applied := now.Add(-10 * time.Minute)
+	after, before := now.Add(-5*time.Minute), now.Add(-time.Hour)
+	oom := corev1.ContainerStatus{LastTerminationState: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{Reason: "OOMKilled"}}}
+	crashLoop := corev1.ContainerStatus{State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}}}
+	restarted := corev1.ContainerStatus{RestartCount: 3}
+	for _, tc := range []struct {
+		name         string
+		guardMinutes int32
+		pod          *corev1.Pod
+		noWorkload   bool
+		wantState    string
+		wantReason   string
+		openSelector bool
+	}{
+		{"an OOM kill in a new pod reverts", 0, podWith("api-7d9f8-x2k4p", "api", after, oom), false, StateReverted, "container main of pod api-7d9f8-x2k4p was OOMKilled", false},
+		{"a crash loop in a new pod reverts", 0, podWith("api-7d9f8-x2k4p", "api", after, crashLoop), false, StateReverted, "container main of pod api-7d9f8-x2k4p is crash-looping", false},
+		{"restarts of a pod from before the change are ignored", 5, podWith("api-5c6b7-q8w9e", "api", before, restarted), false, StateKept, "", false},
+		{"another workload's pods are ignored", 5, podWith("web-7d9f8-x2k4p", "web", after, oom), false, StateKept, "", false},
+		{"a quiet change stays watched for the default period", 0, podWith("api-7d9f8-x2k4p", "api", after, corev1.ContainerStatus{}), false, StateApplied, "", false},
+		{"a quiet change is kept after spec.rightsizing.guardMinutes", 5, podWith("api-7d9f8-x2k4p", "api", after, corev1.ContainerStatus{}), false, StateKept, "", false},
+		{"a deleted workload is not reverted", 0, podWith("api-7d9f8-x2k4p", "api", after, oom), true, StateApplied, "", false},
+		{"an empty selector matches no pods rather than all", 0, podWith("web-7d9f8-x2k4p", "web", after, oom), false, StateApplied, "", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &finopsv1.CostDeckConfig{Name: "default", Namespace: "costdeck", Spec: finopsv1.CostDeckConfigSpec{Rightsizing: finopsv1.RightsizingConfig{GuardMinutes: tc.guardMinutes}}}
+			objs := []client.Object{cfg, tc.pod, guardedNamespace(guardedRecord("api", applied))}
+			if !tc.noWorkload {
+				api := deploy("api", container("main", corev1.ResourceList{"cpu": q("100m")}, nil))
+				if tc.openSelector {
+					api.Spec.Selector = &metav1.LabelSelector{}
+				}
+				objs = append(objs, api)
+			}
+			c := client_(t, objs...)
+			if err := (&Guard{Client: c, Now: func() time.Time { return now }}).Check(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			w := workloadStates(t, c)["api"]
+			if w.State != tc.wantState || !strings.Contains(w.Reason, tc.wantReason) {
+				t.Errorf("api = state %q, reason %q; want %q, %q", w.State, w.Reason, tc.wantState, tc.wantReason)
+			}
+		})
+	}
+}
+
+func TestGuardLeavesSettledRecordsAlone(t *testing.T) {
+	oom := corev1.ContainerStatus{LastTerminationState: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{Reason: "OOMKilled"}}}
+	kept := guardedRecord("api", now.Add(-10*time.Minute))
+	kept.State = StateKept
+	legacy := guardedRecord("web", now)
+	legacy.AppliedAt = nil
+	c := client_(t, guardedNamespace(kept, legacy),
+		deploy("api", container("main", corev1.ResourceList{"cpu": q("100m")}, nil)),
+		deploy("web", container("main", corev1.ResourceList{"cpu": q("100m")}, nil)),
+		podWith("api-7d9f8-x2k4p", "api", now.Add(-5*time.Minute), oom),
+		podWith("web-7d9f8-x2k4p", "web", now.Add(-5*time.Minute), oom))
+	s := &sent{}
+	if err := (&Guard{Client: c, Notify: s, Now: func() time.Time { return now }}).Check(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	states := workloadStates(t, c)
+	if states["api"].State != StateKept || states["web"].State != StateApplied || len(s.messages) != 0 {
+		t.Errorf("states = %+v, messages %v; a kept change and one without an apply time must not be reverted", states, s.messages)
+	}
+}

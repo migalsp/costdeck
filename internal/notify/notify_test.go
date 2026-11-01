@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -12,13 +13,19 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/go-logr/logr/funcr"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
+	"github.com/migalsp/costdeck-operator/internal/finops"
+	"github.com/migalsp/costdeck-operator/internal/netguard"
+	"github.com/migalsp/costdeck-operator/internal/webex"
 )
 
 // recorder is a webhook endpoint that keeps what it receives.
@@ -307,5 +314,263 @@ func TestReady(t *testing.T) {
 		if got := strings.Join(Ready(cfg, event), ","); got != want {
 			t.Errorf("%s: %s, want %s", event, got, want)
 		}
+	}
+}
+
+type capturedLog struct {
+	mu    sync.Mutex
+	lines []string
+}
+
+func (l *capturedLog) into(ctx context.Context) context.Context {
+	return logf.IntoContext(ctx, funcr.New(func(prefix, args string) {
+		l.mu.Lock()
+		defer l.mu.Unlock()
+		l.lines = append(l.lines, prefix+" "+args)
+	}, funcr.Options{}))
+}
+
+func (l *capturedLog) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return strings.Join(l.lines, "\n")
+}
+
+func configClient(t *testing.T, spec finopsv1.CostDeckConfigSpec, secrets ...*corev1.Secret) *fake.ClientBuilder {
+	t.Helper()
+	t.Setenv("POD_NAMESPACE", "costdeck")
+	scheme := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(scheme)
+	_ = finopsv1.AddToScheme(scheme)
+	b := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&finopsv1.CostDeckConfig{Name: "default", Namespace: "costdeck", Spec: spec})
+	for _, s := range secrets {
+		b = b.WithObjects(s)
+	}
+	return b
+}
+
+func teamsWebhook(url string) *corev1.Secret {
+	return &corev1.Secret{Name: "teams", Namespace: "costdeck", Data: map[string][]byte{SecretKeyWebhookURL: []byte(url)}}
+}
+
+func teamsOnly(events ...finopsv1.NotificationEvent) finopsv1.CostDeckConfigSpec {
+	return finopsv1.CostDeckConfigSpec{Integrations: finopsv1.IntegrationsConfig{Notifications: &finopsv1.NotificationsConfig{
+		Teams: &finopsv1.WebhookChannelConfig{Enabled: true, SecretRef: "teams", Events: events},
+	}}}
+}
+
+func TestNotifySendsScheduleChangesAndOnlyLogsFailures(t *testing.T) {
+	teams := &recorder{}
+	srv := httptest.NewServer(teams)
+	defer srv.Close()
+	d := &Dispatcher{Client: configClient(t, teamsOnly(EventSchedules), teamsWebhook(srv.URL)).Build()}
+	logs := &capturedLog{}
+	ctx := logs.into(context.Background())
+
+	d.Notify(ctx, "Scaled **dev** down")
+	if teams.count() != 1 {
+		t.Fatalf("Teams got %d message(s), want the schedule change", teams.count())
+	}
+	if strings.Contains(logs.String(), "Could not send") {
+		t.Errorf("a delivered notification logged a failure: %s", logs)
+	}
+
+	srv.Close()
+	d.Notify(ctx, "Scaled **dev** up")
+	if !strings.Contains(logs.String(), "Could not send a scaling notification") || !strings.Contains(logs.String(), "Teams:") {
+		t.Errorf("a failed scaling notification is not logged with its channel: %s", logs)
+	}
+}
+
+func TestPostSaysWhereAMessageWent(t *testing.T) {
+	slack, teams := &recorder{}, &recorder{}
+	slackSrv, teamsSrv := httptest.NewServer(slack), httptest.NewServer(teams)
+	defer slackSrv.Close()
+	defer teamsSrv.Close()
+	var mails []Mail
+	d := dispatcher(t, slackSrv.URL, teamsSrv.URL, &mails)
+	ctx := context.Background()
+
+	if got, err := (Poster{Dispatcher: d, Event: EventAlerts}).Post(ctx, "alert"); err != nil || got != "Slack, Teams" {
+		t.Errorf("Post(alerts) = %q, %v; want the channels joined", got, err)
+	}
+
+	quiet := &Dispatcher{Client: configClient(t, teamsOnly(EventSchedules), teamsWebhook(teamsSrv.URL)).Build()}
+	got, err := (Poster{Dispatcher: quiet, Event: EventDigests}).Post(ctx, "digest")
+	if got != "" || !errors.Is(err, finops.ErrNoDestination) {
+		t.Errorf("Post with no channel for digests = %q, %v; want finops.ErrNoDestination", got, err)
+	}
+
+	teamsSrv.Close()
+	down := &Dispatcher{Client: configClient(t, teamsOnly(), teamsWebhook(teamsSrv.URL)).Build()}
+	got, err = (Poster{Dispatcher: down, Event: EventAlerts}).Post(ctx, "alert")
+	if got != "" || err == nil || errors.Is(err, finops.ErrNoDestination) || !strings.Contains(err.Error(), "Teams:") {
+		t.Errorf("Post with every channel down = %q, %v; want the delivery error, not a missing destination", got, err)
+	}
+}
+
+func TestSendReportsChannelsWithoutUsableSecrets(t *testing.T) {
+	spec := finopsv1.CostDeckConfigSpec{Integrations: finopsv1.IntegrationsConfig{Notifications: &finopsv1.NotificationsConfig{
+		Slack: &finopsv1.WebhookChannelConfig{Enabled: true},
+		Teams: &finopsv1.WebhookChannelConfig{Enabled: true, SecretRef: "missing"},
+		Email: &finopsv1.EmailChannelConfig{Enabled: true, Host: "smtp.example.com", From: "a@example.com", To: []string{"b@example.com"}, Username: "costdeck", SecretRef: "smtp"},
+	}}}
+	empty := &corev1.Secret{Name: "smtp", Namespace: "costdeck", Data: map[string][]byte{SecretKeyPassword: []byte("  \n")}}
+	mailed := 0
+	d := &Dispatcher{Client: configClient(t, spec, empty).Build(), Mail: func(context.Context, Mail) error { mailed++; return nil }}
+
+	got, err := d.Send(context.Background(), EventAlerts, "alert")
+	if len(got) != 0 || err == nil || mailed != 0 {
+		t.Fatalf("Send = %v, %v, %d mail(s); want every channel to fail before sending", got, err, mailed)
+	}
+	for _, want := range []string{"Slack: no Secret holds the webhook url", "Teams: read Secret missing", "email: the Secret smtp has no PASSWORD"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error lacks %q: %v", want, err)
+		}
+	}
+}
+
+func TestSendPostsToWebex(t *testing.T) {
+	var mu sync.Mutex
+	var messages []map[string]string
+	webexAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]string
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		mu.Lock()
+		messages = append(messages, body)
+		mu.Unlock()
+		_, _ = io.WriteString(w, `{"id":"m1"}`)
+	}))
+	defer webexAPI.Close()
+	webexMessages := func() []map[string]string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]map[string]string(nil), messages...)
+	}
+	teams := &recorder{}
+	teamsSrv := httptest.NewServer(teams)
+	defer teamsSrv.Close()
+
+	withWebex := func(wx *finopsv1.WebexConfig) *Dispatcher {
+		spec := teamsOnly()
+		spec.ClusterName = "prod-eu"
+		spec.Integrations.Messenger = &finopsv1.MessengerIntegrationConfig{Webex: wx}
+		token := &corev1.Secret{Name: "webex", Namespace: "costdeck", Data: map[string][]byte{webex.SecretKeyBotToken: []byte("bot-token")}}
+		c := configClient(t, spec, teamsWebhook(teamsSrv.URL), token).Build()
+		return &Dispatcher{Client: c, Webex: &webex.Notifier{Client: c, NewClient: func(tok string) *webex.Client {
+			return &webex.Client{Token: tok, BaseURL: webexAPI.URL, HTTP: webexAPI.Client()}
+		}}}
+	}
+	ctx := context.Background()
+
+	d := withWebex(&finopsv1.WebexConfig{Enabled: true, RoomID: "space", SecretRef: "webex"})
+	if got, err := d.Send(ctx, EventAlerts, "Budget reached"); err != nil || strings.Join(got, ",") != "Webex,Teams" {
+		t.Fatalf("alerts = %v, %v; want Webex and Teams", got, err)
+	}
+	if got := webexMessages(); len(got) != 1 || got[0]["roomId"] != "space" || got[0]["markdown"] != "**[prod-eu]** Budget reached" {
+		t.Errorf("Webex got %v", got)
+	}
+	if got, err := d.Send(ctx, EventSchedules, "Scaled dev down"); err != nil || strings.Join(got, ",") != ChannelTeams || len(webexMessages()) != 1 {
+		t.Errorf("schedules without notifyTransitions = %v, %v, %d Webex message(s); want Teams only", got, err, len(webexMessages()))
+	}
+
+	transitions := withWebex(&finopsv1.WebexConfig{Enabled: true, RoomID: "space", SecretRef: "webex", NotifyTransitions: true})
+	if got, err := transitions.Send(ctx, EventSchedules, "Scaled dev up"); err != nil || strings.Join(got, ",") != "Webex,Teams" || len(webexMessages()) != 2 {
+		t.Errorf("schedules with notifyTransitions = %v, %v; want Webex and Teams", got, err)
+	}
+
+	noSpace := withWebex(&finopsv1.WebexConfig{Enabled: true, SecretRef: "webex"})
+	if got, err := noSpace.Send(ctx, EventAlerts, "x"); err != nil || strings.Join(got, ",") != ChannelTeams {
+		t.Errorf("Webex without a space = %v, %v; want it skipped quietly", got, err)
+	}
+
+	noToken := withWebex(&finopsv1.WebexConfig{Enabled: true, RoomID: "space", SecretRef: "no-such-secret"})
+	if got, err := noToken.Send(ctx, EventAlerts, "x"); err != nil || strings.Join(got, ",") != ChannelTeams {
+		t.Errorf("a broken Webex = %v, %v; want Teams to keep the message and no error", got, err)
+	}
+	teamsSrv.Close()
+	if _, err := noToken.Send(ctx, EventAlerts, "x"); err == nil || !strings.Contains(err.Error(), "Webex: read secret costdeck/no-such-secret") {
+		t.Errorf("every channel down = %v; want the Webex failure named", err)
+	}
+}
+
+func TestHTTPClientRefusesMetadataAddressesByDefault(t *testing.T) {
+	own := &http.Client{}
+	if (&Dispatcher{HTTP: own}).HTTPClient() != own {
+		t.Error("a client set by the caller is not used")
+	}
+	hc := (&Dispatcher{}).HTTPClient()
+	transport, ok := hc.Transport.(*http.Transport)
+	if !ok || hc.Timeout != 15*time.Second {
+		t.Fatalf("default client = %+v; want a 15s timeout and an http.Transport", hc)
+	}
+	if _, err := transport.DialContext(context.Background(), "tcp", "169.254.169.254:80"); !errors.Is(err, netguard.ErrForbiddenAddress) {
+		t.Errorf("the default webhook client dialled a metadata address: %v", err)
+	}
+}
+
+func TestSendMailDialsThroughTheGuard(t *testing.T) {
+	for _, tc := range []struct {
+		security string
+		port     int
+		wantAddr string
+	}{
+		{"", 0, "169.254.169.254:587"},
+		{"starttls", 0, "169.254.169.254:587"},
+		{"tls", 0, "169.254.169.254:465"},
+		{"none", 2525, "169.254.169.254:2525"},
+	} {
+		m := Mail{Host: "169.254.169.254", Port: tc.port, Security: tc.security, From: "a@example.com", To: []string{"b@example.com"}}
+		err := SendMail(context.Background(), m)
+		if !errors.Is(err, netguard.ErrForbiddenAddress) || !strings.Contains(err.Error(), tc.wantAddr) {
+			t.Errorf("security %q, port %d: %v; want %s refused as a metadata address", tc.security, tc.port, err, tc.wantAddr)
+		}
+	}
+}
+
+func TestSendMailRefusesIncompleteMail(t *testing.T) {
+	for name, m := range map[string]Mail{
+		"no server":    {From: "a@example.com", To: []string{"b@example.com"}},
+		"no sender":    {Host: "smtp.example.com", To: []string{"b@example.com"}},
+		"no recipient": {Host: "smtp.example.com", From: "a@example.com"},
+	} {
+		if err := SendMail(context.Background(), m); err == nil || !strings.Contains(err.Error(), "needs a server, a sender and at least one recipient") {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+}
+
+func TestSendMailWithImplicitTLSNeverSpeaksPlainSMTP(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = l.Close() }()
+	firstByte := make(chan byte, 1)
+	go func() {
+		conn, err := l.Accept()
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.Close() }()
+		b := make([]byte, 1)
+		if _, err := io.ReadFull(conn, b); err == nil {
+			firstByte <- b[0]
+		}
+	}()
+	host, port, _ := net.SplitHostPort(l.Addr().String())
+	p, _ := strconv.Atoi(port)
+	err = SendMail(context.Background(), Mail{Host: host, Port: p, Security: "tls", Username: "costdeck", Password: "secret",
+		From: "a@example.com", To: []string{"b@example.com"}})
+	if err == nil {
+		t.Fatal("a server that never completes a TLS handshake took the mail")
+	}
+	select {
+	case b := <-firstByte:
+		if b != 0x16 {
+			t.Errorf("the first byte sent was %#x, want a TLS handshake record (0x16)", b)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the client sent nothing")
 	}
 }

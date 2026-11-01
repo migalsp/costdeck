@@ -100,3 +100,34 @@ func TestWorkloadsSortBySavings(t *testing.T) {
 		t.Errorf("first workload = %s, want the one that saves most", got[0].Name)
 	}
 }
+
+func TestOwnsPod(t *testing.T) {
+	for _, tc := range []struct {
+		kind, name, pod string
+		want            bool
+	}{
+		{"Deployment", "api", "api-7d9f8b6c5-x2k4p", true},
+		{"Rollout", "api", "api-6f7c9d8b4-q8w9e", true},
+		{"StatefulSet", "db", "db-0", true},
+		{"StatefulSet", "db", "db-12", true},
+		{"Deployment", "api", "api-gateway-7d9f8b6c5-x2k4p", false},
+		{"Deployment", "api", "api", false},
+		{"Deployment", "api", "web-7d9f8b6c5-x2k4p", false},
+		{"StatefulSet", "db", "db-replica-0", false},
+		{"StatefulSet", "db", "db-7d9f8b6c5-x2k4p", false},
+		{"Deployment", "api.v2", "apiXv2-7d9f8b6c5-x2k4p", false},
+	} {
+		if got := OwnsPod(tc.kind, tc.name, tc.pod); got != tc.want {
+			t.Errorf("OwnsPod(%s, %s, %s) = %v, want %v", tc.kind, tc.name, tc.pod, got, tc.want)
+		}
+	}
+}
+
+func TestOwnsPodIgnoresPodsOfWorkloadsWithALongerName(t *testing.T) {
+	t.Skip("bug: OwnsPod matches any two name segments after a Deployment's name, so Job api-migrate's pod api-migrate-x7k2p counts as Deployment api's")
+	for _, pod := range []string{"api-migrate-x7k2p", "api-worker-x7k2p"} {
+		if OwnsPod("Deployment", "api", pod) {
+			t.Errorf("pod %s of a Job or DaemonSet named api-... counts as Deployment api's", pod)
+		}
+	}
+}

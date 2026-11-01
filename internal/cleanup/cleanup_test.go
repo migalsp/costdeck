@@ -2,19 +2,24 @@ package cleanup
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/go-logr/logr/funcr"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
 )
@@ -199,5 +204,228 @@ func TestReaperDeletesAFewAtATime(t *testing.T) {
 	_ = c.List(context.Background(), &left)
 	if len(left.Items) != 5 {
 		t.Errorf("%d left, want 5: at most 20 deletions a run", len(left.Items))
+	}
+}
+
+type failingSender struct{ attempts int }
+
+func (f *failingSender) Send(context.Context, finopsv1.NotificationEvent, string) ([]string, error) {
+	f.attempts++
+	return nil, errors.New("slack is down")
+}
+
+func TestReaperStartRunsRightAway(t *testing.T) {
+	c := setup(t, ttl(false), namespace("pr-old", 8*day, preview(), nil), namespace("pr-later", 2*day, preview(), nil))
+	r := &Reaper{Client: c, Now: func() time.Time { return now }}
+	if !r.NeedLeaderElection() {
+		t.Fatal("the reaper must run on the leader only, so a namespace is deleted once")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- r.Start(ctx) }()
+	deadline := time.Now().Add(5 * time.Second)
+	for c.Get(context.Background(), client.ObjectKey{Name: "pr-old"}, &corev1.Namespace{}) == nil {
+		if time.Now().After(deadline) {
+			cancel()
+			t.Fatal("the first run did not delete the expired namespace")
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Start returned %v after cancellation, want nil", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Start did not return after its context was cancelled")
+	}
+	if err := c.Get(context.Background(), client.ObjectKey{Name: "pr-later"}, &corev1.Namespace{}); err != nil {
+		t.Errorf("a namespace that has not expired was deleted: %v", err)
+	}
+}
+
+func TestPlanSkipsNamespacesBeingDeletedAndProtectsConfigTargets(t *testing.T) {
+	going := namespace("pr-going", 8*day, preview(), nil)
+	going.Finalizers = []string{"kubernetes"}
+	going.DeletionTimestamp = &metav1.Time{Time: now}
+	target := &finopsv1.ScalingConfig{Name: "pr-config", Namespace: "costdeck", Spec: finopsv1.ScalingConfigSpec{TargetNamespace: "pr-config"}}
+	noTTL := finopsv1.NamespaceTTLConfig{Enabled: true, Selector: "env=preview"}
+	c := setup(t, noTTL, going, target,
+		namespace("pr-config", 8*day, preview(), nil),
+		namespace("pr-plain", 8*day, preview(), nil),
+		namespace("pr-label", 8*day, preview(map[string]string{TTLLabel: "3d"}), nil),
+		namespace("pr-extended", 8*day, preview(), map[string]string{ExpiresAnnotation: "2026-10-25T00:00:00Z"}))
+
+	plan, err := Plan(context.Background(), c, noTTL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]Entry{}
+	for _, e := range plan {
+		got[e.Namespace] = e
+	}
+	if _, listed := got["pr-going"]; listed || len(plan) != 4 {
+		t.Fatalf("plan = %+v; a namespace already being deleted must not be listed", plan)
+	}
+	for ns, want := range map[string]string{"pr-config": "a schedule lists it by name", "pr-plain": "no time to live is set", "pr-label": "", "pr-extended": ""} {
+		if got[ns].Protected != want {
+			t.Errorf("%s protected = %q, want %q", ns, got[ns].Protected, want)
+		}
+	}
+	if _, err := Plan(context.Background(), c, finopsv1.NamespaceTTLConfig{Selector: ""}); err == nil {
+		t.Error("an empty selector was planned")
+	}
+}
+
+func TestReaperDeletesOnlyTheNamespaceItPlanned(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name       string
+		deleteErr  error
+		wantErr    string
+		wantRecord bool
+	}{
+		{"deleted", nil, "", true},
+		{"recreated under the same name in between", apierrors.NewConflict(corev1.Resource("namespaces"), "pr-old", errors.New("UID mismatch")), "", false},
+		{"already gone", apierrors.NewNotFound(corev1.Resource("namespaces"), "pr-old"), "", false},
+		{"refused", apierrors.NewForbidden(corev1.Resource("namespaces"), "pr-old", errors.New("no")), "delete namespace pr-old:", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("POD_NAMESPACE", "costdeck")
+			var opts client.DeleteOptions
+			scheme := runtime.NewScheme()
+			_ = clientgoscheme.AddToScheme(scheme)
+			_ = finopsv1.AddToScheme(scheme)
+			cfg := &finopsv1.CostDeckConfig{Name: "default", Namespace: "costdeck", Spec: finopsv1.CostDeckConfigSpec{NamespaceTTL: ttl(false)}}
+			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cfg, namespace("pr-old", 8*day, preview(), nil)).
+				WithInterceptorFuncs(interceptor.Funcs{Delete: func(ctx context.Context, w client.WithWatch, obj client.Object, o ...client.DeleteOption) error {
+					opts.ApplyOptions(o)
+					if tc.deleteErr != nil {
+						return tc.deleteErr
+					}
+					return w.Delete(ctx, obj, o...)
+				}}).Build()
+			s := &sent{}
+			err := (&Reaper{Client: c, Notify: s, Now: func() time.Time { return now }}).Run(ctx)
+			if (tc.wantErr == "") != (err == nil) || (err != nil && !strings.Contains(err.Error(), tc.wantErr)) {
+				t.Fatalf("Run = %v, want error %q", err, tc.wantErr)
+			}
+			if opts.Preconditions == nil || opts.Preconditions.UID == nil || *opts.Preconditions.UID != "uid-pr-old" {
+				t.Errorf("delete preconditions = %+v, want the UID the plan saw", opts.Preconditions)
+			}
+			if opts.PropagationPolicy == nil || *opts.PropagationPolicy != metav1.DeletePropagationBackground {
+				t.Errorf("propagation = %v, want background", opts.PropagationPolicy)
+			}
+			deleted, _ := Deleted(ctx, c)
+			if (len(deleted) == 1) != tc.wantRecord || (len(s.messages) == 1) != tc.wantRecord {
+				t.Errorf("record %+v, messages %v; want a record and an announcement only for a real deletion", deleted, s.messages)
+			}
+		})
+	}
+}
+
+func TestReaperWarningLeadAndFailures(t *testing.T) {
+	ctx := context.Background()
+	with := func(warnBefore time.Duration) finopsv1.NamespaceTTLConfig {
+		setting := ttl(false)
+		setting.WarnBefore = &metav1.Duration{Duration: warnBefore}
+		return setting
+	}
+	objs := func() []client.Object {
+		return []client.Object{
+			namespace("pr-three-days", 4*day+time.Hour, preview(), nil),
+			namespace("pr-five-days", 2*day, preview(), nil),
+		}
+	}
+	warned := func(c client.Client, name string) bool {
+		var ns corev1.Namespace
+		_ = c.Get(ctx, client.ObjectKey{Name: name}, &ns)
+		return ns.Annotations[WarnedAnnotation] != ""
+	}
+
+	c := setup(t, with(72*time.Hour), objs()...)
+	s := &sent{}
+	if err := (&Reaper{Client: c, Notify: s, Now: func() time.Time { return now }}).Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !warned(c, "pr-three-days") || warned(c, "pr-five-days") || len(s.messages) != 1 || !strings.Contains(s.messages[0], "`pr-three-days` will be deleted") {
+		t.Errorf("a 72h lead: messages %v", s.messages)
+	}
+
+	off := setup(t, with(0), objs()...)
+	s = &sent{}
+	if err := (&Reaper{Client: off, Notify: s, Now: func() time.Time { return now.Add(2 * day) }}).Run(ctx); err != nil || len(s.messages) != 0 || warned(off, "pr-three-days") {
+		t.Errorf("a zero lead warned: %v %v", err, s.messages)
+	}
+
+	down := setup(t, with(72*time.Hour), objs()...)
+	failing := &failingSender{}
+	err := (&Reaper{Client: down, Notify: failing, Now: func() time.Time { return now }}).Run(ctx)
+	if err == nil || !strings.Contains(err.Error(), "warn about pr-three-days: slack is down") || warned(down, "pr-three-days") {
+		t.Errorf("Run = %v; a warning that was not sent must not be marked as sent", err)
+	}
+}
+
+func TestReaperLogsAFailedAnnouncementAndKeepsTheRecord(t *testing.T) {
+	c := setup(t, ttl(false), namespace("pr-old", 8*day, preview(), nil))
+	var logged []string
+	ctx := logf.IntoContext(context.Background(), funcr.New(func(prefix, args string) { logged = append(logged, prefix+" "+args) }, funcr.Options{}))
+	if err := (&Reaper{Client: c, Notify: &failingSender{}, Now: func() time.Time { return now }}).Run(ctx); err != nil {
+		t.Fatalf("Run = %v; a failed announcement must not fail the run", err)
+	}
+	if deleted, err := Deleted(ctx, c); err != nil || len(deleted) != 1 {
+		t.Errorf("record = %+v, %v", deleted, err)
+	}
+	if !strings.Contains(strings.Join(logged, "\n"), "Could not announce a deleted namespace") {
+		t.Errorf("log = %q", logged)
+	}
+}
+
+func TestDescribe(t *testing.T) {
+	created := now.Add(-time.Hour)
+	for _, tc := range []struct {
+		entry Entry
+		want  string
+	}{
+		{Entry{Source: SourceExtended}, "at the time it was extended to"},
+		{Entry{Source: SourceLabel}, "after the time its costdeck.io/ttl label gives"},
+		{Entry{Source: SourceTTL, CreatedAt: created, ExpiresAt: created.Add(3 * day)}, "3d after it was created"},
+		{Entry{Source: SourceTTL, CreatedAt: created, ExpiresAt: created.Add(36 * time.Hour)}, "36h0m0s after it was created"},
+	} {
+		if got := describe(tc.entry); got != tc.want {
+			t.Errorf("describe(%+v) = %q, want %q", tc.entry, got, tc.want)
+		}
+	}
+}
+
+func TestDeletedRecord(t *testing.T) {
+	ctx := context.Background()
+	corrupt := &corev1.ConfigMap{Name: logConfigMap, Namespace: "costdeck", Data: map[string]string{logKey: "[{"}}
+	if _, err := Deleted(ctx, setup(t, ttl(false), corrupt)); err == nil {
+		t.Error("a record that does not parse was read as empty")
+	}
+
+	c := setup(t, ttl(false), &corev1.ConfigMap{Name: logConfigMap, Namespace: "costdeck"})
+	for i := range logSize + 3 {
+		if err := record(ctx, c, Deletion{Namespace: fmt.Sprintf("pr-%03d", i), DeletedAt: now.Add(time.Duration(i) * time.Minute)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	list, err := Deleted(ctx, c)
+	if err != nil || len(list) != logSize || list[0].Namespace != fmt.Sprintf("pr-%03d", logSize+2) || list[logSize-1].Namespace != "pr-003" {
+		t.Errorf("record has %d entries from %q to %q, %v; want the newest %d, newest first", len(list), list[0].Namespace, list[len(list)-1].Namespace, err, logSize)
+	}
+}
+
+func TestExtendFromNowOnceExpired(t *testing.T) {
+	ctx := context.Background()
+	c := setup(t, ttl(false), namespace("pr-old", 8*day, preview(), nil))
+	e, err := Extend(ctx, c, ttl(false), "pr-old", day, now)
+	if err != nil || !e.ExpiresAt.Equal(now.Add(day)) || e.Source != SourceExtended {
+		t.Errorf("extend an expired namespace = %+v, %v; want a day from now, not from its past expiry", e, err)
+	}
+	if _, err := Extend(ctx, c, ttl(false), "pr-missing", day, now); !apierrors.IsNotFound(err) {
+		t.Errorf("extend a namespace the setting does not select = %v, want not found", err)
 	}
 }

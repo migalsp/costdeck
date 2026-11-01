@@ -243,3 +243,18 @@ func TestAuditListsRisksFirst(t *testing.T) {
 		t.Errorf("severities = %q, want risks, then waste, then notes", severities)
 	}
 }
+
+func TestParseInitialHeapAndProcessorCount(t *testing.T) {
+	o := Parse([]string{"-Xms256m", "-XX:ActiveProcessorCount=2", "-XX:InitialHeapSize=512m", "-Xmswrong"})
+	if o.InitialHeap != 512<<20 || o.ActiveProcessorCount != 2 || !slices.Equal(o.Flags, []string{"-XX:InitialHeapSize=512m", "-XX:ActiveProcessorCount=2"}) {
+		t.Errorf("options = %+v; want the last initial heap size listed once where it was first set, and the processor count", o)
+	}
+
+	oneCPU := Resources{MemoryRequest: 2 * gibibyte, MemoryLimit: 2 * gibibyte, CPULimit: 1}
+	withCount := Parse([]string{"-XX:MaxRAMPercentage=75", "-XX:ActiveProcessorCount=2"})
+	for _, f := range Audit(withCount, withCount.HeapFor(oneCPU.MemoryLimit), oneCPU, Usage{}) {
+		if f.Code == "serial-gc" {
+			t.Errorf("-XX:ActiveProcessorCount=2 still reports the Serial collector on one CPU: %q", f.Message)
+		}
+	}
+}

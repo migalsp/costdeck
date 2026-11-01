@@ -188,3 +188,25 @@ func TestAssessWakeUp(t *testing.T) {
 		}
 	}
 }
+
+func TestAssessWordsSingleEventsPlainly(t *testing.T) {
+	once := Container{Name: "main", MemoryRequest: 512 * mebibyte, PeakMemory: 400 * mebibyte, Pressure: Pressure{OOMKills: 1}}
+	oom := Assess(api(once), shop)
+	if len(oom) != 1 || oom[0].Message != "OOM-killed: every kill restarts the container and drops the work it was doing." {
+		t.Errorf("one OOM kill without a limit = %+v, want neither a count nor a limit in the message", oom)
+	}
+
+	covered := Workload{Kind: "Deployment", Name: "api", Evictions: 1,
+		Containers: []Container{{Name: "main", MemoryRequest: 2 * gibibyte, PeakMemory: 512 * mebibyte}}}
+	evicted := Assess(covered, shop)
+	if len(evicted) != 1 || !strings.HasPrefix(evicted[0].Message, "1 pod was evicted in the last 14d") ||
+		evicted[0].Fix != "Keep the memory request at least at what the containers use at peak." || *evicted[0].FixMonthlyCost != 0 {
+		t.Errorf("one eviction with requests above the peak = %+v, cost %v", evicted, *evicted[0].FixMonthlyCost)
+	}
+
+	single := Wake{Kind: "ScalingGroup", Name: "dev", Slowest: 4 * time.Minute, Count: 1, Lead: 30 * time.Second, SuggestedLead: 5 * time.Minute, StartsPerMonth: 20, HourlyCost: 1}
+	woke := AssessWakeUp(single)
+	if len(woke) != 1 || !strings.Contains(woke[0].Message, "The last wake-up took up to 4m") || !strings.Contains(woke[0].Fix, "from 30s to about 5m") {
+		t.Errorf("a single wake-up with a lead under a minute = %+v", woke)
+	}
+}
