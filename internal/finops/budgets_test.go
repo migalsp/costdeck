@@ -371,7 +371,6 @@ func budgetSeriesExists(name string) bool {
 }
 
 func TestAlerterDropsBudgetSeriesWhenTheLastBudgetIsRemoved(t *testing.T) {
-	t.Skip("bug: Alerter.Check returns before telemetry.KeepBudgets when no budget is left, so the series of the last removed budget is exported forever")
 	t.Setenv("POD_NAMESPACE", "costdeck")
 	ctx := context.Background()
 	now := time.Date(2026, 10, 11, 0, 0, 0, 0, time.UTC)

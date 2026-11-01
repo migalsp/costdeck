@@ -367,6 +367,7 @@ func (a *Alerter) Check(ctx context.Context) error {
 		return err
 	}
 	if len(cfg.Spec.Budgets) == 0 && !cfg.Spec.Alerts.Anomalies.Enabled {
+		telemetry.KeepBudgets(nil)
 		return nil
 	}
 	rates := a.Pricing.Rates(ctx)
