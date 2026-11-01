@@ -80,6 +80,15 @@ func TestClusterSettings(t *testing.T) {
 	if len(secret.Data) != 1 || string(secret.Data["eu"]) != "cdk_eu" {
 		t.Errorf("tokens = %v", secret.Data)
 	}
+
+	if rr := send(t, server, "PUT", "/api/settings", `{"clusters":[]}`); rr.Code != http.StatusOK {
+		t.Fatalf("removing the last cluster: %d %s", rr.Code, rr.Body.String())
+	}
+	secret = corev1.Secret{}
+	_ = server.Client.Get(context.Background(), client.ObjectKey{Namespace: "costdeck", Name: clusterTokensSecret}, &secret)
+	if len(secret.Data) != 0 {
+		t.Errorf("tokens after removing every cluster = %v; a removed installation's token must not stay stored", secret.Data)
+	}
 }
 
 func TestClustersRead(t *testing.T) {

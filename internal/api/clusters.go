@@ -330,7 +330,7 @@ func (s *Server) applyClusterSettings(ctx context.Context, cfg *finopsv1.CostDec
 		}
 	}
 	cfg.Spec.Clusters = out
-	if len(tokens) == 0 && len(out) == 0 {
+	if len(out) == 0 && len(had) == 0 {
 		return nil
 	}
 	ref := clusterTokensSecret
