@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -75,5 +76,34 @@ func TestRecommendationsAdviseWithoutChangingWorkloads(t *testing.T) {
 	}
 	if got := after.Spec.Template.Spec.Containers[0].Resources.Requests.Cpu().String(); got != "1" {
 		t.Errorf("CPU request = %s after asking for advice; recommendations must never change a workload", got)
+	}
+}
+
+func TestPromWindowNamesWholeDaysInDays(t *testing.T) {
+	for d, want := range map[time.Duration]string{
+		14 * 24 * time.Hour: "14d",
+		24 * time.Hour:      "1d",
+		36 * time.Hour:      "36h",
+		6 * time.Hour:       "6h",
+	} {
+		if got := promWindow(d); got != want {
+			t.Errorf("promWindow(%v) = %q, want %q", d, got, want)
+		}
+	}
+}
+
+func TestRecommendationsWithoutUsageAreUnavailable(t *testing.T) {
+	t.Setenv("POD_NAMESPACE", "costdeck")
+	server := buildMockServerWithK8s()
+	if err := server.Client.Create(context.Background(), riskDeployment("api")); err != nil {
+		t.Fatal(err)
+	}
+	rr := httptest.NewRecorder()
+	server.routes().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/namespaces/shop/recommendations", nil))
+	if rr.Code != http.StatusServiceUnavailable || !strings.Contains(errorMessage(t, rr), "no usage data for namespace shop") {
+		t.Errorf("recommendations without any metrics source = %d %s, want 503 naming the missing usage", rr.Code, rr.Body.String())
+	}
+	if _, cached := server.recommendationCache.get("shop"); cached {
+		t.Error("a failed analysis must not be cached as advice")
 	}
 }

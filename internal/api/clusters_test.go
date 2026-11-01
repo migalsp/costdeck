@@ -3,15 +3,20 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
+	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
 	"github.com/migalsp/costdeck-operator/internal/finops"
+	"github.com/migalsp/costdeck-operator/internal/scaling"
 )
 
 const remoteCurrency = "EUR"
@@ -143,4 +148,77 @@ func TestClustersRead(t *testing.T) {
 		}
 	}
 
+}
+
+func TestFinOpsSummaryCountsSchedulesAndWhatIsDown(t *testing.T) {
+	t.Setenv("POD_NAMESPACE", operatorNamespace)
+	server := buildMockServerWithK8s()
+	seedConfig(t, server, finopsv1.CostDeckConfigSpec{ClusterName: "eu-prod", Pricing: customPricing()})
+	down := &finopsv1.ScalingGroup{Name: "nightly", Namespace: operatorNamespace}
+	down.Status.Phase = scaling.PhaseScaledDown
+	up := &finopsv1.ScalingConfig{Name: "shop", Namespace: operatorNamespace, Spec: finopsv1.ScalingConfigSpec{TargetNamespace: "shop"}}
+	up.Status.Phase = scaling.PhaseScaledUp
+	configDown := &finopsv1.ScalingConfig{Name: "batch", Namespace: operatorNamespace, Spec: finopsv1.ScalingConfigSpec{TargetNamespace: "batch"}}
+	configDown.Status.Phase = scaling.PhaseScaledDown
+	createAll(t, server.Client, readyNode("n1", "4", "16Gi", true), readyNode("n2", "4", "16Gi", true), down, up, configDown,
+		&finopsv1.ScalingGroup{Name: "foreign", Namespace: "elsewhere"})
+
+	rr := send(t, server, http.MethodGet, "/api/finops/summary", "")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("summary = %d %s", rr.Code, rr.Body.String())
+	}
+	sum := decodeInto[finops.ClusterSummary](t, rr)
+	if sum.Name != "eu-prod" || sum.Currency != customCurrency || sum.Nodes != 2 || sum.Schedules != 3 || sum.SchedulesDown != 2 {
+		t.Errorf("summary = %+v, want the cluster's own name, both nodes and the three schedules of the operator namespace", sum)
+	}
+	if !closeTo(sum.MonthlyCost, monthlyAtCustomRates(8, 32)) {
+		t.Errorf("monthly cost = %v, want both nodes at the custom rates", sum.MonthlyCost)
+	}
+}
+
+func TestFinOpsSummaryMapsAnAPIErrorToItsStatus(t *testing.T) {
+	t.Setenv("POD_NAMESPACE", operatorNamespace)
+	server := interceptedServer(interceptor.Funcs{List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+		if _, ok := list.(*corev1.NodeList); ok {
+			return apierrors.NewForbidden(corev1.Resource("nodes"), "", errors.New("RBAC denies listing nodes"))
+		}
+		return c.List(ctx, list, opts...)
+	}})
+	rr := send(t, server, http.MethodGet, "/api/finops/summary", "")
+	if rr.Code != http.StatusForbidden || !strings.Contains(errorMessage(t, rr), "RBAC denies listing nodes") {
+		t.Errorf("summary without node access = %d %s, want 403 with the reason", rr.Code, rr.Body.String())
+	}
+}
+
+func TestClusterConnectionTestUsesTheStoredToken(t *testing.T) {
+	t.Setenv("POD_NAMESPACE", operatorNamespace)
+	server := buildMockServerWithK8s()
+	server.HTTPClient = http.DefaultClient
+	eu := remote(t, "cdk_stored", false)
+	if rr := send(t, server, http.MethodPut, "/api/settings", `{"clusters":[{"name":"eu","url":"`+eu.URL+`","token":"cdk_stored"}]}`); rr.Code != http.StatusOK {
+		t.Fatalf("save = %d %s", rr.Code, rr.Body.String())
+	}
+	test := func(body string) map[string]any {
+		rr := send(t, server, http.MethodPost, "/api/settings/providers/cluster/test", body)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("test %s = %d %s", body, rr.Code, rr.Body.String())
+		}
+		return decodeInto[map[string]any](t, rr)
+	}
+
+	if got := test(`{"name":"eu","url":"` + eu.URL + `/"}`); got["connected"] != true || !strings.Contains(got["message"].(string), "Reached eu: 12 nodes") {
+		t.Errorf("an empty token field must fall back to the stored token: %v", got)
+	}
+	if got := test(`{"name":"eu","url":"` + eu.URL + `","token":"cdk_typo"}`); got["connected"] != false || !strings.Contains(got["error"].(string), "refused the API token") {
+		t.Errorf("a typed token wins over the stored one: %v", got)
+	}
+	if got := test(`{"name":"new","url":"` + eu.URL + `"}`); got["connected"] != false || got["error"] != "no API token for new" {
+		t.Errorf("a cluster without any token = %v", got)
+	}
+	if got := test(`{"name":"eu","url":"http://169.254.169.254"}`); got["connected"] != false || !strings.Contains(got["error"].(string), "link-local and cloud metadata addresses are not allowed") {
+		t.Errorf("a metadata address = %v, want it refused before any request", got)
+	}
+	if rr := send(t, server, http.MethodPost, "/api/settings/providers/cluster/test", `{"name":`); rr.Code != http.StatusBadRequest {
+		t.Errorf("malformed body = %d", rr.Code)
+	}
 }

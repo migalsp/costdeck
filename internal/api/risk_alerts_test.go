@@ -107,3 +107,48 @@ func TestAlertSettingsAreSavedSectionBySection(t *testing.T) {
 		t.Errorf("alerts = %+v: saving one section must leave the other alone", a)
 	}
 }
+
+type cancellingPoster struct {
+	cancel context.CancelFunc
+	posts  []string
+}
+
+func (p *cancellingPoster) Post(_ context.Context, markdown string) (string, error) {
+	p.posts = append(p.posts, markdown)
+	p.cancel()
+	return "Slack", nil
+}
+
+func TestRiskAlerterChecksAtOnceAndStopsWithItsContext(t *testing.T) {
+	t.Setenv("POD_NAMESPACE", "costdeck")
+	server := buildMockServerWithK8s()
+	server.MetricsClient = metricsfake.NewSimpleClientset() //nolint:staticcheck
+	oom := corev1.PodStatus{Phase: corev1.PodRunning, ContainerStatuses: []corev1.ContainerStatus{{
+		Name: "main", RestartCount: 1, LastTerminationState: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{Reason: "OOMKilled", ExitCode: 137}},
+	}}}
+	createAll(t, server.Client,
+		&finopsv1.CostDeckConfig{Name: "default", Namespace: "costdeck", Spec: finopsv1.CostDeckConfigSpec{Alerts: finopsv1.AlertsConfig{PerformanceRisks: &finopsv1.PerformanceRiskAlerts{Enabled: true}}}},
+		&corev1.Namespace{Name: "shop"}, riskDeployment("api"), riskPod("api-7d9f8c-abcde", oom),
+	)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	poster := &cancellingPoster{cancel: cancel}
+	alerter := &RiskAlerter{Server: server, Poster: poster, Namespace: "costdeck"}
+	if !alerter.NeedLeaderElection() {
+		t.Error("risk alerts must run on the leader only, or every replica posts them")
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- alerter.Start(ctx) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("Start = %v, want nil when its context ends", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Start did not check at once, or did not return when its context ended")
+	}
+	if len(poster.posts) != 1 || !strings.Contains(poster.posts[0], "Performance risks: 1 new") {
+		t.Errorf("posts = %q, want the first check right at start", poster.posts)
+	}
+}

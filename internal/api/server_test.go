@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -10,6 +11,7 @@ import (
 	"testing"
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
+	"github.com/migalsp/costdeck-operator/internal/auth"
 	"github.com/migalsp/costdeck-operator/internal/metrics"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -465,5 +467,111 @@ func TestHandleClusterNodes(t *testing.T) {
 	nodes, ok := parsed["nodes"].([]any)
 	if !ok || len(nodes) != 1 {
 		t.Errorf("expected 1 node in response, got %v", parsed)
+	}
+}
+
+func TestOperatorAndAdminRoutesRefuseLowerRolesBeforeTheHandlerRuns(t *testing.T) {
+	t.Setenv("POD_NAMESPACE", "costdeck")
+	t.Setenv("HOSTNAME", "costdeck-operator-0")
+	t.Setenv("COSTDECK_AUTH_USER", "admin")
+	t.Setenv("COSTDECK_AUTH_PASSWORD", "a-long-enough-password")
+	ctx := context.Background()
+	calls := &handlerCalls{}
+	server := interceptedServer(callsMadeByHandlers(calls))
+	outgoing := &refusingTransport{}
+	server.HTTPClient = &http.Client{Transport: outgoing}
+	poster := &recordingPoster{}
+	server.Poster = poster
+	svc, err := auth.NewService(ctx, server.Client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.Auth = svc
+	handler, err := server.Handler()
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientset := server.K8sClient.(*fake.Clientset)
+
+	tokens := map[auth.Role]string{}
+	for _, role := range []auth.Role{auth.RoleViewer, auth.RoleOperator, auth.RoleAdmin} {
+		token, _, err := svc.Tokens.Create(ctx, string(role)+"-token", role, 0, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		tokens[role] = token
+	}
+	issued := httptest.NewRecorder()
+	if err := svc.Sessions.Issue(issued, httptest.NewRequest(http.MethodGet, "/", nil), auth.Identity{Subject: "oidc:vera", Name: "Vera", Role: auth.RoleViewer, Provider: "oidc"}); err != nil {
+		t.Fatal(err)
+	}
+	viewerSession := issued.Result().Cookies()
+
+	type caller struct {
+		name    string
+		role    auth.Role
+		prepare func(*http.Request)
+	}
+	byToken := func(role auth.Role) caller {
+		return caller{string(role) + " token", role, func(r *http.Request) { r.Header.Set("Authorization", "Bearer "+tokens[role]) }}
+	}
+	sessionOfViewer := caller{"viewer session", auth.RoleViewer, func(r *http.Request) {
+		for _, c := range viewerSession {
+			r.AddCookie(c)
+		}
+	}}
+	do := func(route registeredRoute, who caller) *httptest.ResponseRecorder {
+		var body io.Reader
+		if route.method != http.MethodGet && route.method != http.MethodDelete {
+			body = strings.NewReader("{")
+		}
+		req := httptest.NewRequest(route.method, route.path(), body)
+		who.prepare(req)
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		return rr
+	}
+
+	observed := 0
+	routes := routesNeeding(t, auth.RoleOperator, auth.RoleAdmin)
+	if len(routes) < 30 {
+		t.Fatalf("found only %d operator and admin routes in server.go; has the registration style changed?", len(routes))
+	}
+	for _, route := range routes {
+		callers := []caller{byToken(auth.RoleViewer), sessionOfViewer}
+		if route.role == auth.RoleAdmin {
+			callers = append(callers, byToken(auth.RoleOperator))
+		}
+		for _, who := range callers {
+			calls.take()
+			clientset.ClearActions()
+			outgoing.take()
+			poster.posts = nil
+
+			rr := do(route, who)
+			want := "This action needs the " + string(route.role) + " role; you are signed in as " + string(who.role) + "."
+			if rr.Code != http.StatusForbidden || !strings.Contains(rr.Body.String(), want) {
+				t.Errorf("%s %s as %s = %d %s, want 403 from the role check", route.method, route.pattern, who.name, rr.Code, rr.Body.String())
+			}
+			if made := calls.take(); len(made) > 0 {
+				t.Errorf("%s %s as %s reached the handler, which called the API server: %v", route.method, route.pattern, who.name, made)
+			}
+			if actions := clientset.Actions(); len(actions) > 0 {
+				t.Errorf("%s %s as %s reached the handler, which used the clientset: %v", route.method, route.pattern, who.name, actions)
+			}
+			if urls := outgoing.take(); len(urls) > 0 || len(poster.posts) > 0 {
+				t.Errorf("%s %s as %s sent something out: %v %q", route.method, route.pattern, who.name, urls, poster.posts)
+			}
+		}
+
+		calls.take()
+		clientset.ClearActions()
+		if rr := do(route, byToken(route.role)); rr.Code == http.StatusForbidden && strings.Contains(rr.Body.String(), "This action needs the") {
+			t.Errorf("%s %s with the %s role it requires = %s, the role check must let it through", route.method, route.pattern, route.role, rr.Body.String())
+		}
+		observed += len(calls.take()) + len(clientset.Actions())
+	}
+	if observed == 0 {
+		t.Error("handlers allowed to run left no trace, so the checks above could not see a handler run either")
 	}
 }

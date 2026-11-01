@@ -168,3 +168,69 @@ func TestRisksFlagASlowWakeUp(t *testing.T) {
 	}
 	t.Errorf("no slow wake-up risk in %+v", report.Risks)
 }
+
+func fakeVictoriaMetrics(t *testing.T, answers map[string][]map[string]any) string {
+	t.Helper()
+	srv, _ := recordingServer(t, func(w http.ResponseWriter, r *http.Request) {
+		query := r.URL.Query().Get("query")
+		result := []map[string]any{}
+		resultType := "vector"
+		if strings.HasSuffix(r.URL.Path, "/query_range") {
+			resultType = "matrix"
+		}
+		for metric, series := range answers {
+			if resultType == "vector" && strings.Contains(query, metric) {
+				result = series
+			}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "success", "data": map[string]any{"resultType": resultType, "result": result}})
+	})
+	return srv.URL
+}
+
+func sample(labels map[string]string, value string) map[string]any {
+	return map[string]any{"metric": labels, "value": []any{1730000000, value}}
+}
+
+func TestRisksReadTheHistoryFromVictoriaMetrics(t *testing.T) {
+	t.Setenv("POD_NAMESPACE", "costdeck")
+	server := buildMockServerWithK8s()
+	main := func(pod string) map[string]string { return map[string]string{"pod": pod, "container": "main"} }
+	vm := fakeVictoriaMetrics(t, map[string][]map[string]any{
+		"container_cpu_cfs_throttled_periods_total":        {sample(main("api-7d9f8c-aaaaa"), "0.4")},
+		"kube_pod_container_status_last_terminated_reason": {sample(main("api-7d9f8c-aaaaa"), "1"), sample(main("api-7d9f8c-bbbbb"), "1"), sample(main("stranger-0"), "1")},
+		"kube_pod_container_status_restarts_total":         {sample(main("api-7d9f8c-aaaaa"), "2"), sample(main("api-7d9f8c-bbbbb"), "1"), sample(main("stranger-0"), "9")},
+		"kube_pod_status_reason":                           {sample(map[string]string{"pod": "api-7d9f8c-ccccc"}, "1"), sample(map[string]string{"pod": "stranger-0"}, "1")},
+	})
+	api := riskDeployment("api")
+	api.Spec.Template.Spec.Containers[0].Resources.Limits[corev1.ResourceCPU] = resource.MustParse("1")
+	createAll(t, server.Client, api, &finopsv1.CostDeckConfig{Name: "default", Namespace: "costdeck", Spec: finopsv1.CostDeckConfigSpec{Integrations: finopsv1.IntegrationsConfig{
+		VictoriaMetrics: &finopsv1.VictoriaMetricsConfig{Enabled: true, Endpoint: vm, RetentionDays: 3},
+	}}})
+
+	rr := httptest.NewRecorder()
+	server.routes().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/namespaces/shop/risks", nil))
+	var report risks.Report
+	if err := json.Unmarshal(rr.Body.Bytes(), &report); err != nil || rr.Code != http.StatusOK {
+		t.Fatalf("risks = %d %s (%v)", rr.Code, rr.Body.String(), err)
+	}
+	if !report.Historical || report.Window != "3d" || !strings.Contains(report.Basis, "over the last 3d from VictoriaMetrics") {
+		t.Errorf("report = %+v, want three days of history named", report)
+	}
+	found := map[string]risks.Risk{}
+	for _, r := range report.Risks {
+		if r.Workload != apiWorkload {
+			t.Errorf("a pod no workload owns produced a risk: %+v", r)
+		}
+		found[r.Code] = r
+	}
+	if r, ok := found[risks.CodeCPUThrottled]; !ok || r.Severity != risks.SeverityCritical || !strings.Contains(r.Message, "Throttled in 40% of CPU periods at busy times in the last 3d") {
+		t.Errorf("throttling = %+v", r)
+	}
+	if r, ok := found[risks.CodeOOMKilled]; !ok || !strings.Contains(r.Message, "OOM-killed 2 times") {
+		t.Errorf("OOM kills = %+v, want one per pod that was killed", r)
+	}
+	if r, ok := found[risks.CodeEvicted]; !ok || !strings.HasPrefix(r.Message, "1 pod was evicted in the last 3d") {
+		t.Errorf("evictions = %+v", r)
+	}
+}
