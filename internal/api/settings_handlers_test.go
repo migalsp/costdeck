@@ -519,3 +519,17 @@ func TestWebexTestChecksTheBotAndItsSpace(t *testing.T) {
 		t.Errorf("malformed body = %d", rr.Code)
 	}
 }
+
+func TestCloudConnectionTestRefusesABodyItCannotRead(t *testing.T) {
+	t.Setenv("POD_NAMESPACE", operatorNamespace)
+	server := buildMockServerWithK8s()
+	for _, provider := range []string{"aws", "azure", "gcp"} {
+		rr := send(t, server, http.MethodPost, "/api/settings/providers/"+provider+"/test", `{"accessKeyId": "AKIA`)
+		if rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), "Invalid request body") {
+			t.Errorf("%s with a cut-off body = %d %s; it must not quietly test the stored credentials instead", provider, rr.Code, rr.Body.String())
+		}
+	}
+	if got := testProvider(t, server, "gcp", ``); got.Connected {
+		t.Errorf("an empty body tests the stored settings, which here connect nowhere: %+v", got)
+	}
+}

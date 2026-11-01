@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"slices"
 	"sort"
@@ -103,12 +101,11 @@ func (s *Server) toolRegistry() []ai.Tool {
 				"or why a cluster could not be read. Totals per currency.",
 			Parameters: obj(map[string]any{}),
 			Run: func(ctx context.Context, _ map[string]any) (string, error) {
-				rec := httptest.NewRecorder()
-				s.handleClusters(rec, httptest.NewRequest(http.MethodGet, "/api/clusters", nil).WithContext(ctx))
-				if rec.Code != http.StatusOK {
-					return "", fmt.Errorf("clusters: %s", strings.TrimSpace(rec.Body.String()))
+				resp, err := s.clusters(ctx)
+				if err != nil {
+					return "", fmt.Errorf("clusters: %w", err)
 				}
-				return rec.Body.String(), nil
+				return toJSON(resp)
 			},
 		},
 		{

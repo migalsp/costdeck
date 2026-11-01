@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -1299,11 +1300,27 @@ func (s *Server) testCloudProvider(w http.ResponseWriter, r *http.Request, saved
 	ctx := r.Context()
 	cfg := saved.DeepCopy()
 	var override map[string][]byte
-	body, _ := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+	if err != nil {
+		writeErrorf(w, http.StatusBadRequest, "Invalid request body: %v", err)
+		return
+	}
+	decode := func(v any) bool {
+		if len(bytes.TrimSpace(body)) == 0 {
+			return true
+		}
+		if err := json.Unmarshal(body, v); err != nil {
+			writeErrorf(w, http.StatusBadRequest, "Invalid request body: %v", err)
+			return false
+		}
+		return true
+	}
 	switch name {
 	case scaling.ProviderAWS:
 		var req AWSUpdateRequest
-		_ = json.Unmarshal(body, &req)
+		if !decode(&req) {
+			return
+		}
 		if cfg.Spec.Providers.AWS == nil {
 			cfg.Spec.Providers.AWS = &finopsv1.AWSProviderConfig{}
 		}
@@ -1315,7 +1332,9 @@ func (s *Server) testCloudProvider(w http.ResponseWriter, r *http.Request, saved
 		}
 	case scaling.ProviderAzure:
 		var req AzureUpdateRequest
-		_ = json.Unmarshal(body, &req)
+		if !decode(&req) {
+			return
+		}
 		if cfg.Spec.Providers.Azure == nil {
 			cfg.Spec.Providers.Azure = &finopsv1.AzureProviderConfig{}
 		}
@@ -1330,7 +1349,9 @@ func (s *Server) testCloudProvider(w http.ResponseWriter, r *http.Request, saved
 		}
 	case scaling.ProviderGCP:
 		var req GCPUpdateRequest
-		_ = json.Unmarshal(body, &req)
+		if !decode(&req) {
+			return
+		}
 		if cfg.Spec.Providers.GCP == nil {
 			cfg.Spec.Providers.GCP = &finopsv1.GCPProviderConfig{}
 		}
