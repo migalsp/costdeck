@@ -277,6 +277,7 @@ type ScalingConfigSpec struct {
 	ActiveUntil *metav1.Time `json:"activeUntil,omitempty"`
 
 	// Schedules define periodic scaling events
+	// +kubebuilder:validation:MaxItems=50
 	// +optional
 	// +listType=atomic
 	Schedules []ScalingSchedule `json:"schedules,omitempty"`

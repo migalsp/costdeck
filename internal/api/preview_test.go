@@ -212,3 +212,25 @@ func TestPreviewWarnsAboutGitOps(t *testing.T) {
 		t.Error("a schedule that pauses GitOps still warns about it")
 	}
 }
+
+func TestSchedulesTooLargeToWorkOutAreRefused(t *testing.T) {
+	server := buildMockServerWithK8s()
+	window := `{"days":[1],"startTime":"08:00","endTime":"08:01","timezone":"UTC"}`
+	windows := func(n int) string { return "[" + strings.TrimSuffix(strings.Repeat(window+",", n), ",") + "]" }
+
+	if rr := send(t, server, "POST", "/api/scaling/preview", `{"kind":"group","spec":{"namespaces":["shop"],"schedules":`+windows(maxSchedules)+`}}`); rr.Code != http.StatusOK {
+		t.Fatalf("a preview with %d windows = %d %s", maxSchedules, rr.Code, rr.Body.String())
+	}
+	rr := send(t, server, "POST", "/api/scaling/preview", `{"kind":"group","spec":{"namespaces":["shop"],"schedules":`+windows(maxSchedules+1)+`}}`)
+	if rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), "at most 50 time windows") {
+		t.Errorf("a preview with %d windows = %d %s, want 400 before any work", maxSchedules+1, rr.Code, rr.Body.String())
+	}
+	group := `{"metadata":{"name":"huge"},"spec":{"category":"x","namespaces":["shop"],"schedules":` + windows(maxSchedules+1) + `}}`
+	if rr := send(t, server, "POST", "/api/scaling/groups", group); rr.Code != http.StatusBadRequest {
+		t.Errorf("creating a group with %d windows = %d %s", maxSchedules+1, rr.Code, rr.Body.String())
+	}
+	exceptions := `[` + strings.TrimSuffix(strings.Repeat(`{"date":"2026-12-24","active":false},`, maxExceptions+1), ",") + `]`
+	if rr := send(t, server, "POST", "/api/scaling/preview", `{"kind":"config","spec":{"targetNamespace":"shop","exceptions":`+exceptions+`}}`); rr.Code != http.StatusBadRequest {
+		t.Errorf("a preview with %d exceptions = %d", maxExceptions+1, rr.Code)
+	}
+}

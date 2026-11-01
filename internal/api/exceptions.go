@@ -66,6 +66,24 @@ func prewarmLeadOf(obj client.Object) time.Duration {
 // validateSchedule rejects selectors, hibernate rules, exceptions and calendar names that
 // would not apply, so a typo is caught when saving instead of surfacing later in a status
 // condition.
+const (
+	maxSchedules  = 50
+	maxExceptions = 100
+	maxCalendars  = 10
+)
+
+func checkScheduleSize(schedules []finopsv1.ScalingSchedule, exceptions []finopsv1.ScheduleException, calendars []string) error {
+	switch {
+	case len(schedules) > maxSchedules:
+		return fmt.Errorf("a schedule has at most %d time windows, not %d", maxSchedules, len(schedules))
+	case len(exceptions) > maxExceptions:
+		return fmt.Errorf("a schedule has at most %d exceptions, not %d", maxExceptions, len(exceptions))
+	case len(calendars) > maxCalendars:
+		return fmt.Errorf("a schedule uses at most %d calendars, not %d", maxCalendars, len(calendars))
+	}
+	return nil
+}
+
 func (s *Server) validateSchedule(ctx context.Context, obj client.Object) error {
 	if g, ok := obj.(*finopsv1.ScalingGroup); ok && g.Spec.NamespaceSelector != nil {
 		// Matching against no namespaces checks the selector itself.
@@ -84,6 +102,9 @@ func (s *Server) validateSchedule(ctx context.Context, obj client.Object) error 
 		return err
 	}
 	schedules, own, names := scheduleOf(obj)
+	if err := checkScheduleSize(schedules, own, names); err != nil {
+		return err
+	}
 	if _, problems := scaling.ResolveExceptions(own, names, s.calendars(ctx), scaling.ExceptionZone(schedules)); len(problems) > 0 {
 		return errors.New(strings.Join(problems, "; "))
 	}

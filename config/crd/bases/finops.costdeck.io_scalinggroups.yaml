@@ -441,6 +441,7 @@ spec:
                       and endDay (continuous weekly window)
                     rule: has(self.startDay) || (has(self.days) && size(self.days)
                       > 0)
+                maxItems: 50
                 type: array
                 x-kubernetes-list-type: atomic
               sequence:

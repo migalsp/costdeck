@@ -93,6 +93,10 @@ func (s *Server) handlePreviewSchedule(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "kind must be group or config")
 		return
 	}
+	if err := checkScheduleSize(req.Spec.Schedules, req.Spec.Exceptions, req.Spec.Calendars); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	resp, err := s.previewSchedule(r.Context(), req, time.Now())
 	if err != nil {
 		writeK8sError(w, err)
