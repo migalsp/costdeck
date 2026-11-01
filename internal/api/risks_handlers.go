@@ -80,6 +80,11 @@ func (c *pressureCache) put(ns string, obs observations) {
 	if c.entries == nil {
 		c.entries = map[string]cachedObservations{}
 	}
+	for k, e := range c.entries {
+		if time.Since(e.at) >= recommendationTTL {
+			delete(c.entries, k)
+		}
+	}
 	c.entries[ns] = cachedObservations{obs: obs, at: time.Now()}
 }
 
@@ -244,6 +249,9 @@ func (s *Server) risks(ctx context.Context, ns string) (risks.Report, error) {
 	workloads, err := s.workloadRequests(ctx, ns)
 	if err != nil {
 		return risks.Report{}, err
+	}
+	if len(workloads) == 0 {
+		return risks.Report{Namespace: ns, Risks: []risks.Risk{}}, nil
 	}
 	obs := s.pressure(ctx, ns, workloads)
 	advice, adviceErr := s.recommendations(ctx, ns)

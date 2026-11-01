@@ -61,6 +61,11 @@ func (c *recommendationCache) put(ns string, r rightsizing.Report) {
 	if c.entries == nil {
 		c.entries = map[string]cachedReport{}
 	}
+	for k, e := range c.entries {
+		if time.Since(e.at) >= e.ttl {
+			delete(c.entries, k)
+		}
+	}
 	ttl := recommendationTTL
 	for _, w := range r.Workloads {
 		for _, ca := range w.Containers {
@@ -127,6 +132,9 @@ func (s *Server) recommendations(ctx context.Context, ns string) (rightsizing.Re
 	workloads, err := s.workloadRequests(ctx, ns)
 	if err != nil {
 		return rightsizing.Report{}, err
+	}
+	if len(workloads) == 0 {
+		return rightsizing.Report{Namespace: ns, Workloads: []rightsizing.WorkloadAdvice{}}, nil
 	}
 	demand, d, err := s.metricsProvider().ContainerDemand(ctx, ns)
 	if err != nil {

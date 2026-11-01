@@ -266,6 +266,10 @@ func TestRecommendationsToolKeepsOnlyWhatShouldChange(t *testing.T) {
 func TestRecommendationsToolSaysWhenThereIsNoUsage(t *testing.T) {
 	t.Setenv("POD_NAMESPACE", operatorNamespace)
 	server := buildMockServerWithK8s()
+	if out, err := server.toolRecommendations(context.Background(), "shop"); err != nil || strings.Contains(fmt.Sprint(out), "no usage") {
+		t.Errorf("an empty namespace = %v, %v; it has nothing to advise on, which is not a missing-usage error", out, err)
+	}
+	createAll(t, server.Client, riskDeployment("api"))
 	if _, err := server.toolRecommendations(context.Background(), "shop"); err == nil || !strings.Contains(err.Error(), "no usage data for namespace shop") {
 		t.Errorf("err = %v, want the missing usage named", err)
 	}

@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -105,5 +106,27 @@ func TestRecommendationsWithoutUsageAreUnavailable(t *testing.T) {
 	}
 	if _, cached := server.recommendationCache.get("shop"); cached {
 		t.Error("a failed analysis must not be cached as advice")
+	}
+}
+
+func TestNamespacesWithoutWorkloadsAreNeitherQueriedNorCached(t *testing.T) {
+	t.Setenv("POD_NAMESPACE", operatorNamespace)
+	server := buildMockServerWithK8s()
+	for i := range 50 {
+		ns := fmt.Sprintf("made-up-%d", i)
+		for _, path := range []string{"/api/namespaces/" + ns + "/recommendations", "/api/namespaces/" + ns + "/risks"} {
+			if rr := send(t, server, http.MethodGet, path, ""); rr.Code != http.StatusOK {
+				t.Fatalf("GET %s = %d %s", path, rr.Code, rr.Body.String())
+			}
+		}
+	}
+	if n := len(server.recommendationCache.entries) + len(server.pressureCache.entries); n != 0 {
+		t.Errorf("%d cache entries for namespaces without workloads; a viewer looping over names must not grow the caches", n)
+	}
+
+	server.recommendationCache.entries = map[string]cachedReport{"old": {at: time.Now().Add(-time.Hour), ttl: recommendationTTL}}
+	server.recommendationCache.put("fresh", rightsizing.Report{})
+	if _, kept := server.recommendationCache.entries["old"]; kept {
+		t.Error("an expired report stayed in the cache")
 	}
 }
