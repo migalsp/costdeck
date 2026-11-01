@@ -52,10 +52,11 @@ func TestParseFlagsDefaults(t *testing.T) {
 		"metricsAddr": "0", "probeAddr": ":8081",
 		"webhookCertPath": "", "webhookCertName": "tls.crt", "webhookCertKey": "tls.key",
 		"metricsCertPath": "", "metricsCertName": "tls.crt", "metricsCertKey": "tls.key",
+		"enableHTTP2": "false",
 	}
-	if !maps.Equal(p.flags, want) || p.leaderElect || p.probeAddr != ":8081" || !p.secure || !p.loggerConfig.Development {
+	if !maps.Equal(p.flags, want) || p.leaderElect || p.probeAddr != ":8081" || !p.secure || p.loggerConfig.Development {
 		t.Errorf("defaults = %+v; want metrics off, probes on :8081, no leader election, "+
-			"secure metrics and development logs", p)
+			"secure metrics, HTTP/2 off and production logs", p)
 	}
 }
 
@@ -63,13 +64,15 @@ func TestParseFlagsAsTheChartPassesThem(t *testing.T) {
 	p := parseArgs(t, "--leader-elect", "--metrics-bind-address=:8443", "--metrics-secure=false",
 		"--health-probe-bind-address=:9440",
 		"--metrics-cert-path=/certs/metrics", "--metrics-cert-name=m.crt", "--metrics-cert-key=m.key",
-		"--webhook-cert-path=/certs/webhook", "--webhook-cert-name=w.crt", "--webhook-cert-key=w.key", "--zap-devel=false")
+		"--webhook-cert-path=/certs/webhook", "--webhook-cert-name=w.crt", "--webhook-cert-key=w.key",
+		"--zap-devel=true", "--enable-http2")
 	want := map[string]string{
 		"metricsAddr": ":8443", "probeAddr": ":9440",
 		"webhookCertPath": "/certs/webhook", "webhookCertName": "w.crt", "webhookCertKey": "w.key",
 		"metricsCertPath": "/certs/metrics", "metricsCertName": "m.crt", "metricsCertKey": "m.key",
+		"enableHTTP2": "true",
 	}
-	if !maps.Equal(p.flags, want) || !p.leaderElect || p.probeAddr != ":9440" || p.secure || p.loggerConfig.Development {
+	if !maps.Equal(p.flags, want) || !p.leaderElect || p.probeAddr != ":9440" || p.secure || !p.loggerConfig.Development {
 		t.Errorf("parsed = %+v", p)
 	}
 }
@@ -208,6 +211,13 @@ func TestSetupMetricsOptions(t *testing.T) {
 	}
 	if got := nextProtos(t, secure.TLSOpts); !slices.Equal(got, []string{"http/1.1"}) {
 		t.Errorf("metrics protocols = %v, want HTTP/2 off", got)
+	}
+	withHTTP2 := map[string]string{"metricsAddr": ":8443", "enableHTTP2": "true"}
+	if http2 := setupMetricsOptions(withHTTP2, true); len(http2.TLSOpts) != 0 {
+		t.Errorf("with --enable-http2 the metrics server still forces HTTP/1.1")
+	}
+	if http2 := setupWebhookServer(withHTTP2).(*webhook.DefaultServer); len(http2.Options.TLSOpts) != 0 {
+		t.Errorf("with --enable-http2 the webhook server still forces HTTP/1.1")
 	}
 
 	certFlags := map[string]string{

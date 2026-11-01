@@ -955,6 +955,19 @@ helm upgrade costdeck-operator oci://ghcr.io/migalsp/costdeck/charts/costdeck-op
 `--reset-then-reuse-values` keeps your overrides while picking up new chart defaults.
 Plain `--reuse-values` ignores new defaults and can render an incomplete Deployment.
 
+Upgrading from 1.6 or earlier:
+
+- The operator logs one JSON object per line, without stack traces on warnings. For the
+  console format of earlier versions, add `--set 'extraArgs={--zap-devel=true}'`.
+- Generic OIDC sign-in grants a role from the roles claim only through
+  `spec.auth.oidc.roleMapping` or a role named `costdeck.viewer`, `costdeck.operator` or
+  `costdeck.admin`. Map plain names such as `admin` in **Role → role mapping** to keep them.
+- A ScalingConfig's workload stages wait until they are ready instead of moving on after a
+  minute; set `spec.featureFlags.skipOnTimeout` (or tick the option in **Workload rules**)
+  to keep moving on.
+- With `sleepPage.enabled`, the sleep page moves to its own `<release>-sleep` Service; routes
+  asleep at upgrade time move over on the next reconcile.
+
 Upgrading from 1.3 or earlier:
 
 - The default image is now on GHCR, and the Ingress is off unless you enable it. Set

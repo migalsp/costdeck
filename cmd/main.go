@@ -20,6 +20,7 @@ import (
 	"crypto/tls"
 	"flag"
 	"os"
+	"strconv"
 
 	// Embeds the IANA timezone database into the binary. The runtime image is
 	// gcr.io/distroless/static, which ships no /usr/share/zoneinfo, so without this
@@ -89,7 +90,7 @@ func parseFlags() (map[string]string, bool, string, bool, zap.Options) {
 	flag.StringVar(&metricsCertKey, "metrics-cert-key", "tls.key", "Metrics key filename.")
 	flag.BoolVar(&enableHTTP2, "enable-http2", false, "Enable HTTP/2.")
 
-	opts := zap.Options{Development: true}
+	opts := zap.Options{}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
 
@@ -98,6 +99,7 @@ func parseFlags() (map[string]string, bool, string, bool, zap.Options) {
 		"probeAddr":       probeAddr,
 		"webhookCertPath": webhookCertPath, "webhookCertName": webhookCertName, "webhookCertKey": webhookCertKey,
 		"metricsCertPath": metricsCertPath, "metricsCertName": metricsCertName, "metricsCertKey": metricsCertKey,
+		"enableHTTP2": strconv.FormatBool(enableHTTP2),
 	}
 	return flags, enableLeaderElection, probeAddr, secureMetrics, opts
 }
@@ -338,12 +340,15 @@ func clientOptions() client.Options {
 	}
 }
 
-func setupWebhookServer(flags map[string]string) webhook.Server {
-	opts := webhook.Options{
-		TLSOpts: []func(*tls.Config){func(c *tls.Config) {
-			c.NextProtos = []string{"http/1.1"}
-		}},
+func http1Only(flags map[string]string) []func(*tls.Config) {
+	if flags["enableHTTP2"] == "true" {
+		return nil
 	}
+	return []func(*tls.Config){func(c *tls.Config) { c.NextProtos = []string{"http/1.1"} }}
+}
+
+func setupWebhookServer(flags map[string]string) webhook.Server {
+	opts := webhook.Options{TLSOpts: http1Only(flags)}
 	if p := flags["webhookCertPath"]; len(p) > 0 {
 		opts.CertDir = p
 		opts.CertName = flags["webhookCertName"]
@@ -356,9 +361,7 @@ func setupMetricsOptions(flags map[string]string, secure bool) metricsserver.Opt
 	opts := metricsserver.Options{
 		BindAddress:   flags["metricsAddr"],
 		SecureServing: secure,
-		TLSOpts: []func(*tls.Config){func(c *tls.Config) {
-			c.NextProtos = []string{"http/1.1"}
-		}},
+		TLSOpts:       http1Only(flags),
 	}
 	if secure {
 		opts.FilterProvider = filters.WithAuthenticationAndAuthorization
