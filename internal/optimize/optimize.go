@@ -223,7 +223,8 @@ func adviceFor(a rightsizing.WorkloadAdvice, container string) *rightsizing.Cont
 // Record adds a change to the namespace's NamespaceOptimization, replacing an earlier
 // one of the workload. A concurrent change of the record is read again and retried.
 func Record(ctx context.Context, c client.Client, ns string, rec finopsv1.WorkloadOptimization) error {
-	return retry.RetryOnConflict(retry.DefaultBackoff, func() error { return recordOnce(ctx, c, ns, rec) })
+	changedMeanwhile := func(err error) bool { return apierrors.IsConflict(err) || apierrors.IsAlreadyExists(err) }
+	return retry.OnError(retry.DefaultBackoff, changedMeanwhile, func() error { return recordOnce(ctx, c, ns, rec) })
 }
 
 func recordOnce(ctx context.Context, c client.Client, ns string, rec finopsv1.WorkloadOptimization) error {

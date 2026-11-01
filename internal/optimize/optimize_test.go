@@ -363,6 +363,37 @@ func TestRecordRetriesAChangeMadeMeanwhile(t *testing.T) {
 	}
 }
 
+func TestRecordRetriesWhenAnotherWriterCreatedTheRecordFirst(t *testing.T) {
+	ctx := context.Background()
+	t.Setenv("POD_NAMESPACE", "costdeck")
+	scheme := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(scheme)
+	_ = finopsv1.AddToScheme(scheme)
+	raced := false
+	c := fake.NewClientBuilder().WithScheme(scheme).
+		WithStatusSubresource(&finopsv1.NamespaceOptimization{}).
+		WithInterceptorFuncs(interceptor.Funcs{Create: func(ctx context.Context, w client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+			if _, ok := obj.(*finopsv1.NamespaceOptimization); ok && !raced {
+				raced = true
+				winner := guardedNamespace(guardedRecord("web", now))
+				if err := w.Create(ctx, winner); err != nil {
+					return err
+				}
+				if err := w.Status().Update(ctx, winner); err != nil {
+					return err
+				}
+				return apierrors.NewAlreadyExists(schema.GroupResource{Group: "finops.costdeck.io", Resource: "namespaceoptimizations"}, obj.GetName())
+			}
+			return w.Create(ctx, obj, opts...)
+		}}).Build()
+	if err := Record(ctx, c, "shop", guardedRecord("api", now)); err != nil {
+		t.Fatalf("Record = %v; losing the race to create the record must read it and retry", err)
+	}
+	if states := workloadStates(t, c); len(states) != 2 {
+		t.Errorf("records = %v, want web and api", states)
+	}
+}
+
 func TestRecordsKeepWorkloadsOfTheSameNameApart(t *testing.T) {
 	ctx := context.Background()
 	api := deploy("api", container("main", corev1.ResourceList{"cpu": q("2")}, nil))
