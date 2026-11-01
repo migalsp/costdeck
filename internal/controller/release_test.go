@@ -12,6 +12,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/event"
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
+	"github.com/migalsp/costdeck-operator/internal/scaling"
 )
 
 func TestReleaseGivesUpOnlyAfterTenMinutes(t *testing.T) {
@@ -60,5 +61,15 @@ func TestGroupChangesReachTheConfigsAtOnce(t *testing.T) {
 	after.Status.SelectedNamespaces, after.Status.Phase = nil, "ScaledDown"
 	if selectionChanged().Update(event.UpdateEvent{ObjectOld: before, ObjectNew: after}) {
 		t.Error("every status write of a group queued all configs")
+	}
+}
+
+func TestTheTransitionLogForgetsDeletedSchedules(t *testing.T) {
+	var l transitionLog
+	l.changed("uid-1", scaling.PhaseScaledUp, scaling.PhaseScaledDown)
+	l.changed("uid-2", scaling.PhaseScaledUp, scaling.PhaseScaledDown)
+	l.forget("uid-1")
+	if _, kept := l.last["uid-1"]; kept || len(l.last) != 1 {
+		t.Errorf("log = %v; a deleted schedule's entry must go", l.last)
 	}
 }

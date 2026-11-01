@@ -754,6 +754,7 @@ func (r *ScalingGroupReconciler) finalize(ctx context.Context, group *finopsv1.S
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 	telemetry.ForgetScaling("ScalingGroup", group.Name)
+	r.announced.forget(group.UID)
 	return ctrl.Result{}, nil
 }
 

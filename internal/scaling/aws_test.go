@@ -17,6 +17,8 @@ import (
 	"sync"
 	"testing"
 
+	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
+
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awscredentials "github.com/aws/aws-sdk-go-v2/credentials"
 	rdstypes "github.com/aws/aws-sdk-go-v2/service/rds/types"
@@ -615,5 +617,15 @@ func TestAWSConstructorsReportABrokenSDKConfiguration(t *testing.T) {
 		if got.provider != nil || got.err == nil || !strings.HasPrefix(got.err.Error(), got.prefix) || !strings.Contains(got.err.Error(), "AWS_MAX_ATTEMPTS=many") {
 			t.Errorf("provider %v, error %v; want no provider and an error starting with %q that names the bad setting", got.provider, got.err, got.prefix)
 		}
+	}
+}
+
+func TestEC2InstanceWithoutAStateIsNeitherRunningNorStopped(t *testing.T) {
+	if got := instanceState(ec2types.Instance{}); got != "" {
+		t.Errorf("state of an instance the API sent without one = %q, want empty instead of a panic", got)
+	}
+	running := ec2types.Instance{State: &ec2types.InstanceState{Name: ec2types.InstanceStateNameRunning}}
+	if got := instanceState(running); got != ec2types.InstanceStateNameRunning {
+		t.Errorf("state = %q", got)
 	}
 }

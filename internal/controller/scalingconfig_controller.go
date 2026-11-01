@@ -145,7 +145,7 @@ func (r *ScalingConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	newReplicas, ready, err := r.Engine.ScaleWithServices(ctx, config.Spec.TargetNamespace, targetActive, config.Spec.Sequence, exclusions, config.Spec.Hibernate, config.Status.OriginalReplicas, timeoutPassed)
 	if err != nil {
 		l.Error(err, "failed to execute scaling")
-		return ctrl.Result{RequeueAfter: time.Minute}, err
+		return ctrl.Result{}, err
 	}
 
 	if targetActive && ready {
@@ -214,6 +214,7 @@ func (r *ScalingConfigReconciler) finalize(ctx context.Context, config *finopsv1
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 	telemetry.ForgetScaling("ScalingConfig", config.Name)
+	r.announced.forget(config.UID)
 	return ctrl.Result{}, nil
 }
 

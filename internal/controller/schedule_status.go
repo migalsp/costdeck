@@ -238,6 +238,12 @@ type transitionLog struct {
 	last map[types.UID]string
 }
 
+func (l *transitionLog) forget(uid types.UID) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	delete(l.last, uid)
+}
+
 func settled(phase string) bool {
 	return phase == scaling.PhaseScaledUp || phase == scaling.PhaseScaledDown
 }
