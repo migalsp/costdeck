@@ -66,6 +66,19 @@ describe('Schedule activity', () => {
     expect(urls(fetch)).not.toContain('/api/namespaces/db/pods')
   })
 
+  it('draws only the group\'s own namespaces and cloud targets from the sequence, as the operator scales them', async () => {
+    const group = teamA({ conflictingNamespaces: ['web'], readyNamespaces: [] }, { sequence: ['db stranger', 'ext:orders-db', 'web', 'api'] })
+    answer(group, [on('GET', '/api/scaling/groups/team-a/events', () => json([]))])
+    render(<ScheduleActivity group={group} />)
+    expect(await screen.findByText('Stage 1')).toBeTruthy()
+    expect(screen.queryByText('stranger')).toBeNull()
+    expect(within(column('Stage 1')).getByText('db')).toBeTruthy()
+    expect(within(column('Stage 2')).getByText('orders-db')).toBeTruthy()
+    expect(within(column('Stage 3')).getByText('api')).toBeTruthy()
+    expect(screen.queryByText('Stage 4')).toBeNull()
+    expect(screen.queryByRole('button', { name: /^web/ })).toBeNull()
+  })
+
   it('says which namespaces the timeout skipped and moves on to the next stage', async () => {
     const group = teamA({ skippedNamespaces: ['api'] })
     const fetch = answer(group)

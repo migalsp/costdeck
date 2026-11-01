@@ -353,7 +353,7 @@ func (r *ScalingGroupReconciler) getScalingStages(group *finopsv1.ScalingGroup, 
 		for _, s := range group.Spec.Sequence {
 			var nsInStage []string
 			for target := range strings.FieldsSeq(s) {
-				if !slices.Contains(skip, target) {
+				if strings.HasPrefix(target, "ext:") || slices.Contains(managedNamespaces, target) {
 					nsInStage = append(nsInStage, target)
 				}
 			}
