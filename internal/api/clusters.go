@@ -124,11 +124,18 @@ type remoteEntry struct {
 }
 
 func (s *Server) handleClusters(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	cfg, err := config.Get(ctx, s.Client)
+	resp, err := s.clusters(r.Context())
 	if err != nil {
 		writeK8sError(w, err)
 		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) clusters(ctx context.Context) (clustersResponse, error) {
+	cfg, err := config.Get(ctx, s.Client)
+	if err != nil {
+		return clustersResponse{}, err
 	}
 	rows := make([]clusterRow, 1+len(cfg.Spec.Clusters))
 	rows[0] = clusterRow{Name: localName(cfg), Local: true}
@@ -150,7 +157,7 @@ func (s *Server) handleClusters(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	wg.Wait()
-	writeJSON(w, http.StatusOK, clustersResponse{Clusters: rows, Totals: totals(rows)})
+	return clustersResponse{Clusters: rows, Totals: totals(rows)}, nil
 }
 
 func totals(rows []clusterRow) []clusterTotals {
@@ -330,11 +337,12 @@ func (s *Server) applyClusterSettings(ctx context.Context, cfg *finopsv1.CostDec
 		}
 	}
 	cfg.Spec.Clusters = out
-	if len(tokens) == 0 && len(out) == 0 {
+	if len(out) == 0 && len(had) == 0 {
 		return nil
 	}
 	ref := clusterTokensSecret
-	return s.storeCredentials(ctx, clusterTokensSecret, tokens, &ref)
+	s.storeCredentials(req, clusterTokensSecret, tokens, &ref)
+	return nil
 }
 
 // testCluster reaches another installation with the unsaved values of the form, the

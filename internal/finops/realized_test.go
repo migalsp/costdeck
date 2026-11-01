@@ -14,13 +14,13 @@ import (
 func TestCheckNodes(t *testing.T) {
 	now := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
 	node := func(name string) corev1.Node {
-		return corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: name}, Status: corev1.NodeStatus{
+		return corev1.Node{Name: name, Status: corev1.NodeStatus{
 			Capacity:    corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("4"), corev1.ResourceMemory: resource.MustParse("16Gi")},
 			Allocatable: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("4"), corev1.ResourceMemory: resource.MustParse("16Gi")},
 		}}
 	}
 	pod := func(ns, name, nodeName, cpu, mem string, owner string) corev1.Pod {
-		p := corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: name, Labels: map[string]string{"app": name}},
+		p := corev1.Pod{Namespace: ns, Name: name, Labels: map[string]string{"app": name},
 			Spec: corev1.PodSpec{NodeName: nodeName, Containers: []corev1.Container{{Name: "c", Resources: corev1.ResourceRequirements{
 				Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse(cpu), corev1.ResourceMemory: resource.MustParse(mem)}}}}},
 			Status: corev1.PodStatus{Phase: corev1.PodRunning}}
@@ -36,7 +36,7 @@ func TestCheckNodes(t *testing.T) {
 		pod("monitoring", "agent", "busy", "1", "1Gi", "DaemonSet"),
 		pod("shop", "db-0", "blocked", "500m", "8Gi", "StatefulSet"),
 	}
-	pdbs := []policyv1.PodDisruptionBudget{{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "db"},
+	pdbs := []policyv1.PodDisruptionBudget{{Namespace: "shop", Name: "db",
 		Spec: policyv1.PodDisruptionBudgetSpec{Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "db-0"}}}}}
 	recorded := []RecordedNode{{"gone", 0.4}, {"busy", 0.2}, {"blocked", 0.2}, {"idle", 0.2}}
 

@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
-	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -95,64 +95,65 @@ func wakeURL(dashboard, ns string, r *http.Request) string {
 	return strings.TrimRight(dashboard, "/") + "/wake/" + url.PathEscape(ns) + "?return=" + url.QueryEscape(back)
 }
 
-// sleepPages answers the requests a sleeping namespace's routes send to Cost Deck, before
-// authentication and the dashboard: the gateway marks them with scaling.SleepingHeader.
-// Only a namespace whose routes Cost Deck put to sleep gets its details shown, so the
-// header cannot be used to ask about other namespaces.
-func (s *Server) sleepPages(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ns := r.Header.Get(scaling.SleepingHeader)
-		if ns == "" {
-			next.ServeHTTP(w, r)
-			return
+// serveSleepPage answers what a sleeping namespace's routes send: the gateway marks those
+// requests with scaling.SleepingHeader. Only a namespace whose routes Cost Deck put to
+// sleep gets its details shown, so the header cannot be used to ask about others.
+func (s *Server) serveSleepPage(w http.ResponseWriter, r *http.Request) {
+	ns := r.Header.Get(scaling.SleepingHeader)
+	ctx := r.Context()
+	if ns == "" || !slices.Contains(s.sleeping.get(ctx, (&scaling.Engine{Client: s.Client}).SleepingNamespaces, time.Now()), ns) {
+		writeSleepPage(w, r, sleepPageData{Namespace: "This application"})
+		return
+	}
+	d := sleepPageData{Namespace: ns}
+	if st, _, name := s.scheduleOf(ctx, ns); st != nil {
+		d.Schedule = name
+		if st.DesiredState == scaling.StateUp {
+			d.Starting = true
+		} else if st.NextTransition != nil {
+			t := st.NextTransition.Time.Time
+			d.NextStart = &t
 		}
-		ctx := r.Context()
-		engine := &scaling.Engine{Client: s.Client}
-		sleeping, err := engine.SleepingNamespaces(ctx)
-		if err != nil || !slices.Contains(sleeping, ns) {
-			writeSleepPage(w, r, sleepPageData{Namespace: "This application"})
-			return
-		}
-		d := sleepPageData{Namespace: ns}
-		if st, _, name := s.scheduleOf(ctx, ns); st != nil {
-			d.Schedule = name
-			if st.DesiredState == scaling.StateUp {
-				d.Starting = true
-			} else if st.NextTransition != nil {
-				t := st.NextTransition.Time.Time
-				d.NextStart = &t
-			}
-		}
-		if cfg, err := config.Get(ctx, s.Client); err == nil {
-			d.WakeURL = wakeURL(cfg.Spec.DashboardURL, ns, r)
-		}
-		writeSleepPage(w, r, d)
-	})
+	}
+	if cfg, err := config.Get(ctx, s.Client); err == nil {
+		d.WakeURL = wakeURL(cfg.Spec.DashboardURL, ns, r)
+	}
+	writeSleepPage(w, r, d)
 }
 
-// scheduleOf finds the schedule that scales a namespace: the group it belongs to (the
-// older one, if several), else its own config.
+const sleepingRefresh = 10 * time.Second
+
+type sleepingNamespaces struct {
+	mu    sync.Mutex
+	names []string
+	at    time.Time
+}
+
+func (c *sleepingNamespaces) get(ctx context.Context, load func(context.Context) ([]string, error), now time.Time) []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.at.IsZero() && now.Sub(c.at) < sleepingRefresh {
+		return c.names
+	}
+	names, err := load(ctx)
+	if err != nil {
+		return c.names
+	}
+	c.names, c.at = names, now
+	return names
+}
+
+// scheduleOf finds the schedule that scales a namespace: the group that owns it, else its
+// own config.
 func (s *Server) scheduleOf(ctx context.Context, ns string) (*finopsv1.ScheduleStatus, string, string) {
-	var groups finopsv1.ScalingGroupList
-	if err := s.Client.List(ctx, &groups, client.InNamespace(config.OperatorNamespace())); err == nil {
-		sort.Slice(groups.Items, func(i, j int) bool {
-			return groups.Items[i].CreationTimestamp.Before(&groups.Items[j].CreationTimestamp)
-		})
-		for i := range groups.Items {
-			if slices.Contains(groups.Items[i].Members(), ns) {
-				return &groups.Items[i].Status.ScheduleStatus, targetGroup, groups.Items[i].Name
-			}
-		}
+	owner, kind, st, _ := s.scheduleOwner(ctx, ns)
+	switch {
+	case owner == nil:
+		return nil, "", ""
+	case kind == kindScalingGroup:
+		return st, targetGroup, owner.GetName()
 	}
-	var configs finopsv1.ScalingConfigList
-	if err := s.Client.List(ctx, &configs, client.InNamespace(config.OperatorNamespace())); err == nil {
-		for i := range configs.Items {
-			if configs.Items[i].Spec.TargetNamespace == ns {
-				return &configs.Items[i].Status.ScheduleStatus, kindConfig, configs.Items[i].Name
-			}
-		}
-	}
-	return nil, "", ""
+	return st, kindConfig, owner.GetName()
 }
 
 // wakeStatusResponse is GET /api/wake/{ns}: what the dashboard's wake page needs.

@@ -11,7 +11,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -98,12 +97,10 @@ func (s *Server) saveReport(ctx context.Context, report string) error {
 	err := s.Client.Get(ctx, key, cm)
 	if apierrors.IsNotFound(err) {
 		cm = &corev1.ConfigMap{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: key.Name, Namespace: key.Namespace,
-				Labels:      map[string]string{"app.kubernetes.io/managed-by": "costdeck-operator"},
-				Annotations: map[string]string{"costdeck.io/generated-at": now},
-			},
-			Data: map[string]string{reportKey: report},
+			Name: key.Name, Namespace: key.Namespace,
+			Labels:      map[string]string{"app.kubernetes.io/managed-by": "costdeck-operator"},
+			Annotations: map[string]string{"costdeck.io/generated-at": now},
+			Data:        map[string]string{reportKey: report},
 		}
 		return s.Client.Create(ctx, cm)
 	}

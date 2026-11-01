@@ -24,13 +24,13 @@ func realizedServer(t *testing.T) *Server {
 	t.Setenv("POD_NAMESPACE", "costdeck")
 	server := buildMockServerWithK8s()
 	ctx := context.Background()
-	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-a"}, Status: corev1.NodeStatus{
+	node := &corev1.Node{Name: "node-a", Status: corev1.NodeStatus{
 		Allocatable: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("4"), corev1.ResourceMemory: resource.MustParse("16Gi")}}}
-	debug := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "ops", Name: "debug", Labels: map[string]string{"app": "debug"},
+	debug := &corev1.Pod{Namespace: "ops", Name: "debug", Labels: map[string]string{"app": "debug"},
 		Annotations:     map[string]string{"cluster-autoscaler.kubernetes.io/safe-to-evict": "false"},
-		OwnerReferences: []metav1.OwnerReference{{Kind: "ReplicaSet", Name: "debug-1", Controller: new(true)}}},
-		Spec: corev1.PodSpec{NodeName: "node-a"}, Status: corev1.PodStatus{Phase: corev1.PodRunning}}
-	pdb := &policyv1.PodDisruptionBudget{ObjectMeta: metav1.ObjectMeta{Namespace: "ops", Name: "debug"},
+		OwnerReferences: []metav1.OwnerReference{{Kind: "ReplicaSet", Name: "debug-1", Controller: new(true)}},
+		Spec:            corev1.PodSpec{NodeName: "node-a"}, Status: corev1.PodStatus{Phase: corev1.PodRunning}}
+	pdb := &policyv1.PodDisruptionBudget{Namespace: "ops", Name: "debug",
 		Spec: policyv1.PodDisruptionBudgetSpec{Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "debug"}}}}
 	if err := server.Client.Create(ctx, node); err != nil {
 		t.Fatal(err)
@@ -47,12 +47,12 @@ func realizedServer(t *testing.T) *Server {
 			ScaleDownNodes: []finopsv1.ScaleDownNode{{Name: "gone-node", HourlyCost: "0.3000"}, {Name: "node-a", HourlyCost: "0.2000"}}}
 	}
 	for name, st := range map[string]finopsv1.ScheduleStatus{"settled": status("Down", 20*time.Minute), "fresh": status("Down", 2*time.Minute), "up": status("Up", time.Hour)} {
-		if err := server.Client.Create(ctx, &finopsv1.ScalingGroup{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "costdeck"},
+		if err := server.Client.Create(ctx, &finopsv1.ScalingGroup{Name: name, Namespace: "costdeck",
 			Spec: finopsv1.ScalingGroupSpec{Namespaces: []string{"shop"}}, Status: finopsv1.ScalingGroupStatus{ScheduleStatus: st}}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := server.Client.Create(ctx, &finopsv1.ScalingConfig{ObjectMeta: metav1.ObjectMeta{Name: "billing", Namespace: "costdeck"},
+	if err := server.Client.Create(ctx, &finopsv1.ScalingConfig{Name: "billing", Namespace: "costdeck",
 		Spec: finopsv1.ScalingConfigSpec{TargetNamespace: "billing"}, Status: finopsv1.ScalingConfigStatus{ScheduleStatus: status("Down", 20*time.Minute)}}); err != nil {
 		t.Fatal(err)
 	}

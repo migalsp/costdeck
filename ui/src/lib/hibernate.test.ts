@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest'
+import shared from '../../../internal/scaling/testdata/hibernate.json'
+import type { HibernateRule } from './types'
 import { describeRule, hibernateIssue, parseNames, ruleIssue } from './hibernate'
+
+describe('ruleIssue matches the operator (internal/scaling/testdata/hibernate.json)', () => {
+  for (const c of shared.cases) {
+    it(c.name, () => {
+      expect(ruleIssue(c.rule as HibernateRule) === null).toBe(c.valid)
+    })
+  }
+})
 
 describe('hibernate rules', () => {
   it('reads names and globs separated by commas or spaces', () => {

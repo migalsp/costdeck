@@ -1,17 +1,21 @@
-import { useState } from 'react'
-import { Lightbulb, ArrowRight, AlertTriangle, Copy, Check, Info, GitPullRequest, ExternalLink, Undo2, Wand2 } from 'lucide-react'
+import { Fragment, useState, type ReactNode } from 'react'
+import { Lightbulb, ArrowRight, AlertTriangle, Copy, Check, Info, GitPullRequest, ExternalLink, Undo2, Wand2, Coffee } from 'lucide-react'
 import { apiError, errorMessage, fetchRecommendations, getJSON } from '../lib/api'
 import { useAuth } from '../lib/auth'
 import { describeState, describeValues, latest, type RightsizingChanges } from '../lib/rightsizing'
 import { toast } from '../lib/toast'
 import { Button } from './ui'
 import { formatMoney } from '../lib/format'
-import type { AdviceAction, ContainerAdvice, Recommendations, ResourceAdvice, WorkloadAdvice } from '../lib/types'
+import type { AdviceAction, ContainerAdvice, JVMAdvice, JVMFinding, Recommendations, ResourceAdvice, WorkloadAdvice } from '../lib/types'
 import { usePolling } from '../lib/usePolling'
 
 const actionable: AdviceAction[] = ['reduce', 'increase', 'set']
 
-const needsAttention = (c: ContainerAdvice) => actionable.includes(c.cpu.action) || actionable.includes(c.memory.action)
+const hasRequestAdvice = (c: ContainerAdvice) => actionable.includes(c.cpu.action) || actionable.includes(c.memory.action)
+
+const jvmNeedsAttention = (c: ContainerAdvice) => !!c.jvm && c.jvm.findings.some(f => f.severity !== 'note')
+
+const needsAttention = (c: ContainerAdvice) => hasRequestAdvice(c) || jvmNeedsAttention(c) || !!c.cpu.held || !!c.memory.held
 
 // The values to paste: recommended where there is advice, the current request otherwise.
 const yamlFor = (w: WorkloadAdvice, c: ContainerAdvice) => {
@@ -24,6 +28,9 @@ const yamlFor = (w: WorkloadAdvice, c: ContainerAdvice) => {
 
 function Change({ advice }: { advice: ResourceAdvice }) {
   if (advice.action === 'unknown') return <span className="text-slate-300">no data</span>
+  if (advice.action === 'keep' && advice.held) {
+    return <span className="text-amber-700" title={`Not reduced: ${advice.held}`}>{advice.request} · held: {advice.held}</span>
+  }
   if (advice.action === 'keep') return <span className="text-slate-400">{advice.request} · fits</span>
   const tone = advice.action === 'increase' ? 'text-amber-600' : 'text-emerald-600'
   return (
@@ -36,7 +43,7 @@ function Change({ advice }: { advice: ResourceAdvice }) {
   )
 }
 
-function CopyButton({ text }: { text: string }) {
+function CopyButton({ text, label = 'Copy as YAML' }: { text: string; label?: string }) {
   const [copied, setCopied] = useState(false)
   return (
     <button
@@ -47,10 +54,48 @@ function CopyButton({ text }: { text: string }) {
         })
       }}
       className="p-1.5 rounded-lg text-slate-400 hover:text-brand-600 hover:bg-brand-50 transition-colors"
-      title={`Copy as YAML:\n\n${text}`}
+      title={`${label}:\n\n${text}`}
+      aria-label={label}
     >
       {copied ? <Check size={14} className="text-emerald-500" /> : <Copy size={14} />}
     </button>
+  )
+}
+
+const findingTone: Record<JVMFinding['severity'], { icon: ReactNode; label: string }> = {
+  risk: { icon: <AlertTriangle size={12} className="text-rose-600 shrink-0 mt-0.5" />, label: 'Risk' },
+  waste: { icon: <Lightbulb size={12} className="text-emerald-600 shrink-0 mt-0.5" />, label: 'Saving' },
+  note: { icon: <Info size={12} className="text-slate-400 shrink-0 mt-0.5" />, label: 'Note' },
+}
+
+function JvmDetails({ jvm, currency }: { jvm: JVMAdvice; currency: string }) {
+  return (
+    <div className="rounded-lg border border-orange-100 bg-orange-50/50 px-3 py-2 text-xs text-slate-600 space-y-1.5" aria-label="JVM advice">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-slate-500">
+        <span>Heap {jvm.heap ?? 'unknown'}: {jvm.heapSource}</span>
+        {(jvm.options?.length ?? 0) > 0 && <code className="rounded bg-slate-100 px-1 font-mono text-slate-700">{jvm.options!.join(' ')}</code>}
+        {jvm.heapAfterGC && <span>after garbage collection up to {jvm.heapAfterGC}{jvm.heapUsed ? `, in use up to ${jvm.heapUsed}` : ''}</span>}
+      </div>
+      {jvm.findings.length > 0 && (
+        <ul className="space-y-1">
+          {jvm.findings.map(f => (
+            <li key={f.code} className="flex items-start gap-1.5">
+              {findingTone[f.severity].icon}
+              <span><span className="sr-only">{findingTone[f.severity].label}: </span>{f.message}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {jvm.recommendedOptions && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="font-semibold text-slate-700">Recommended heap</span>
+          <code className="rounded bg-slate-100 px-1 font-mono text-slate-700">{jvm.recommendedOptions}</code>
+          <span>with {jvm.recommendedMemory} of memory as request and limit</span>
+          {(jvm.monthlySavings ?? 0) >= 0.01 && <span className="font-bold text-emerald-600">~{formatMoney(jvm.monthlySavings!, currency)}/mo</span>}
+          <CopyButton text={jvm.recommendedOptions} label="Copy the JVM options" />
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -133,6 +178,9 @@ export default function RecommendationsPanel({ namespace }: { namespace: string 
             {report.monthlySavings >= 0.01 ? `~${formatMoney(report.monthlySavings, report.currency)}` : formatMoney(0, report.currency)}
             <span className="text-sm font-bold text-slate-400">/mo</span>
           </div>
+          {(report.javaMonthlySavings ?? 0) >= 0.01 && (
+            <div className="text-[11px] font-semibold text-emerald-700">+ ~{formatMoney(report.javaMonthlySavings!, report.currency)}/mo by lowering Java heaps</div>
+          )}
           <div className="text-[11px] text-slate-400">
             {reducible} container{reducible === 1 ? '' : 's'} over-requested
             {underRequested > 0 && <> · <span className="text-amber-600">{underRequested} under-requested</span></>}
@@ -158,11 +206,22 @@ export default function RecommendationsPanel({ namespace }: { namespace: string 
             </thead>
             <tbody className="divide-y divide-slate-100">
               {rows.map(({ w, c }) => (
-                <tr key={`${w.kind}/${w.name}/${c.name}`} className="hover:bg-slate-50/60">
+                <Fragment key={`${w.kind}/${w.name}/${c.name}`}>
+                <tr className="hover:bg-slate-50/60">
                   <td className="px-5 py-2.5">
                     <div className="font-bold text-slate-700">{w.name}{w.containers.length > 1 && <span className="font-medium text-slate-400"> / {c.name}</span>}</div>
                     <div className="text-[10px] text-slate-400 uppercase tracking-wider">
                       {w.kind} · {w.replicas} replica{w.replicas === 1 ? '' : 's'}
+                      {w.policy && (
+                        <span className="ml-2 normal-case tracking-normal text-slate-500" title={w.applyForbidden ? 'Its RightsizingPolicy forbids applying the advice or proposing it' : 'Its RightsizingPolicy bounds this advice'}>
+                          policy {w.policy}{w.applyForbidden ? ' · apply forbidden' : ''}
+                        </span>
+                      )}
+                      {c.jvm && (
+                        <span className="ml-2 inline-flex items-center gap-1 text-orange-700 normal-case tracking-normal" title={c.jvm.heapSource}>
+                          <Coffee size={10} /> Java{c.jvm.heap ? ` · heap ${c.jvm.heap}` : ''}
+                        </span>
+                      )}
                       {(c.cpu.action === 'increase' || c.memory.action === 'increase') && (
                         <span className="ml-2 inline-flex items-center gap-1 text-amber-600 normal-case tracking-normal" title="It uses more than it requests, so it competes for capacity it never reserved: CPU throttling, or eviction under memory pressure.">
                           <AlertTriangle size={10} /> uses more than requested
@@ -173,11 +232,11 @@ export default function RecommendationsPanel({ namespace }: { namespace: string 
                   <td className="px-3 py-2.5"><Change advice={c.cpu} /></td>
                   <td className="px-3 py-2.5"><Change advice={c.memory} /></td>
                   <td className="px-3 py-2.5 text-right font-bold text-emerald-600 whitespace-nowrap">
-                    {w.monthlySavings >= 0.01 && w.containers.indexOf(c) === w.containers.findIndex(needsAttention)
+                    {w.monthlySavings >= 0.01 && w.containers.indexOf(c) === w.containers.findIndex(hasRequestAdvice)
                       ? `${formatMoney(w.monthlySavings, report.currency)}/mo` : ''}
                   </td>
                   <td className="px-3 py-2.5 text-right whitespace-nowrap">
-                    {canAct && w.containers.indexOf(c) === w.containers.findIndex(needsAttention) && (() => {
+                    {canAct && !w.applyForbidden && w.containers.indexOf(c) === w.containers.findIndex(hasRequestAdvice) && (() => {
                       const key = `${w.kind}/${w.name}`
                       const ch = latest(changes, w.kind, w.name)
                       const live = ch && (ch.state === 'applied' || ch.state === 'kept')
@@ -197,9 +256,15 @@ export default function RecommendationsPanel({ namespace }: { namespace: string 
                         </span>
                       )
                     })()}
-                    <CopyButton text={yamlFor(w, c)} />
+                    {hasRequestAdvice(c) && <CopyButton text={yamlFor(w, c)} />}
                   </td>
                 </tr>
+                {c.jvm && (c.jvm.findings.length > 0 || c.jvm.recommendedOptions) && (
+                  <tr>
+                    <td colSpan={5} className="px-5 pb-3 pt-0"><JvmDetails jvm={c.jvm} currency={report.currency} /></td>
+                  </tr>
+                )}
+                </Fragment>
               ))}
             </tbody>
           </table>

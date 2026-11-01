@@ -10,6 +10,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/resource"
 
+	"github.com/migalsp/costdeck-operator/internal/jvm"
 	"github.com/migalsp/costdeck-operator/internal/metrics"
 	"github.com/migalsp/costdeck-operator/internal/pricing"
 )
@@ -62,6 +63,31 @@ type Workload struct {
 	Name       string
 	Replicas   int32
 	Containers []Container
+	Policy     *Policy
+}
+
+type Policy struct {
+	Name           string
+	ApplyForbidden bool
+	Exclude        bool
+	CPU            Bounds
+	Memory         Bounds
+}
+
+type Bounds struct {
+	Min      float64
+	Max      float64
+	Headroom *float64
+}
+
+func (b Bounds) clamp(v float64) float64 {
+	if b.Min > 0 {
+		v = max(v, b.Min)
+	}
+	if b.Max > 0 {
+		v = min(v, b.Max)
+	}
+	return v
 }
 
 // Container holds the requests of one container: cores and bytes, zero when unset.
@@ -69,6 +95,11 @@ type Container struct {
 	Name          string
 	CPURequest    float64
 	MemoryRequest float64
+	MemoryLimit   float64
+	CPULimit      float64
+	Java          *jvm.Runtime
+	HoldCPU       string
+	HoldMemory    string
 }
 
 // Report is the advice for one namespace.
@@ -83,10 +114,11 @@ type Report struct {
 	Basis string `json:"basis"`
 	// Warning carries a problem worth showing next to the advice, such as VictoriaMetrics
 	// being unreachable.
-	Warning        string           `json:"warning,omitempty"`
-	Currency       string           `json:"currency"`
-	MonthlySavings float64          `json:"monthlySavings"`
-	Workloads      []WorkloadAdvice `json:"workloads"`
+	Warning            string           `json:"warning,omitempty"`
+	Currency           string           `json:"currency"`
+	MonthlySavings     float64          `json:"monthlySavings"`
+	JavaMonthlySavings float64          `json:"javaMonthlySavings,omitempty"`
+	Workloads          []WorkloadAdvice `json:"workloads"`
 }
 
 // WorkloadAdvice is the advice for one workload, per container.
@@ -95,6 +127,8 @@ type WorkloadAdvice struct {
 	Name           string            `json:"name"`
 	Replicas       int32             `json:"replicas"`
 	MonthlySavings float64           `json:"monthlySavings"`
+	Policy         string            `json:"policy,omitempty"`
+	ApplyForbidden bool              `json:"applyForbidden,omitempty"`
 	Containers     []ContainerAdvice `json:"containers"`
 }
 
@@ -103,6 +137,22 @@ type ContainerAdvice struct {
 	Name   string         `json:"name"`
 	CPU    ResourceAdvice `json:"cpu"`
 	Memory ResourceAdvice `json:"memory"`
+	JVM    *JVMAdvice     `json:"jvm,omitempty"`
+}
+
+type JVMAdvice struct {
+	DetectedBy         string        `json:"detectedBy"`
+	Options            []string      `json:"options,omitempty"`
+	Heap               string        `json:"heap,omitempty"`
+	HeapSource         string        `json:"heapSource"`
+	HeapUsed           string        `json:"heapUsed,omitempty"`
+	HeapAfterGC        string        `json:"heapAfterGC,omitempty"`
+	NonHeap            string        `json:"nonHeap,omitempty"`
+	RecommendedHeap    string        `json:"recommendedHeap,omitempty"`
+	RecommendedMemory  string        `json:"recommendedMemory,omitempty"`
+	RecommendedOptions string        `json:"recommendedOptions,omitempty"`
+	MonthlySavings     float64       `json:"monthlySavings,omitempty"`
+	Findings           []jvm.Finding `json:"findings"`
 }
 
 // ResourceAdvice compares a request with observed demand. Quantities are Kubernetes
@@ -112,24 +162,59 @@ type ResourceAdvice struct {
 	Observed    string `json:"observed,omitempty"`
 	Recommended string `json:"recommended,omitempty"`
 	Action      string `json:"action"`
+	Held        string `json:"held,omitempty"`
 }
 
 // Analyze compares each workload's requests with the demand of its pods and prices the
 // reductions with the given rates.
-func Analyze(workloads []Workload, demand map[metrics.ContainerKey]metrics.Usage, rates pricing.Rates, s Settings) Report {
+func Analyze(workloads []Workload, demand map[metrics.ContainerKey]metrics.Usage, heapDemand map[metrics.ContainerKey]metrics.HeapUsage, rates pricing.Rates, s Settings) Report {
 	report := Report{Currency: rates.Currency, Workloads: []WorkloadAdvice{}}
 	for _, w := range workloads {
+		if w.Policy != nil && w.Policy.Exclude {
+			continue
+		}
 		peaks := peakDemand(w, demand)
+		heapPeaks := peakHeapDemand(w, heapDemand)
 		advice := WorkloadAdvice{Kind: w.Kind, Name: w.Name, Replicas: w.Replicas}
+		policy := Policy{}
+		if w.Policy != nil {
+			policy = *w.Policy
+			advice.Policy, advice.ApplyForbidden = policy.Name, policy.ApplyForbidden
+		}
+		cpuHeadroom, memHeadroom := s.CPUHeadroom, s.MemoryHeadroom
+		if policy.CPU.Headroom != nil {
+			cpuHeadroom = *policy.CPU.Headroom
+		}
+		if policy.Memory.Headroom != nil {
+			memHeadroom = *policy.Memory.Headroom
+		}
 		for _, c := range w.Containers {
 			observed, seen := peaks[c.Name]
-			cpuRec := roundCPU(max(observed.cpu*s.CPUHeadroom, s.MinCPU))
-			memRec := roundMemory(max(observed.mem*s.MemoryHeadroom, s.MinMemory))
+			cpuRec := roundCPU(policy.CPU.clamp(max(observed.cpu*cpuHeadroom, s.MinCPU)))
+			memRec := roundMemory(max(observed.mem*memHeadroom, s.MinMemory))
+			var javaAdvice *JVMAdvice
+			var memoryFloor float64
+			if java, heapUse, ok := javaRuntime(w, c, heapPeaks); ok {
+				javaAdvice, memoryFloor = adviseJVM(java, c, heapUse, rates, w.Replicas)
+				memRec = max(memRec, memoryFloor)
+				report.JavaMonthlySavings += javaAdvice.MonthlySavings
+			}
+			memRec = roundMemory(policy.Memory.clamp(memRec))
+			memoryFloor = min(memoryFloor, memRec)
 			ca := ContainerAdvice{
 				Name:   c.Name,
 				CPU:    advise(c.CPURequest, observed.cpu, cpuRec, seen, s.ReduceThreshold, formatCPU),
 				Memory: advise(c.MemoryRequest, observed.mem, memRec, seen, s.ReduceThreshold, formatMemory),
+				JVM:    javaAdvice,
 			}
+			if memoryFloor > c.MemoryRequest {
+				ca.Memory.Action, ca.Memory.Recommended = ActionIncrease, formatMemory(memRec)
+				if c.MemoryRequest <= 0 {
+					ca.Memory.Action = ActionSet
+				}
+			}
+			holdReduction(&ca.CPU, c.HoldCPU)
+			holdReduction(&ca.Memory, c.HoldMemory)
 			hourly := 0.0
 			if ca.CPU.Action == ActionReduce {
 				hourly += (c.CPURequest - cpuRec) * rates.CPUCoreHour
@@ -173,6 +258,15 @@ func advise(request, observed, recommended float64, seen bool, threshold float64
 	return a
 }
 
+func holdReduction(a *ResourceAdvice, reason string) {
+	if reason == "" || a.Action != ActionReduce {
+		return
+	}
+	a.Action, a.Recommended, a.Held = ActionKeep, "", reason
+}
+
+func OwnsPod(kind, name, pod string) bool { return podPattern(kind, name).MatchString(pod) }
+
 type demandPair struct{ cpu, mem float64 }
 
 // peakDemand returns, per container name, the highest demand across the workload's pods.
@@ -193,15 +287,98 @@ func peakDemand(w Workload, demand map[metrics.ContainerKey]metrics.Usage) map[s
 	return out
 }
 
+func peakHeapDemand(w Workload, heapDemand map[metrics.ContainerKey]metrics.HeapUsage) map[string]jvm.Usage {
+	pattern := podPattern(w.Kind, w.Name)
+	out := map[string]jvm.Usage{}
+	for key, u := range heapDemand {
+		if !pattern.MatchString(key.Pod) {
+			continue
+		}
+		p := out[key.Container]
+		p.HeapUsed = max(p.HeapUsed, u.Used)
+		p.HeapAfterGC = max(p.HeapAfterGC, u.AfterGC)
+		p.NonHeap = max(p.NonHeap, u.NonHeap)
+		out[key.Container] = p
+	}
+	return out
+}
+
+func javaRuntime(w Workload, c Container, heapPeaks map[string]jvm.Usage) (jvm.Runtime, jvm.Usage, bool) {
+	heapUse, measured := heapPeaks[c.Name]
+	if unlabelled, ok := heapPeaks[""]; ok && !measured && ownsUnlabelledSeries(w, c) {
+		heapUse, measured = unlabelled, true
+	}
+	switch {
+	case c.Java != nil:
+		return *c.Java, heapUse, true
+	case measured:
+		return jvm.Runtime{DetectedBy: jvm.DetectedByMetrics}, heapUse, true
+	}
+	return jvm.Runtime{}, jvm.Usage{}, false
+}
+
+func ownsUnlabelledSeries(w Workload, c Container) bool {
+	javaContainers := 0
+	for _, other := range w.Containers {
+		if other.Java != nil {
+			javaContainers++
+		}
+	}
+	if javaContainers == 0 {
+		return len(w.Containers) == 1
+	}
+	return c.Java != nil && javaContainers == 1
+}
+
+func adviseJVM(java jvm.Runtime, c Container, heapUse jvm.Usage, rates pricing.Rates, replicas int32) (*JVMAdvice, float64) {
+	resources := jvm.Resources{MemoryRequest: c.MemoryRequest, MemoryLimit: c.MemoryLimit, CPULimit: c.CPULimit}
+	heap := java.Options.HeapFor(c.MemoryLimit)
+	a := &JVMAdvice{
+		DetectedBy: java.DetectedBy,
+		Options:    java.Options.Flags,
+		HeapSource: heap.Source,
+		Findings:   jvm.Audit(java.Options, heap, resources, heapUse),
+	}
+	if a.Findings == nil {
+		a.Findings = []jvm.Finding{}
+	}
+	var memoryFloor float64
+	if heap.Known {
+		a.Heap = formatMemory(heap.Max)
+		memoryFloor = roundMemory(heap.Max + jvm.NativeMemory(heap.Max, heapUse.NonHeap))
+	}
+	if heapUse.HeapUsed > 0 {
+		a.HeapUsed = formatMemory(heapUse.HeapUsed)
+	}
+	if heapUse.HeapAfterGC > 0 {
+		a.HeapAfterGC = formatMemory(heapUse.HeapAfterGC)
+	}
+	if heapUse.NonHeap > 0 {
+		a.NonHeap = formatMemory(heapUse.NonHeap)
+	}
+	oversized := slices.ContainsFunc(a.Findings, func(f jvm.Finding) bool { return f.Code == jvm.CodeHeapOversized })
+	tight := slices.ContainsFunc(a.Findings, func(f jvm.Finding) bool { return f.Code == jvm.CodeHeapTight })
+	if plan, ok := jvm.PlanFor(java.Options, heapUse); ok && (oversized || tight || !heap.Known) {
+		a.RecommendedHeap, a.RecommendedMemory, a.RecommendedOptions = formatMemory(plan.Heap), formatMemory(plan.Memory), plan.Options
+		if oversized && c.MemoryRequest > plan.Memory {
+			a.MonthlySavings = (c.MemoryRequest - plan.Memory) / (1 << 30) * rates.MemoryGBHour * float64(replicas) * pricing.HoursPerMonth
+		}
+	}
+	return a, memoryFloor
+}
+
 // podPattern matches the pods a workload creates: <deployment>-<replicaset hash>-<suffix>
-// or <statefulset>-<ordinal>. Hash segments never contain dashes, so "api" does not
-// claim the pods of "api-gateway".
+// or <statefulset>-<ordinal>. Kubernetes writes the hash and the five-character suffix in
+// an alphabet without vowels, so "api" claims neither the pods of "api-gateway" nor those
+// of the StatefulSet "api-postgresql" or the Job "api-migrate".
 func podPattern(kind, name string) *regexp.Regexp {
 	if kind == "StatefulSet" {
 		return regexp.MustCompile("^" + regexp.QuoteMeta(name) + `-[0-9]+$`)
 	}
-	return regexp.MustCompile("^" + regexp.QuoteMeta(name) + `-[a-z0-9]+-[a-z0-9]+$`)
+	return regexp.MustCompile("^" + regexp.QuoteMeta(name) + `-` + safeAlphabet + `{1,10}-` + safeAlphabet + `{5}$`)
 }
+
+const safeAlphabet = `[bcdfghjklmnpqrstvwxz2456789]`
 
 // roundingSlack keeps float noise (0.1*1.5 = 0.15000000000000002) from rounding a value
 // that is already on a step up to the next one.

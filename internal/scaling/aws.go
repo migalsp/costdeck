@@ -340,7 +340,7 @@ func (p *AWSProvider) isEC2Ready(ctx context.Context, target finopsv1.ExternalTa
 		return false, fmt.Errorf("EC2 instance not found: %s", target.Identifier)
 	}
 
-	state := out.Reservations[0].Instances[0].State.Name
+	state := instanceState(out.Reservations[0].Instances[0])
 	if active {
 		return state == ec2types.InstanceStateNameRunning, nil
 	}
@@ -386,7 +386,7 @@ func (p *AWSProvider) discoverEC2(ctx context.Context, tags map[string]string) (
 					Type:       AWSTypeEC2,
 					Identifier: id,
 					Region:     p.cfg.Region,
-					Status:     string(instance.State.Name),
+					Status:     string(instanceState(instance)),
 					Name:       name,
 				})
 			}
@@ -404,4 +404,11 @@ func (p *AWSProvider) getEC2Name(tags []ec2types.Tag) string {
 		}
 	}
 	return ""
+}
+
+func instanceState(i ec2types.Instance) ec2types.InstanceStateName {
+	if i.State == nil {
+		return ""
+	}
+	return i.State.Name
 }

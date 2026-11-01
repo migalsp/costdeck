@@ -31,7 +31,7 @@ service: one operator in your cluster does it all.
     <td width="33%" valign="top"><img src="docs/assets/screenshots/budgets.png" alt="Budgets and alerts"><br><sub><b>Budgets &amp; Alerts</b>: monthly limits, forecasts and alerts sent to Slack and Teams</sub></td>
   </tr>
   <tr>
-    <td width="33%" valign="top"><img src="docs/assets/screenshots/rightsizing.png" alt="Right-sizing"><br><sub><b>Right-sizing</b>: what each workload could request, applied with a guard or as a pull request</sub></td>
+    <td width="33%" valign="top"><img src="docs/assets/screenshots/rightsizing.png" alt="Performance risks and right-sizing"><br><sub><b>Right-sizing</b>: performance risks, what each workload could request and the Java heap it needs, applied with a guard or as a pull request</sub></td>
     <td width="33%" valign="top"><img src="docs/assets/screenshots/allocation.png" alt="Cost allocation"><br><sub><b>Cost allocation</b>: a period's cost by team with shared and idle cost, as CSV</sub></td>
     <td width="33%" valign="top"><img src="docs/assets/screenshots/sleep-page.png" alt="Sleep page"><br><sub><b>Sleep page</b>: what people see on a scaled-down environment, with a way to wake it</sub></td>
   </tr>
@@ -96,6 +96,8 @@ service: one operator in your cluster does it all.
   inside its schedule's hours too.
 - **A sleep page while down.** A sleeping environment's Gateway API routes show a page that
   says it is asleep and links to waking it for an hour or two, instead of a gateway error.
+- **Ready when the day starts.** Every wake-up is timed, and prewarm starts an environment
+  that much ahead of its schedule, so nobody waits for it at nine.
 - **Everything that runs in a namespace.** Deployments, StatefulSets and Argo Rollouts
   (canary and blue-green, including those that take their pods from a Deployment); CronJobs
   are suspended and KEDA ScaledObjects paused while the namespace is down. CloudNativePG and
@@ -115,6 +117,25 @@ service: one operator in your cluster does it all.
 
 - **Right-sizing advice.** Which requests can shrink (p95 usage when VictoriaMetrics is
   connected), with the saving per workload. Cost Deck never touches nodes.
+- **Java heap advice.** A JVM takes its heap up front, so container metrics alone show a
+  Java service as busy as its heap allows. Cost Deck finds Java containers (the `java`
+  command, `JAVA_TOOL_OPTIONS`, `JDK_JAVA_OPTIONS`, `JAVA_OPTS`, `_JAVA_OPTIONS`, a JVM
+  image, or JVM metrics) and works out the heap their flags give them under the container
+  limit, as the JVM does. It flags a heap at the limit or with no room left for native
+  memory, the default heap of 25% of the limit, no limit at all, a request below the heap
+  and the Serial collector picked on small containers, and keeps memory advice from going
+  below the heap. When VictoriaMetrics has JVM metrics (Micrometer, the Prometheus Java
+  client or JMX exporter, OpenTelemetry), it recommends a heap of twice what was left
+  after garbage collection, the memory to pair with it, the flag to set and the saving.
+  Advice only: nothing changes the JVM. Set the annotation `costdeck.io/runtime` to `java`
+  or `none` on a workload or its pod template to correct the detection.
+- **Right-sizing policies.** A `RightsizingPolicy` in a team's namespace bounds and pads
+  the advice for its workloads, forbids applying it, or leaves them out.
+- **Performance risks.** What holds workloads back, most severe first, with the fix and
+  what it costs: CPU throttling by a limit, OOM kills, restarts and crash loops with their
+  reason, evictions, memory close to the limit, autoscalers stuck at their maximum and JVM
+  heaps still full after garbage collection. Right-sizing never cuts a resource under
+  pressure, and the assistant can explain why a namespace is slow.
 - **Applied with a guard, or as a pull request.** If you allow it, operators apply the
   advice from a namespace's page: the new pods are watched, and the old requests come back
   (with an alert) if one is OOMKilled, restarts or crash-loops. Workloads a GitOps tool
@@ -132,8 +153,9 @@ service: one operator in your cluster does it all.
 ### Budgets and reports
 
 - **Budgets and alerts.** Monthly budgets per cluster, team, environment or any set of
-  namespaces, alerting at thresholds and when the month is heading over, and daily cost
-  anomaly alerts.
+  namespaces, alerting at thresholds and when the month is heading over, daily cost
+  anomaly alerts, and alerts about new critical performance risks, listed in the digest
+  too.
 - **Showback and chargeback.** A period's cost by team, environment, namespace or any label
   such as `cost-center`, with shared namespaces and idle capacity charged by your policy,
   adding up to the bill, as a table and a CSV for finance.
@@ -182,7 +204,8 @@ and every chart value.
   document.
 - **[Installation guide](docs/installation.md)**: chart values, Ingress, single sign-on,
   cloud permissions, monitoring, upgrades.
-- **API**: Swagger UI at `/api/docs`, the specification at `/api/openapi.yaml` and
+- **API**: Swagger UI at `/api/docs` (swagger-ui comes from unpkg.com, pinned to one
+  version and checked against its hash), the specification at `/api/openapi.yaml` and
   `/api/openapi.json`. Every operation names the role it needs.
 
 ## How it fits together
@@ -264,8 +287,9 @@ dependencies, stage timeouts, workload rules, holiday exceptions, namespace sele
 preview and dry run, GitOps pausing, operator-run services, realized savings, GPUs, AI
 costs, auth with Keycloak, the API, VictoriaMetrics history, MCP, the sleep page, sleep
 when unused, Slack, Teams and email, Argo Rollouts, preview cleanup, cost allocation,
-several clusters, cost estimates, and right-sizing applied, guarded and proposed in a
-real Gitea. A change that breaks one fails the build. A feature or fix that changes
+several clusters, cost estimates, Java heap advice from JVM flags and metrics, performance
+risks from real OOM kills, crash loops and autoscalers, timed wake-ups and prewarm, and
+right-sizing applied, guarded and proposed in a real Gitea. A change that breaks one fails the build. A feature or fix that changes
 behaviour adds or extends a scenario. To run it against an existing test cluster instead
 of a new Kind cluster:
 
@@ -283,8 +307,8 @@ the run fails: Go, UI, Helm, the install bundle, known vulnerabilities, dependen
 conventional commit messages, zizmor on the workflows, shellcheck, the image scan and the
 end-to-end parts.
 
-Schedule windows, the next schedule change, holiday exceptions and cost estimates also
-have Go fuzz tests. `go test` runs their seed inputs, and every night each one is fuzzed
+Schedule windows, the next schedule change, holiday exceptions, cost estimates and the
+reading of JVM flags also have Go fuzz tests. `go test` runs their seed inputs, and every night each one is fuzzed
 for ten minutes; a failing input is kept as a workflow artifact, to be copied into
 `testdata/fuzz` as a regression test. To fuzz one locally:
 

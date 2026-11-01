@@ -3,6 +3,7 @@ import { usePolling } from '../lib/usePolling'
 import { Cpu, Crown, Database, Download, RefreshCw, Terminal } from 'lucide-react'
 import { Badge, Button, PageHeader } from '../components/ui'
 import { KpiTile } from '../components/finops/charts'
+import { useAuth } from '../lib/auth'
 import {
   AreaChart,
   Area,
@@ -41,6 +42,9 @@ export default function OperatorHealth() {
   const [history, setHistory] = useState<(HealthSample & { time: string })[]>([])
   const [logs, setLogs] = useState<string>('')
   const [logPod, setLogPod] = useState<string>('')
+  const [logsError, setLogsError] = useState('')
+  const { can } = useAuth()
+  const canReadLogs = can('operator')
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [autoScroll, setAutoScroll] = useState(true)
@@ -49,6 +53,7 @@ export default function OperatorHealth() {
   const fetchHealth = async () => {
     try {
       const res = await fetch('/api/operator/health')
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const data = await res.json()
       setHealth(data.current)
       setHistory(((data.history || []) as HealthSample[]).map(h => ({
@@ -61,10 +66,18 @@ export default function OperatorHealth() {
   }
 
   const fetchLogs = async () => {
+    if (!canReadLogs) return
     try {
       const res = await fetch('/api/operator/logs')
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        setLogs('')
+        setLogsError(body.error || `The logs could not be read (HTTP ${res.status}).`)
+        return
+      }
       const data = await res.text()
       setLogs(data)
+      setLogsError('')
       setLogPod(res.headers.get('X-Costdeck-Pod') || '')
     } catch (err) {
       console.error("Failed to fetch logs", err)
@@ -120,7 +133,7 @@ export default function OperatorHealth() {
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
         <KpiTile label="Status" value={hasErrors ? <span className="text-amber-700">{errorCount} error{errorCount > 1 ? 's' : ''}</span> : (health?.status || 'Unknown')}
-          sub={hasErrors ? 'In the last log lines below' : 'No errors in the recent logs'} />
+          sub={hasErrors ? 'In the last log lines below' : canReadLogs && !logsError ? 'No errors in the recent logs' : 'Logs not checked'} />
         <KpiTile label="Namespaces tracked" value={health?.managedNamespaces || 0} sub="With usage and cost history" />
         <KpiTile label="Goroutines" value={health?.goroutines || 0} sub={`${health?.cpuCores || 0} CPU cores visible to this pod`} />
         <KpiTile label="Memory" value={<>{health?.heapAllocMiB?.toFixed(0) || 0}<span className="text-sm font-medium text-slate-400"> MiB heap</span></>}
@@ -286,17 +299,17 @@ export default function OperatorHealth() {
               />
               Auto-scroll
             </label>
-            <a
+            {can('admin') && <a
               href="/api/operator/logs/download"
               className="flex items-center gap-2 px-3 py-1 bg-slate-700 hover:bg-slate-600 text-white rounded text-xs transition-colors"
             >
               <Download size={12} />
               Download full logs
-            </a>
+            </a>}
           </div>
         </div>
         <div ref={logBoxRef} className="flex-1 overflow-auto p-6 font-mono text-[13px] text-slate-300 whitespace-pre">
-          {logs || 'No logs available...'}
+          {canReadLogs ? (logsError || logs || 'No logs available...') : 'Reading the logs needs the operator role.'}
         </div>
       </div>
     </div>

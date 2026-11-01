@@ -81,7 +81,8 @@ func (e *Engine) routes(ctx context.Context, ns string) ([]unstructured.Unstruct
 }
 
 // SleepRoutes points every HTTPRoute of a namespace at the sleep page and returns how many
-// show it now. Routes already asleep are left as they are.
+// show it now. A route already asleep keeps what it saved; it is only moved to the page's
+// current Service when it still points at an earlier one.
 func (e *Engine) SleepRoutes(ctx context.Context, ns string, page SleepBackend) (int, error) {
 	routes, err := e.routes(ctx, ns)
 	if err != nil {
@@ -90,30 +91,56 @@ func (e *Engine) SleepRoutes(ctx context.Context, ns string, page SleepBackend) 
 	asleep := 0
 	for i := range routes {
 		r := &routes[i]
-		if r.GetAnnotations()[SleepingAnnotation] != "" {
+		rules, _, _ := unstructured.NestedSlice(r.Object, "spec", "rules")
+		mark := r.GetAnnotations()[SleepingAnnotation]
+		if mark != "" && pointsAt(rules, page) {
 			asleep++
 			continue
 		}
-		rules, _, _ := unstructured.NestedSlice(r.Object, "spec", "rules")
-		saved := make([]savedRule, len(rules))
+		if mark == "" {
+			saved := make([]savedRule, len(rules))
+			for j, raw := range rules {
+				rule, _ := raw.(map[string]any)
+				saved[j] = savedRule{BackendRefs: rule["backendRefs"], Filters: rule["filters"]}
+			}
+			raw, err := json.Marshal(saved)
+			if err != nil {
+				return asleep, err
+			}
+			mark = string(raw)
+		}
 		for j, raw := range rules {
 			rule, _ := raw.(map[string]any)
-			saved[j] = savedRule{BackendRefs: rule["backendRefs"], Filters: rule["filters"]}
 			rule["backendRefs"] = []any{map[string]any{"group": "", "kind": "Service", "name": page.Name, "namespace": page.Namespace, "port": page.Port}}
 			rule["filters"] = []any{map[string]any{"type": "RequestHeaderModifier",
 				"requestHeaderModifier": map[string]any{"set": []any{map[string]any{"name": SleepingHeader, "value": ns}}}}}
 			rules[j] = rule
 		}
-		raw, err := json.Marshal(saved)
-		if err != nil {
-			return asleep, err
-		}
-		if err := e.patchRoute(ctx, r, rules, string(raw)); err != nil {
+		if err := e.patchRoute(ctx, r, rules, mark); err != nil {
 			return asleep, fmt.Errorf("point HTTPRoute %s/%s at the sleep page: %w", ns, r.GetName(), err)
 		}
 		asleep++
 	}
 	return asleep, nil
+}
+
+func pointsAt(rules []any, page SleepBackend) bool {
+	for _, raw := range rules {
+		rule, _ := raw.(map[string]any)
+		refs, _ := rule["backendRefs"].([]any)
+		if len(refs) != 1 {
+			return false
+		}
+		ref, _ := refs[0].(map[string]any)
+		port, _ := ref["port"].(int64)
+		if p, ok := ref["port"].(float64); ok {
+			port = int64(p)
+		}
+		if ref["name"] != page.Name || ref["namespace"] != page.Namespace || port != page.Port {
+			return false
+		}
+	}
+	return true
 }
 
 // WakeRoutes puts back what SleepRoutes replaced and returns how many routes it restored.

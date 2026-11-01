@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -51,12 +50,40 @@ func scheduleOf(obj client.Object) (schedules []finopsv1.ScalingSchedule, except
 func (s *Server) timetableOf(ctx context.Context, obj client.Object) scaling.Timetable {
 	schedules, own, names := scheduleOf(obj)
 	exceptions, _ := scaling.ResolveExceptions(own, names, s.calendars(ctx), scaling.ExceptionZone(schedules))
-	return scaling.Timetable{Schedules: schedules, Exceptions: exceptions}
+	return scaling.Timetable{Schedules: schedules, Exceptions: exceptions, Lead: prewarmLeadOf(obj)}
+}
+
+func prewarmLeadOf(obj client.Object) time.Duration {
+	switch o := obj.(type) {
+	case *finopsv1.ScalingGroup:
+		return scaling.PrewarmLead(o.Spec.Prewarm, o.Status.RecentWakeUps)
+	case *finopsv1.ScalingConfig:
+		return scaling.PrewarmLead(o.Spec.Prewarm, o.Status.RecentWakeUps)
+	}
+	return 0
 }
 
 // validateSchedule rejects selectors, hibernate rules, exceptions and calendar names that
 // would not apply, so a typo is caught when saving instead of surfacing later in a status
 // condition.
+const (
+	maxSchedules  = 50
+	maxExceptions = 100
+	maxCalendars  = 10
+)
+
+func checkScheduleSize(schedules []finopsv1.ScalingSchedule, exceptions []finopsv1.ScheduleException, calendars []string) error {
+	switch {
+	case len(schedules) > maxSchedules:
+		return fmt.Errorf("a schedule has at most %d time windows, not %d", maxSchedules, len(schedules))
+	case len(exceptions) > maxExceptions:
+		return fmt.Errorf("a schedule has at most %d exceptions, not %d", maxExceptions, len(exceptions))
+	case len(calendars) > maxCalendars:
+		return fmt.Errorf("a schedule uses at most %d calendars, not %d", maxCalendars, len(calendars))
+	}
+	return nil
+}
+
 func (s *Server) validateSchedule(ctx context.Context, obj client.Object) error {
 	if g, ok := obj.(*finopsv1.ScalingGroup); ok && g.Spec.NamespaceSelector != nil {
 		// Matching against no namespaces checks the selector itself.
@@ -75,6 +102,9 @@ func (s *Server) validateSchedule(ctx context.Context, obj client.Object) error 
 		return err
 	}
 	schedules, own, names := scheduleOf(obj)
+	if err := checkScheduleSize(schedules, own, names); err != nil {
+		return err
+	}
 	if _, problems := scaling.ResolveExceptions(own, names, s.calendars(ctx), scaling.ExceptionZone(schedules)); len(problems) > 0 {
 		return errors.New(strings.Join(problems, "; "))
 	}
@@ -138,7 +168,7 @@ func (s *Server) changeExceptions(ctx context.Context, target, name string, chan
 	var obj client.Object
 	switch target {
 	case targetGroup:
-		obj = &finopsv1.ScalingGroup{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: config.OperatorNamespace()}}
+		obj = &finopsv1.ScalingGroup{Name: name, Namespace: config.OperatorNamespace()}
 	case targetNamespace:
 		cfg, err := s.configForNamespace(ctx, name)
 		if err != nil {

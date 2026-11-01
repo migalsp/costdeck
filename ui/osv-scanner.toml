@@ -1,0 +1,4 @@
+[[IgnoredVulns]]
+id = "GHSA-g3hv-75wg-m249"
+ignoreUntil = 2026-11-30T00:00:00Z
+reason = "Only eslint and typescript-eslint use minimatch, a development dependency that is not in the dashboard bundle or the image, and they match glob patterns from eslint.config.js only. No eslint or typescript-eslint release depends on the fixed minimatch 11 yet."

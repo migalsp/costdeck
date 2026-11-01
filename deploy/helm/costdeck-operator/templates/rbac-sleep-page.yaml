@@ -27,7 +27,7 @@ subjects:
   name: {{ include "costdeck-operator.serviceAccountName" . }}
   namespace: {{ .Release.Namespace }}
 ---
-# The ReferenceGrant that opens the API Service to the sleeping routes lives here.
+# The ReferenceGrant that opens the sleep page Service to the sleeping routes lives here.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:

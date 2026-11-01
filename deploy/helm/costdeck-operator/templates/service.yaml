@@ -17,3 +17,22 @@ spec:
       name: http
   selector:
     {{- include "costdeck-operator.selectorLabels" . | nindent 4 }}
+{{- if .Values.sleepPage.enabled }}
+---
+# Serves only the sleep page: the sleeping routes may reach this Service, never the API.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "costdeck-operator.fullname" . }}-sleep
+  labels:
+    {{- include "costdeck-operator.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: 80
+      targetPort: sleep
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "costdeck-operator.selectorLabels" . | nindent 4 }}
+{{- end }}

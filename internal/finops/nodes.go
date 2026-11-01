@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	resourcehelper "k8s.io/component-helpers/resource"
+
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 
@@ -153,23 +155,8 @@ const (
 // PodRequests is what the scheduler reserves for a pod: the larger of its containers'
 // requests and its biggest init container, plus the pod overhead.
 func PodRequests(p *corev1.Pod) (cpu, mem resource.Quantity) {
-	for _, c := range p.Spec.Containers {
-		cpu.Add(*c.Resources.Requests.Cpu())
-		mem.Add(*c.Resources.Requests.Memory())
-	}
-	for _, c := range p.Spec.InitContainers {
-		if c.Resources.Requests.Cpu().Cmp(cpu) > 0 {
-			cpu = c.Resources.Requests.Cpu().DeepCopy()
-		}
-		if c.Resources.Requests.Memory().Cmp(mem) > 0 {
-			mem = c.Resources.Requests.Memory().DeepCopy()
-		}
-	}
-	if p.Spec.Overhead != nil {
-		cpu.Add(*p.Spec.Overhead.Cpu())
-		mem.Add(*p.Spec.Overhead.Memory())
-	}
-	return cpu, mem
+	reqs := resourcehelper.PodRequests(p, resourcehelper.PodResourcesOptions{})
+	return reqs.Cpu().DeepCopy(), reqs.Memory().DeepCopy()
 }
 
 // active reports whether a pod holds node resources.

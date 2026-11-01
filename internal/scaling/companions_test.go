@@ -6,7 +6,6 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -41,9 +40,9 @@ func companionEngine(t *testing.T, withKEDA bool, objs ...client.Object) *Engine
 
 func TestCompanionsArePausedAndOnlyOursResumed(t *testing.T) {
 	ctx := context.Background()
-	nightly := &batchv1.CronJob{ObjectMeta: metav1.ObjectMeta{Name: "nightly", Namespace: "test-ns"}}
-	manual := &batchv1.CronJob{ObjectMeta: metav1.ObjectMeta{Name: "manual", Namespace: "test-ns"}, Spec: batchv1.CronJobSpec{Suspend: new(true)}}
-	keep := &batchv1.CronJob{ObjectMeta: metav1.ObjectMeta{Name: "backup-keep", Namespace: "test-ns"}}
+	nightly := &batchv1.CronJob{Name: "nightly", Namespace: "test-ns"}
+	manual := &batchv1.CronJob{Name: "manual", Namespace: "test-ns", Spec: batchv1.CronJobSpec{Suspend: new(true)}}
+	keep := &batchv1.CronJob{Name: "backup-keep", Namespace: "test-ns"}
 	e := companionEngine(t, true, nightly, manual, keep, scaledObject("api", nil))
 
 	if err := e.holdCompanions(ctx, "test-ns", []string{"backup-*"}); err != nil {

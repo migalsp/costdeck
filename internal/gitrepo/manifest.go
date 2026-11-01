@@ -68,9 +68,13 @@ func get(m *yaml.Node, key string) *yaml.Node {
 	return nil
 }
 
-// ensure returns the mapping under key, adding it when missing.
+// ensure returns the mapping under key, adding it when missing and turning an empty
+// value (resources: with nothing under it) into one.
 func ensure(m *yaml.Node, key string) *yaml.Node {
 	if v := get(m, key); v != nil {
+		if v.Kind == yaml.ScalarNode && (v.Tag == "!!null" || v.Value == "") {
+			v.Kind, v.Tag, v.Value, v.Style, v.Content = yaml.MappingNode, "!!map", "", 0, nil
+		}
 		return v
 	}
 	v := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}

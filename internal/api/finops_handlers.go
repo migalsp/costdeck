@@ -294,13 +294,14 @@ func (s *Server) handleBudgets(w http.ResponseWriter, r *http.Request) {
 	sort.Strings(teamList)
 	wx := cfg.Spec.Integrations.Messenger
 	writeJSON(w, http.StatusOK, map[string]any{
-		"currency":   rates.Currency,
-		"budgets":    finops.EvaluateBudgets(cfg.Spec.Budgets, snap, ledger),
-		"anomalies":  cfg.Spec.Alerts.Anomalies,
-		"events":     events,
-		"webexReady": wx != nil && wx.Webex != nil && wx.Webex.Enabled && wx.Webex.RoomID != "",
-		"channels":   notify.Ready(cfg, notify.EventAlerts),
-		"scopes":     map[string]any{"namespaces": names, "teams": teamList},
+		"currency":         rates.Currency,
+		"budgets":          finops.EvaluateBudgets(cfg.Spec.Budgets, snap, ledger),
+		"anomalies":        cfg.Spec.Alerts.Anomalies,
+		"performanceRisks": map[string]bool{"enabled": cfg.Spec.Alerts.PerformanceRisks != nil && cfg.Spec.Alerts.PerformanceRisks.Enabled},
+		"events":           events,
+		"webexReady":       wx != nil && wx.Webex != nil && wx.Webex.Enabled && wx.Webex.RoomID != "",
+		"channels":         notify.Ready(cfg, notify.EventAlerts),
+		"scopes":           map[string]any{"namespaces": names, "teams": teamList},
 	})
 }
 

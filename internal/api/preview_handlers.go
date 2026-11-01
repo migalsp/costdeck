@@ -45,6 +45,7 @@ type previewRequest struct {
 		ExternalTargets   []finopsv1.ExternalTarget    `json:"externalTargets,omitempty"`
 		PauseGitOps       bool                         `json:"pauseGitOps,omitempty"`
 		Hibernate         []finopsv1.HibernateRule     `json:"hibernate,omitempty"`
+		Prewarm           *finopsv1.Prewarm            `json:"prewarm,omitempty"`
 	} `json:"spec"`
 }
 
@@ -92,6 +93,10 @@ func (s *Server) handlePreviewSchedule(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "kind must be group or config")
 		return
 	}
+	if err := checkScheduleSize(req.Spec.Schedules, req.Spec.Exceptions, req.Spec.Calendars); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	resp, err := s.previewSchedule(r.Context(), req, time.Now())
 	if err != nil {
 		writeK8sError(w, err)
@@ -109,7 +114,7 @@ func (s *Server) previewSchedule(ctx context.Context, req previewRequest, now ti
 	calendars := s.calendars(ctx)
 	exceptions, problems := scaling.ResolveExceptions(sp.Exceptions, sp.Calendars, calendars, scaling.ExceptionZone(sp.Schedules))
 	resp.Problems = append(resp.Problems, problems...)
-	tt := scaling.Timetable{Schedules: sp.Schedules, Exceptions: exceptions}
+	tt := scaling.Timetable{Schedules: sp.Schedules, Exceptions: exceptions, Lead: scaling.PrewarmLead(sp.Prewarm, s.recentWakeUps(ctx, req.Kind, req.Name))}
 	resp.Intervals = tt.Intervals(now, now.AddDate(0, 0, previewDays))
 	resp.UpShare = tt.ActiveShare(now, now.AddDate(0, 0, shareDays))
 	resp.NextChange = tt.NextChange(now)
@@ -144,9 +149,9 @@ func (s *Server) previewSchedule(ctx context.Context, req previewRequest, now ti
 		}
 		// Plan the draft among the other groups, as the controller will.
 		draft := finopsv1.ScalingGroup{
-			ObjectMeta: metav1.ObjectMeta{Name: previewNewName, CreationTimestamp: metav1.NewTime(now)},
-			Spec:       finopsv1.ScalingGroupSpec{Namespaces: sp.Namespaces, NamespaceSelector: sp.NamespaceSelector},
-			Status:     finopsv1.ScalingGroupStatus{SelectedNamespaces: selected},
+			Name: previewNewName, CreationTimestamp: metav1.NewTime(now),
+			Spec:   finopsv1.ScalingGroupSpec{Namespaces: sp.Namespaces, NamespaceSelector: sp.NamespaceSelector},
+			Status: finopsv1.ScalingGroupStatus{SelectedNamespaces: selected},
 		}
 		var planned []finopsv1.ScalingGroup
 		for _, g := range groups.Items {
@@ -258,6 +263,26 @@ func hibernateError(err error) string {
 	return err.Error()
 }
 
+func (s *Server) recentWakeUps(ctx context.Context, kind, name string) []finopsv1.WakeUp {
+	if name == "" {
+		return nil
+	}
+	key := client.ObjectKey{Name: name, Namespace: config.OperatorNamespace()}
+	switch kind {
+	case targetGroup:
+		g := &finopsv1.ScalingGroup{}
+		if s.Client.Get(ctx, key, g) == nil {
+			return g.Status.RecentWakeUps
+		}
+	case kindConfig:
+		c := &finopsv1.ScalingConfig{}
+		if s.Client.Get(ctx, key, c) == nil {
+			return c.Status.RecentWakeUps
+		}
+	}
+	return nil
+}
+
 // toolPreview previews a saved group (target "group") or namespace schedule ("namespace")
 // for the assistant and MCP.
 func (s *Server) toolPreview(ctx context.Context, target, name string) (string, error) {
@@ -271,7 +296,7 @@ func (s *Server) toolPreview(ctx context.Context, target, name string) (string, 
 		req.Kind, req.Name = targetGroup, g.Name
 		req.Spec.Namespaces, req.Spec.NamespaceSelector, req.Spec.Activation = g.Spec.Namespaces, g.Spec.NamespaceSelector, g.Spec.Activation
 		req.Spec.Schedules, req.Spec.Exceptions, req.Spec.Calendars, req.Spec.ExternalTargets = g.Spec.Schedules, g.Spec.Exceptions, g.Spec.Calendars, g.Spec.ExternalTargets
-		req.Spec.PauseGitOps, req.Spec.Hibernate = g.Spec.PauseGitOps, g.Spec.Hibernate
+		req.Spec.PauseGitOps, req.Spec.Hibernate, req.Spec.Prewarm = g.Spec.PauseGitOps, g.Spec.Hibernate, g.Spec.Prewarm
 	case targetNamespace:
 		c, err := s.configForNamespace(ctx, name)
 		if err != nil {
@@ -280,7 +305,7 @@ func (s *Server) toolPreview(ctx context.Context, target, name string) (string, 
 		req.Kind, req.Name = kindConfig, c.Name
 		req.Spec.TargetNamespace, req.Spec.Exclusions = c.Spec.TargetNamespace, c.Spec.Exclusions
 		req.Spec.Schedules, req.Spec.Exceptions, req.Spec.Calendars = c.Spec.Schedules, c.Spec.Exceptions, c.Spec.Calendars
-		req.Spec.PauseGitOps, req.Spec.Hibernate = c.Spec.PauseGitOps, c.Spec.Hibernate
+		req.Spec.PauseGitOps, req.Spec.Hibernate, req.Spec.Prewarm = c.Spec.PauseGitOps, c.Spec.Hibernate, c.Spec.Prewarm
 	default:
 		return "", fmt.Errorf("target must be group or namespace")
 	}

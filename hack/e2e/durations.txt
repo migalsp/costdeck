@@ -4,6 +4,7 @@
 40-stage-timeout 71
 50-workload-rules 58
 60-single-namespace 13
+61-delete-while-down 70
 70-victoriametrics 6
 80-mcp 1
 90-exceptions 33
@@ -25,4 +26,7 @@
 996-allocation 2
 997-clusters 1
 998-estimate 14
+9985-java 35
+9986-risks 150
+9987-prewarm 60
 999-rightsizing 59

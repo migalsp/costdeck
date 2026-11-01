@@ -282,6 +282,16 @@ func ClaimStrings(claims map[string]any, path string) []string {
 // winning; without a match AutoProvision (default on) grants DefaultRole (default viewer).
 // A group mapping matches with or without a leading slash, as Keycloak's full group paths
 // carry one.
+func oidcRole(cfg finopsv1.OIDCConfig, name string) (Role, bool) {
+	if mapped, ok := cfg.RoleMapping[name]; ok {
+		return ParseRole(mapped)
+	}
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(name)), "costdeck.") {
+		return ParseRole(name)
+	}
+	return "", false
+}
+
 func ResolveOIDCRole(cfg finopsv1.OIDCConfig, groups, roles []string) (Role, bool) {
 	var role Role
 	for _, g := range groups {
@@ -293,7 +303,7 @@ func ResolveOIDCRole(cfg finopsv1.OIDCConfig, groups, roles []string) (Role, boo
 		}
 	}
 	for _, name := range roles {
-		if r, ok := ParseRole(name); ok {
+		if r, ok := oidcRole(cfg, name); ok {
 			role = Higher(role, r)
 		}
 	}

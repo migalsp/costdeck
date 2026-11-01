@@ -145,6 +145,7 @@ func parseExceptionTime(s string, loc *time.Location) (time.Time, bool, error) {
 type Timetable struct {
 	Schedules  []finopsv1.ScalingSchedule
 	Exceptions []Exception
+	Lead       time.Duration
 }
 
 // exceptionAt returns the exception in force at t: of those covering t, the one that
@@ -165,10 +166,22 @@ func (tt Timetable) exceptionAt(t time.Time) *Exception {
 
 // ActiveAt says whether the target should be up at t.
 func (tt Timetable) ActiveAt(t time.Time) bool {
+	return tt.activeWithoutLead(t) || (tt.Lead > 0 && tt.activeWithoutLead(t.Add(tt.Lead)))
+}
+
+func (tt Timetable) activeWithoutLead(t time.Time) bool {
 	if ex := tt.exceptionAt(t); ex != nil {
 		return ex.Active
 	}
 	return (&Engine{}).IsActiveAt(t, tt.Schedules, nil)
+}
+
+func (tt Timetable) prewarming(t time.Time) bool {
+	return tt.Lead > 0 && !tt.activeWithoutLead(t) && tt.activeWithoutLead(t.Add(tt.Lead))
+}
+
+func (tt Timetable) exceptionsDecide(t time.Time) bool {
+	return tt.exceptionAt(t) != nil && (tt.Lead <= 0 || tt.exceptionAt(t.Add(tt.Lead)) != nil)
 }
 
 // NextChange is the first minute after t at which ActiveAt flips, or nil if it never
@@ -181,7 +194,7 @@ func (tt Timetable) NextChange(t time.Time) *time.Time {
 	current := tt.ActiveAt(t)
 	var bounds []time.Time
 	for _, ex := range tt.Exceptions {
-		for _, b := range []time.Time{ex.From, ex.To} {
+		for _, b := range []time.Time{ex.From, ex.To, ex.From.Add(-tt.Lead), ex.To.Add(-tt.Lead)} {
 			if b.After(t) {
 				bounds = append(bounds, b)
 			}
@@ -195,12 +208,13 @@ func (tt Timetable) NextChange(t time.Time) *time.Time {
 		if i < len(bounds) {
 			until = &bounds[i]
 		}
-		if !scheduleSteady && tt.exceptionAt(from) == nil {
+		scheduleOnly := tt.exceptionAt(from) == nil && (tt.Lead <= 0 || tt.exceptionAt(from.Add(tt.Lead)) == nil)
+		if !tt.exceptionsDecide(from) && (!scheduleSteady || !scheduleOnly) {
 			change, scannedWholeWeek := tt.scheduleChangeBefore(from, until, current)
 			if change != nil {
 				return change
 			}
-			scheduleSteady = scannedWholeWeek
+			scheduleSteady = scheduleSteady || (scannedWholeWeek && scheduleOnly)
 		}
 		if until == nil {
 			return nil
@@ -241,6 +255,9 @@ const maxIntervals = 2000
 // Intervals splits [from, to) into stretches of one state and one reason, for previews.
 func (tt Timetable) Intervals(from, to time.Time) []Interval {
 	reason := func(t time.Time) string {
+		if tt.prewarming(t) {
+			return ReasonPrewarm
+		}
 		if ex := tt.exceptionAt(t); ex != nil {
 			return ex.Name
 		}
@@ -260,6 +277,14 @@ func (tt Timetable) Intervals(from, to time.Time) []Interval {
 			for _, b := range []time.Time{ex.From, ex.To} {
 				if b.After(start) && b.Before(end) && reason(b) != why {
 					end = b
+				}
+			}
+		}
+		if why == ReasonPrewarm {
+			for at := start.Truncate(time.Minute).Add(time.Minute); at.Before(end) && !at.After(start.Add(tt.Lead)); at = at.Add(time.Minute) {
+				if !tt.prewarming(at) {
+					end = at
+					break
 				}
 			}
 		}

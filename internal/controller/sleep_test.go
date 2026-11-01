@@ -7,7 +7,6 @@ import (
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
@@ -29,14 +28,14 @@ var _ = Describe("Sleep page", func() {
 
 	It("shows the sleep page once the namespace is down, and the application once it is up", func() {
 		GinkgoT().Setenv("POD_NAMESPACE", "default")
-		Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}}))).To(Succeed())
+		Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, &corev1.Namespace{Name: ns}))).To(Succeed())
 		original := []any{map[string]any{"backendRefs": []any{map[string]any{"name": "web", "port": int64(80)}}}}
 		route := &unstructured.Unstructured{Object: map[string]any{"spec": map[string]any{"hostnames": []any{"shop.example.com"}, "rules": original}}}
 		route.SetGroupVersionKind(routeGVK)
 		route.SetNamespace(ns)
 		route.SetName("shop")
 		Expect(k8sClient.Create(ctx, route)).To(Succeed())
-		g := &finopsv1.ScalingGroup{ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace},
+		g := &finopsv1.ScalingGroup{Name: key.Name, Namespace: key.Namespace,
 			Spec: finopsv1.ScalingGroupSpec{Category: "Test", Namespaces: []string{ns}, Schedules: closed, SleepPage: true}}
 		Expect(k8sClient.Create(ctx, g)).To(Succeed())
 		DeferCleanup(func() {
@@ -71,7 +70,8 @@ var _ = Describe("Sleep page", func() {
 		Expect(asleep.GetAnnotations()).To(HaveKey(scaling.SleepingAnnotation))
 		refs, _, _ := unstructured.NestedSlice(asleep.Object, "spec", "rules")
 		backend := refs[0].(map[string]any)["backendRefs"].([]any)[0].(map[string]any)
-		Expect(backend["name"]).To(Equal("costdeck-operator-api"))
+		Expect(backend["name"]).To(Equal("costdeck-operator-sleep"))
+		Expect(backend["port"]).To(BeEquivalentTo(80))
 		Expect(backend["namespace"]).To(Equal("default"))
 		Expect(grantExists()).To(BeTrue())
 		cond := meta.FindStatusCondition(g.Status.Conditions, ConditionSleepPage)

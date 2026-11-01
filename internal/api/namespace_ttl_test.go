@@ -50,7 +50,7 @@ func TestNamespaceTTLSettingsAndPlan(t *testing.T) {
 
 	ns := func(name string, age time.Duration, labels map[string]string) {
 		t.Helper()
-		o := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: name, Labels: labels, CreationTimestamp: metav1.NewTime(time.Now().Add(-age))}}
+		o := &corev1.Namespace{Name: name, Labels: labels, CreationTimestamp: metav1.NewTime(time.Now().Add(-age))}
 		if err := server.Client.Create(ctx, o); err != nil {
 			t.Fatal(err)
 		}

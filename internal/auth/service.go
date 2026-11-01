@@ -136,8 +136,10 @@ func (s *Service) localConfigured() bool { return s.localUser != "" && s.localPa
 // COSTDECK_AUTH_DISABLED=true and no single sign-on: a development setting, never a
 // fallback for missing configuration.
 func (s *Service) Disabled(ctx context.Context) bool {
-	return s.disabled && !s.Entra.Enabled(ctx)
+	return s.disabled && !s.Entra.Enabled(ctx) && !s.OIDC.Enabled(ctx)
 }
+
+const webexWebhookPath = "/api/webex/webhook"
 
 // anonymousAdmin is the identity used while authentication is disabled.
 var anonymousAdmin = &Identity{Subject: "anonymous", Name: "Anonymous", Role: RoleAdmin, Provider: "anonymous"}
@@ -146,7 +148,7 @@ var anonymousAdmin = &Identity{Subject: "anonymous", Name: "Anonymous", Role: Ro
 // authenticates every request with its HMAC signature instead.
 func PublicPath(path string) bool {
 	switch path {
-	case "/api/login", "/api/logout", "/api/auth/config", "/api/docs", "/api/openapi.yaml", "/api/openapi.json", "/api/webex/webhook":
+	case "/api/login", "/api/logout", "/api/auth/config", "/api/docs", "/api/openapi.yaml", "/api/openapi.json", webexWebhookPath:
 		return true
 	}
 	return strings.HasPrefix(path, "/api/auth/entra/") || strings.HasPrefix(path, "/api/auth/oidc/")
@@ -164,6 +166,10 @@ func protectedPath(path string) bool {
 func (s *Service) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !protectedPath(r.URL.Path) {
+			if strings.HasPrefix(r.URL.Path, "/api/") && r.URL.Path != webexWebhookPath && crossSiteWrite(r) {
+				writeAuthJSON(w, http.StatusForbidden, map[string]string{"error": "Cross-site request refused"})
+				return
+			}
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -282,6 +288,10 @@ func (s *Service) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		writeAuthJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
 		return
 	}
+	if s.limiter(accountKey(creds.Username)).Tokens() < 1 {
+		writeAuthJSON(w, http.StatusTooManyRequests, map[string]string{"error": "Too many failed attempts for this account, wait a minute and try again."})
+		return
+	}
 
 	var id Identity
 	switch {
@@ -325,6 +335,7 @@ func (s *Service) HandleLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) rejectLogin(w http.ResponseWriter, r *http.Request, user string, status int, msg string) {
+	s.limiter(accountKey(user)).Allow()
 	logf.FromContext(r.Context()).Info("Rejected a local sign-in", "user", user, "ip", clientIP(r), "reason", msg)
 	writeAuthJSON(w, status, map[string]string{"error": msg})
 }
@@ -426,7 +437,8 @@ const (
 	maxLimiters = 4096
 )
 
-// limiter allows five password attempts per minute per client address.
+// limiter allows five password attempts per minute per client address, and five failed
+// attempts per minute per account.
 func (s *Service) limiter(ip string) *rate.Limiter {
 	s.limitersMu.Lock()
 	defer s.limitersMu.Unlock()
@@ -447,6 +459,10 @@ func (s *Service) limiter(ip string) *rate.Limiter {
 	l := rate.NewLimiter(rate.Every(12*time.Second), loginBurst)
 	s.limiters[ip] = l
 	return l
+}
+
+func accountKey(username string) string {
+	return "account:" + strings.ToLower(strings.TrimSpace(username))
 }
 
 // clientIP returns the address that rate limiting applies to. Behind an Ingress, that is

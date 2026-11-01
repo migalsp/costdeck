@@ -12,12 +12,14 @@ import (
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
 	"github.com/migalsp/costdeck-operator/internal/scaling"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
 func buildMockServer() *Server {
@@ -35,10 +37,8 @@ func TestHandleScalingGroupsGET(t *testing.T) {
 
 	// Seed one item
 	group := &finopsv1.ScalingGroup{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-group",
-			Namespace: "costdeck",
-		},
+		Name:      "test-group",
+		Namespace: "costdeck",
 		Spec: finopsv1.ScalingGroupSpec{
 			Namespaces: []string{"default"},
 		},
@@ -105,10 +105,8 @@ func TestHandleScalingConfigsGET(t *testing.T) {
 	server := buildMockServer()
 
 	config := &finopsv1.ScalingConfig{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-config",
-			Namespace: "costdeck",
-		},
+		Name:      "test-config",
+		Namespace: "costdeck",
 		Spec: finopsv1.ScalingConfigSpec{
 			TargetNamespace: "app-ns",
 		},
@@ -146,10 +144,8 @@ func TestHandleScalingConfigActionsGETAndDELETE(t *testing.T) {
 	server := buildMockServer()
 
 	config := &finopsv1.ScalingConfig{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-config-action",
-			Namespace: "costdeck",
-		},
+		Name:      "test-config-action",
+		Namespace: "costdeck",
 	}
 	if err := server.Client.Create(context.Background(), config); err != nil {
 		t.Fatal(err)
@@ -180,7 +176,7 @@ func seedGroup(t *testing.T, server *Server, name string) {
 	t.Helper()
 	forcedUp := true
 	group := &finopsv1.ScalingGroup{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "costdeck"},
+		Name: name, Namespace: "costdeck",
 		Spec: finopsv1.ScalingGroupSpec{
 			Namespaces: []string{"default"},
 			Active:     &forcedUp,
@@ -377,5 +373,209 @@ func TestSettingsEntraValidationAndMasking(t *testing.T) {
 	e := resp.Auth.Entra
 	if e == nil || !e.Enabled || !e.HasClientSecret || e.DefaultRole != "viewer" || e.GroupRoleMapping["g1"] != "operator" {
 		t.Errorf("stored Entra settings = %+v, want aliases normalised and the secret stored", e)
+	}
+}
+
+func TestGetScalingGroupLeavesOutManagedFields(t *testing.T) {
+	t.Setenv("POD_NAMESPACE", "costdeck")
+	server := interceptedServer(interceptor.Funcs{Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+		if err := c.Get(ctx, key, obj, opts...); err != nil {
+			return err
+		}
+		obj.SetManagedFields([]metav1.ManagedFieldsEntry{{Manager: "kubectl", Operation: metav1.ManagedFieldsOperationApply, APIVersion: "finops.costdeck.io/v1"}})
+		return nil
+	}})
+	createAll(t, server.Client, &finopsv1.ScalingGroup{Name: "shop", Namespace: "costdeck", Spec: finopsv1.ScalingGroupSpec{Namespaces: []string{"shop-dev"}}})
+
+	rr := send(t, server, http.MethodGet, "/api/scaling/groups/shop", "")
+	if rr.Code != http.StatusOK || strings.Contains(rr.Body.String(), "managedFields") || strings.Contains(rr.Body.String(), "kubectl") {
+		t.Fatalf("GET = %d %s, want the group without managedFields", rr.Code, rr.Body.String())
+	}
+	if got := decodeInto[finopsv1.ScalingGroup](t, rr); got.Name != shopNamespace || strings.Join(got.Spec.Namespaces, ",") != "shop-dev" {
+		t.Errorf("group = %+v", got)
+	}
+	if rr := send(t, server, http.MethodGet, "/api/scaling/groups/ghost", ""); rr.Code != http.StatusNotFound {
+		t.Errorf("GET unknown group = %d, want 404", rr.Code)
+	}
+}
+
+func TestDeleteScalingGroup(t *testing.T) {
+	t.Setenv("POD_NAMESPACE", "costdeck")
+	server := buildMockServer()
+	seedGroup(t, server, "shop")
+	if rr := send(t, server, http.MethodDelete, "/api/scaling/groups/shop", ""); rr.Code != http.StatusNoContent {
+		t.Fatalf("DELETE = %d %s", rr.Code, rr.Body.String())
+	}
+	var list finopsv1.ScalingGroupList
+	if err := server.Client.List(context.Background(), &list); err != nil || len(list.Items) != 0 {
+		t.Errorf("groups after delete = %d (%v)", len(list.Items), err)
+	}
+	if rr := send(t, server, http.MethodDelete, "/api/scaling/groups/shop", ""); rr.Code != http.StatusNotFound {
+		t.Errorf("deleting twice = %d, want 404", rr.Code)
+	}
+}
+
+func TestScalingGroupEventsListOnlyThatGroupsEvents(t *testing.T) {
+	t.Setenv("POD_NAMESPACE", "costdeck")
+	server := buildMockServer()
+	event := func(name, ns, kind, object, reason string) *corev1.Event {
+		return &corev1.Event{Name: name, Namespace: ns, Reason: reason, InvolvedObject: corev1.ObjectReference{Kind: kind, Name: object, Namespace: "costdeck"}}
+	}
+	createAll(t, server.Client,
+		event("e1", "costdeck", "ScalingGroup", "shop", "ScaledDown"),
+		event("e2", "costdeck", "ScalingGroup", "search", "ScaledUp"),
+		event("e3", "costdeck", "ScalingConfig", "shop", "ScaledUp"),
+		event("e4", "elsewhere", "ScalingGroup", "shop", "ScaledUp"),
+		event("e5", "costdeck", "ScalingGroup", "shop", "ScaledUp"),
+	)
+
+	events := decodeInto[[]corev1.Event](t, send(t, server, http.MethodGet, "/api/scaling/groups/shop/events", ""))
+	reasons := make([]string, 0, len(events))
+	for _, e := range events {
+		reasons = append(reasons, e.Name+":"+e.Reason)
+	}
+	if strings.Join(reasons, ",") != "e1:ScaledDown,e5:ScaledUp" {
+		t.Errorf("events = %v, want only the shop group's events in the operator namespace", reasons)
+	}
+	if body := send(t, server, http.MethodGet, "/api/scaling/groups/quiet/events", "").Body.String(); strings.TrimSpace(body) != "[]" {
+		t.Errorf("a group without events = %s, want []", body)
+	}
+}
+
+func TestUpdateScalingGroupRefusesBadInput(t *testing.T) {
+	t.Setenv("POD_NAMESPACE", "costdeck")
+	server := buildMockServer()
+	seedGroup(t, server, "shop")
+	for _, tc := range []struct {
+		name, body string
+		status     int
+	}{
+		{"shop", `{"spec":`, http.StatusBadRequest},
+		{"shop", `{"spec":{"namespaces":["a"],"calendars":["no-such-calendar"]}}`, http.StatusBadRequest},
+		{"ghost", `{"spec":{"namespaces":["a"]}}`, http.StatusNotFound},
+	} {
+		if rr := send(t, server, http.MethodPut, "/api/scaling/groups/"+tc.name, tc.body); rr.Code != tc.status {
+			t.Errorf("PUT %s %s = %d %s, want %d", tc.name, tc.body, rr.Code, rr.Body.String(), tc.status)
+		}
+	}
+	if g := fetchGroup(t, server, "shop"); strings.Join(g.Spec.Namespaces, ",") != "default" || g.Spec.Active == nil {
+		t.Errorf("a refused update changed the group: %+v", g.Spec)
+	}
+}
+
+func seedConfigObject(t *testing.T, server *Server, name string) {
+	t.Helper()
+	cfg := &finopsv1.ScalingConfig{Name: name, Namespace: "costdeck", Annotations: map[string]string{scaling.LegacyOverrideAnnotation: "ScaledUp"},
+		Spec: finopsv1.ScalingConfigSpec{TargetNamespace: name, Active: new(true), Schedules: []finopsv1.ScalingSchedule{{
+			Days: []int{1, 2, 3, 4, 5}, StartTime: "09:00", EndTime: "18:00", Timezone: "UTC",
+		}}}}
+	cfg.Status.Phase = scaling.PhaseScaledUp
+	createAll(t, server.Client, cfg)
+}
+
+func fetchConfig(t *testing.T, server *Server, name string) *finopsv1.ScalingConfig {
+	t.Helper()
+	got := &finopsv1.ScalingConfig{}
+	if err := server.Client.Get(context.Background(), client.ObjectKey{Name: name, Namespace: "costdeck"}, got); err != nil {
+		t.Fatal(err)
+	}
+	return got
+}
+
+func TestUpdateScalingConfigReplacesTheWholeSpec(t *testing.T) {
+	t.Setenv("POD_NAMESPACE", "costdeck")
+	server := buildMockServer()
+	seedConfigObject(t, server, "shop")
+
+	rr := send(t, server, http.MethodPut, "/api/scaling/configs/shop", `{"metadata":{"name":"renamed"},"spec":{"targetNamespace":"shop","schedules":[{"days":[6],"startTime":"10:00","endTime":"12:00","timezone":"UTC"}]},"status":{"phase":"Forged"}}`)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("PUT = %d %s", rr.Code, rr.Body.String())
+	}
+	got := fetchConfig(t, server, "shop")
+	if got.Spec.Active != nil || len(got.Spec.Schedules) != 1 || got.Spec.Schedules[0].StartTime != "10:00" {
+		t.Errorf("spec = %+v, want the new schedule and the override dropped with the omitted field", got.Spec)
+	}
+	if got.Status.Phase != scaling.PhaseScaledUp {
+		t.Errorf("status = %q, a client cannot write the status through the spec endpoint", got.Status.Phase)
+	}
+	if body := decodeInto[finopsv1.ScalingConfig](t, rr); body.Name != shopNamespace || body.Spec.Schedules[0].StartTime != "10:00" {
+		t.Errorf("response = %+v, want the stored config", body)
+	}
+	for _, tc := range []struct {
+		name, body string
+		status     int
+	}{
+		{"shop", `{"spec":`, http.StatusBadRequest},
+		{"shop", `{"spec":{"targetNamespace":"shop","calendars":["no-such-calendar"]}}`, http.StatusBadRequest},
+		{"ghost", `{"spec":{"targetNamespace":"ghost"}}`, http.StatusNotFound},
+	} {
+		if rr := send(t, server, http.MethodPut, "/api/scaling/configs/"+tc.name, tc.body); rr.Code != tc.status {
+			t.Errorf("PUT %s %s = %d %s, want %d", tc.name, tc.body, rr.Code, rr.Body.String(), tc.status)
+		}
+	}
+}
+
+func TestScalingConfigManualOverride(t *testing.T) {
+	t.Setenv("POD_NAMESPACE", "costdeck")
+	server := buildMockServer()
+	seedConfigObject(t, server, "batch")
+	manual := func(name, body string) *httptest.ResponseRecorder {
+		return send(t, server, http.MethodPost, "/api/scaling/configs/"+name+"/manual", body)
+	}
+
+	if rr := manual("batch", `{"active": false, "until": "2h"}`); rr.Code != http.StatusOK {
+		t.Fatalf("pin down = %d %s", rr.Code, rr.Body.String())
+	}
+	got := fetchConfig(t, server, "batch")
+	if got.Spec.Active == nil || *got.Spec.Active || got.Spec.ActiveUntil == nil || time.Until(got.Spec.ActiveUntil.Time) < 119*time.Minute {
+		t.Errorf("override = %v until %v, want down for two hours", got.Spec.Active, got.Spec.ActiveUntil)
+	}
+	if _, kept := got.Annotations[scaling.LegacyOverrideAnnotation]; !kept {
+		t.Error("an override must leave the legacy annotation until control goes back to the schedule")
+	}
+
+	for _, body := range []string{`{"active": true, "until": "soon"}`, `{"active":`} {
+		if rr := manual("batch", body); rr.Code != http.StatusBadRequest {
+			t.Errorf("manual %s = %d, want 400", body, rr.Code)
+		}
+	}
+	if rr := manual("ghost", `{"active": true}`); rr.Code != http.StatusNotFound {
+		t.Errorf("manual on an unknown config = %d, want 404", rr.Code)
+	}
+
+	if rr := manual("batch", `{"active": null}`); rr.Code != http.StatusOK {
+		t.Fatalf("resume = %d %s", rr.Code, rr.Body.String())
+	}
+	got = fetchConfig(t, server, "batch")
+	if got.Spec.Active != nil || got.Spec.ActiveUntil != nil || len(got.Spec.Schedules) != 1 {
+		t.Errorf("after resume = %+v, want the schedule back in control", got.Spec)
+	}
+	if _, kept := got.Annotations[scaling.LegacyOverrideAnnotation]; kept {
+		t.Error("following the schedule must also drop the legacy override annotation")
+	}
+}
+
+func TestCreateScheduleStartsScheduleDrivenAndRefusesDuplicates(t *testing.T) {
+	t.Setenv("POD_NAMESPACE", "costdeck")
+	server := buildMockServer()
+	for _, kind := range []string{"groups", "configs"} {
+		body := `{"metadata":{"name":"shop","namespace":"elsewhere","resourceVersion":"42"},"spec":{"namespaces":["shop"],"targetNamespace":"shop","active":false,"activeUntil":"2030-01-01T00:00:00Z"},"status":{"phase":"ScaledDown"}}`
+		rr := send(t, server, http.MethodPost, "/api/scaling/"+kind, body)
+		if rr.Code != http.StatusCreated {
+			t.Fatalf("create %s = %d %s", kind, rr.Code, rr.Body.String())
+		}
+		if strings.Contains(rr.Body.String(), "ScaledDown") || strings.Contains(rr.Body.String(), `"active"`) {
+			t.Errorf("created %s = %s, want no status and no override", kind, rr.Body.String())
+		}
+		if rr := send(t, server, http.MethodPost, "/api/scaling/"+kind, body); rr.Code != http.StatusConflict {
+			t.Errorf("creating %s shop twice = %d, want 409", kind, rr.Code)
+		}
+		if rr := send(t, server, http.MethodPost, "/api/scaling/"+kind, `{"metadata":`); rr.Code != http.StatusBadRequest {
+			t.Errorf("malformed %s body = %d, want 400", kind, rr.Code)
+		}
+	}
+	g, c := fetchGroup(t, server, shopNamespace), fetchConfig(t, server, shopNamespace)
+	if g.Spec.Active != nil || g.Spec.ActiveUntil != nil || g.Status.Phase != "" || c.Spec.Active != nil || c.Spec.ActiveUntil != nil || c.Status.Phase != "" {
+		t.Errorf("stored group %+v / config %+v, want both in the operator namespace, schedule-driven", g, c)
 	}
 }

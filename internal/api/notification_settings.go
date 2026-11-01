@@ -163,9 +163,7 @@ func (s *Server) applyNotificationSettings(ctx context.Context, cfg *finopsv1.Co
 			if err := notify.CheckWebhook(u.WebhookURL); err != nil {
 				return badRequestf("%s: %v", name, err)
 			}
-			if err := s.storeCredentials(ctx, secret, map[string][]byte{notify.SecretKeyWebhookURL: []byte(strings.TrimSpace(u.WebhookURL))}, &c.SecretRef); err != nil {
-				return err
-			}
+			s.storeCredentials(req, secret, map[string][]byte{notify.SecretKeyWebhookURL: []byte(strings.TrimSpace(u.WebhookURL))}, &c.SecretRef)
 		}
 		if c.Enabled && c.SecretRef == "" {
 			return badRequestf("%s needs its webhook URL", name)
@@ -187,9 +185,7 @@ func (s *Server) applyNotificationSettings(ctx context.Context, cfg *finopsv1.Co
 			return err
 		}
 		if u.Password != "" {
-			if err := s.storeCredentials(ctx, smtpSecret, map[string][]byte{notify.SecretKeyPassword: []byte(u.Password)}, &e.SecretRef); err != nil {
-				return err
-			}
+			s.storeCredentials(req, smtpSecret, map[string][]byte{notify.SecretKeyPassword: []byte(u.Password)}, &e.SecretRef)
 		}
 		if e.Enabled {
 			if e.Host == "" || e.From == "" || len(e.To) == 0 {

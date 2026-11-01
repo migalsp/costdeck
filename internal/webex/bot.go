@@ -439,7 +439,7 @@ func (b *Bot) scale(ctx context.Context, msg *Message, cmd command) (string, err
 		}
 		obj, name = g, g.Name
 		timetable = func() scaling.Timetable {
-			return b.timetable(ctx, g.Spec.Schedules, g.Spec.Exceptions, g.Spec.Calendars)
+			return b.timetable(ctx, g.Spec.Schedules, g.Spec.Exceptions, g.Spec.Calendars, scaling.PrewarmLead(g.Spec.Prewarm, g.Status.RecentWakeUps))
 		}
 		set = func(a *bool, u *metav1.Time) { g.Spec.Active, g.Spec.ActiveUntil = a, u }
 	case targetConfig:
@@ -449,7 +449,7 @@ func (b *Bot) scale(ctx context.Context, msg *Message, cmd command) (string, err
 		}
 		obj, name = c, c.Name
 		timetable = func() scaling.Timetable {
-			return b.timetable(ctx, c.Spec.Schedules, c.Spec.Exceptions, c.Spec.Calendars)
+			return b.timetable(ctx, c.Spec.Schedules, c.Spec.Exceptions, c.Spec.Calendars, scaling.PrewarmLead(c.Spec.Prewarm, c.Status.RecentWakeUps))
 		}
 		set = func(a *bool, u *metav1.Time) { c.Spec.Active, c.Spec.ActiveUntil = a, u }
 	default:
@@ -650,11 +650,11 @@ func orDefault(s, def string) string {
 
 // timetable resolves when a group or config runs on its own, exceptions and calendar
 // days included, so "until the next change" also ends with a holiday.
-func (b *Bot) timetable(ctx context.Context, schedules []finopsv1.ScalingSchedule, own []finopsv1.ScheduleException, calendars []string) scaling.Timetable {
+func (b *Bot) timetable(ctx context.Context, schedules []finopsv1.ScalingSchedule, own []finopsv1.ScheduleException, calendars []string, lead time.Duration) scaling.Timetable {
 	var shared []finopsv1.HolidayCalendar
 	if cfg, err := config.Get(ctx, b.K8s); err == nil {
 		shared = cfg.Spec.Calendars
 	}
 	exceptions, _ := scaling.ResolveExceptions(own, calendars, shared, scaling.ExceptionZone(schedules))
-	return scaling.Timetable{Schedules: schedules, Exceptions: exceptions}
+	return scaling.Timetable{Schedules: schedules, Exceptions: exceptions, Lead: lead}
 }

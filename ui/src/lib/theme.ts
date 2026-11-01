@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from 'react'
 
 // The colour theme: follow the operating system, or always light or dark. The choice is
-// a per-browser convenience kept in localStorage; index.html applies it before the first
+// a per-browser convenience kept in localStorage; public/theme-init.js applies it before the first
 // paint with the same rules, so a reload never flashes the other theme.
 export type Theme = 'system' | 'light' | 'dark'
 

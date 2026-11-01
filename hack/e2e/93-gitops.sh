@@ -31,7 +31,8 @@ status: {inventory: {entries: [{id: smoke-gitops_flux-app_apps_Deployment}]}}
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata: {name: smoke-shop, namespace: smoke-gitops}
-spec: {syncPolicy: {automated: {selfHeal: true}}}
+spec: {destination: {namespace: smoke-gitops}, syncPolicy: {automated: {selfHeal: true}}}
+status: {resources: [{group: apps, kind: Deployment, namespace: smoke-gitops, name: argo-app}]}
 YAML
 deployment smoke-gitops flux-app 1
 deployment smoke-gitops argo-app 1

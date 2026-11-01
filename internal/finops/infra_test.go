@@ -8,14 +8,13 @@ import (
 	discoveryv1 "k8s.io/api/discovery/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/migalsp/costdeck-operator/internal/pricing"
 )
 
 func claim(ns, name, class, size string) *corev1.PersistentVolumeClaim {
 	return &corev1.PersistentVolumeClaim{
-		ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: name},
+		Namespace: ns, Name: name,
 		Spec: corev1.PersistentVolumeClaimSpec{
 			StorageClassName: &class,
 			Resources:        corev1.VolumeResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceStorage: resource.MustParse(size)}},
@@ -27,24 +26,24 @@ func claim(ns, name, class, size string) *corev1.PersistentVolumeClaim {
 func TestBuildInfra(t *testing.T) {
 	ready, notReady := true, false
 	c := testClient(
-		&storagev1.StorageClass{ObjectMeta: metav1.ObjectMeta{Name: "gp3", Annotations: map[string]string{defaultClassAnnotation: "true"}},
+		&storagev1.StorageClass{Name: "gp3", Annotations: map[string]string{defaultClassAnnotation: "true"},
 			Provisioner: "ebs.csi.aws.com", Parameters: map[string]string{"type": "gp3"}},
-		&storagev1.StorageClass{ObjectMeta: metav1.ObjectMeta{Name: "local"}, Provisioner: "rancher.io/local-path"},
+		&storagev1.StorageClass{Name: "local", Provisioner: "rancher.io/local-path"},
 		claim("shop", "db", "gp3", "100Gi"),
 		claim("shop", "old", "gp3", "50Gi"),
 		claim("dev", "cache", "gp3", "10Gi"),
 		claim("shop", "scratch", "local", "20Gi"),
 		&corev1.PersistentVolume{
-			ObjectMeta: metav1.ObjectMeta{Name: "pv-left"},
-			Spec:       corev1.PersistentVolumeSpec{StorageClassName: "gp3", Capacity: corev1.ResourceList{corev1.ResourceStorage: resource.MustParse("200Gi")}},
-			Status:     corev1.PersistentVolumeStatus{Phase: corev1.VolumeReleased},
+			Name:   "pv-left",
+			Spec:   corev1.PersistentVolumeSpec{StorageClassName: "gp3", Capacity: corev1.ResourceList{corev1.ResourceStorage: resource.MustParse("200Gi")}},
+			Status: corev1.PersistentVolumeStatus{Phase: corev1.VolumeReleased},
 		},
-		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "web"}, Spec: corev1.ServiceSpec{Type: corev1.ServiceTypeLoadBalancer, Ports: []corev1.ServicePort{{Port: 443}}}},
-		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "legacy"}, Spec: corev1.ServiceSpec{Type: corev1.ServiceTypeLoadBalancer}},
-		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Namespace: "dev", Name: "web"}, Spec: corev1.ServiceSpec{Type: corev1.ServiceTypeLoadBalancer}},
-		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "internal"}, Spec: corev1.ServiceSpec{Type: corev1.ServiceTypeClusterIP}},
+		&corev1.Service{Namespace: "shop", Name: "web", Spec: corev1.ServiceSpec{Type: corev1.ServiceTypeLoadBalancer, Ports: []corev1.ServicePort{{Port: 443}}}},
+		&corev1.Service{Namespace: "shop", Name: "legacy", Spec: corev1.ServiceSpec{Type: corev1.ServiceTypeLoadBalancer}},
+		&corev1.Service{Namespace: "dev", Name: "web", Spec: corev1.ServiceSpec{Type: corev1.ServiceTypeLoadBalancer}},
+		&corev1.Service{Namespace: "shop", Name: "internal", Spec: corev1.ServiceSpec{Type: corev1.ServiceTypeClusterIP}},
 		&discoveryv1.EndpointSlice{
-			ObjectMeta:  metav1.ObjectMeta{Namespace: "shop", Name: "web-1", Labels: map[string]string{discoveryv1.LabelServiceName: "web"}},
+			Namespace: "shop", Name: "web-1", Labels: map[string]string{discoveryv1.LabelServiceName: "web"},
 			AddressType: discoveryv1.AddressTypeIPv4,
 			Endpoints: []discoveryv1.Endpoint{
 				{Addresses: []string{"10.0.0.1"}, Conditions: discoveryv1.EndpointConditions{Ready: &ready}},
@@ -53,9 +52,9 @@ func TestBuildInfra(t *testing.T) {
 		},
 	)
 	pods := []corev1.Pod{{
-		ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "db-0"},
-		Spec:       corev1.PodSpec{Volumes: []corev1.Volume{{VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "db"}}}}},
-		Status:     corev1.PodStatus{Phase: corev1.PodRunning},
+		Namespace: "shop", Name: "db-0",
+		Spec:   corev1.PodSpec{Volumes: []corev1.Volume{{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "db"}}}},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning},
 	}}
 	inf, err := buildInfra(context.Background(), c, c, "aws", pricing.InfraRates{}, pods, map[string]bool{"dev": true})
 	if err != nil {

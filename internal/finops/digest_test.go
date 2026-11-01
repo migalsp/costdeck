@@ -8,7 +8,6 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -162,10 +161,10 @@ func TestReportStore(t *testing.T) {
 func TestDigestScheduler(t *testing.T) {
 	ctx := context.Background()
 	cfg := &finopsv1.CostDeckConfig{
-		ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: "costdeck"},
-		Spec:       finopsv1.CostDeckConfigSpec{Reports: finopsv1.ReportsConfig{Digest: finopsv1.DigestSchedule{Enabled: true, Frequency: "weekly"}}},
+		Name: "default", Namespace: "costdeck",
+		Spec: finopsv1.CostDeckConfigSpec{Reports: finopsv1.ReportsConfig{Digest: finopsv1.DigestSchedule{Enabled: true, Frequency: "weekly"}}},
 	}
-	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n"}}
+	node := &corev1.Node{Name: "n"}
 	c := testClient(cfg, node)
 	poster := &fakePoster{}
 	now := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC) // Wednesday

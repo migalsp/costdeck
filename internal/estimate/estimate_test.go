@@ -231,6 +231,7 @@ func TestEstimateClampsRolloutReplicas(t *testing.T) {
 		{"-3", 0, true},
 		{"4294967297", math.MaxInt32, false},
 		{"2", 2, false},
+		{"null", 1, false},
 	} {
 		r, err := Estimate(nil, rollout(tc.replicas), "default", prices)
 		if err != nil {
@@ -259,5 +260,57 @@ func TestEstimateWithoutChanges(t *testing.T) {
 	}
 	if money(-1234567.891, "EUR") != "−€1,234,567.89" || money(5, "CHF") != "5.00 CHF" {
 		t.Errorf("money = %s, %s", money(-1234567.891, "EUR"), money(5, "CHF"))
+	}
+}
+
+func TestEstimateCountsTheLargestInitContainer(t *testing.T) {
+	podWithInit := `
+apiVersion: v1
+kind: Pod
+metadata: {name: job, namespace: shop}
+spec:
+  initContainers:
+    - {name: warm, image: app, resources: {requests: {cpu: "2", memory: 256Mi}}}
+  containers:
+    - {name: main, image: app, resources: {requests: {cpu: 250m, memory: 512Mi}}}
+    - {name: side, image: app, resources: {requests: {cpu: 250m, memory: 512Mi}}}
+`
+	r, err := Estimate(nil, []byte(podWithInit), "default", prices)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Items) != 1 || r.Items[0].After.CPU != "2" || r.Items[0].After.Memory != "1Gi" || r.After != 62.05 {
+		t.Errorf("items = %+v, after = %v; want the init container's 2 cores and the containers' 1Gi, as the scheduler reserves", r.Items, r.After)
+	}
+}
+
+func TestEstimateDescribesGPUAndStorageChanges(t *testing.T) {
+	db := func(gpus, storage string) []byte {
+		return []byte(`apiVersion: apps/v1
+kind: StatefulSet
+metadata: {name: db, namespace: shop}
+spec:
+  replicas: 1
+  template:
+    spec:
+      containers: [{name: pg, image: postgres, resources: {limits: {nvidia.com/gpu: ` + gpus + `}}}]
+  volumeClaimTemplates: [{metadata: {name: data}, spec: {resources: {requests: {storage: ` + storage + `}}}}]
+`)
+	}
+	r, err := Estimate(db("1", "5Gi"), db("2", "10Gi"), "default", prices)
+	if err != nil {
+		t.Fatal(err)
+	}
+	md := r.Markdown()
+	if !strings.Contains(md, "StatefulSet `shop/db`: GPUs 1 → 2, storage 5Gi → 10Gi") {
+		t.Errorf("markdown does not say what changed:\n%s", md)
+	}
+
+	fresh, err := Estimate(nil, db("1", "5Gi"), "default", prices)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if md := fresh.Markdown(); !strings.Contains(md, "### Cost estimate: +$730.50 a month\n") {
+		t.Errorf("a change to nothing that cost anything before has no percentage:\n%s", md)
 	}
 }

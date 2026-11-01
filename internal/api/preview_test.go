@@ -23,7 +23,7 @@ func seedWorkload(t *testing.T, server *Server, ns, name string, replicas int32,
 	t.Helper()
 	labels := map[string]string{"app": name}
 	d := &appsv1.Deployment{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+		Name: name, Namespace: ns,
 		Spec: appsv1.DeploymentSpec{
 			Replicas: &replicas, Selector: &metav1.LabelSelector{MatchLabels: labels},
 			Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: labels}, Spec: corev1.PodSpec{Containers: []corev1.Container{{
@@ -42,24 +42,24 @@ func TestPreviewSchedule(t *testing.T) {
 	server := buildMockServerWithK8s()
 	ctx := context.Background()
 	// Custom rates: 0.04 per core-hour, 0.005 per GiB-hour.
-	if err := server.Client.Create(ctx, &finopsv1.CostDeckConfig{ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: "costdeck"},
+	if err := server.Client.Create(ctx, &finopsv1.CostDeckConfig{Name: "default", Namespace: "costdeck",
 		Spec: finopsv1.CostDeckConfigSpec{Pricing: finopsv1.PricingConfig{CPUCoreHour: "0.04", MemoryGBHour: "0.005", Currency: "EUR"}}}); err != nil {
 		t.Fatal(err)
 	}
 	server.Pricing = &pricing.Resolver{Client: server.Client}
 	for _, ns := range []string{"shop-dev", "shop-qa", "pay-dev"} {
-		if err := server.Client.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns, Labels: map[string]string{"env": "dev"}}}); err != nil {
+		if err := server.Client.Create(ctx, &corev1.Namespace{Name: ns, Labels: map[string]string{"env": "dev"}}); err != nil {
 			t.Fatal(err)
 		}
 	}
 	seedWorkload(t, server, "shop-dev", "api", 2, "500m", "1Gi")
 	seedWorkload(t, server, "shop-dev", "redis", 1, "1", "2Gi") // excluded by the workload rules below
 	seedWorkload(t, server, "pay-dev", "api", 1, "1", "1Gi")
-	if err := server.Client.Create(ctx, &finopsv1.ScalingConfig{ObjectMeta: metav1.ObjectMeta{Name: "shop-dev", Namespace: "costdeck"},
+	if err := server.Client.Create(ctx, &finopsv1.ScalingConfig{Name: "shop-dev", Namespace: "costdeck",
 		Spec: finopsv1.ScalingConfigSpec{TargetNamespace: "shop-dev", Exclusions: []string{"redis"}}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := server.Client.Create(ctx, &finopsv1.ScalingGroup{ObjectMeta: metav1.ObjectMeta{Name: "pay", Namespace: "costdeck"},
+	if err := server.Client.Create(ctx, &finopsv1.ScalingGroup{Name: "pay", Namespace: "costdeck",
 		Spec: finopsv1.ScalingGroupSpec{Namespaces: []string{"pay-dev"}}}); err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +115,7 @@ func TestPreviewWarnsAndReports(t *testing.T) {
 	t.Setenv("POD_NAMESPACE", "costdeck")
 	server := buildMockServerWithK8s()
 	seedCalendars(t, server)
-	if err := server.Client.Create(context.Background(), &finopsv1.ScalingGroup{ObjectMeta: metav1.ObjectMeta{Name: "shop", Namespace: "costdeck"},
+	if err := server.Client.Create(context.Background(), &finopsv1.ScalingGroup{Name: "shop", Namespace: "costdeck",
 		Spec: finopsv1.ScalingGroupSpec{Namespaces: []string{"shop-dev"}}}); err != nil {
 		t.Fatal(err)
 	}
@@ -158,11 +158,11 @@ func TestPreviewTool(t *testing.T) {
 	server := buildMockServerWithK8s()
 	seedCalendars(t, server)
 	ctx := context.Background()
-	if err := server.Client.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "shop-dev"}}); err != nil {
+	if err := server.Client.Create(ctx, &corev1.Namespace{Name: "shop-dev"}); err != nil {
 		t.Fatal(err)
 	}
 	seedWorkload(t, server, "shop-dev", "api", 2, "500m", "1Gi")
-	if err := server.Client.Create(ctx, &finopsv1.ScalingGroup{ObjectMeta: metav1.ObjectMeta{Name: "shop", Namespace: "costdeck"},
+	if err := server.Client.Create(ctx, &finopsv1.ScalingGroup{Name: "shop", Namespace: "costdeck",
 		Spec: finopsv1.ScalingGroupSpec{Namespaces: []string{"shop-dev"}, Schedules: []finopsv1.ScalingSchedule{{Days: []int{1, 2, 3, 4, 5}, StartTime: "08:00", EndTime: "20:00", Timezone: "UTC"}}}}); err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +185,7 @@ func TestPreviewWarnsAboutGitOps(t *testing.T) {
 	server := buildMockServerWithK8s()
 	seedCalendars(t, server)
 	ctx := context.Background()
-	if err := server.Client.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "shop-dev"}}); err != nil {
+	if err := server.Client.Create(ctx, &corev1.Namespace{Name: "shop-dev"}); err != nil {
 		t.Fatal(err)
 	}
 	seedWorkload(t, server, "shop-dev", "api", 1, "100m", "128Mi")
@@ -210,5 +210,81 @@ func TestPreviewWarnsAboutGitOps(t *testing.T) {
 	}
 	if strings.Contains(strings.Join(preview(true).Warnings, " "), "managed by") {
 		t.Error("a schedule that pauses GitOps still warns about it")
+	}
+}
+
+func TestSchedulesTooLargeToWorkOutAreRefused(t *testing.T) {
+	server := buildMockServerWithK8s()
+	window := `{"days":[1],"startTime":"08:00","endTime":"08:01","timezone":"UTC"}`
+	windows := func(n int) string { return "[" + strings.TrimSuffix(strings.Repeat(window+",", n), ",") + "]" }
+
+	if rr := send(t, server, "POST", "/api/scaling/preview", `{"kind":"group","spec":{"namespaces":["shop"],"schedules":`+windows(maxSchedules)+`}}`); rr.Code != http.StatusOK {
+		t.Fatalf("a preview with %d windows = %d %s", maxSchedules, rr.Code, rr.Body.String())
+	}
+	rr := send(t, server, "POST", "/api/scaling/preview", `{"kind":"group","spec":{"namespaces":["shop"],"schedules":`+windows(maxSchedules+1)+`}}`)
+	if rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), "at most 50 time windows") {
+		t.Errorf("a preview with %d windows = %d %s, want 400 before any work", maxSchedules+1, rr.Code, rr.Body.String())
+	}
+	group := `{"metadata":{"name":"huge"},"spec":{"category":"x","namespaces":["shop"],"schedules":` + windows(maxSchedules+1) + `}}`
+	if rr := send(t, server, "POST", "/api/scaling/groups", group); rr.Code != http.StatusBadRequest {
+		t.Errorf("creating a group with %d windows = %d %s", maxSchedules+1, rr.Code, rr.Body.String())
+	}
+	exceptions := `[` + strings.TrimSuffix(strings.Repeat(`{"date":"2026-12-24","active":false},`, maxExceptions+1), ",") + `]`
+	if rr := send(t, server, "POST", "/api/scaling/preview", `{"kind":"config","spec":{"targetNamespace":"shop","exceptions":`+exceptions+`}}`); rr.Code != http.StatusBadRequest {
+		t.Errorf("a preview with %d exceptions = %d", maxExceptions+1, rr.Code)
+	}
+}
+
+func TestPreviewCountsTheMeasuredPrewarmOfASavedSchedule(t *testing.T) {
+	t.Setenv("POD_NAMESPACE", "costdeck")
+	server := buildMockServerWithK8s()
+	ctx := context.Background()
+	if err := server.Client.Create(ctx, &corev1.Namespace{Name: "shop-dev"}); err != nil {
+		t.Fatal(err)
+	}
+	schedule := []finopsv1.ScalingSchedule{{Days: []int{0, 1, 2, 3, 4, 5, 6}, StartTime: "08:00", EndTime: "20:00", Timezone: "UTC"}}
+	tenMinutes := []finopsv1.WakeUp{{StartedAt: metav1.Now(), Seconds: 600}}
+	if err := server.Client.Create(ctx, &finopsv1.ScalingGroup{Name: "shop", Namespace: "costdeck",
+		Spec:   finopsv1.ScalingGroupSpec{Namespaces: []string{"shop-dev"}, Schedules: schedule, Prewarm: &finopsv1.Prewarm{Auto: true}},
+		Status: finopsv1.ScalingGroupStatus{ScheduleStatus: finopsv1.ScheduleStatus{RecentWakeUps: tenMinutes}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := server.Client.Create(ctx, &finopsv1.ScalingConfig{Name: "shop-dev", Namespace: "costdeck",
+		Spec:   finopsv1.ScalingConfigSpec{TargetNamespace: "shop-dev", Schedules: schedule, Prewarm: &finopsv1.Prewarm{Auto: true}},
+		Status: finopsv1.ScalingConfigStatus{ScheduleStatus: finopsv1.ScheduleStatus{RecentWakeUps: tenMinutes}}}); err != nil {
+		t.Fatal(err)
+	}
+	prewarmLead := func(kind, name string) time.Duration {
+		t.Helper()
+		body := `{"kind":"` + kind + `","name":"` + name + `","spec":{"namespaces":["shop-dev"],"targetNamespace":"shop-dev","prewarm":{"auto":true},
+			"schedules":[{"days":[0,1,2,3,4,5,6],"startTime":"08:00","endTime":"20:00","timezone":"UTC"}]}}`
+		var got previewResponse
+		if err := json.Unmarshal(send(t, server, "POST", "/api/scaling/preview", body).Body.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+		longest := time.Duration(0)
+		for _, iv := range got.Intervals {
+			if iv.Reason == "prewarm" && iv.Active {
+				longest = max(longest, iv.To.Sub(iv.From))
+			}
+		}
+		return longest
+	}
+	if got := prewarmLead("group", "shop"); got != 11*time.Minute {
+		t.Errorf("saved group: prewarm of %v, want the 10-minute wake-up plus a minute", got)
+	}
+	if got := prewarmLead("config", "shop-dev"); got != 11*time.Minute {
+		t.Errorf("saved namespace schedule: prewarm of %v, want the 10-minute wake-up plus a minute", got)
+	}
+	if got := prewarmLead("group", ""); got != 0 {
+		t.Errorf("new schedule with no wake-ups yet: prewarm of %v, want none", got)
+	}
+
+	out, err := server.toolPreview(ctx, "group", "shop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, `"upShare":"51%"`) {
+		t.Errorf("the assistant's preview leaves out the prewarm (12 h plus 11 minutes a day is 51%%):\n%s", out)
 	}
 }

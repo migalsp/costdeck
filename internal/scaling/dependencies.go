@@ -105,7 +105,7 @@ func (e *Engine) PlanGroups(now time.Time, groups []finopsv1.ScalingGroup, calen
 		resolve(name)
 	}
 
-	owners := namespaceOwners(groups)
+	owners := NamespaceOwners(groups)
 	for name, g := range byName {
 		plan := plans[name]
 		if !plan.InCycle {
@@ -121,7 +121,7 @@ func (e *Engine) PlanGroups(now time.Time, groups []finopsv1.ScalingGroup, calen
 			}
 		}
 		for _, ns := range g.Members() {
-			if owner := owners[ns]; owner != name {
+			if owner, owned := owners[ns]; owned && owner != name {
 				plan.ConflictingNamespaces = append(plan.ConflictingNamespaces, ns)
 				if plan.NamespaceOwners == nil {
 					plan.NamespaceOwners = map[string]string{}
@@ -144,7 +144,7 @@ func isRunning(phase string) bool {
 // exceptions it could not apply.
 func (e *Engine) ownDecision(now time.Time, g *finopsv1.ScalingGroup, calendars []finopsv1.HolidayCalendar) (Decision, []string) {
 	exceptions, problems := ResolveExceptions(g.Spec.Exceptions, g.Spec.Calendars, calendars, ExceptionZone(g.Spec.Schedules))
-	tt := Timetable{Schedules: g.Spec.Schedules, Exceptions: exceptions}
+	tt := Timetable{Schedules: g.Spec.Schedules, Exceptions: exceptions, Lead: PrewarmLead(g.Spec.Prewarm, g.Status.RecentWakeUps)}
 	d := e.Decide(now, tt, g.Spec.Active, g.Spec.ActiveUntil, g.Annotations)
 	keeps := d.Mode == ModeManualUp || d.Mode == ModeManualDown || (d.Mode == ModeException && d.Active)
 	if g.Spec.Activation == finopsv1.ActivationOnDemand && !keeps {
@@ -154,13 +154,16 @@ func (e *Engine) ownDecision(now time.Time, g *finopsv1.ScalingGroup, calendars 
 	return ApplyIdle(d, IdleUntil(&g.Status.ScheduleStatus), now, at), problems
 }
 
-// namespaceOwners assigns every namespace to exactly one group, so a namespace shared by
+// NamespaceOwners assigns every namespace to exactly one group, so a namespace shared by
 // mistake is scaled once: a group that lists it by name wins over one whose selector
-// matched it, and among equals the oldest group (ties broken by name).
-func namespaceOwners(groups []finopsv1.ScalingGroup) map[string]string {
-	ordered := make([]*finopsv1.ScalingGroup, len(groups))
+// matched it, and among equals the oldest group (ties broken by name). A group in a dry
+// run changes nothing, so it owns nothing either.
+func NamespaceOwners(groups []finopsv1.ScalingGroup) map[string]string {
+	ordered := make([]*finopsv1.ScalingGroup, 0, len(groups))
 	for i := range groups {
-		ordered[i] = &groups[i]
+		if !groups[i].Spec.DryRun {
+			ordered = append(ordered, &groups[i])
+		}
 	}
 	sort.SliceStable(ordered, func(i, j int) bool {
 		ti, tj := ordered[i].CreationTimestamp, ordered[j].CreationTimestamp

@@ -4,11 +4,21 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/runtime"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
 func TestUsersLifecycle(t *testing.T) {
@@ -141,5 +151,120 @@ func TestManagedUserSignInAndPasswordChange(t *testing.T) {
 	signIns, _ := svc.SignIns.List(ctx)
 	if len(signIns) != 1 || signIns[0].Subject != "user:anna" || signIns[0].Count != 1 {
 		t.Errorf("sign-ins = %+v", signIns)
+	}
+}
+
+func TestUsersAnyCountsOnlyEnabledAccounts(t *testing.T) {
+	ctx := context.Background()
+	users := newTestService(t).Users
+	if users.Any(ctx) {
+		t.Error("Any() with no users = true")
+	}
+	if _, err := users.Create(ctx, User{Username: "anna", Role: RoleViewer}, "anna's long password", false, ""); err != nil {
+		t.Fatal(err)
+	}
+	if !users.Any(ctx) {
+		t.Error("Any() with an enabled user = false")
+	}
+	disabled := true
+	if _, err := users.Update(ctx, "anna", UserPatch{Disabled: &disabled}); err != nil {
+		t.Fatal(err)
+	}
+	if users.Any(ctx) {
+		t.Error("Any() with only a disabled user = true, the login page would offer a form nobody can use")
+	}
+}
+
+func TestUsersAnyIsFalseWhenTheSecretCannotBeRead(t *testing.T) {
+	t.Setenv("POD_NAMESPACE", "costdeck")
+	scheme := runtime.NewScheme()
+	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+	c := fake.NewClientBuilder().WithScheme(scheme).WithInterceptorFuncs(interceptor.Funcs{
+		Get: func(context.Context, client.WithWatch, client.ObjectKey, client.Object, ...client.GetOption) error {
+			return apierrors.NewForbidden(corev1.Resource("secrets"), usersSecretName, errors.New("rbac"))
+		},
+	}).Build()
+	if (&Users{Client: c}).Any(context.Background()) {
+		t.Error("Any() must be false when the users Secret cannot be read")
+	}
+}
+
+func TestGeneratePasswordIsUsableAndUnpredictable(t *testing.T) {
+	ctx := context.Background()
+	users := newTestService(t).Users
+	first, second := GeneratePassword(), GeneratePassword()
+	if first == second {
+		t.Fatalf("two generated passwords are equal: %q", first)
+	}
+	if len(first) < MinPasswordLength || len(first) > maxPasswordLength {
+		t.Errorf("generated password has %d characters, want %d to %d", len(first), MinPasswordLength, maxPasswordLength)
+	}
+	if _, err := users.Create(ctx, User{Username: "anna", Role: RoleViewer}, first, true, "local:admin"); err != nil {
+		t.Fatalf("a generated password is refused by the password rules: %v", err)
+	}
+	if _, err := users.Authenticate(ctx, "anna", first); err != nil {
+		t.Errorf("the generated password does not sign in: %v", err)
+	}
+}
+
+func TestOtherReplicasEndSessionsOnceTheirUserCacheExpires(t *testing.T) {
+	ctx := context.Background()
+	svc := newTestService(t)
+	replicaA := svc.Users
+	replicaB := &Users{Client: svc.Client, Reserved: "admin"}
+	if _, err := replicaA.Create(ctx, User{Username: "anna", Role: RoleViewer}, "anna's long password", false, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := replicaA.Create(ctx, User{Username: "bob", Role: RoleViewer}, "bob's long password", false, ""); err != nil {
+		t.Fatal(err)
+	}
+	anna := &Identity{Subject: annaSession, IssuedAt: time.Now().Unix()}
+	bob := &Identity{Subject: "user:bob", IssuedAt: time.Now().Unix()}
+	for _, id := range []*Identity{anna, bob} {
+		if _, err := replicaB.Session(ctx, id); err != nil {
+			t.Fatalf("replica B rejects %s: %v", id.Subject, err)
+		}
+	}
+
+	disabled := true
+	if _, err := replicaA.Update(ctx, "anna", UserPatch{Disabled: &disabled}); err != nil {
+		t.Fatal(err)
+	}
+	if err := replicaA.Delete(ctx, "bob"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := replicaA.Session(ctx, anna); !errors.Is(err, ErrUserDisabled) {
+		t.Errorf("the replica that disabled anna still serves her: %v", err)
+	}
+
+	replicaB.mu.Lock()
+	replicaB.loadedAt = time.Now().Add(-userCache - time.Second)
+	replicaB.mu.Unlock()
+	if _, err := replicaB.Session(ctx, anna); !errors.Is(err, ErrUserDisabled) {
+		t.Errorf("replica B serves a disabled user after its cache expired: %v", err)
+	}
+	if _, err := replicaB.Session(ctx, bob); !errors.Is(err, ErrUserNotFound) {
+		t.Errorf("replica B serves a deleted user after its cache expired: %v", err)
+	}
+}
+
+func TestPruneSignInsKeepsTheMostRecent(t *testing.T) {
+	data := map[string][]byte{}
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	for i := range maxSignIns + 2 {
+		raw, _ := json.Marshal(SignIn{Subject: fmt.Sprintf("user:%d", i), At: start.Add(time.Duration(i) * time.Minute)})
+		data[fmt.Sprintf("k%03d", i)] = raw
+	}
+	pruneSignIns(data)
+	if len(data) != maxSignIns {
+		t.Fatalf("%d records kept, want %d", len(data), maxSignIns)
+	}
+	for _, oldest := range []string{"k000", "k001"} {
+		if _, ok := data[oldest]; ok {
+			t.Errorf("the oldest record %s was kept", oldest)
+		}
+	}
+	if _, ok := data[fmt.Sprintf("k%03d", maxSignIns+1)]; !ok {
+		t.Error("the newest record was dropped")
 	}
 }

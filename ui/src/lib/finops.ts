@@ -400,7 +400,7 @@ export interface BudgetStatus {
 
 export interface AlertEvent {
   at: string
-  kind: 'budget' | 'forecast' | 'anomaly'
+  kind: 'budget' | 'forecast' | 'anomaly' | 'risk'
   title: string
   detail: string
   budget?: string
@@ -410,10 +410,13 @@ export interface AlertEvent {
 
 export interface AnomalySettings { enabled?: boolean; percent?: number; minimumDaily?: string }
 
+export interface RiskAlertSettings { enabled: boolean }
+
 export interface BudgetsResponse {
   currency: string
   budgets: BudgetStatus[]
   anomalies: AnomalySettings
+  performanceRisks?: RiskAlertSettings
   events: AlertEvent[]
   webexReady: boolean
   // channels take alerts: Webex, Slack, Teams, email.

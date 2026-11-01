@@ -38,6 +38,13 @@ rules:
   - patch
   - watch
 - apiGroups:
+  - autoscaling
+  resources:
+  - horizontalpodautoscalers
+  verbs:
+  - get
+  - list
+- apiGroups:
   - batch
   resources:
   - cronjobs
@@ -54,6 +61,13 @@ rules:
   - get
   - list
   - watch
+- apiGroups:
+  - finops.costdeck.io
+  resources:
+  - rightsizingpolicies
+  verbs:
+  - get
+  - list
 - apiGroups:
   - keda.sh
   resources:

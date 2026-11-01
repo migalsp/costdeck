@@ -160,10 +160,12 @@ checked against the issuer's keys, audience and expiry.
    - the issuer `https://keycloak.example.com/realms/<realm>`, which must be HTTPS;
    - the client ID and the client secret, stored in the `costdeck-oidc-credentials`
      Secret.
-3. **Map groups to roles.** Keycloak sends full paths (`/costdeck-admins`); a mapping
-   matches with or without the leading slash. Roles named `viewer`, `operator` or `admin`
-   in the roles claim count as they are; client roles are at
-   `resource_access.<client>.roles`.
+3. **Map groups and roles to Cost Deck roles.** Keycloak sends full paths
+   (`/costdeck-admins`); a mapping matches with or without the leading slash. A role in
+   the roles claim counts when **Role → role mapping** maps it, or when it is named
+   `costdeck.viewer`, `costdeck.operator` or `costdeck.admin`. Plain names such as `admin`
+   grant nothing by themselves, because every application of a realm may share them;
+   client roles are at `resource_access.<client>.roles`.
 4. **Choose who else gets in.** Turn off auto-provisioning to admit only users with a
    mapped group or role.
 
@@ -459,7 +461,8 @@ Besides the Webex space, **Settings → Notifications** sends Cost Deck's messag
 Microsoft Teams and email. Each channel picks what it receives:
 
 - **Scaling changes**: a schedule finished scaling up or down.
-- **Alerts**: budgets, cost anomalies and namespaces about to be deleted.
+- **Alerts**: budgets, cost anomalies, critical performance risks and namespaces about to
+  be deleted.
 - **Digests**: the scheduled cost summary.
 
 **Send test message** checks a channel with the values in the form before you save.
@@ -499,9 +502,16 @@ Webex can message a bot directly.
   `spec.budgets`) alert at their thresholds and when the month is heading over, and
   anomaly alerts when a namespace's daily cost jumps. They go to every notification
   channel that takes alerts, and are always listed in the dashboard.
+- **Performance risk alerts** (`spec.alerts.performanceRisks.enabled`, off by default):
+  every half hour the leader looks for critical performance risks in every namespace (OOM
+  kills, crash loops, evictions, CPU throttled a quarter of the time or more, JVM heaps
+  still full after garbage collection) and sends the new ones to the channels that take
+  alerts, at most once a day per risk. The open ones are kept in the `costdeck-risk-alerts`
+  ConfigMap and listed in the digest. Saving the anomaly alerts leaves this setting alone,
+  and the other way round.
 - **Cost digest**: under **Reports → Scheduled digest**, a weekly (Mondays) or monthly
-  (the 1st) summary of cost, savings and the top opportunities goes to every channel that
-  takes digests. It is stored in `spec.reports.digest` of the `CostDeckConfig`.
+  (the 1st) summary of cost, savings, the top opportunities and, with performance risk
+  alerts on, the open critical risks goes to every channel that takes digests. It is stored in `spec.reports.digest` of the `CostDeckConfig`.
 
 Commands (`help` lists them):
 
@@ -661,11 +671,15 @@ run.
   checks every 20 seconds and shows the application once it is back. A person wakes it,
   not every request, so bots and health checks do not keep it up.
 - **How the routes are changed.** Each rule's backends and filters are kept in the
-  `costdeck.io/sleeping` annotation. Meanwhile the rule points at the `<release>-api`
-  Service with a header naming the namespace. A ReferenceGrant `costdeck-sleep-page` in the
-  operator namespace opens that Service to the sleeping routes.
+  `costdeck.io/sleeping` annotation. Meanwhile the rule points at the `<release>-sleep`
+  Service with a header naming the namespace. That Service serves the sleep page and
+  nothing else, on a listener of its own (port 8083), so a route someone adds to it
+  cannot publish the dashboard or the API. A ReferenceGrant `costdeck-sleep-page` in the
+  operator namespace opens only that Service to the sleeping routes. Routes put to sleep
+  by an earlier version, on the `<release>-api` Service, move over by themselves.
 - **Permissions.** Install with `--set sleepPage.enabled=true`, which grants read and patch
-  on HTTPRoutes cluster-wide and ReferenceGrants in the operator namespace.
+  on HTTPRoutes cluster-wide and ReferenceGrants in the operator namespace, and adds the
+  `<release>-sleep` Service.
 - **Ingress controllers.** Ingress-based routing is not covered. ingress-nginx, the usual
   one, was retired in March 2026, and Gateway API is its recommended successor.
 
@@ -693,6 +707,21 @@ that is up from 8 to 18 but nobody touched after lunch stops paying for the afte
 - **What it does not override.** Manual starts and stops, exceptions and the fail-safe
   keep their say, and a group stays up while groups that depend on it need it.
 
+### Wake-ups and prewarm
+
+Every scale-up from zero is timed, from leaving `ScaledDown` until every target is ready:
+the last five are in `status.recentWakeUps`, newest first. A namespace whose wake-ups take
+two minutes or more shows a performance risk, since whoever opens it when its schedule
+starts waits that long.
+
+**Start ahead of the schedule** (`spec.prewarm`) starts the workloads before each
+scheduled start, so they are ready when it comes. `minutes` is a fixed lead, up to 120;
+`auto: true` takes the slowest of the last five wake-ups plus a minute, at most 30 minutes,
+and uses `minutes` until there is a wake-up to measure. While it runs early the mode is
+`Prewarm` and `status.prewarmMinutes` says by how much. The lead also counts at the end of
+an exception that keeps the namespace down, in "next change", in previews and in cost
+estimates; the end of a window is left alone.
+
 ### Preview cleanup
 
 Preview environments (a namespace per pull request or branch) are often left behind
@@ -713,10 +742,12 @@ run that only lists what would be deleted and when.
   `costdeck.io/ttl=3d` (or `36h`).
 - **Warnings**: by default a day before, the notification channels that take alerts are
   told which namespace goes when. **Keep 3 more days** in the dashboard moves the time
-  (annotation `costdeck.io/expires-at`) and warns again.
-- **Pace and record**: at most 20 namespaces go in one run, every 30 seconds, each only
-  if it is still the namespace that was planned (by UID). Deletions are recorded in the
-  ConfigMap `costdeck-namespace-ttl` and shown in the dashboard.
+  (annotation `costdeck.io/expires-at`) and warns again. A namespace that is already past
+  its time when cleanup first sees it, for example right after it is switched on, is
+  warned about and kept for the warning lead before it goes.
+- **Pace and record**: at most 20 namespaces go in an hour, each only if it is still the
+  namespace that was planned (by UID). Deletions are recorded in the ConfigMap
+  `costdeck-namespace-ttl` and shown in the dashboard.
 
 ### Realized savings
 
@@ -767,6 +798,73 @@ operators act on the advice, in two ways:
 Every change, applied, proposed or put back, is listed on the namespace page and by
 `GET /api/rightsizing/changes`. The assistant and MCP clients have `apply_rightsizing`
 and `propose_rightsizing`, which ask for confirmation.
+
+### Right-sizing policies
+
+A `RightsizingPolicy` in a namespace says how right-sizing treats the workloads it picks:
+bounds and headroom for the advice, whether operators may apply it, or no advice at all. A
+team can keep one next to its manifests:
+
+```yaml
+apiVersion: finops.costdeck.io/v1
+kind: RightsizingPolicy
+metadata: {name: payments, namespace: shop}
+spec:
+  selector: {matchLabels: {app: payments}}   # empty: every workload of the namespace
+  apply: Forbidden                           # Allowed (default) or Forbidden
+  cpu: {min: 250m, headroomPercent: 50}
+  memory: {max: 4Gi}
+```
+
+- **Which policy counts.** A workload follows the oldest policy whose selector matches the
+  labels of its pod template.
+- **Bounds and headroom.** `min` and `max` bound the recommended request, and
+  `headroomPercent` replaces the default headroom (20% with history, 50% with a single
+  reading). A bound wins over the JVM heap floor, which then shows as a risk.
+- **Apply.** With `Forbidden` the advice is still shown, but **Apply**, **Pull request**
+  and the assistant's tools are refused with the policy's name.
+- **Exclude.** `exclude: true` leaves the workloads out of the advice.
+
+The advice is cached for five minutes, so a new policy shows within that time. For this
+the operator reads RightsizingPolicies cluster-wide.
+
+### Java containers
+
+A container counts as Java when it runs `java`, sets `JAVA_TOOL_OPTIONS`,
+`JDK_JAVA_OPTIONS`, `JAVA_OPTS` or `_JAVA_OPTIONS`, uses a JVM image, or has JVM heap
+series in VictoriaMetrics. Set the annotation `costdeck.io/runtime` to `java` or `none` on
+the workload or its pod template to correct that: `none` covers every container of the pod,
+`java` only its main one, the container `kubectl.kubernetes.io/default-container` names or
+else the first, so sidecars keep their own detection. Cost Deck reads the JVM flags in the order
+the JVM applies them and works out the heap the JVM takes under the container limit. The
+memory advice then never goes below that heap plus native memory, and the namespace page
+lists what is wrong with the setup: a heap at the limit, the default 25% heap, no limit, a
+request below the heap. With JVM heap series (Micrometer `jvm_memory_used_bytes`, the
+Prometheus Java client or JMX exporter, or OpenTelemetry) carrying `namespace` and `pod`
+labels, it also recommends a heap of twice what was left after garbage collection, with the
+memory, the flag and the saving. Nothing is applied to the JVM.
+
+## Performance risks
+
+The namespace page lists, most severe first, what holds the workloads back or makes them
+unstable, with a fix and what the fix adds to the monthly cost (limits are not billed):
+
+- CPU throttling, the p95 of 5-minute shares of throttled CFS periods, from cAdvisor's
+  `container_cpu_cfs_throttled_periods_total`; 10% is a warning, 25% critical;
+- OOM kills, restarts and crash loops with their reason and exit code;
+- evictions, with the kubelet's message when the evicted pod is still there;
+- memory at 90% of its limit or more;
+- HorizontalPodAutoscalers that want more replicas than their maximum, with the number
+  worked out from their current utilization;
+- JVM heaps still full after garbage collection, and JVM setups that risk an OOM kill.
+
+The current state of pods and HorizontalPodAutoscalers is always read; for this the operator
+reads HorizontalPodAutoscalers cluster-wide. CPU throttling and the last 14 days of OOM
+kills, restarts and evictions need VictoriaMetrics with cAdvisor and kube-state-metrics
+series. Right-sizing never cuts a resource under pressure: a throttled container keeps its
+CPU request and one that was OOM-killed, evicted or close to its limit keeps its memory,
+and the advice says why. `GET /api/namespaces/{ns}/risks` serves the list, and the
+assistant and MCP clients have `get_performance_risks`.
 
 ## Prometheus metrics
 
@@ -844,7 +942,7 @@ helm upgrade costdeck-operator oci://ghcr.io/migalsp/costdeck/charts/costdeck-op
 | `gitops.pause` | `false` | Lets schedules with `spec.pauseGitOps` pause Flux and Argo CD (cluster-wide read and patch on their objects) |
 | `hibernation.enabled` | `false` | Lets hibernate rules stop CloudNativePG and Zalando Postgres clusters and Strimzi Connect, MirrorMaker 2 and Bridge (cluster-wide read and patch on them) |
 | `hibernation.extraRules` | `[]` | `apiGroups` and `resources` of other operators' kinds that hibernate rules stop |
-| `sleepPage.enabled` | `false` | Lets schedules with `spec.sleepPage` point their HTTPRoutes at the sleep page (read and patch on HTTPRoutes, ReferenceGrants in the release namespace) |
+| `sleepPage.enabled` | `false` | Lets schedules with `spec.sleepPage` point their HTTPRoutes at the sleep page (read and patch on HTTPRoutes, ReferenceGrants in the release namespace, the `<release>-sleep` Service) |
 | `namespaceTTL.enabled` | `false` | Lets preview cleanup delete namespaces past their time to live (patch and delete on namespaces) |
 
 `values.schema.json` rejects malformed values at install time.
@@ -858,6 +956,19 @@ helm upgrade costdeck-operator oci://ghcr.io/migalsp/costdeck/charts/costdeck-op
 
 `--reset-then-reuse-values` keeps your overrides while picking up new chart defaults.
 Plain `--reuse-values` ignores new defaults and can render an incomplete Deployment.
+
+Upgrading from 1.6 or earlier:
+
+- The operator logs one JSON object per line, without stack traces on warnings. For the
+  console format of earlier versions, add `--set 'extraArgs={--zap-devel=true}'`.
+- Generic OIDC sign-in grants a role from the roles claim only through
+  `spec.auth.oidc.roleMapping` or a role named `costdeck.viewer`, `costdeck.operator` or
+  `costdeck.admin`. Map plain names such as `admin` in **Role → role mapping** to keep them.
+- A ScalingConfig's workload stages wait until they are ready instead of moving on after a
+  minute; set `spec.featureFlags.skipOnTimeout` (or tick the option in **Workload rules**)
+  to keep moving on.
+- With `sleepPage.enabled`, the sleep page moves to its own `<release>-sleep` Service; routes
+  asleep at upgrade time move over on the next reconcile.
 
 Upgrading from 1.3 or earlier:
 
@@ -878,14 +989,28 @@ helm uninstall costdeck-operator -n costdeck
 ```
 
 The CRDs, and with them your schedules and the `CostDeckConfig`, are kept, so a reinstall
-picks up where you left off. To remove everything:
+picks up where you left off.
+
+Deleting a schedule restores what it scaled down: its finalizer
+(`finops.costdeck.io/release`) holds the deletion until the operator has brought back the
+replicas, CronJobs, KEDA objects, hibernated services, paused GitOps objects and
+sleep-page routes of its namespaces. A group or config that is up when you delete it
+changes nothing. If something cannot be restored within ten minutes, the deletion goes
+ahead and the schedule's events say what was left. To remove everything, delete the
+schedules while the operator still runs, then the rest:
 
 ```bash
+kubectl delete scalinggroups,scalingconfigs --all -n costdeck --wait
+helm uninstall costdeck-operator -n costdeck
 kubectl delete crd costdeckconfigs.finops.costdeck.io namespacefinops.finops.costdeck.io \
-  namespaceoptimizations.finops.costdeck.io scalingconfigs.finops.costdeck.io \
-  scalinggroups.finops.costdeck.io
+  namespaceoptimizations.finops.costdeck.io rightsizingpolicies.finops.costdeck.io \
+  scalingconfigs.finops.costdeck.io scalinggroups.finops.costdeck.io
 kubectl delete namespace costdeck
 ```
 
-Workloads keep the replica count they had at that moment; scale up anything that was down
-before uninstalling if you need it running.
+A schedule deleted after the operator is gone waits for its finalizer. Remove the
+finalizer to let it go; its workloads then keep the replica count they have:
+
+```bash
+kubectl patch scalinggroup <name> -n costdeck --type merge -p '{"metadata":{"finalizers":null}}'
+```

@@ -227,7 +227,7 @@ func (s *Server) handleScalingGroupEvents(w http.ResponseWriter, r *http.Request
 
 	filtered := []corev1.Event{}
 	for _, e := range events.Items {
-		if e.InvolvedObject.Kind == "ScalingGroup" && e.InvolvedObject.Name == name {
+		if e.InvolvedObject.Kind == kindScalingGroup && e.InvolvedObject.Name == name {
 			filtered = append(filtered, e)
 		}
 	}

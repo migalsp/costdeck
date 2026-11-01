@@ -7,8 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
 	"github.com/migalsp/costdeck-operator/internal/auth"
 )
@@ -23,7 +21,7 @@ func mcpTestServer(t *testing.T, enabled bool) (http.Handler, *Server, string, s
 	server := buildMockServer()
 	seedGroup(t, server, "pps1")
 	if err := server.Client.Create(context.Background(), &finopsv1.CostDeckConfig{
-		ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: "costdeck"},
+		Name: "default", Namespace: "costdeck",
 		Spec: finopsv1.CostDeckConfigSpec{Integrations: finopsv1.IntegrationsConfig{
 			MCP: &finopsv1.MCPConfig{Enabled: enabled},
 		}},

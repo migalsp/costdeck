@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -10,6 +11,7 @@ import (
 	"testing"
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
+	"github.com/migalsp/costdeck-operator/internal/auth"
 	"github.com/migalsp/costdeck-operator/internal/metrics"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -109,7 +111,7 @@ func TestHandleNamespaces(t *testing.T) {
 	server := buildMockServerWithK8s()
 
 	ns := &finopsv1.NamespaceFinOps{
-		ObjectMeta: metav1.ObjectMeta{Name: "test-ns", Namespace: "costdeck"},
+		Name: "test-ns", Namespace: "costdeck",
 	}
 	if err := server.Client.Create(context.Background(), ns); err != nil {
 		t.Fatal(err)
@@ -189,7 +191,7 @@ func TestServeHistory(t *testing.T) {
 	server := buildMockServerWithK8s()
 
 	ns := &finopsv1.NamespaceFinOps{
-		ObjectMeta: metav1.ObjectMeta{Name: "test-ns", Namespace: "costdeck"},
+		Name: "test-ns", Namespace: "costdeck",
 		Status: finopsv1.NamespaceFinOpsStatus{
 			History: []finopsv1.MetricDataPoint{
 				{Timestamp: metav1.Now(), CPU: finopsv1.ResourceMetrics{Usage: "100m"}},
@@ -228,13 +230,13 @@ func TestServeHistoryRange(t *testing.T) {
 		CPU:    finopsv1.ResourceMetrics{Usage: "100m", Requests: "1", Limits: "2"},
 		Memory: finopsv1.ResourceMetrics{Usage: "64Mi", Requests: "1Gi", Limits: "2Gi"}}
 	if err := server.Client.Create(ctx, &finopsv1.NamespaceFinOps{
-		ObjectMeta: metav1.ObjectMeta{Name: "shop", Namespace: "costdeck"},
-		Spec:       finopsv1.NamespaceFinOpsSpec{TargetNamespace: "shop"},
-		Status:     finopsv1.NamespaceFinOpsStatus{History: []finopsv1.MetricDataPoint{recent}},
+		Name: "shop", Namespace: "costdeck",
+		Spec:   finopsv1.NamespaceFinOpsSpec{TargetNamespace: "shop"},
+		Status: finopsv1.NamespaceFinOpsStatus{History: []finopsv1.MetricDataPoint{recent}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	cfg := &finopsv1.CostDeckConfig{ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: "costdeck"}}
+	cfg := &finopsv1.CostDeckConfig{Name: "default", Namespace: "costdeck"}
 	if err := server.Client.Create(ctx, cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -331,7 +333,7 @@ func TestHandleNamespaceRevert(t *testing.T) {
 
 	// Pre-create the required finops object
 	opt := &finopsv1.NamespaceOptimization{
-		ObjectMeta: metav1.ObjectMeta{Name: "test-ns", Namespace: "costdeck"},
+		Name: "test-ns", Namespace: "costdeck",
 		Status: finopsv1.NamespaceOptimizationStatus{
 			Workloads: []finopsv1.WorkloadOptimization{
 				{
@@ -364,7 +366,7 @@ func TestHandleScalingGroups(t *testing.T) {
 	server := buildMockServerWithK8s()
 
 	group := &finopsv1.ScalingGroup{
-		ObjectMeta: metav1.ObjectMeta{Name: "test-group", Namespace: "costdeck"},
+		Name: "test-group", Namespace: "costdeck",
 		Spec: finopsv1.ScalingGroupSpec{
 			Active: new(bool),
 		},
@@ -396,7 +398,7 @@ func TestHandleScalingConfigs(t *testing.T) {
 	server := buildMockServerWithK8s()
 
 	config := &finopsv1.ScalingConfig{
-		ObjectMeta: metav1.ObjectMeta{Name: "test-config", Namespace: "costdeck"},
+		Name: "test-config", Namespace: "costdeck",
 		Spec: finopsv1.ScalingConfigSpec{
 			Active: new(bool),
 		},
@@ -427,7 +429,7 @@ func TestHandleClusterNodes(t *testing.T) {
 
 	// Add a dummy node
 	node := &corev1.Node{
-		ObjectMeta: metav1.ObjectMeta{Name: "test-node"},
+		Name: "test-node",
 		Status: corev1.NodeStatus{
 			Allocatable: corev1.ResourceList{
 				corev1.ResourceCPU:    resource.MustParse("2"),
@@ -465,5 +467,111 @@ func TestHandleClusterNodes(t *testing.T) {
 	nodes, ok := parsed["nodes"].([]any)
 	if !ok || len(nodes) != 1 {
 		t.Errorf("expected 1 node in response, got %v", parsed)
+	}
+}
+
+func TestOperatorAndAdminRoutesRefuseLowerRolesBeforeTheHandlerRuns(t *testing.T) {
+	t.Setenv("POD_NAMESPACE", "costdeck")
+	t.Setenv("HOSTNAME", "costdeck-operator-0")
+	t.Setenv("COSTDECK_AUTH_USER", "admin")
+	t.Setenv("COSTDECK_AUTH_PASSWORD", "a-long-enough-password")
+	ctx := context.Background()
+	calls := &handlerCalls{}
+	server := interceptedServer(callsMadeByHandlers(calls))
+	outgoing := &refusingTransport{}
+	server.HTTPClient = &http.Client{Transport: outgoing}
+	poster := &recordingPoster{}
+	server.Poster = poster
+	svc, err := auth.NewService(ctx, server.Client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.Auth = svc
+	handler, err := server.Handler()
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientset := server.K8sClient.(*fake.Clientset)
+
+	tokens := map[auth.Role]string{}
+	for _, role := range []auth.Role{auth.RoleViewer, auth.RoleOperator, auth.RoleAdmin} {
+		token, _, err := svc.Tokens.Create(ctx, string(role)+"-token", role, 0, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		tokens[role] = token
+	}
+	issued := httptest.NewRecorder()
+	if err := svc.Sessions.Issue(issued, httptest.NewRequest(http.MethodGet, "/", nil), auth.Identity{Subject: "oidc:vera", Name: "Vera", Role: auth.RoleViewer, Provider: "oidc"}); err != nil {
+		t.Fatal(err)
+	}
+	viewerSession := issued.Result().Cookies()
+
+	type caller struct {
+		name    string
+		role    auth.Role
+		prepare func(*http.Request)
+	}
+	byToken := func(role auth.Role) caller {
+		return caller{string(role) + " token", role, func(r *http.Request) { r.Header.Set("Authorization", "Bearer "+tokens[role]) }}
+	}
+	sessionOfViewer := caller{"viewer session", auth.RoleViewer, func(r *http.Request) {
+		for _, c := range viewerSession {
+			r.AddCookie(c)
+		}
+	}}
+	do := func(route registeredRoute, who caller) *httptest.ResponseRecorder {
+		var body io.Reader
+		if route.method != http.MethodGet && route.method != http.MethodDelete {
+			body = strings.NewReader("{")
+		}
+		req := httptest.NewRequest(route.method, route.path(), body)
+		who.prepare(req)
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		return rr
+	}
+
+	observed := 0
+	routes := routesNeeding(t, auth.RoleOperator, auth.RoleAdmin)
+	if len(routes) < 30 {
+		t.Fatalf("found only %d operator and admin routes in server.go; has the registration style changed?", len(routes))
+	}
+	for _, route := range routes {
+		callers := []caller{byToken(auth.RoleViewer), sessionOfViewer}
+		if route.role == auth.RoleAdmin {
+			callers = append(callers, byToken(auth.RoleOperator))
+		}
+		for _, who := range callers {
+			calls.take()
+			clientset.ClearActions()
+			outgoing.take()
+			poster.posts = nil
+
+			rr := do(route, who)
+			want := "This action needs the " + string(route.role) + " role; you are signed in as " + string(who.role) + "."
+			if rr.Code != http.StatusForbidden || !strings.Contains(rr.Body.String(), want) {
+				t.Errorf("%s %s as %s = %d %s, want 403 from the role check", route.method, route.pattern, who.name, rr.Code, rr.Body.String())
+			}
+			if made := calls.take(); len(made) > 0 {
+				t.Errorf("%s %s as %s reached the handler, which called the API server: %v", route.method, route.pattern, who.name, made)
+			}
+			if actions := clientset.Actions(); len(actions) > 0 {
+				t.Errorf("%s %s as %s reached the handler, which used the clientset: %v", route.method, route.pattern, who.name, actions)
+			}
+			if urls := outgoing.take(); len(urls) > 0 || len(poster.posts) > 0 {
+				t.Errorf("%s %s as %s sent something out: %v %q", route.method, route.pattern, who.name, urls, poster.posts)
+			}
+		}
+
+		calls.take()
+		clientset.ClearActions()
+		if rr := do(route, byToken(route.role)); rr.Code == http.StatusForbidden && strings.Contains(rr.Body.String(), "This action needs the") {
+			t.Errorf("%s %s with the %s role it requires = %s, the role check must let it through", route.method, route.pattern, route.role, rr.Body.String())
+		}
+		observed += len(calls.take()) + len(clientset.Actions())
+	}
+	if observed == 0 {
+		t.Error("handlers allowed to run left no trace, so the checks above could not see a handler run either")
 	}
 }

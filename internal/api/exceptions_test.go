@@ -11,8 +11,6 @@ import (
 	"testing"
 	"time"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
 	"github.com/migalsp/costdeck-operator/internal/auth"
 )
@@ -30,7 +28,7 @@ func send(t *testing.T, server *Server, method, path, body string) *httptest.Res
 
 func seedCalendars(t *testing.T, server *Server, calendars ...finopsv1.HolidayCalendar) {
 	t.Helper()
-	cfg := &finopsv1.CostDeckConfig{ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: "costdeck"}, Spec: finopsv1.CostDeckConfigSpec{Calendars: calendars}}
+	cfg := &finopsv1.CostDeckConfig{Name: "default", Namespace: "costdeck", Spec: finopsv1.CostDeckConfigSpec{Calendars: calendars}}
 	if err := server.Client.Create(context.Background(), cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +103,7 @@ func TestManualOverrideUntilNextChangeStopsAtAnException(t *testing.T) {
 	seedCalendars(t, server)
 	tomorrow := time.Now().UTC().AddDate(0, 0, 1).Format("2006-01-02")
 	group := &finopsv1.ScalingGroup{
-		ObjectMeta: metav1.ObjectMeta{Name: "shop", Namespace: "costdeck"},
+		Name: "shop", Namespace: "costdeck",
 		Spec: finopsv1.ScalingGroupSpec{
 			Namespaces: []string{"shop"},
 			// Up around the clock: only the exception can end the override.

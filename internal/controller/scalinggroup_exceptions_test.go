@@ -55,7 +55,7 @@ var _ = Describe("Schedule exceptions and holiday calendars", func() {
 
 	It("keeps a group down for today's exception and says so in its status", func() {
 		Expect(k8sClient.Create(ctx, &finopsv1.ScalingGroup{
-			ObjectMeta: metav1.ObjectMeta{Name: groupKey.Name, Namespace: groupKey.Namespace},
+			Name: groupKey.Name, Namespace: groupKey.Namespace,
 			Spec: finopsv1.ScalingGroupSpec{
 				Category: "Test", Namespaces: []string{"exc-test-ns"}, Schedules: allWeek,
 				Exceptions: []finopsv1.ScheduleException{{Name: "Office move", Start: today, State: "Down"}},
@@ -75,8 +75,8 @@ var _ = Describe("Schedule exceptions and holiday calendars", func() {
 
 	It("reports a missing calendar, and applies it once it exists", func() {
 		Expect(k8sClient.Create(ctx, &finopsv1.ScalingGroup{
-			ObjectMeta: metav1.ObjectMeta{Name: groupKey.Name, Namespace: groupKey.Namespace},
-			Spec:       finopsv1.ScalingGroupSpec{Category: "Test", Namespaces: []string{"exc-test-ns"}, Schedules: allWeek, Calendars: []string{"company"}},
+			Name: groupKey.Name, Namespace: groupKey.Namespace,
+			Spec: finopsv1.ScalingGroupSpec{Category: "Test", Namespaces: []string{"exc-test-ns"}, Schedules: allWeek, Calendars: []string{"company"}},
 		})).To(Succeed())
 
 		By("reporting the calendar as missing and staying on the schedule")
@@ -89,8 +89,8 @@ var _ = Describe("Schedule exceptions and holiday calendars", func() {
 
 		By("mapping a change of the settings to the groups that use calendars")
 		cfg := &finopsv1.CostDeckConfig{
-			ObjectMeta: metav1.ObjectMeta{Name: configKey.Name, Namespace: configKey.Namespace},
-			Spec:       finopsv1.CostDeckConfigSpec{Calendars: []finopsv1.HolidayCalendar{{Name: "company", Days: []finopsv1.CalendarDay{{Date: today, Name: "Founders day"}}}}},
+			Name: configKey.Name, Namespace: configKey.Namespace,
+			Spec: finopsv1.CostDeckConfigSpec{Calendars: []finopsv1.HolidayCalendar{{Name: "company", Days: []finopsv1.CalendarDay{{Date: today, Name: "Founders day"}}}}},
 		}
 		Expect(k8sClient.Create(ctx, cfg)).To(Succeed())
 		Expect(reconciler.groupsWithCalendars(ctx, cfg)).To(ContainElement(reconcile.Request{NamespacedName: groupKey}))
@@ -118,7 +118,7 @@ var _ = Describe("ScalingConfig exceptions", func() {
 	It("keeps a namespace up for an Up exception outside its schedule", func() {
 		GinkgoT().Setenv("POD_NAMESPACE", "default")
 		Expect(k8sClient.Create(ctx, &finopsv1.ScalingConfig{
-			ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace},
+			Name: key.Name, Namespace: key.Namespace,
 			Spec: finopsv1.ScalingConfigSpec{
 				TargetNamespace: "exc-config-ns",
 				// A window that never covers today.

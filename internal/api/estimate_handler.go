@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"sort"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -115,7 +114,7 @@ type scheduleShare struct {
 func (s *Server) scheduleShares(ctx context.Context, now time.Time) (map[string]scheduleShare, error) {
 	out := map[string]scheduleShare{}
 	calendars := s.calendars(ctx)
-	add := func(ns, kind, name string, sp finopsv1.ScalingGroupSpec) {
+	add := func(ns, kind, name string, sp finopsv1.ScalingGroupSpec, recent []finopsv1.WakeUp) {
 		if _, done := out[ns]; done {
 			return
 		}
@@ -124,7 +123,7 @@ func (s *Server) scheduleShares(ctx context.Context, now time.Time) (map[string]
 			return
 		}
 		exceptions, _ := scaling.ResolveExceptions(sp.Exceptions, sp.Calendars, calendars, scaling.ExceptionZone(sp.Schedules))
-		tt := scaling.Timetable{Schedules: sp.Schedules, Exceptions: exceptions}
+		tt := scaling.Timetable{Schedules: sp.Schedules, Exceptions: exceptions, Lead: scaling.PrewarmLead(sp.Prewarm, recent)}
 		if len(sp.Schedules) == 0 && len(exceptions) == 0 {
 			return
 		}
@@ -135,13 +134,12 @@ func (s *Server) scheduleShares(ctx context.Context, now time.Time) (map[string]
 	if err := s.Client.List(ctx, &groups, client.InNamespace(config.OperatorNamespace())); err != nil {
 		return nil, err
 	}
-	// The older group owns a namespace two groups claim.
-	sort.Slice(groups.Items, func(i, j int) bool {
-		return groups.Items[i].CreationTimestamp.Before(&groups.Items[j].CreationTimestamp)
-	})
+	owners := scaling.NamespaceOwners(groups.Items)
 	for _, g := range groups.Items {
 		for _, ns := range g.Members() {
-			add(ns, "schedule", g.Name, g.Spec)
+			if owners[ns] == g.Name {
+				add(ns, "schedule", g.Name, g.Spec, g.Status.RecentWakeUps)
+			}
 		}
 	}
 	var configs finopsv1.ScalingConfigList
@@ -152,7 +150,7 @@ func (s *Server) scheduleShares(ctx context.Context, now time.Time) (map[string]
 		if c.Spec.TargetNamespace == "" {
 			continue
 		}
-		add(c.Spec.TargetNamespace, "schedule", c.Name, finopsv1.ScalingGroupSpec{Schedules: c.Spec.Schedules, Exceptions: c.Spec.Exceptions, Calendars: c.Spec.Calendars})
+		add(c.Spec.TargetNamespace, "schedule", c.Name, finopsv1.ScalingGroupSpec{Schedules: c.Spec.Schedules, Exceptions: c.Spec.Exceptions, Calendars: c.Spec.Calendars, Prewarm: c.Spec.Prewarm}, c.Status.RecentWakeUps)
 	}
 	return out, nil
 }

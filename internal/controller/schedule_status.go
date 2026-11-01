@@ -133,9 +133,27 @@ func settledRequeue(d scaling.Decision, now time.Time) time.Duration {
 
 // applyDecision mirrors a scheduling decision into the status and the ManualOverride
 // condition.
+const recentWakeUps = 5
+
+func trackWakeUp(st *finopsv1.ScheduleStatus, oldPhase, newPhase string, now time.Time) {
+	switch {
+	case oldPhase == scaling.PhaseScaledDown && (newPhase == scaling.PhaseScalingUp || newPhase == scaling.PhaseWaitingForDependencies):
+		started := metav1.NewTime(now)
+		st.WakeUpStartedAt = &started
+	case newPhase == scaling.PhaseScaledUp && st.WakeUpStartedAt != nil:
+		took := int32(now.Sub(st.WakeUpStartedAt.Time).Round(time.Second) / time.Second)
+		st.RecentWakeUps = append([]finopsv1.WakeUp{{StartedAt: *st.WakeUpStartedAt, Seconds: max(took, 0)}}, st.RecentWakeUps...)
+		st.RecentWakeUps = st.RecentWakeUps[:min(len(st.RecentWakeUps), recentWakeUps)]
+		st.WakeUpStartedAt = nil
+	case newPhase == scaling.PhaseScalingDown || newPhase == scaling.PhaseScaledDown:
+		st.WakeUpStartedAt = nil
+	}
+}
+
 func applyDecision(st *finopsv1.ScheduleStatus, conds *[]metav1.Condition, d scaling.Decision, generation int64, kind string) {
 	st.Mode = d.Mode
 	st.DesiredState = d.State()
+	st.PrewarmMinutes = int32(d.PrewarmLead / time.Minute)
 	st.Exception, st.ExceptionEndsAt = d.Exception, nil
 	if d.ExceptionEndsAt != nil {
 		t := metav1.NewTime(*d.ExceptionEndsAt)
@@ -176,6 +194,9 @@ func applyDecision(st *finopsv1.ScheduleStatus, conds *[]metav1.Condition, d sca
 	case scaling.ModeIdle:
 		cond.Status, cond.Reason = metav1.ConditionFalse, "Idle"
 		cond.Message = fmt.Sprintf("The %s sleeps for being unused (status.idleUntil); a manual start wakes it.", kind)
+	case scaling.ModePrewarm:
+		cond.Status, cond.Reason = metav1.ConditionFalse, "Prewarm"
+		cond.Message = fmt.Sprintf("The %s is started %d minutes ahead of its schedule so it is ready when the schedule starts (spec.prewarm).", kind, int(d.PrewarmLead/time.Minute))
 	case scaling.ModeException:
 		cond.Status, cond.Reason = metav1.ConditionFalse, "Exception"
 		cond.Message = fmt.Sprintf("The %s is kept %s for %q until %s; then the schedule takes over.", kind, strings.ToLower(d.State()), d.Exception, d.ExceptionEndsAt.UTC().Format(time.RFC3339))
@@ -215,6 +236,12 @@ type Notifier interface {
 type transitionLog struct {
 	mu   sync.Mutex
 	last map[types.UID]string
+}
+
+func (l *transitionLog) forget(uid types.UID) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	delete(l.last, uid)
 }
 
 func settled(phase string) bool {
@@ -271,6 +298,8 @@ func transitionMessage(kind, name, phase string, st finopsv1.ScheduleStatus, req
 		why = "(no schedule)"
 	case scaling.ModeIdle:
 		why = "because nobody used it"
+	case scaling.ModePrewarm:
+		why = fmt.Sprintf("%d minutes ahead of its schedule, to be ready on time", st.PrewarmMinutes)
 	case scaling.ModeException:
 		why = "for " + st.Exception
 		if st.ExceptionEndsAt != nil {

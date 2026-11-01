@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -145,7 +144,7 @@ func TestProviderNamespaceHistory(t *testing.T) {
 	srv := httptest.NewServer(prom)
 	defer srv.Close()
 
-	cfg := &finopsv1.CostDeckConfig{ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: "costdeck"}}
+	cfg := &finopsv1.CostDeckConfig{Name: "default", Namespace: "costdeck"}
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cfg).Build()
 	p := NewProvider(c, stubSource{})
 	ctx := context.Background()

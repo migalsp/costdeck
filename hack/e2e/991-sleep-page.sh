@@ -50,17 +50,28 @@ api PUT /api/settings '{"dashboardUrl":"https://costdeck.example.com"}' >/dev/nu
 track_group smoke-sleep
 expect_code 201 "a closed schedule with a sleep page" POST /api/scaling/groups "$SLEEP_BODY" -b "$JAR"
 wait_for "the namespace is scaled to zero" replicas_are smoke-sleep web 0
-wait_for "the route points at the sleep page" backend_is "$RELEASE-api"
-grant_exists || fail "no ReferenceGrant opens the API Service to the route"
+wait_for "the route points at the sleep page" backend_is "$RELEASE-sleep"
+grant_exists || fail "no ReferenceGrant opens the sleep page Service to the route"
+[[ "$(kubectl get referencegrants.gateway.networking.k8s.io costdeck-sleep-page -n "$NS" -o jsonpath='{.spec.to[*].name}')" == "$RELEASE-sleep" ]] ||
+  fail "the ReferenceGrant opens more than the sleep page Service: $(kubectl get referencegrants.gateway.networking.k8s.io costdeck-sleep-page -n "$NS" -o jsonpath='{.spec.to}')"
 [[ "$(kubectl get httproute shop -n smoke-sleep -o jsonpath='{.spec.rules[0].backendRefs[0].namespace}')" == "$NS" ]] || fail "the route's backend is not in $NS"
 ok "the route and its ReferenceGrant pass the Gateway API's own validation"
 
 log "The page tells visitors the application is asleep and how to wake it"
-page=$(curl -sS -w '\n%{http_code}' -H "X-Costdeck-Sleeping: smoke-sleep" -H "Host: smoke-sleep.example.com" -H "Accept: text/html" "localhost:$API_PORT/cart")
+SLEEP_PORT=${SLEEP_PORT:-18083}
+kubectl port-forward -n "$NS" "svc/$RELEASE-sleep" "$SLEEP_PORT:80" >/dev/null 2>&1 &
+PF_PIDS="$PF_PIDS $!"
+wait_for "the sleep page Service answers" curl -s -o /dev/null "localhost:$SLEEP_PORT/"
+page=$(curl -sS -w '\n%{http_code}' -H "X-Costdeck-Sleeping: smoke-sleep" -H "Host: smoke-sleep.example.com" -H "Accept: text/html" "localhost:$SLEEP_PORT/cart")
 echo "$page" | tail -1 | grep -q 503 || fail "the sleep page should answer 503: $(echo "$page" | tail -1)"
 echo "$page" | grep -q 'smoke-sleep is asleep' || fail "the page does not say the namespace is asleep"
 echo "$page" | grep -q 'href="https://costdeck.example.com/wake/smoke-sleep?return=' || fail "the page has no wake link"
 ok "503 with the page and a wake link"
+for path in /api/settings /api/version /mcp /; do
+  through=$(curl -sS -o /dev/null -w '%{http_code}' -H "X-Costdeck-Sleeping: smoke-sleep" -H "Accept: application/json" "localhost:$SLEEP_PORT$path")
+  [[ "$through" == 503 ]] || fail "$path through the sleep page Service answered $through, not the sleep page"
+done
+ok "a route to the sleep page Service reaches nothing but the page"
 api GET /api/wake/smoke-sleep | jq -e '.sleeping and .schedule.name == "smoke-sleep" and .hostnames == ["smoke-sleep.example.com"]' >/dev/null ||
   fail "the wake status is wrong: $(api GET /api/wake/smoke-sleep)"
 ok "the dashboard's wake page knows the namespace sleeps"

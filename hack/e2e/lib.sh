@@ -131,6 +131,12 @@ CLOSED_SCHEDULE='[{startDay: 0, startTime: "03:00", endDay: 0, endTime: "03:01",
 # shellcheck disable=SC2034
 CLOSED_SCHEDULE_JSON='[{"startDay":0,"startTime":"03:00","endDay":0,"endTime":"03:01","timezone":"Pacific/Kiritimati"}]'
 
+vm_series_at_least() {
+  local count
+  count=$(curl -sf -G "localhost:$VM_PORT/api/v1/query" --data-urlencode "query=count(last_over_time($1[1h]))" | jq -r '.data.result[0].value[1] // 0')
+  ((count >= $2))
+}
+
 # start_victoriametrics runs a VictoriaMetrics in smoke-vm (once), forwards it to
 # localhost:$VM_PORT for importing synthetic series, and points Cost Deck at it with the
 # given retention in days. The settings are switched off again on exit.

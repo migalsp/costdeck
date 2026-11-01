@@ -73,7 +73,7 @@ export type DesiredState = 'Up' | 'Down'
 
 // ScheduleStatus mirrors what the operator reports about who is in control.
 export interface ScheduleStatus {
-  mode?: 'Schedule' | 'ManualUp' | 'ManualDown' | 'Exception' | 'AlwaysOn' | 'Dependency' | 'OnDemand' | 'Idle'
+  mode?: 'Schedule' | 'ManualUp' | 'ManualDown' | 'Exception' | 'AlwaysOn' | 'Dependency' | 'OnDemand' | 'Idle' | 'Prewarm'
   desiredState?: DesiredState
   // The exception or calendar day in force while mode is Exception, and when it ends.
   exception?: string
@@ -88,6 +88,14 @@ export interface ScheduleStatus {
   scaleDownAt?: string
   // When idle auto-sleep hands the namespaces back to the schedule, while mode is Idle.
   idleUntil?: string
+  wakeUpStartedAt?: string
+  recentWakeUps?: { startedAt: string; seconds: number }[]
+  prewarmMinutes?: number
+}
+
+export interface Prewarm {
+  auto?: boolean
+  minutes?: number
 }
 
 // Realized savings: GET /api/scaling/{groups|configs}/{name}/realized checks whether the
@@ -168,6 +176,7 @@ export interface ScalingGroupSpec {
   // idleAfter puts the namespaces to sleep once nobody used them for this long (a Go
   // duration: the API returns "1h0m0s" for "1h").
   idleAfter?: string
+  prewarm?: Prewarm
   // hibernate stops operator-run services in every namespace of the group.
   hibernate?: HibernateRule[]
 }
@@ -215,7 +224,9 @@ export interface ScalingConfigSpec {
   pauseGitOps?: boolean
   sleepPage?: boolean
   idleAfter?: string
+  prewarm?: Prewarm
   hibernate?: HibernateRule[]
+  featureFlags?: { skipOnTimeout: boolean; timeoutMinutes: number }
 }
 
 export interface ScalingConfig {
@@ -240,12 +251,35 @@ export interface ResourceAdvice {
   observed?: string
   recommended?: string
   action: AdviceAction
+  held?: string
+}
+
+export interface JVMFinding {
+  severity: 'risk' | 'waste' | 'note'
+  code: string
+  message: string
+}
+
+export interface JVMAdvice {
+  detectedBy: 'annotation' | 'command' | 'options' | 'image' | 'metrics'
+  options?: string[]
+  heap?: string
+  heapSource: string
+  heapUsed?: string
+  heapAfterGC?: string
+  nonHeap?: string
+  recommendedHeap?: string
+  recommendedMemory?: string
+  recommendedOptions?: string
+  monthlySavings?: number
+  findings: JVMFinding[]
 }
 
 export interface ContainerAdvice {
   name: string
   cpu: ResourceAdvice
   memory: ResourceAdvice
+  jvm?: JVMAdvice
 }
 
 export interface WorkloadAdvice {
@@ -253,6 +287,8 @@ export interface WorkloadAdvice {
   name: string
   replicas: number
   monthlySavings: number
+  policy?: string
+  applyForbidden?: boolean
   containers: ContainerAdvice[]
 }
 
@@ -266,7 +302,30 @@ export interface Recommendations {
   warning?: string
   currency: string
   monthlySavings: number
+  javaMonthlySavings?: number
   workloads: WorkloadAdvice[]
+}
+
+export interface Risk {
+  kind: WorkloadAdvice['kind']
+  workload: string
+  container?: string
+  severity: 'critical' | 'warning'
+  code: string
+  message: string
+  fix?: string
+  fixMonthlyCost?: number
+}
+
+// Risks is GET /api/namespaces/{ns}/risks: what holds the workloads back, most severe first.
+export interface Risks {
+  namespace: string
+  historical: boolean
+  window?: string
+  basis: string
+  warning?: string
+  currency: string
+  risks: Risk[]
 }
 
 // NamespaceFinOps is GET /api/namespaces: the per-minute usage samples of one namespace.

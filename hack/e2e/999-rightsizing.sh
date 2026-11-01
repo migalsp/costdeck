@@ -50,9 +50,19 @@ rs_workload steady "" 'sleep 3600'
 rs_workload crashy "" 'if [ "$CPU_MILLIS" -lt 100 ]; then echo "too little CPU: ${CPU_MILLIS}m"; sleep 3; exit 1; fi; sleep 3600'
 rs_workload proposed "" 'sleep 3600'
 rs_workload managed 'argocd.argoproj.io/tracking-id: "shop:apps/Deployment:smoke-rs/managed"' 'sleep 3600'
-for d in steady crashy proposed managed; do wait_for "$d is up" ready_are smoke-rs "$d" 1; done
+rs_workload guarded "" 'sleep 3600'
+kubectl apply -f - >/dev/null <<'YAML' || fail "applying the RightsizingPolicy"
+apiVersion: finops.costdeck.io/v1
+kind: RightsizingPolicy
+metadata: {name: e2e-guarded, namespace: smoke-rs}
+spec:
+  selector: {matchLabels: {app: guarded}}
+  apply: Forbidden
+  cpu: {min: 300m}
+YAML
+for d in steady crashy proposed managed guarded; do wait_for "$d is up" ready_are smoke-rs "$d" 1; done
 # metrics-server reports a pod's usage a minute or so after it starts.
-for d in steady crashy proposed managed; do TIMEOUT=240 wait_for "advice to reduce $d" advice_ready "$d"; done
+for d in steady crashy proposed managed guarded; do TIMEOUT=240 wait_for "advice to reduce $d" advice_ready "$d"; done
 
 log "Applying is off until an admin turns it on"
 [[ "$(rs_post apply steady)" == 403 ]] || fail "applying while it is off was not refused"
@@ -70,6 +80,12 @@ ok "steady now requests $(cpu_request steady), watched"
 [[ "$(rs_post apply managed)" == 409 ]] || fail "a workload Argo CD manages was not refused"
 [[ "$(cpu_request managed)" == 500m ]] || fail "the managed workload was changed"
 ok "the Argo CD workload is left to a pull request"
+[[ "$(rs_post apply guarded)" == 403 ]] || fail "a workload its RightsizingPolicy keeps from being changed was not refused: $(rs_why apply guarded)"
+[[ "$(cpu_request guarded)" == 500m ]] || fail "the guarded workload was changed"
+api GET /api/namespaces/smoke-rs/recommendations |
+  jq -e '.workloads[] | select(.name == "guarded") | .policy == "e2e-guarded" and .applyForbidden and .containers[0].cpu.recommended == "300m"' >/dev/null ||
+  fail "the advice does not follow the policy: $(api GET /api/namespaces/smoke-rs/recommendations | jq -c '.workloads[] | select(.name == "guarded")')"
+ok "the RightsizingPolicy keeps its 300m floor and forbids applying"
 
 log "New pods that fail with the smaller request get the old one back"
 [[ "$(rs_post apply crashy)" == 200 ]] || fail "applying the advice to crashy: $(rs_why apply crashy)"

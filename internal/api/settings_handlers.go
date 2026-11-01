@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -16,7 +17,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -83,6 +83,7 @@ type OIDCSettingsResponse struct {
 	Scopes           []string          `json:"scopes,omitempty"`
 	GroupsClaim      string            `json:"groupsClaim,omitempty"`
 	RolesClaim       string            `json:"rolesClaim,omitempty"`
+	RoleMapping      map[string]string `json:"roleMapping,omitempty"`
 	DefaultRole      string            `json:"defaultRole,omitempty"`
 	AutoProvision    bool              `json:"autoProvision"`
 	GroupRoleMapping map[string]string `json:"groupRoleMapping,omitempty"`
@@ -196,6 +197,8 @@ type VictoriaMetricsSettingsResponse struct {
 // SettingsUpdateRequest is the payload for updating settings.
 // Credentials are provided here in plaintext and then stored in K8s Secrets.
 type SettingsUpdateRequest struct {
+	secrets []pendingSecret
+
 	DashboardURL *string                    `json:"dashboardUrl,omitempty"`
 	NamespaceTTL *NamespaceTTLUpdateRequest `json:"namespaceTTL,omitempty"`
 	Allocation   *AllocationUpdateRequest   `json:"allocation,omitempty"`
@@ -208,8 +211,8 @@ type SettingsUpdateRequest struct {
 	Pricing      *PricingUpdateRequest      `json:"pricing,omitempty"`
 	Reports      *ReportsUpdateRequest      `json:"reports,omitempty"`
 	// Budgets replaces the whole list when present.
-	Budgets *[]finopsv1.Budget     `json:"budgets,omitempty"`
-	Alerts  *finopsv1.AlertsConfig `json:"alerts,omitempty"`
+	Budgets *[]finopsv1.Budget   `json:"budgets,omitempty"`
+	Alerts  *AlertsUpdateRequest `json:"alerts,omitempty"`
 	// Billing replaces the reconciliation setup when present.
 	Billing *finopsv1.BillingConfig `json:"billing,omitempty"`
 	// Calendars replaces the holiday calendars when present.
@@ -245,8 +248,8 @@ type AuthUpdateRequest struct {
 	OIDC              *OIDCUpdateRequest  `json:"oidc,omitempty"`
 }
 
-// OIDCUpdateRequest changes OpenID Connect sign-in. Scopes and GroupRoleMapping replace
-// the whole list or mapping when present.
+// OIDCUpdateRequest changes OpenID Connect sign-in. Scopes, GroupRoleMapping and
+// RoleMapping replace the whole list or mapping when present.
 type OIDCUpdateRequest struct {
 	Enabled          *bool             `json:"enabled,omitempty"`
 	DisplayName      *string           `json:"displayName,omitempty"`
@@ -257,6 +260,7 @@ type OIDCUpdateRequest struct {
 	Scopes           []string          `json:"scopes,omitempty"`
 	GroupsClaim      *string           `json:"groupsClaim,omitempty"`
 	RolesClaim       *string           `json:"rolesClaim,omitempty"`
+	RoleMapping      map[string]string `json:"roleMapping,omitempty"`
 	DefaultRole      *string           `json:"defaultRole,omitempty"`
 	AutoProvision    *bool             `json:"autoProvision,omitempty"`
 	GroupRoleMapping map[string]string `json:"groupRoleMapping,omitempty"`
@@ -549,7 +553,7 @@ func (s *Server) buildSettingsResponse(ctx context.Context, cfg *finopsv1.CostDe
 		resp.Auth.OIDC = &OIDCSettingsResponse{
 			Enabled: o.Enabled, DisplayName: o.DisplayName, IssuerURL: o.IssuerURL, ClientID: o.ClientID, RedirectURL: o.RedirectURL,
 			Scopes: o.Scopes, GroupsClaim: o.GroupsClaim, RolesClaim: o.RolesClaim, DefaultRole: o.DefaultRole,
-			AutoProvision: o.AutoProvision == nil || *o.AutoProvision, GroupRoleMapping: o.GroupRoleMapping, SkipSSLVerify: o.SkipSSLVerify,
+			AutoProvision: o.AutoProvision == nil || *o.AutoProvision, GroupRoleMapping: o.GroupRoleMapping, RoleMapping: o.RoleMapping, SkipSSLVerify: o.SkipSSLVerify,
 			HasClientSecret: o.ClientSecretRef != "" && s.secretExists(ctx, o.ClientSecretRef, cfg.Namespace),
 		}
 	}
@@ -581,10 +585,14 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		if cfg, err = s.getOrCreateDefaultConfig(ctx); err != nil {
 			return err
 		}
+		req.secrets = nil
 		for _, apply := range appliers {
 			if err := apply(ctx, cfg, &req); err != nil {
 				return err
 			}
+		}
+		if err := s.writeSecrets(ctx, req.secrets); err != nil {
+			return err
 		}
 		return s.Client.Update(ctx, cfg)
 	})
@@ -636,7 +644,8 @@ func (s *Server) applyAWSSettings(ctx context.Context, cfg *finopsv1.CostDeckCon
 	if aws.Region != "" {
 		data["AWS_REGION"] = []byte(aws.Region)
 	}
-	return s.storeCredentials(ctx, "costdeck-aws-credentials", data, &aws.SecretRef)
+	s.storeCredentials(req, "costdeck-aws-credentials", data, &aws.SecretRef)
+	return nil
 }
 
 func (s *Server) applyAzureSettings(ctx context.Context, cfg *finopsv1.CostDeckConfig, req *SettingsUpdateRequest) error {
@@ -672,11 +681,12 @@ func (s *Server) applyAzureSettings(ctx context.Context, cfg *finopsv1.CostDeckC
 	if azure.TenantID == "" {
 		return badRequestf("a tenant ID is required with a client secret")
 	}
-	return s.storeCredentials(ctx, "costdeck-azure-credentials", map[string][]byte{
+	s.storeCredentials(req, "costdeck-azure-credentials", map[string][]byte{
 		"AZURE_CLIENT_ID":     []byte(azureReq.ClientID),
 		"AZURE_CLIENT_SECRET": []byte(azureReq.ClientSecret),
 		"AZURE_TENANT_ID":     []byte(azureReq.TenantID),
 	}, &azure.SecretRef)
+	return nil
 }
 
 func (s *Server) applyGCPSettings(ctx context.Context, cfg *finopsv1.CostDeckConfig, req *SettingsUpdateRequest) error {
@@ -706,9 +716,10 @@ func (s *Server) applyGCPSettings(ctx context.Context, cfg *finopsv1.CostDeckCon
 	if err := validServiceAccountKey(gcpReq.ServiceAccountJSON); err != nil {
 		return badRequest{err}
 	}
-	return s.storeCredentials(ctx, "costdeck-gcp-credentials", map[string][]byte{
+	s.storeCredentials(req, "costdeck-gcp-credentials", map[string][]byte{
 		"credentials.json": []byte(gcpReq.ServiceAccountJSON),
 	}, &gcp.SecretRef)
+	return nil
 }
 
 func (s *Server) applyAISettings(ctx context.Context, cfg *finopsv1.CostDeckConfig, req *SettingsUpdateRequest) error {
@@ -742,7 +753,8 @@ func (s *Server) applyAISettings(ctx context.Context, cfg *finopsv1.CostDeckConf
 	if aiReq.APIKey == "" {
 		return nil
 	}
-	return s.storeCredentials(ctx, "costdeck-ai-credentials", map[string][]byte{"API_KEY": []byte(aiReq.APIKey)}, &ai.SecretRef)
+	s.storeCredentials(req, "costdeck-ai-credentials", map[string][]byte{"API_KEY": []byte(aiReq.APIKey)}, &ai.SecretRef)
+	return nil
 }
 
 func (s *Server) applyWebexSettings(ctx context.Context, cfg *finopsv1.CostDeckConfig, req *SettingsUpdateRequest) error {
@@ -787,7 +799,8 @@ func (s *Server) applyWebexSettings(ctx context.Context, cfg *finopsv1.CostDeckC
 			data[webex.SecretKeyWebhookSecret] = []byte(*wxReq.WebhookSecret)
 		}
 	}
-	return s.storeCredentials(ctx, secretName, data, &wx.SecretRef)
+	s.storeCredentials(req, secretName, data, &wx.SecretRef)
+	return nil
 }
 
 func (s *Server) applyVictoriaMetricsSettings(ctx context.Context, cfg *finopsv1.CostDeckConfig, req *SettingsUpdateRequest) error {
@@ -821,7 +834,8 @@ func (s *Server) applyVictoriaMetricsSettings(ctx context.Context, cfg *finopsv1
 	if data == nil {
 		return nil
 	}
-	return s.storeCredentials(ctx, "costdeck-vm-credentials", data, &vm.SecretRef)
+	s.storeCredentials(req, "costdeck-vm-credentials", data, &vm.SecretRef)
+	return nil
 }
 
 func applyMCPSettings(_ context.Context, cfg *finopsv1.CostDeckConfig, req *SettingsUpdateRequest) error {
@@ -926,18 +940,27 @@ func applyReportSettings(_ context.Context, cfg *finopsv1.CostDeckConfig, req *S
 	return nil
 }
 
+type AlertsUpdateRequest struct {
+	Anomalies        *finopsv1.AnomalyAlerts         `json:"anomalies,omitempty"`
+	PerformanceRisks *finopsv1.PerformanceRiskAlerts `json:"performanceRisks,omitempty"`
+}
+
 var budgetName = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
 
 func applyBudgetSettings(_ context.Context, cfg *finopsv1.CostDeckConfig, req *SettingsUpdateRequest) error {
-	if req.Alerts != nil {
-		a := req.Alerts.Anomalies
+	if req.Alerts != nil && req.Alerts.Anomalies != nil {
+		a := *req.Alerts.Anomalies
 		if a.Percent != 0 && (a.Percent < 5 || a.Percent > 1000) {
 			return badRequestf("the anomaly threshold must be between 5 and 1000 percent")
 		}
 		if a.MinimumDaily != "" && !decimalRate.MatchString(a.MinimumDaily) {
 			return badRequestf("the minimum daily increase must be a plain number such as 5")
 		}
-		cfg.Spec.Alerts = *req.Alerts
+		cfg.Spec.Alerts.Anomalies = a
+	}
+	if req.Alerts != nil && req.Alerts.PerformanceRisks != nil {
+		risks := *req.Alerts.PerformanceRisks
+		cfg.Spec.Alerts.PerformanceRisks = &risks
 	}
 	if req.Budgets == nil {
 		return nil
@@ -1056,7 +1079,7 @@ func (s *Server) applyAuthSettings(ctx context.Context, cfg *finopsv1.CostDeckCo
 	if req.Auth.DisableLocalLogin != nil {
 		cfg.Spec.Auth.DisableLocalLogin = *req.Auth.DisableLocalLogin
 	}
-	if err := s.applyOIDCSettings(ctx, cfg, req.Auth.OIDC); err != nil {
+	if err := s.applyOIDCSettings(cfg, req, req.Auth.OIDC); err != nil {
 		return err
 	}
 	er := req.Auth.Entra
@@ -1110,8 +1133,9 @@ func (s *Server) applyAuthSettings(ctx context.Context, cfg *finopsv1.CostDeckCo
 	if er.ClientSecret == "" {
 		return nil
 	}
-	return s.storeCredentials(ctx, "costdeck-entra-credentials",
+	s.storeCredentials(req, "costdeck-entra-credentials",
 		map[string][]byte{auth.SecretKeyClientSecret: []byte(er.ClientSecret)}, &e.ClientSecretRef)
+	return nil
 }
 
 // applyDashboardURL sets the address people open Cost Deck at; an empty one clears it.
@@ -1143,7 +1167,7 @@ func roleMapping(in map[string]string) (map[string]string, error) {
 }
 
 // applyOIDCSettings applies the OpenID Connect section of a settings update.
-func (s *Server) applyOIDCSettings(ctx context.Context, cfg *finopsv1.CostDeckConfig, or *OIDCUpdateRequest) error {
+func (s *Server) applyOIDCSettings(cfg *finopsv1.CostDeckConfig, req *SettingsUpdateRequest, or *OIDCUpdateRequest) error {
 	if or == nil {
 		return nil
 	}
@@ -1184,6 +1208,13 @@ func (s *Server) applyOIDCSettings(ctx context.Context, cfg *finopsv1.CostDeckCo
 		}
 		o.GroupRoleMapping = mapping
 	}
+	if or.RoleMapping != nil {
+		mapping, err := roleMapping(or.RoleMapping)
+		if err != nil {
+			return err
+		}
+		o.RoleMapping = mapping
+	}
 	if or.AutoProvision != nil {
 		v := *or.AutoProvision
 		o.AutoProvision = &v
@@ -1200,16 +1231,29 @@ func (s *Server) applyOIDCSettings(ctx context.Context, cfg *finopsv1.CostDeckCo
 	if or.ClientSecret == "" {
 		return nil
 	}
-	return s.storeCredentials(ctx, "costdeck-oidc-credentials",
+	s.storeCredentials(req, "costdeck-oidc-credentials",
 		map[string][]byte{auth.SecretKeyClientSecret: []byte(or.ClientSecret)}, &o.ClientSecretRef)
+	return nil
 }
 
-// storeCredentials writes a credentials Secret and points the config field at it.
-func (s *Server) storeCredentials(ctx context.Context, name string, data map[string][]byte, ref *string) error {
-	if err := s.upsertSecret(ctx, config.OperatorNamespace(), name, data); err != nil {
-		return fmt.Errorf("store credentials in %s: %w", name, err)
-	}
+// storeCredentials points the config field at a credentials Secret and queues the Secret,
+// which is written once every section of the save is valid.
+type pendingSecret struct {
+	name string
+	data map[string][]byte
+}
+
+func (s *Server) storeCredentials(req *SettingsUpdateRequest, name string, data map[string][]byte, ref *string) {
+	req.secrets = append(req.secrets, pendingSecret{name: name, data: data})
 	*ref = name
+}
+
+func (s *Server) writeSecrets(ctx context.Context, secrets []pendingSecret) error {
+	for _, sec := range secrets {
+		if err := s.upsertSecret(ctx, config.OperatorNamespace(), sec.name, sec.data); err != nil {
+			return fmt.Errorf("store credentials in %s: %w", sec.name, err)
+		}
+	}
 	return nil
 }
 
@@ -1256,11 +1300,27 @@ func (s *Server) testCloudProvider(w http.ResponseWriter, r *http.Request, saved
 	ctx := r.Context()
 	cfg := saved.DeepCopy()
 	var override map[string][]byte
-	body, _ := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+	if err != nil {
+		writeErrorf(w, http.StatusBadRequest, "Invalid request body: %v", err)
+		return
+	}
+	decode := func(v any) bool {
+		if len(bytes.TrimSpace(body)) == 0 {
+			return true
+		}
+		if err := json.Unmarshal(body, v); err != nil {
+			writeErrorf(w, http.StatusBadRequest, "Invalid request body: %v", err)
+			return false
+		}
+		return true
+	}
 	switch name {
 	case scaling.ProviderAWS:
 		var req AWSUpdateRequest
-		_ = json.Unmarshal(body, &req)
+		if !decode(&req) {
+			return
+		}
 		if cfg.Spec.Providers.AWS == nil {
 			cfg.Spec.Providers.AWS = &finopsv1.AWSProviderConfig{}
 		}
@@ -1272,7 +1332,9 @@ func (s *Server) testCloudProvider(w http.ResponseWriter, r *http.Request, saved
 		}
 	case scaling.ProviderAzure:
 		var req AzureUpdateRequest
-		_ = json.Unmarshal(body, &req)
+		if !decode(&req) {
+			return
+		}
 		if cfg.Spec.Providers.Azure == nil {
 			cfg.Spec.Providers.Azure = &finopsv1.AzureProviderConfig{}
 		}
@@ -1287,7 +1349,9 @@ func (s *Server) testCloudProvider(w http.ResponseWriter, r *http.Request, saved
 		}
 	case scaling.ProviderGCP:
 		var req GCPUpdateRequest
-		_ = json.Unmarshal(body, &req)
+		if !decode(&req) {
+			return
+		}
 		if cfg.Spec.Providers.GCP == nil {
 			cfg.Spec.Providers.GCP = &finopsv1.GCPProviderConfig{}
 		}
@@ -1438,7 +1502,7 @@ func (s *Server) testWebex(w http.ResponseWriter, ctx context.Context, r *http.R
 	if req.RoomID != nil {
 		settings.RoomID = strings.TrimSpace(*req.RoomID)
 	}
-	msg, err := webex.Check(ctx, webex.NewClient(settings.Token), settings)
+	msg, err := webex.Check(ctx, s.webexClient(settings.Token), settings)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"connected": false, "error": err.Error()})
 		return
@@ -1562,13 +1626,11 @@ func (s *Server) upsertSecret(ctx context.Context, namespace, name string, data 
 	if apierrors.IsNotFound(err) {
 		// Create new secret
 		secret = &corev1.Secret{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      name,
-				Namespace: namespace,
-				Labels: map[string]string{
-					"app.kubernetes.io/managed-by": "costdeck-operator",
-					"costdeck.io/secret-type":      "provider-credentials",
-				},
+			Name:      name,
+			Namespace: namespace,
+			Labels: map[string]string{
+				"app.kubernetes.io/managed-by": "costdeck-operator",
+				"costdeck.io/secret-type":      "provider-credentials",
 			},
 			Type: corev1.SecretTypeOpaque,
 			Data: data,

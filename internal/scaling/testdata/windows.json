@@ -65,6 +65,20 @@
       "down": ["Tue 08:30", "Mon 10:00"]
     },
     {
+      "name": "prewarm starts a window early and ends it on time",
+      "leadMinutes": 10,
+      "schedules": [{ "days": [1, 2, 3, 4, 5], "startTime": "08:00", "endTime": "18:00" }],
+      "up": ["Mon 07:50", "Mon 08:00", "Fri 18:00", "Fri 07:55"],
+      "down": ["Mon 07:49", "Fri 18:01", "Sun 07:55", "Sat 07:55"]
+    },
+    {
+      "name": "prewarm before a Monday window reaches back into Sunday",
+      "leadMinutes": 30,
+      "schedules": [{ "days": [1], "startTime": "00:15", "endTime": "01:00" }],
+      "up": ["Sun 23:45", "Mon 00:00"],
+      "down": ["Sun 23:44", "Mon 01:01"]
+    },
+    {
       "name": "a time the CRD refuses makes no window, so the target stays up",
       "schedules": [{ "days": [1], "startTime": "08:00junk", "endTime": "09:00" }, { "days": [2], "startTime": " 08:00", "endTime": "09:00" }],
       "up": ["Mon 07:00", "Tue 07:00", "Sun 12:00"],

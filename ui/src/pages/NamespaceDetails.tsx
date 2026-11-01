@@ -3,6 +3,7 @@ import { ArrowLeft, Search, Activity, AlertCircle } from 'lucide-react'
 import NamespaceScalingPanel from '../components/NamespaceScalingPanel'
 import InfoTooltip from '../components/InfoTooltip'
 import RecommendationsPanel from '../components/RecommendationsPanel'
+import RisksPanel from '../components/RisksPanel'
 import { apiError, errorMessage, fetchNamespaceCost, getJSON } from '../lib/api'
 import type { CostEstimate, OptimizationStatus } from '../lib/types'
 import { usePolling } from '../lib/usePolling'
@@ -170,6 +171,8 @@ export default function NamespaceDetails({ namespace, onBack }: NamespaceDetails
       </div>
 
       <NamespaceScalingPanel namespace={namespace} />
+
+      <RisksPanel namespace={namespace} />
 
       <RecommendationsPanel namespace={namespace} />
 

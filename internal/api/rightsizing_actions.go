@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
+
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -20,6 +22,7 @@ import (
 	"github.com/migalsp/costdeck-operator/internal/netguard"
 	"github.com/migalsp/costdeck-operator/internal/optimize"
 	"github.com/migalsp/costdeck-operator/internal/rightsizing"
+	"github.com/migalsp/costdeck-operator/internal/scaling"
 )
 
 const gitTokenSecret = "costdeck-git-credentials"
@@ -38,6 +41,9 @@ func (s *Server) adviceFor(ctx context.Context, ns string, ref workloadRef) (rig
 	}
 	for _, w := range report.Workloads {
 		if w.Kind == ref.Kind && w.Name == ref.Name {
+			if w.ApplyForbidden {
+				return w, report, errPolicyForbids{policy: w.Policy, workload: w.Name}
+			}
 			return w, report, nil
 		}
 	}
@@ -71,6 +77,9 @@ func (s *Server) applyRightsizing(ctx context.Context, ns string, ref workloadRe
 	if !cfg.Spec.Rightsizing.Apply {
 		return finopsv1.WorkloadOptimization{}, errApplyOff
 	}
+	if err := s.changeableNamespace(ctx, ns); err != nil {
+		return finopsv1.WorkloadOptimization{}, err
+	}
 	advice, _, err := s.adviceFor(ctx, ns, ref)
 	if err != nil {
 		return finopsv1.WorkloadOptimization{}, err
@@ -80,6 +89,33 @@ func (s *Server) applyRightsizing(ctx context.Context, ns string, ref workloadRe
 		s.recommendationCache.drop(ns, ref.Kind, ref.Name)
 	}
 	return rec, err
+}
+
+type errProtectedNamespace struct{ namespace, reason string }
+
+func (e errProtectedNamespace) Error() string {
+	return fmt.Sprintf("workloads in %s are not changed through Cost Deck: %s", e.namespace, e.reason)
+}
+
+func (s *Server) changeableNamespace(ctx context.Context, name string) error {
+	ns := &corev1.Namespace{}
+	if err := s.Client.Get(ctx, client.ObjectKey{Name: name}, ns); err != nil && !apierrors.IsNotFound(err) {
+		return err
+	}
+	ns.Name = name
+	if reason := scaling.ProtectedNamespace(ns, config.OperatorNamespace()); reason != "" {
+		return errProtectedNamespace{namespace: name, reason: reason}
+	}
+	return nil
+}
+
+type errPolicyForbids struct{ policy, workload string }
+
+func (e errPolicyForbids) Error() string {
+	if e.policy == policiesUnreadable {
+		return fmt.Sprintf("the right-sizing policies of this namespace could not be read, so advice for %s cannot be applied or proposed until they can", e.workload)
+	}
+	return fmt.Sprintf("the RightsizingPolicy %s forbids applying advice to %s or proposing it", e.policy, e.workload)
 }
 
 // errNoUsage means there is no advice to act on yet: the usage data is missing.
@@ -100,7 +136,7 @@ func (s *Server) handleRevertRightsizing(w http.ResponseWriter, r *http.Request)
 	if by := actorName(r); by != "" {
 		reason = "put back by " + by
 	}
-	rec, err := optimize.Revert(r.Context(), s.Client, r.PathValue("ns"), ref.Name, reason)
+	rec, err := optimize.Revert(r.Context(), s.Client, r.PathValue("ns"), ref.Kind, ref.Name, reason)
 	if err == nil {
 		s.recommendationCache.forget(r.PathValue("ns"))
 	}
@@ -217,14 +253,18 @@ func firstOf(v ...string) string {
 }
 
 func writeRightsizing(w http.ResponseWriter, rec finopsv1.WorkloadOptimization, err error) {
+	var forbids errPolicyForbids
 	switch {
 	case err == nil:
 		writeJSON(w, http.StatusOK, rec)
-	case errors.Is(err, errApplyOff), errors.Is(err, errNoRepository):
+	case errors.As(err, &forbids) && forbids.policy == policiesUnreadable:
+		writeError(w, http.StatusServiceUnavailable, err.Error())
+	case errors.Is(err, errApplyOff), errors.Is(err, errNoRepository), errors.As(err, new(errPolicyForbids)), errors.As(err, new(errProtectedNamespace)):
 		writeError(w, http.StatusForbidden, err.Error())
 	case errors.Is(err, optimize.ErrManagedByGitOps):
 		writeError(w, http.StatusConflict, err.Error())
-	case errors.Is(err, optimize.ErrNothingToApply), errors.Is(err, optimize.ErrUnsupported), errors.Is(err, gitrepo.ErrNotFound):
+	case errors.Is(err, optimize.ErrNothingToApply), errors.Is(err, optimize.ErrUnsupported), errors.Is(err, optimize.ErrAmbiguousWorkload),
+		errors.Is(err, gitrepo.ErrNotFound):
 		writeError(w, http.StatusBadRequest, err.Error())
 	case errors.As(err, new(errNoUsage)):
 		writeError(w, http.StatusServiceUnavailable, err.Error())
@@ -379,9 +419,7 @@ func (s *Server) applyRightsizingSettings(ctx context.Context, cfg *finopsv1.Cos
 	}
 	if u.Git.Token != "" {
 		ref = gitTokenSecret
-		if err := s.storeCredentials(ctx, gitTokenSecret, map[string][]byte{"TOKEN": []byte(strings.TrimSpace(u.Git.Token))}, &ref); err != nil {
-			return err
-		}
+		s.storeCredentials(req, gitTokenSecret, map[string][]byte{"TOKEN": []byte(strings.TrimSpace(u.Git.Token))}, &ref)
 	}
 	if ref == "" {
 		return badRequestf("right-sizing: enter an access token that can push branches and open pull requests")

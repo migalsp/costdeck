@@ -79,6 +79,57 @@ describe('Right-sizing', () => {
     expect(screen.queryByRole('button', { name: /Apply|Pull request|Put back/ })).toBeNull()
   })
 
+  it('shows what is wrong with a JVM even when its requests fit', async () => {
+    const keep = { request: '4Gi', observed: '3500Mi', action: 'keep' }
+    const java = {
+      ...report, monthlySavings: 0, javaMonthlySavings: 44.4,
+      workloads: [
+        { kind: 'Deployment', name: 'orders', replicas: 2, monthlySavings: 0, containers: [{ name: 'app', cpu: { request: '1', observed: '900m', action: 'keep' }, memory: keep,
+          jvm: { detectedBy: 'options', options: ['-Xmx3g', '-XX:+UseG1GC'], heap: '3Gi', heapSource: 'set by -Xmx', heapUsed: '2900Mi', heapAfterGC: '400Mi',
+            recommendedHeap: '800Mi', recommendedMemory: '1056Mi', recommendedOptions: '-Xmx800m', monthlySavings: 44.4,
+            findings: [{ severity: 'waste', code: 'heap-oversized', message: 'After garbage collection the heap held at most 400Mi, so a 800Mi heap is enough instead of 3Gi.' }] } }] },
+        { kind: 'Deployment', name: 'quiet', replicas: 1, monthlySavings: 0, containers: [{ name: 'app', cpu: { request: '1', observed: '900m', action: 'keep' }, memory: keep,
+          jvm: { detectedBy: 'image', heap: '3Gi', heapSource: 'set by -Xmx', findings: [{ severity: 'note', code: 'serial-gc', message: 'The JVM picks the Serial collector.' }] } }] },
+      ],
+    }
+    mockFetch(
+      on('GET', '/api/namespaces/shop/recommendations', () => json(java)),
+      on('GET', '/api/rightsizing/changes', () => json({ applyEnabled: false, guardMinutes: 30, changes: [] })),
+    )
+    render(<AuthContext.Provider value={viewer}><RecommendationsPanel namespace="shop" /></AuthContext.Provider>)
+    const advice = await screen.findByLabelText('JVM advice')
+    expect(screen.getByText(/Java · heap 3Gi/)).toBeTruthy()
+    expect(screen.getByText(/by lowering Java heaps/).textContent).toBe('+ ~$44/mo by lowering Java heaps')
+    expect(within(advice).getByText('-Xmx3g -XX:+UseG1GC')).toBeTruthy()
+    expect(within(advice).getByText(/after garbage collection up to 400Mi, in use up to 2900Mi/)).toBeTruthy()
+    expect(within(advice).getByText(/so a 800Mi heap is enough instead of 3Gi/)).toBeTruthy()
+    expect(within(advice).getByText('-Xmx800m')).toBeTruthy()
+    expect(within(advice).getByText('with 1056Mi of memory as request and limit')).toBeTruthy()
+    expect(within(advice).getByRole('button', { name: 'Copy the JVM options' })).toBeTruthy()
+    expect(screen.queryByText('quiet')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Copy as YAML' })).toBeNull()
+  })
+
+  it('offers apply only where there is request advice, not for JVM findings alone', async () => {
+    const keep = { request: '2Gi', observed: '1500Mi', action: 'keep' }
+    const java = {
+      ...report, monthlySavings: 40,
+      workloads: [
+        report.workloads[0],
+        { kind: 'Deployment', name: 'orders', replicas: 1, monthlySavings: 0, containers: [{ name: 'app', cpu: { request: '1', observed: '900m', action: 'keep' }, memory: keep,
+          jvm: { detectedBy: 'options', heap: '512Mi', heapSource: 'the JVM default, 25% of the limit', findings: [{ severity: 'waste', code: 'default-heap', message: 'No heap size is set.' }] } }] },
+      ],
+    }
+    mockFetch(
+      on('GET', '/api/namespaces/shop/recommendations', () => json(java)),
+      on('GET', '/api/rightsizing/changes', () => json({ applyEnabled: true, guardMinutes: 30, changes: [] })),
+    )
+    render(<AuthContext.Provider value={operator}><RecommendationsPanel namespace="shop" /></AuthContext.Provider>)
+    expect(await screen.findByText('No heap size is set.')).toBeTruthy()
+    expect(screen.getAllByRole('button', { name: 'Apply' })).toHaveLength(1)
+    expect(screen.getAllByRole('button', { name: 'Copy as YAML' })).toHaveLength(1)
+  })
+
   it('turns applying on with a warning, tests a repository and saves', async () => {
     window.history.replaceState(null, '', '/settings/rightsizing')
     const settings = { providers: {}, integrations: {}, auth: { disableLocalLogin: false }, calendars: [], rightsizing: { apply: false, guardMinutes: 30 } }

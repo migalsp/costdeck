@@ -39,7 +39,7 @@ var _ = Describe("ScalingGroup dependencies", func() {
 			Recorder: events.NewFakeRecorder(100),
 		}
 		Expect(k8sClient.Create(ctx, &finopsv1.ScalingGroup{
-			ObjectMeta: metav1.ObjectMeta{Name: platformKey.Name, Namespace: platformKey.Namespace},
+			Name: platformKey.Name, Namespace: platformKey.Namespace,
 			Spec: finopsv1.ScalingGroupSpec{
 				Category:   "Platform",
 				Namespaces: []string{"dep-test-platform"},
@@ -47,7 +47,7 @@ var _ = Describe("ScalingGroup dependencies", func() {
 			},
 		})).To(Succeed())
 		Expect(k8sClient.Create(ctx, &finopsv1.ScalingGroup{
-			ObjectMeta: metav1.ObjectMeta{Name: envKey.Name, Namespace: envKey.Namespace},
+			Name: envKey.Name, Namespace: envKey.Namespace,
 			Spec: finopsv1.ScalingGroupSpec{
 				Category:   "Solution",
 				Namespaces: []string{"dep-test-env"},

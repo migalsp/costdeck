@@ -22,14 +22,22 @@ import (
 	"slices"
 	"time"
 
+	"sigs.k8s.io/controller-runtime/pkg/event"
+
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/client-go/tools/events"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
@@ -52,6 +60,7 @@ type ScalingConfigReconciler struct {
 	Notifier Notifier
 	// Requests counts the traffic idle auto-sleep looks at; optional.
 	Requests  RequestCounter
+	Recorder  events.EventRecorder
 	announced transitionLog
 	idle      idleWatch
 }
@@ -74,17 +83,24 @@ func (r *ScalingConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		}
 		return ctrl.Result{}, err
 	}
+	if handled, result, err := r.handleDeletion(ctx, config); handled {
+		return result, err
+	}
 	before := config.Status.DeepCopy()
 
 	// 1.5 Conflict Resolution: "Group Wins"
-	if managed, groupName, err := r.isManagedByGroup(ctx, config.Spec.TargetNamespace); err == nil && managed {
+	managed, groupName, err := r.isManagedByGroup(ctx, config.Spec.TargetNamespace)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if managed {
 		l.Info("Namespace managed by group, overriding individual config", "namespace", config.Spec.TargetNamespace, "group", groupName)
 		return r.markAsOverridden(ctx, config, before, groupName)
 	}
 
 	// 2. Determine desired state
 	exceptions, problems := scaling.ResolveExceptions(config.Spec.Exceptions, config.Spec.Calendars, calendars(ctx, r.Client), scaling.ExceptionZone(config.Spec.Schedules))
-	timetable := scaling.Timetable{Schedules: config.Spec.Schedules, Exceptions: exceptions}
+	timetable := scaling.Timetable{Schedules: config.Spec.Schedules, Exceptions: exceptions, Lead: scaling.PrewarmLead(config.Spec.Prewarm, config.Status.RecentWakeUps)}
 	at := func(t time.Time) scaling.Decision {
 		return r.Engine.Decide(t, timetable, config.Spec.Active, config.Spec.ActiveUntil, config.Annotations)
 	}
@@ -129,7 +145,7 @@ func (r *ScalingConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	newReplicas, ready, err := r.Engine.ScaleWithServices(ctx, config.Spec.TargetNamespace, targetActive, config.Spec.Sequence, exclusions, config.Spec.Hibernate, config.Status.OriginalReplicas, timeoutPassed)
 	if err != nil {
 		l.Error(err, "failed to execute scaling")
-		return ctrl.Result{RequeueAfter: time.Minute}, err
+		return ctrl.Result{}, err
 	}
 
 	if targetActive && ready {
@@ -149,6 +165,7 @@ func (r *ScalingConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		}
 	}
 	setReadyCondition(&config.Status.Conditions, config.Status.Phase, targetActive, config.Generation, "")
+	trackWakeUp(&config.Status.ScheduleStatus, previousPhase, config.Status.Phase, time.Now())
 	var savings float64
 	if cpu, mem, err := r.Engine.KeptDown(ctx, config.Spec.TargetNamespace, config.Status.OriginalReplicas); err == nil {
 		savings = recordSavings(ctx, &config.Status.ScheduleStatus, r.Pricing, cpu, mem)
@@ -168,17 +185,74 @@ func (r *ScalingConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	return ctrl.Result{RequeueAfter: settledRequeue(decision, time.Now())}, nil
 }
 
+func (r *ScalingConfigReconciler) handleDeletion(ctx context.Context, config *finopsv1.ScalingConfig) (bool, ctrl.Result, error) {
+	if !config.DeletionTimestamp.IsZero() {
+		result, err := r.finalize(ctx, config)
+		return true, result, err
+	}
+	if controllerutil.AddFinalizer(config, ReleaseFinalizer) {
+		if err := r.Update(ctx, config); err != nil {
+			return true, ctrl.Result{}, err
+		}
+	}
+	return false, ctrl.Result{}, nil
+}
+
+func (r *ScalingConfigReconciler) finalize(ctx context.Context, config *finopsv1.ScalingConfig) (ctrl.Result, error) {
+	if !controllerutil.ContainsFinalizer(config, ReleaseFinalizer) {
+		return ctrl.Result{}, nil
+	}
+	if err := r.releaseEverything(ctx, config); err != nil {
+		if !giveUpOnRelease(config.DeletionTimestamp.Time, time.Now()) {
+			r.warn(config, "ReleaseFailed", "Could not restore everything the config scaled down yet, retrying: %v", err)
+			return ctrl.Result{RequeueAfter: releaseRetry}, nil
+		}
+		r.warn(config, "ReleaseAbandoned", "Deleted after %s without restoring everything the config scaled down: %v", releaseGiveUpAfter, err)
+	}
+	controllerutil.RemoveFinalizer(config, ReleaseFinalizer)
+	if err := r.Update(ctx, config); err != nil {
+		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+	telemetry.ForgetScaling("ScalingConfig", config.Name)
+	r.announced.forget(config.UID)
+	return ctrl.Result{}, nil
+}
+
+func (r *ScalingConfigReconciler) warn(config *finopsv1.ScalingConfig, reason, format string, args ...any) {
+	if r.Recorder != nil {
+		r.Recorder.Eventf(config, nil, corev1.EventTypeWarning, reason, "Release", format, args...)
+	}
+}
+
+func (r *ScalingConfigReconciler) releaseEverything(ctx context.Context, config *finopsv1.ScalingConfig) error {
+	if config.Status.Phase == PhaseOverriddenByGroup {
+		return nil
+	}
+	managed, _, err := r.isManagedByGroup(ctx, config.Spec.TargetNamespace)
+	if err != nil || managed {
+		return err
+	}
+	ns := config.Spec.TargetNamespace
+	err = releaseNamespace(ctx, r.Engine, ns, namespaceRules{
+		exclusions:   scaling.ExclusionsWith(config.Spec.Exclusions, config.Spec.Hibernate),
+		sequence:     config.Spec.Sequence,
+		hibernate:    config.Spec.Hibernate,
+		originals:    config.Status.OriginalReplicas,
+		scaledByThem: phaseReachedByScaling(config.Status.Phase) || len(config.Status.OriginalReplicas) > 0,
+	})
+	if err != nil {
+		return err
+	}
+	return syncSleepGrantAfterRelease(ctx, r.Engine)
+}
+
 func (r *ScalingConfigReconciler) isManagedByGroup(ctx context.Context, ns string) (bool, string, error) {
 	groups := &finopsv1.ScalingGroupList{}
 	if err := r.List(ctx, groups); err != nil {
 		return false, "", err
 	}
-	for _, g := range groups.Items {
-		if slices.Contains(g.Members(), ns) {
-			return true, g.Name, nil
-		}
-	}
-	return false, "", nil
+	owner, ok := scaling.NamespaceOwners(groups.Items)[ns]
+	return ok, owner, nil
 }
 
 func (r *ScalingConfigReconciler) markAsOverridden(ctx context.Context, config *finopsv1.ScalingConfig, before *finopsv1.ScalingConfigStatus, groupName string) (ctrl.Result, error) {
@@ -211,11 +285,11 @@ func (r *ScalingConfigReconciler) updateStatusPhase(ctx context.Context, config 
 		config.Status.LastAction = metav1.Now()
 	}
 
-	if config.Status.Phase == "ScalingUp" || config.Status.Phase == "ScalingDown" {
-		if time.Since(config.Status.LastAction.Time) > time.Minute {
-			l.Info("Scaling timeout exceeded", "namespace", config.Spec.TargetNamespace)
-			return true
-		}
+	flags := config.Spec.FeatureFlags
+	moving := config.Status.Phase == scaling.PhaseScalingUp || config.Status.Phase == scaling.PhaseScalingDown
+	if moving && flags != nil && flags.SkipOnTimeout && time.Since(config.Status.LastAction.Time) > time.Duration(timeoutMinutes(flags))*time.Minute {
+		l.Info("Scaling timeout exceeded", "namespace", config.Spec.TargetNamespace)
+		return true
 	}
 	return false
 }
@@ -225,12 +299,38 @@ func (r *ScalingConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	if r.Engine == nil {
 		r.Engine = &scaling.Engine{Client: r.Client}
 	}
+	if r.Recorder == nil {
+		r.Recorder = mgr.GetEventRecorder("scalingconfig-controller")
+	}
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&finopsv1.ScalingConfig{}).
 		// A changed holiday calendar applies at once to the configs that use one.
-		Watches(&finopsv1.CostDeckConfig{}, handler.EnqueueRequestsFromMapFunc(r.configsWithCalendars)).
+		Watches(&finopsv1.CostDeckConfig{}, handler.EnqueueRequestsFromMapFunc(r.configsWithCalendars),
+			builder.WithPredicates(predicate.GenerationChangedPredicate{})).
+		Watches(&finopsv1.ScalingGroup{}, handler.EnqueueRequestsFromMapFunc(r.configsBesideGroup),
+			builder.WithPredicates(predicate.Or(predicate.GenerationChangedPredicate{}, selectionChanged()))).
 		Named("scalingconfig").
 		Complete(r)
+}
+
+func selectionChanged() predicate.Funcs {
+	return predicate.Funcs{UpdateFunc: func(e event.UpdateEvent) bool {
+		before, okBefore := e.ObjectOld.(*finopsv1.ScalingGroup)
+		after, okAfter := e.ObjectNew.(*finopsv1.ScalingGroup)
+		return okBefore && okAfter && !slices.Equal(before.Status.SelectedNamespaces, after.Status.SelectedNamespaces)
+	}}
+}
+
+func (r *ScalingConfigReconciler) configsBesideGroup(ctx context.Context, obj client.Object) []reconcile.Request {
+	var configs finopsv1.ScalingConfigList
+	if err := r.List(ctx, &configs, client.InNamespace(obj.GetNamespace())); err != nil {
+		return nil
+	}
+	out := make([]reconcile.Request, 0, len(configs.Items))
+	for _, c := range configs.Items {
+		out = append(out, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&c)})
+	}
+	return out
 }
 
 // configsWithCalendars maps a CostDeckConfig event to the configs that name a calendar.

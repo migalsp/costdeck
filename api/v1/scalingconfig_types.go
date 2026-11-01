@@ -196,6 +196,47 @@ type ScheduleStatus struct {
 	// while Mode is Idle; a manual start clears it.
 	// +optional
 	IdleUntil *metav1.Time `json:"idleUntil,omitempty"`
+
+	// WakeUpStartedAt is when the running scale-up from zero began. It is cleared once
+	// every target is ready, or when the targets go down again first.
+	// +optional
+	WakeUpStartedAt *metav1.Time `json:"wakeUpStartedAt,omitempty"`
+
+	// RecentWakeUps are the last scale-ups from zero, newest first, with how long each
+	// took until every target was ready.
+	// +kubebuilder:validation:MaxItems=5
+	// +listType=atomic
+	// +optional
+	RecentWakeUps []WakeUp `json:"recentWakeUps,omitempty"`
+
+	// PrewarmMinutes is how far ahead of each scheduled start spec.prewarm starts the
+	// workloads now.
+	// +optional
+	PrewarmMinutes int32 `json:"prewarmMinutes,omitempty"`
+}
+
+// Prewarm starts the workloads ahead of each scheduled start.
+type Prewarm struct {
+	// Auto takes the lead from the slowest of the last five wake-ups (status.recentWakeUps)
+	// plus a minute, at most 30 minutes. Minutes applies until there is a wake-up to measure.
+	// +optional
+	Auto bool `json:"auto,omitempty"`
+
+	// Minutes is the lead when Auto is off, or before the first measured wake-up.
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=120
+	// +optional
+	Minutes int32 `json:"minutes,omitempty"`
+}
+
+// WakeUp is one scale-up from zero and how long it took.
+type WakeUp struct {
+	// StartedAt is when the scale-up began.
+	StartedAt metav1.Time `json:"startedAt"`
+
+	// Seconds is how long it took until every target was ready.
+	// +kubebuilder:validation:Minimum=0
+	Seconds int32 `json:"seconds"`
 }
 
 // ScaleDownNode is a node a scale-down could free.
@@ -216,8 +257,10 @@ type ScheduledTransition struct {
 
 // ScalingConfigSpec defines the desired state of ScalingConfig
 type ScalingConfigSpec struct {
-	// TargetNamespace is the namespace this config applies to
+	// TargetNamespace is the namespace this config applies to. It cannot change: create a
+	// ScalingConfig for the other namespace, so this one restores what it scaled down.
 	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="targetNamespace cannot change; create a ScalingConfig for the other namespace"
 	TargetNamespace string `json:"targetNamespace"`
 
 	// Active is a manual override. While it is set the schedule is ignored completely:
@@ -234,6 +277,7 @@ type ScalingConfigSpec struct {
 	ActiveUntil *metav1.Time `json:"activeUntil,omitempty"`
 
 	// Schedules define periodic scaling events
+	// +kubebuilder:validation:MaxItems=50
 	// +optional
 	// +listType=atomic
 	Schedules []ScalingSchedule `json:"schedules,omitempty"`
@@ -260,6 +304,12 @@ type ScalingConfigSpec struct {
 	// +optional
 	// +listType=atomic
 	Sequence []string `json:"sequence,omitempty"`
+
+	// FeatureFlags.SkipOnTimeout lets a stage of the sequence that is not ready within
+	// TimeoutMinutes stop holding back the next one. Without it each stage waits until its
+	// workloads are ready. A group that runs this namespace uses its own setting.
+	// +optional
+	FeatureFlags *ScalingGroupFeatureFlags `json:"featureFlags,omitempty"`
 
 	// Exclusions lists workloads that are never scaled down, by name or prefix glob
 	// ("redis-*"), or by the kind of their controller ("owner:Elasticsearch") for workloads
@@ -305,6 +355,11 @@ type ScalingConfigSpec struct {
 	// unused.
 	// +optional
 	IdleAfter *metav1.Duration `json:"idleAfter,omitempty"`
+
+	// Prewarm starts the workloads ahead of each scheduled start, so they are ready when it
+	// comes: by a fixed number of minutes, or by how long recent wake-ups took.
+	// +optional
+	Prewarm *Prewarm `json:"prewarm,omitempty"`
 }
 
 // ScalingConfigStatus defines the observed state of ScalingConfig.
