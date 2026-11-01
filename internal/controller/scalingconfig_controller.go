@@ -19,7 +19,10 @@ package controller
 import (
 	"context"
 	"fmt"
+	"slices"
 	"time"
+
+	"sigs.k8s.io/controller-runtime/pkg/event"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/tools/events"
@@ -303,8 +306,30 @@ func (r *ScalingConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		// A changed holiday calendar applies at once to the configs that use one.
 		Watches(&finopsv1.CostDeckConfig{}, handler.EnqueueRequestsFromMapFunc(r.configsWithCalendars),
 			builder.WithPredicates(predicate.GenerationChangedPredicate{})).
+		Watches(&finopsv1.ScalingGroup{}, handler.EnqueueRequestsFromMapFunc(r.configsBesideGroup),
+			builder.WithPredicates(predicate.Or(predicate.GenerationChangedPredicate{}, selectionChanged()))).
 		Named("scalingconfig").
 		Complete(r)
+}
+
+func selectionChanged() predicate.Funcs {
+	return predicate.Funcs{UpdateFunc: func(e event.UpdateEvent) bool {
+		before, okBefore := e.ObjectOld.(*finopsv1.ScalingGroup)
+		after, okAfter := e.ObjectNew.(*finopsv1.ScalingGroup)
+		return okBefore && okAfter && !slices.Equal(before.Status.SelectedNamespaces, after.Status.SelectedNamespaces)
+	}}
+}
+
+func (r *ScalingConfigReconciler) configsBesideGroup(ctx context.Context, obj client.Object) []reconcile.Request {
+	var configs finopsv1.ScalingConfigList
+	if err := r.List(ctx, &configs, client.InNamespace(obj.GetNamespace())); err != nil {
+		return nil
+	}
+	out := make([]reconcile.Request, 0, len(configs.Items))
+	for _, c := range configs.Items {
+		out = append(out, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&c)})
+	}
+	return out
 }
 
 // configsWithCalendars maps a CostDeckConfig event to the configs that name a calendar.

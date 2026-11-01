@@ -1,8 +1,17 @@
 package controller
 
 import (
+	"context"
+	"slices"
 	"testing"
 	"time"
+
+	"k8s.io/apimachinery/pkg/runtime"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/event"
+
+	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
 )
 
 func TestReleaseGivesUpOnlyAfterTenMinutes(t *testing.T) {
@@ -19,5 +28,37 @@ func TestReleaseGivesUpOnlyAfterTenMinutes(t *testing.T) {
 		if got := giveUpOnRelease(deleted, deleted.Add(tt.after)); got != tt.want {
 			t.Errorf("%s after the deletion: give up = %v, want %v", tt.after, got, tt.want)
 		}
+	}
+}
+
+func TestGroupChangesReachTheConfigsAtOnce(t *testing.T) {
+	scheme := runtime.NewScheme()
+	utilruntime.Must(finopsv1.AddToScheme(scheme))
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+		&finopsv1.ScalingConfig{Name: "config-a", Namespace: "costdeck", Spec: finopsv1.ScalingConfigSpec{TargetNamespace: "a"}},
+		&finopsv1.ScalingConfig{Name: "config-b", Namespace: "costdeck", Spec: finopsv1.ScalingConfigSpec{TargetNamespace: "b"}},
+		&finopsv1.ScalingConfig{Name: "elsewhere", Namespace: "other", Spec: finopsv1.ScalingConfigSpec{TargetNamespace: "c"}},
+	).Build()
+	r := &ScalingConfigReconciler{Client: c}
+	group := &finopsv1.ScalingGroup{Name: "g", Namespace: "costdeck", Spec: finopsv1.ScalingGroupSpec{Namespaces: []string{"a"}}}
+	queued := r.configsBesideGroup(context.Background(), group)
+	names := make([]string, 0, len(queued))
+	for _, req := range queued {
+		names = append(names, req.Name)
+	}
+	slices.Sort(names)
+	if !slices.Equal(names, []string{"config-a", "config-b"}) {
+		t.Errorf("configs queued = %v; every config of the namespace, since a namespace that left the group is no longer in it", names)
+	}
+
+	before := group.DeepCopy()
+	after := group.DeepCopy()
+	after.Status.SelectedNamespaces = []string{"b"}
+	if !selectionChanged().Update(event.UpdateEvent{ObjectOld: before, ObjectNew: after}) {
+		t.Error("a selector that took a namespace did not reach the configs")
+	}
+	after.Status.SelectedNamespaces, after.Status.Phase = nil, "ScaledDown"
+	if selectionChanged().Update(event.UpdateEvent{ObjectOld: before, ObjectNew: after}) {
+		t.Error("every status write of a group queued all configs")
 	}
 }
