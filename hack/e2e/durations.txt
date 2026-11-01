@@ -4,6 +4,7 @@
 40-stage-timeout 71
 50-workload-rules 58
 60-single-namespace 13
+61-delete-while-down 70
 70-victoriametrics 6
 80-mcp 1
 90-exceptions 33

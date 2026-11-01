@@ -236,9 +236,70 @@ func TestConfigsWithCalendarsMapsSettingsChangesToConfigsThatUseCalendars(t *tes
 
 var _ = Describe("ScalingConfig controller setup", func() {
 	It("builds a scaling engine on the reconciler's client when none is given", func() {
-		r := &ScalingConfigReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+		r := &ScalingConfigReconciler{Client: rawClient, Scheme: rawClient.Scheme()}
 		Expect(r.SetupWithManager(newTestManager())).To(Succeed())
 		Expect(r.Engine).NotTo(BeNil())
 		Expect(r.Engine.Client).To(BeIdenticalTo(r.Client))
+	})
+})
+
+var _ = Describe("ScalingConfig letting go of its namespace", func() {
+	ctx := context.Background()
+	key := types.NamespacedName{Name: "config-letgo", Namespace: "default"}
+	const ns = "config-letgo"
+
+	var reconciler *ScalingConfigReconciler
+	replicas := func() int32 {
+		GinkgoHelper()
+		d := &appsv1.Deployment{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "app", Namespace: ns}, d)).To(Succeed())
+		return ptr.Deref(d.Spec.Replicas, -1)
+	}
+	reconcileConfig := func() {
+		GinkgoHelper()
+		_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: key})
+		Expect(err).NotTo(HaveOccurred())
+	}
+
+	BeforeEach(func() {
+		reconciler = &ScalingConfigReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), Engine: &scaling.Engine{Client: k8sClient}, Recorder: events.NewFakeRecorder(100)}
+		Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, &corev1.Namespace{Name: ns}))).To(Succeed())
+		labels := map[string]string{"app": "app"}
+		Expect(k8sClient.Create(ctx, &appsv1.Deployment{
+			Name: "app", Namespace: ns,
+			Spec: appsv1.DeploymentSpec{
+				Replicas: ptr.To[int32](2), Selector: &metav1.LabelSelector{MatchLabels: labels},
+				Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: labels}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "app", Image: "busybox"}}}},
+			},
+		})).To(Succeed())
+		Expect(k8sClient.Create(ctx, &finopsv1.ScalingConfig{
+			Name: key.Name, Namespace: key.Namespace,
+			Spec: finopsv1.ScalingConfigSpec{TargetNamespace: ns, Active: new(false)},
+		})).To(Succeed())
+		reconcileConfig()
+		Expect(replicas()).To(BeZero())
+	})
+
+	AfterEach(func() {
+		Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, &finopsv1.ScalingConfig{Name: key.Name, Namespace: key.Namespace}))).To(Succeed())
+		Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, &appsv1.Deployment{Name: "app", Namespace: ns}))).To(Succeed())
+	})
+
+	It("restores what it scaled down when the config is deleted", func() {
+		Expect(rawClient.Delete(ctx, &finopsv1.ScalingConfig{Name: key.Name, Namespace: key.Namespace})).To(Succeed())
+		reconcileConfig()
+		Eventually(func() error {
+			return k8sClient.Get(ctx, key, &finopsv1.ScalingConfig{})
+		}).Should(Satisfy(errors.IsNotFound))
+		Expect(replicas()).To(Equal(int32(2)))
+	})
+
+	It("refuses to move to another namespace, which would strand this one at zero", func() {
+		c := &finopsv1.ScalingConfig{}
+		Expect(k8sClient.Get(ctx, key, c)).To(Succeed())
+		c.Spec.TargetNamespace = "somewhere-else"
+		err := k8sClient.Update(ctx, c)
+		Expect(errors.IsInvalid(err)).To(BeTrue(), "got %v", err)
+		Expect(err.Error()).To(ContainSubstring("targetNamespace cannot change"))
 	})
 })

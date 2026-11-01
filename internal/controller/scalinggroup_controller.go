@@ -30,10 +30,12 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
@@ -80,6 +82,9 @@ func (r *ScalingGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		}
 		return ctrl.Result{}, err
 	}
+	if handled, result, err := r.handleDeletion(ctx, group); handled {
+		return result, err
+	}
 	before := group.Status.DeepCopy()
 
 	// 1.5 Namespaces the selector matches join the group; those that stopped matching
@@ -88,6 +93,7 @@ func (r *ScalingGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if err != nil {
 		return ctrl.Result{}, err
 	}
+	departed = append(departed, removedNamespaces(group, departed)...)
 
 	// 2. Determine the desired state against every group in the namespace, so that
 	// dependsOn edges and namespace ownership are taken into account.
@@ -662,31 +668,116 @@ func (r *ScalingGroupReconciler) selectNamespaces(ctx context.Context, group *fi
 	return departed, nil
 }
 
-// release brings back what the group scaled down in namespaces its selector no longer
-// matches, unless another group now owns them, and forgets their replica counts.
+// release brings back what the group scaled down in namespaces that left it, unless
+// another group now owns them, and forgets their replica counts.
 func (r *ScalingGroupReconciler) release(ctx context.Context, group *finopsv1.ScalingGroup, departed []string, plan scaling.GroupPlan) {
+	released := false
 	for _, ns := range departed {
 		if owner, ok := plan.NamespaceOwners[ns]; ok && owner != group.Name {
 			continue
 		}
-		// Everything at once: nothing schedules the namespace any more to finish the stages.
-		exclusions, sequence, hibernate := r.workloadRules(ctx, group, ns)
-		err := r.Engine.ReleaseServices(ctx, ns, hibernate)
-		if err == nil {
-			_, _, err = r.Engine.ScaleTarget(ctx, ns, true, sequence, exclusions, namespaceOriginals(group, ns), true)
-		}
-		if err != nil {
+		if err := releaseNamespace(ctx, r.Engine, ns, r.rulesFor(ctx, group, ns)); err != nil {
 			logf.FromContext(ctx).Error(err, "Could not restore a namespace that left the group", "namespace", ns)
 			continue
 		}
+		released = true
 		for k := range group.Status.OriginalReplicas {
 			if strings.HasPrefix(k, ns+"/") {
 				delete(group.Status.OriginalReplicas, k)
 			}
 		}
 		r.Recorder.Eventf(group, nil, corev1.EventTypeNormal, "NamespaceReleased", "Release",
-			"Namespace %s no longer matches the selector; restored what the group had scaled down", ns)
+			"Namespace %s left the group; restored what the group had scaled down", ns)
 	}
+	if released {
+		if err := syncSleepGrantAfterRelease(ctx, r.Engine); err != nil {
+			logf.FromContext(ctx).Error(err, "Could not update the sleep page grant after a namespace left the group")
+		}
+	}
+}
+
+func (r *ScalingGroupReconciler) rulesFor(ctx context.Context, group *finopsv1.ScalingGroup, ns string) namespaceRules {
+	exclusions, sequence, hibernate := r.workloadRules(ctx, group, ns)
+	originals := namespaceOriginals(group, ns)
+	return namespaceRules{
+		exclusions: exclusions, sequence: sequence, hibernate: hibernate, originals: originals,
+		scaledByThem: group.Status.Phase != scaling.PhaseScaledUp || len(originals) > 0,
+	}
+}
+
+func removedNamespaces(group *finopsv1.ScalingGroup, already []string) []string {
+	members := group.Members()
+	var out []string
+	for k := range group.Status.OriginalReplicas {
+		ns, _, found := strings.Cut(k, "/")
+		if !found || slices.Contains(members, ns) || slices.Contains(already, ns) || slices.Contains(out, ns) {
+			continue
+		}
+		out = append(out, ns)
+	}
+	slices.Sort(out)
+	return out
+}
+
+func (r *ScalingGroupReconciler) handleDeletion(ctx context.Context, group *finopsv1.ScalingGroup) (bool, ctrl.Result, error) {
+	if !group.DeletionTimestamp.IsZero() {
+		result, err := r.finalize(ctx, group)
+		return true, result, err
+	}
+	if controllerutil.AddFinalizer(group, ReleaseFinalizer) {
+		if err := r.Update(ctx, group); err != nil {
+			return true, ctrl.Result{}, err
+		}
+	}
+	return false, ctrl.Result{}, nil
+}
+
+func (r *ScalingGroupReconciler) finalize(ctx context.Context, group *finopsv1.ScalingGroup) (ctrl.Result, error) {
+	if !controllerutil.ContainsFinalizer(group, ReleaseFinalizer) {
+		return ctrl.Result{}, nil
+	}
+	if err := r.releaseEverything(ctx, group); err != nil {
+		if !giveUpOnRelease(group.DeletionTimestamp.Time, time.Now()) {
+			r.Recorder.Eventf(group, nil, corev1.EventTypeWarning, "ReleaseFailed", "Release",
+				"Could not restore everything the group scaled down yet, retrying: %v", err)
+			return ctrl.Result{RequeueAfter: releaseRetry}, nil
+		}
+		r.Recorder.Eventf(group, nil, corev1.EventTypeWarning, "ReleaseAbandoned", "Release",
+			"Deleted after %s without restoring everything the group scaled down: %v", releaseGiveUpAfter, err)
+	}
+	controllerutil.RemoveFinalizer(group, ReleaseFinalizer)
+	if err := r.Update(ctx, group); err != nil {
+		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+	telemetry.ForgetScaling("ScalingGroup", group.Name)
+	return ctrl.Result{}, nil
+}
+
+func (r *ScalingGroupReconciler) releaseEverything(ctx context.Context, group *finopsv1.ScalingGroup) error {
+	plan, err := r.planFor(ctx, group)
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for _, ns := range group.Members() {
+		if owner, ok := plan.NamespaceOwners[ns]; ok && owner != group.Name {
+			continue
+		}
+		if err := releaseNamespace(ctx, r.Engine, ns, r.rulesFor(ctx, group, ns)); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if group.Status.Phase != scaling.PhaseScaledUp {
+		for _, target := range group.Spec.ExternalTargets {
+			if _, err := r.reconcileExternalTarget(ctx, group, "ext:"+target.Identifier, true); err != nil {
+				errs = append(errs, fmt.Errorf("start %s: %w", target.Identifier, err))
+			}
+		}
+	}
+	if err := syncSleepGrantAfterRelease(ctx, r.Engine); err != nil {
+		errs = append(errs, err)
+	}
+	return utilerrors.NewAggregate(errs)
 }
 
 // groupsWithSelectors maps a Namespace event to the groups that select namespaces.

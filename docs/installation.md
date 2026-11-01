@@ -966,14 +966,28 @@ helm uninstall costdeck-operator -n costdeck
 ```
 
 The CRDs, and with them your schedules and the `CostDeckConfig`, are kept, so a reinstall
-picks up where you left off. To remove everything:
+picks up where you left off.
+
+Deleting a schedule restores what it scaled down: its finalizer
+(`finops.costdeck.io/release`) holds the deletion until the operator has brought back the
+replicas, CronJobs, KEDA objects, hibernated services, paused GitOps objects and
+sleep-page routes of its namespaces. A group or config that is up when you delete it
+changes nothing. If something cannot be restored within ten minutes, the deletion goes
+ahead and the schedule's events say what was left. To remove everything, delete the
+schedules while the operator still runs, then the rest:
 
 ```bash
+kubectl delete scalinggroups,scalingconfigs --all -n costdeck --wait
+helm uninstall costdeck-operator -n costdeck
 kubectl delete crd costdeckconfigs.finops.costdeck.io namespacefinops.finops.costdeck.io \
-  namespaceoptimizations.finops.costdeck.io scalingconfigs.finops.costdeck.io \
-  scalinggroups.finops.costdeck.io
+  namespaceoptimizations.finops.costdeck.io rightsizingpolicies.finops.costdeck.io \
+  scalingconfigs.finops.costdeck.io scalinggroups.finops.costdeck.io
 kubectl delete namespace costdeck
 ```
 
-Workloads keep the replica count they had at that moment; scale up anything that was down
-before uninstalling if you need it running.
+A schedule deleted after the operator is gone waits for its finalizer. Remove the
+finalizer to let it go; its workloads then keep the replica count they have:
+
+```bash
+kubectl patch scalinggroup <name> -n costdeck --type merge -p '{"metadata":{"finalizers":null}}'
+```

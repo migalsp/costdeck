@@ -257,8 +257,10 @@ type ScheduledTransition struct {
 
 // ScalingConfigSpec defines the desired state of ScalingConfig
 type ScalingConfigSpec struct {
-	// TargetNamespace is the namespace this config applies to
+	// TargetNamespace is the namespace this config applies to. It cannot change: create a
+	// ScalingConfig for the other namespace, so this one restores what it scaled down.
 	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="targetNamespace cannot change; create a ScalingConfig for the other namespace"
 	TargetNamespace string `json:"targetNamespace"`
 
 	// Active is a manual override. While it is set the schedule is ignored completely:

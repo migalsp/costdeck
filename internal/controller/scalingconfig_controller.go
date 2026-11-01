@@ -22,6 +22,10 @@ import (
 	"slices"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/client-go/tools/events"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -54,6 +58,7 @@ type ScalingConfigReconciler struct {
 	Notifier Notifier
 	// Requests counts the traffic idle auto-sleep looks at; optional.
 	Requests  RequestCounter
+	Recorder  events.EventRecorder
 	announced transitionLog
 	idle      idleWatch
 }
@@ -76,10 +81,17 @@ func (r *ScalingConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		}
 		return ctrl.Result{}, err
 	}
+	if handled, result, err := r.handleDeletion(ctx, config); handled {
+		return result, err
+	}
 	before := config.Status.DeepCopy()
 
 	// 1.5 Conflict Resolution: "Group Wins"
-	if managed, groupName, err := r.isManagedByGroup(ctx, config.Spec.TargetNamespace); err == nil && managed {
+	managed, groupName, err := r.isManagedByGroup(ctx, config.Spec.TargetNamespace)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if managed {
 		l.Info("Namespace managed by group, overriding individual config", "namespace", config.Spec.TargetNamespace, "group", groupName)
 		return r.markAsOverridden(ctx, config, before, groupName)
 	}
@@ -171,6 +183,66 @@ func (r *ScalingConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	return ctrl.Result{RequeueAfter: settledRequeue(decision, time.Now())}, nil
 }
 
+func (r *ScalingConfigReconciler) handleDeletion(ctx context.Context, config *finopsv1.ScalingConfig) (bool, ctrl.Result, error) {
+	if !config.DeletionTimestamp.IsZero() {
+		result, err := r.finalize(ctx, config)
+		return true, result, err
+	}
+	if controllerutil.AddFinalizer(config, ReleaseFinalizer) {
+		if err := r.Update(ctx, config); err != nil {
+			return true, ctrl.Result{}, err
+		}
+	}
+	return false, ctrl.Result{}, nil
+}
+
+func (r *ScalingConfigReconciler) finalize(ctx context.Context, config *finopsv1.ScalingConfig) (ctrl.Result, error) {
+	if !controllerutil.ContainsFinalizer(config, ReleaseFinalizer) {
+		return ctrl.Result{}, nil
+	}
+	if err := r.releaseEverything(ctx, config); err != nil {
+		if !giveUpOnRelease(config.DeletionTimestamp.Time, time.Now()) {
+			r.warn(config, "ReleaseFailed", "Could not restore everything the config scaled down yet, retrying: %v", err)
+			return ctrl.Result{RequeueAfter: releaseRetry}, nil
+		}
+		r.warn(config, "ReleaseAbandoned", "Deleted after %s without restoring everything the config scaled down: %v", releaseGiveUpAfter, err)
+	}
+	controllerutil.RemoveFinalizer(config, ReleaseFinalizer)
+	if err := r.Update(ctx, config); err != nil {
+		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+	telemetry.ForgetScaling("ScalingConfig", config.Name)
+	return ctrl.Result{}, nil
+}
+
+func (r *ScalingConfigReconciler) warn(config *finopsv1.ScalingConfig, reason, format string, args ...any) {
+	if r.Recorder != nil {
+		r.Recorder.Eventf(config, nil, corev1.EventTypeWarning, reason, "Release", format, args...)
+	}
+}
+
+func (r *ScalingConfigReconciler) releaseEverything(ctx context.Context, config *finopsv1.ScalingConfig) error {
+	if config.Status.Phase == PhaseOverriddenByGroup {
+		return nil
+	}
+	managed, _, err := r.isManagedByGroup(ctx, config.Spec.TargetNamespace)
+	if err != nil || managed {
+		return err
+	}
+	ns := config.Spec.TargetNamespace
+	err = releaseNamespace(ctx, r.Engine, ns, namespaceRules{
+		exclusions:   scaling.ExclusionsWith(config.Spec.Exclusions, config.Spec.Hibernate),
+		sequence:     config.Spec.Sequence,
+		hibernate:    config.Spec.Hibernate,
+		originals:    config.Status.OriginalReplicas,
+		scaledByThem: config.Status.Phase != scaling.PhaseScaledUp || len(config.Status.OriginalReplicas) > 0,
+	})
+	if err != nil {
+		return err
+	}
+	return syncSleepGrantAfterRelease(ctx, r.Engine)
+}
+
 func (r *ScalingConfigReconciler) isManagedByGroup(ctx context.Context, ns string) (bool, string, error) {
 	groups := &finopsv1.ScalingGroupList{}
 	if err := r.List(ctx, groups); err != nil {
@@ -227,6 +299,9 @@ func (r *ScalingConfigReconciler) updateStatusPhase(ctx context.Context, config 
 func (r *ScalingConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	if r.Engine == nil {
 		r.Engine = &scaling.Engine{Client: r.Client}
+	}
+	if r.Recorder == nil {
+		r.Recorder = mgr.GetEventRecorder("scalingconfig-controller")
 	}
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&finopsv1.ScalingConfig{}).

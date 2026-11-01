@@ -24,6 +24,8 @@ import (
 	"testing"
 	"time"
 
+	batchv1 "k8s.io/api/batch/v1"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	appsv1 "k8s.io/api/apps/v1"
@@ -405,11 +407,23 @@ var _ = Describe("ScalingGroup letting go of namespaces", func() {
 		_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: key})
 		Expect(err).NotTo(HaveOccurred())
 	}
+	cronJobSuspended := func(ns string) bool {
+		GinkgoHelper()
+		job := &batchv1.CronJob{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "report", Namespace: ns}, job)).To(Succeed())
+		return ptr.Deref(job.Spec.Suspend, false)
+	}
 
 	BeforeEach(func() {
 		reconciler = &ScalingGroupReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), Engine: &scaling.Engine{Client: k8sClient}, Recorder: events.NewFakeRecorder(100)}
 		for _, ns := range namespaces {
 			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, &corev1.Namespace{Name: ns}))).To(Succeed())
+			Expect(k8sClient.Create(ctx, &batchv1.CronJob{
+				Name: "report", Namespace: ns,
+				Spec: batchv1.CronJobSpec{Schedule: "0 * * * *", JobTemplate: batchv1.JobTemplateSpec{Spec: batchv1.JobSpec{Template: corev1.PodTemplateSpec{
+					Spec: corev1.PodSpec{RestartPolicy: corev1.RestartPolicyNever, Containers: []corev1.Container{{Name: "report", Image: "busybox"}}},
+				}}}},
+			})).To(Succeed())
 			labels := map[string]string{"app": "app"}
 			Expect(k8sClient.Create(ctx, &appsv1.Deployment{
 				Name: "app", Namespace: ns,
@@ -426,6 +440,7 @@ var _ = Describe("ScalingGroup letting go of namespaces", func() {
 		reconcileGroup()
 		for _, ns := range namespaces {
 			Expect(replicasIn(ns)).To(BeZero())
+			Expect(cronJobSuspended(ns)).To(BeTrue())
 		}
 	})
 
@@ -433,11 +448,11 @@ var _ = Describe("ScalingGroup letting go of namespaces", func() {
 		Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, &finopsv1.ScalingGroup{Name: key.Name, Namespace: key.Namespace}))).To(Succeed())
 		for _, ns := range namespaces {
 			Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, &appsv1.Deployment{Name: "app", Namespace: ns}))).To(Succeed())
+			Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, &batchv1.CronJob{Name: "report", Namespace: ns}))).To(Succeed())
 		}
 	})
 
 	It("restores a namespace removed from spec.namespaces, as it does for one its selector stops matching", func() {
-		Skip("bug: selectNamespaces only releases namespaces that left status.selectedNamespaces, so one removed from spec.namespaces stays scaled to zero with nothing scheduling it")
 		g := &finopsv1.ScalingGroup{}
 		Expect(k8sClient.Get(ctx, key, g)).To(Succeed())
 		g.Spec.Namespaces = []string{"letgo-a"}
@@ -445,24 +460,68 @@ var _ = Describe("ScalingGroup letting go of namespaces", func() {
 		reconcileGroup()
 		Expect(replicasIn("letgo-a")).To(BeZero())
 		Expect(replicasIn("letgo-b")).To(Equal(int32(3)))
+		Expect(cronJobSuspended("letgo-a")).To(BeTrue())
+		Expect(cronJobSuspended("letgo-b")).To(BeFalse())
+		g = &finopsv1.ScalingGroup{}
+		Expect(k8sClient.Get(ctx, key, g)).To(Succeed())
+		Expect(g.Status.OriginalReplicas).NotTo(HaveKey(HavePrefix("letgo-b/")))
 	})
 
 	It("restores what it scaled down when the group is deleted", func() {
-		Skip("bug: ScalingGroup has no finalizer, so deleting a group that is down leaves its namespaces at zero replicas, against the no-schedule-never-scales-to-zero fail-safe")
-		Expect(k8sClient.Delete(ctx, &finopsv1.ScalingGroup{Name: key.Name, Namespace: key.Namespace})).To(Succeed())
+		Expect(rawClient.Delete(ctx, &finopsv1.ScalingGroup{Name: key.Name, Namespace: key.Namespace})).To(Succeed())
+		Expect(k8sClient.Get(ctx, key, &finopsv1.ScalingGroup{})).To(Succeed())
+		reconcileGroup()
 		Eventually(func() error {
 			return k8sClient.Get(ctx, key, &finopsv1.ScalingGroup{})
 		}).Should(Satisfy(errors.IsNotFound))
-		reconcileGroup()
 		for _, ns := range namespaces {
 			Expect(replicasIn(ns)).To(Equal(int32(3)))
+			Expect(cronJobSuspended(ns)).To(BeFalse())
 		}
+	})
+
+	It("adds its finalizer so a deletion waits for the release", func() {
+		g := &finopsv1.ScalingGroup{}
+		Expect(k8sClient.Get(ctx, key, g)).To(Succeed())
+		Expect(g.Finalizers).To(ContainElement(ReleaseFinalizer))
+	})
+
+	It("does not start workloads someone stopped by hand when an up group is deleted", func() {
+		g := &finopsv1.ScalingGroup{}
+		Expect(k8sClient.Get(ctx, key, g)).To(Succeed())
+		g.Spec.Active = new(true)
+		Expect(k8sClient.Update(ctx, g)).To(Succeed())
+		reconcileGroup()
+		for _, ns := range namespaces {
+			d := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "app", Namespace: ns}, d)).To(Succeed())
+			Expect(*d.Spec.Replicas).To(Equal(int32(3)))
+			d.Status.Replicas, d.Status.ReadyReplicas, d.Status.AvailableReplicas = 3, 3, 3
+			Expect(k8sClient.Status().Update(ctx, d)).To(Succeed())
+		}
+		Eventually(func() string {
+			reconcileGroup()
+			Expect(k8sClient.Get(ctx, key, g)).To(Succeed())
+			return g.Status.Phase
+		}).Should(Equal(scaling.PhaseScaledUp))
+		d := &appsv1.Deployment{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "app", Namespace: "letgo-b"}, d)).To(Succeed())
+		d.Spec.Replicas = ptr.To[int32](0)
+		Expect(k8sClient.Update(ctx, d)).To(Succeed())
+
+		Expect(rawClient.Delete(ctx, &finopsv1.ScalingGroup{Name: key.Name, Namespace: key.Namespace})).To(Succeed())
+		reconcileGroup()
+		Eventually(func() error {
+			return k8sClient.Get(ctx, key, &finopsv1.ScalingGroup{})
+		}).Should(Satisfy(errors.IsNotFound))
+		Expect(replicasIn("letgo-b")).To(BeZero())
+		Expect(replicasIn("letgo-a")).To(Equal(int32(3)))
 	})
 })
 
 var _ = Describe("ScalingGroup controller setup", func() {
 	It("resolves cloud providers from the live settings unless providers are given", func() {
-		r := &ScalingGroupReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+		r := &ScalingGroupReconciler{Client: rawClient, Scheme: rawClient.Scheme()}
 		Expect(r.SetupWithManager(newTestManager())).To(Succeed())
 		Expect(r.Engine).NotTo(BeNil())
 		Expect(r.Engine.Client).To(BeIdenticalTo(r.Client))

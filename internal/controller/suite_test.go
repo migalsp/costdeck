@@ -23,6 +23,9 @@ import (
 	"testing"
 	"time"
 
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -46,6 +49,7 @@ var (
 	testEnv   *envtest.Environment
 	cfg       *rest.Config
 	k8sClient client.Client
+	rawClient client.Client
 )
 
 func TestControllers(t *testing.T) {
@@ -86,10 +90,24 @@ var _ = BeforeSuite(func() {
 	Expect(err).NotTo(HaveOccurred())
 	Expect(cfg).NotTo(BeNil())
 
-	k8sClient, err = client.New(cfg, client.Options{Scheme: scheme.Scheme})
+	rawClient, err = client.NewWithWatch(cfg, client.Options{Scheme: scheme.Scheme})
 	Expect(err).NotTo(HaveOccurred())
-	Expect(k8sClient).NotTo(BeNil())
+	Expect(rawClient).NotTo(BeNil())
+	k8sClient = interceptor.NewClient(rawClient.(client.WithWatch), interceptor.Funcs{Delete: deleteSkippingRelease})
 })
+
+func deleteSkippingRelease(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
+	switch obj.(type) {
+	case *finopsv1.ScalingGroup, *finopsv1.ScalingConfig:
+		current := obj.DeepCopyObject().(client.Object)
+		if err := c.Get(ctx, client.ObjectKeyFromObject(obj), current); err == nil && controllerutil.RemoveFinalizer(current, ReleaseFinalizer) {
+			if err := c.Update(ctx, current); err != nil {
+				return err
+			}
+		}
+	}
+	return c.Delete(ctx, obj, opts...)
+}
 
 var _ = AfterSuite(func() {
 	By("tearing down the test environment")
