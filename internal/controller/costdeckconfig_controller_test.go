@@ -248,7 +248,6 @@ var _ = Describe("CostDeckConfig Controller", func() {
 		})
 
 		It("checks the providers again only every five minutes, not on each of its own status writes", func() {
-			Skip("bug: CostDeckConfigReconciler watches its own status writes (no GenerationChangedPredicate) and stamps a new LastChecked each time, so a provider check slower than a second re-runs in a loop")
 			vm := newFakeVictoriaMetrics()
 			vm.series.Store(3)
 			vm.delay = 1100 * time.Millisecond

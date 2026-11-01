@@ -32,9 +32,11 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
@@ -620,7 +622,8 @@ func (r *ScalingGroupReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		// namespace ownership on the other groups listing the same namespace.
 		Watches(&finopsv1.ScalingGroup{}, handler.EnqueueRequestsFromMapFunc(r.relatedGroups)).
 		// A changed holiday calendar applies at once to the groups that use one.
-		Watches(&finopsv1.CostDeckConfig{}, handler.EnqueueRequestsFromMapFunc(r.groupsWithCalendars)).
+		Watches(&finopsv1.CostDeckConfig{}, handler.EnqueueRequestsFromMapFunc(r.groupsWithCalendars),
+			builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		// A namespace created, relabelled or deleted can join or leave a selector's matches.
 		Watches(&corev1.Namespace{}, handler.EnqueueRequestsFromMapFunc(r.groupsWithSelectors)).
 		Named("scalinggroup").
