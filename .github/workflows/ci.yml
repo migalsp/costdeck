@@ -166,6 +166,7 @@ jobs:
         with:
           scan-args: |-
             --recursive
+            --no-call-analysis=go
             ./
 
   dependency-review:
