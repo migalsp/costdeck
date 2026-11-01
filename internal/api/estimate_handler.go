@@ -114,7 +114,7 @@ type scheduleShare struct {
 func (s *Server) scheduleShares(ctx context.Context, now time.Time) (map[string]scheduleShare, error) {
 	out := map[string]scheduleShare{}
 	calendars := s.calendars(ctx)
-	add := func(ns, kind, name string, sp finopsv1.ScalingGroupSpec) {
+	add := func(ns, kind, name string, sp finopsv1.ScalingGroupSpec, recent []finopsv1.WakeUp) {
 		if _, done := out[ns]; done {
 			return
 		}
@@ -123,7 +123,7 @@ func (s *Server) scheduleShares(ctx context.Context, now time.Time) (map[string]
 			return
 		}
 		exceptions, _ := scaling.ResolveExceptions(sp.Exceptions, sp.Calendars, calendars, scaling.ExceptionZone(sp.Schedules))
-		tt := scaling.Timetable{Schedules: sp.Schedules, Exceptions: exceptions, Lead: scaling.PrewarmLead(sp.Prewarm, nil)}
+		tt := scaling.Timetable{Schedules: sp.Schedules, Exceptions: exceptions, Lead: scaling.PrewarmLead(sp.Prewarm, recent)}
 		if len(sp.Schedules) == 0 && len(exceptions) == 0 {
 			return
 		}
@@ -138,7 +138,7 @@ func (s *Server) scheduleShares(ctx context.Context, now time.Time) (map[string]
 	for _, g := range groups.Items {
 		for _, ns := range g.Members() {
 			if owners[ns] == g.Name {
-				add(ns, "schedule", g.Name, g.Spec)
+				add(ns, "schedule", g.Name, g.Spec, g.Status.RecentWakeUps)
 			}
 		}
 	}
@@ -150,7 +150,7 @@ func (s *Server) scheduleShares(ctx context.Context, now time.Time) (map[string]
 		if c.Spec.TargetNamespace == "" {
 			continue
 		}
-		add(c.Spec.TargetNamespace, "schedule", c.Name, finopsv1.ScalingGroupSpec{Schedules: c.Spec.Schedules, Exceptions: c.Spec.Exceptions, Calendars: c.Spec.Calendars})
+		add(c.Spec.TargetNamespace, "schedule", c.Name, finopsv1.ScalingGroupSpec{Schedules: c.Spec.Schedules, Exceptions: c.Spec.Exceptions, Calendars: c.Spec.Calendars, Prewarm: c.Spec.Prewarm}, c.Status.RecentWakeUps)
 	}
 	return out, nil
 }

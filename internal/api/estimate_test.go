@@ -3,11 +3,14 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	storagev1 "k8s.io/api/storage/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
 )
@@ -74,5 +77,30 @@ func TestEstimateEndpoint(t *testing.T) {
 	}
 	if rr := send(t, server, "POST", "/api/estimate", `{"base":"kind: [","head":""}`); rr.Code != http.StatusBadRequest {
 		t.Errorf("broken manifests: %d", rr.Code)
+	}
+}
+
+func TestEstimateCountsThePrewarmOfGroupsAndNamespaceSchedules(t *testing.T) {
+	t.Setenv("POD_NAMESPACE", "costdeck")
+	server := buildMockServerWithK8s()
+	ctx := context.Background()
+	halfADay := []finopsv1.ScalingSchedule{{Days: []int{0, 1, 2, 3, 4, 5, 6}, StartTime: "00:00", EndTime: "11:59", Timezone: "UTC"}}
+	if err := server.Client.Create(ctx, &finopsv1.ScalingGroup{Name: "dev", Namespace: "costdeck",
+		Spec:   finopsv1.ScalingGroupSpec{Namespaces: []string{"shop-dev"}, Schedules: halfADay, Prewarm: &finopsv1.Prewarm{Auto: true}},
+		Status: finopsv1.ScalingGroupStatus{ScheduleStatus: finopsv1.ScheduleStatus{RecentWakeUps: []finopsv1.WakeUp{{StartedAt: metav1.Now(), Seconds: 1380}}}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := server.Client.Create(ctx, &finopsv1.ScalingConfig{Name: "pay-dev", Namespace: "costdeck",
+		Spec: finopsv1.ScalingConfigSpec{TargetNamespace: "pay-dev", Schedules: halfADay, Prewarm: &finopsv1.Prewarm{Minutes: 60}}}); err != nil {
+		t.Fatal(err)
+	}
+	shares, err := server.scheduleShares(ctx, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for ns, want := range map[string]float64{"shop-dev": (12*60 + 24) / 1440.0, "pay-dev": (12*60 + 60) / 1440.0} {
+		if got := shares[ns].share; math.Abs(got-want) > 0.002 {
+			t.Errorf("%s is up %.4f of the time, want %.4f with its prewarm", ns, got, want)
+		}
 	}
 }

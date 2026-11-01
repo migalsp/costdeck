@@ -234,3 +234,57 @@ func TestSchedulesTooLargeToWorkOutAreRefused(t *testing.T) {
 		t.Errorf("a preview with %d exceptions = %d", maxExceptions+1, rr.Code)
 	}
 }
+
+func TestPreviewCountsTheMeasuredPrewarmOfASavedSchedule(t *testing.T) {
+	t.Setenv("POD_NAMESPACE", "costdeck")
+	server := buildMockServerWithK8s()
+	ctx := context.Background()
+	if err := server.Client.Create(ctx, &corev1.Namespace{Name: "shop-dev"}); err != nil {
+		t.Fatal(err)
+	}
+	schedule := []finopsv1.ScalingSchedule{{Days: []int{0, 1, 2, 3, 4, 5, 6}, StartTime: "08:00", EndTime: "20:00", Timezone: "UTC"}}
+	tenMinutes := []finopsv1.WakeUp{{StartedAt: metav1.Now(), Seconds: 600}}
+	if err := server.Client.Create(ctx, &finopsv1.ScalingGroup{Name: "shop", Namespace: "costdeck",
+		Spec:   finopsv1.ScalingGroupSpec{Namespaces: []string{"shop-dev"}, Schedules: schedule, Prewarm: &finopsv1.Prewarm{Auto: true}},
+		Status: finopsv1.ScalingGroupStatus{ScheduleStatus: finopsv1.ScheduleStatus{RecentWakeUps: tenMinutes}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := server.Client.Create(ctx, &finopsv1.ScalingConfig{Name: "shop-dev", Namespace: "costdeck",
+		Spec:   finopsv1.ScalingConfigSpec{TargetNamespace: "shop-dev", Schedules: schedule, Prewarm: &finopsv1.Prewarm{Auto: true}},
+		Status: finopsv1.ScalingConfigStatus{ScheduleStatus: finopsv1.ScheduleStatus{RecentWakeUps: tenMinutes}}}); err != nil {
+		t.Fatal(err)
+	}
+	prewarmLead := func(kind, name string) time.Duration {
+		t.Helper()
+		body := `{"kind":"` + kind + `","name":"` + name + `","spec":{"namespaces":["shop-dev"],"targetNamespace":"shop-dev","prewarm":{"auto":true},
+			"schedules":[{"days":[0,1,2,3,4,5,6],"startTime":"08:00","endTime":"20:00","timezone":"UTC"}]}}`
+		var got previewResponse
+		if err := json.Unmarshal(send(t, server, "POST", "/api/scaling/preview", body).Body.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+		longest := time.Duration(0)
+		for _, iv := range got.Intervals {
+			if iv.Reason == "prewarm" && iv.Active {
+				longest = max(longest, iv.To.Sub(iv.From))
+			}
+		}
+		return longest
+	}
+	if got := prewarmLead("group", "shop"); got != 11*time.Minute {
+		t.Errorf("saved group: prewarm of %v, want the 10-minute wake-up plus a minute", got)
+	}
+	if got := prewarmLead("config", "shop-dev"); got != 11*time.Minute {
+		t.Errorf("saved namespace schedule: prewarm of %v, want the 10-minute wake-up plus a minute", got)
+	}
+	if got := prewarmLead("group", ""); got != 0 {
+		t.Errorf("new schedule with no wake-ups yet: prewarm of %v, want none", got)
+	}
+
+	out, err := server.toolPreview(ctx, "group", "shop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, `"upShare":"51%"`) {
+		t.Errorf("the assistant's preview leaves out the prewarm (12 h plus 11 minutes a day is 51%%):\n%s", out)
+	}
+}
