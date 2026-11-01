@@ -18,7 +18,7 @@ func testNode(name, pool, cpu string, labels map[string]string) corev1.Node {
 	maps.Copy(l, labels)
 	rl := corev1.ResourceList{corev1.ResourceCPU: resource.MustParse(cpu), corev1.ResourceMemory: resource.MustParse("16Gi"), corev1.ResourcePods: resource.MustParse("110")}
 	return corev1.Node{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Labels: l},
+		Name: name, Labels: l,
 		Status: corev1.NodeStatus{
 			Capacity: rl, Allocatable: rl,
 			Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}},
@@ -28,7 +28,7 @@ func testNode(name, pool, cpu string, labels map[string]string) corev1.Node {
 
 func testPod(ns, name, node, cpu, mem string, daemon bool) corev1.Pod {
 	p := corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: name},
+		Namespace: ns, Name: name,
 		Spec: corev1.PodSpec{NodeName: node, Containers: []corev1.Container{{Resources: corev1.ResourceRequirements{
 			Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse(cpu), corev1.ResourceMemory: resource.MustParse(mem)},
 		}}}},

@@ -145,9 +145,9 @@ func (s *Server) previewSchedule(ctx context.Context, req previewRequest, now ti
 		}
 		// Plan the draft among the other groups, as the controller will.
 		draft := finopsv1.ScalingGroup{
-			ObjectMeta: metav1.ObjectMeta{Name: previewNewName, CreationTimestamp: metav1.NewTime(now)},
-			Spec:       finopsv1.ScalingGroupSpec{Namespaces: sp.Namespaces, NamespaceSelector: sp.NamespaceSelector},
-			Status:     finopsv1.ScalingGroupStatus{SelectedNamespaces: selected},
+			Name: previewNewName, CreationTimestamp: metav1.NewTime(now),
+			Spec:   finopsv1.ScalingGroupSpec{Namespaces: sp.Namespaces, NamespaceSelector: sp.NamespaceSelector},
+			Status: finopsv1.ScalingGroupStatus{SelectedNamespaces: selected},
 		}
 		var planned []finopsv1.ScalingGroup
 		for _, g := range groups.Items {

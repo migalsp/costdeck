@@ -7,7 +7,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	metricsv1beta1 "k8s.io/metrics/pkg/apis/metrics/v1beta1"
 	metricsfake "k8s.io/metrics/pkg/client/clientset/versioned/fake"
 )
@@ -17,7 +16,7 @@ func TestMetricsServerSharesOneReading(t *testing.T) {
 	gvr := metricsv1beta1.SchemeGroupVersion.WithResource("pods")
 	for _, p := range []struct{ ns, name, cpu string }{{"a", "a-1", "100m"}, {"a", "a-2", "50m"}, {"b", "b-1", "200m"}} {
 		pm := &metricsv1beta1.PodMetrics{
-			ObjectMeta: metav1.ObjectMeta{Name: p.name, Namespace: p.ns},
+			Name: p.name, Namespace: p.ns,
 			Containers: []metricsv1beta1.ContainerMetrics{{Name: "c", Usage: corev1.ResourceList{
 				corev1.ResourceCPU: resource.MustParse(p.cpu), corev1.ResourceMemory: resource.MustParse("64Mi"),
 			}}},

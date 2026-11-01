@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
 )
@@ -18,8 +17,8 @@ import (
 func oidcService(t *testing.T, f *fakeEntra, cfg finopsv1.OIDCConfig) *Service {
 	cfg.Enabled, cfg.IssuerURL, cfg.ClientID, cfg.ClientSecretRef = true, f.issuer(), f.client, "oidc"
 	return newTestService(t,
-		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "oidc", Namespace: "costdeck"}, Data: map[string][]byte{SecretKeyClientSecret: []byte(f.secret)}},
-		&finopsv1.CostDeckConfig{ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: "costdeck"},
+		&corev1.Secret{Name: "oidc", Namespace: "costdeck", Data: map[string][]byte{SecretKeyClientSecret: []byte(f.secret)}},
+		&finopsv1.CostDeckConfig{Name: "default", Namespace: "costdeck",
 			Spec: finopsv1.CostDeckConfigSpec{Auth: finopsv1.AuthConfig{OIDC: &cfg}}})
 }
 

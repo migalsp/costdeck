@@ -25,7 +25,7 @@ import (
 func riskDeployment(name string) *appsv1.Deployment {
 	replicas := int32(1)
 	return &appsv1.Deployment{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "shop"},
+		Name: name, Namespace: "shop",
 		Spec: appsv1.DeploymentSpec{Replicas: &replicas, Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{
 			Name: "main",
 			Resources: corev1.ResourceRequirements{
@@ -37,7 +37,7 @@ func riskDeployment(name string) *appsv1.Deployment {
 }
 
 func riskPod(name string, status corev1.PodStatus) *corev1.Pod {
-	return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "shop"}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "main"}}}, Status: status}
+	return &corev1.Pod{Name: name, Namespace: "shop", Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "main"}}}, Status: status}
 }
 
 func TestRisksReadPodsAndAutoscalers(t *testing.T) {
@@ -55,7 +55,7 @@ func TestRisksReadPodsAndAutoscalers(t *testing.T) {
 	}}}
 	evicted := corev1.PodStatus{Phase: corev1.PodFailed, Reason: "Evicted", Message: "The node was low on resource: memory."}
 	hpa := &autoscalingv2.HorizontalPodAutoscaler{
-		ObjectMeta: metav1.ObjectMeta{Name: "web", Namespace: "shop"},
+		Name: "web", Namespace: "shop",
 		Spec: autoscalingv2.HorizontalPodAutoscalerSpec{
 			ScaleTargetRef: autoscalingv2.CrossVersionObjectReference{Kind: "Deployment", Name: "web"}, MaxReplicas: 3,
 			Metrics: []autoscalingv2.MetricSpec{{Type: autoscalingv2.ResourceMetricSourceType, Resource: &autoscalingv2.ResourceMetricSource{
@@ -80,7 +80,7 @@ func TestRisksReadPodsAndAutoscalers(t *testing.T) {
 	metricsClient := metricsfake.NewSimpleClientset() //nolint:staticcheck // k8s.io/metrics generates no NewClientset
 	for _, pod := range []string{"api-7d9f8c-abcde", "worker-5c6b7d-fghij"} {
 		pm := &metricsv1beta1.PodMetrics{
-			ObjectMeta: metav1.ObjectMeta{Name: pod, Namespace: "shop"},
+			Name: pod, Namespace: "shop",
 			Containers: []metricsv1beta1.ContainerMetrics{{Name: "main", Usage: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("50m"), corev1.ResourceMemory: resource.MustParse("100Mi")}}},
 		}
 		if err := metricsClient.Tracker().Create(metricsv1beta1.SchemeGroupVersion.WithResource("pods"), pm, "shop"); err != nil {
@@ -138,7 +138,7 @@ func TestRisksFlagASlowWakeUp(t *testing.T) {
 	server := buildMockServerWithK8s()
 	ctx := context.Background()
 	group := &finopsv1.ScalingGroup{
-		ObjectMeta: metav1.ObjectMeta{Name: "dev", Namespace: "costdeck"},
+		Name: "dev", Namespace: "costdeck",
 		Spec: finopsv1.ScalingGroupSpec{Category: "e2e", Namespaces: []string{"shop"}, Schedules: []finopsv1.ScalingSchedule{
 			{Days: []int{1, 2, 3, 4, 5}, StartTime: "08:00", EndTime: "18:00", Timezone: "UTC"},
 		}},

@@ -136,8 +136,7 @@ func (s *Server) handleAIExecuteTool(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	result, err := s.executeMutatingTool(r.Context(), name, req.Args)
 	if err != nil {
-		var bad errBadOverride
-		if errors.As(err, &bad) {
+		if bad, ok := errors.AsType[errBadOverride](err); ok {
 			writeError(w, http.StatusBadRequest, bad.Error())
 			return
 		}
@@ -247,7 +246,7 @@ func (s *Server) testAIProvider(w http.ResponseWriter, r *http.Request) {
 		fail(err)
 		return
 	}
-	msg := fmt.Sprintf("Connected — %d models available", len(models))
+	msg := fmt.Sprintf("Connected - %d models available", len(models))
 	found := false
 	for _, m := range models {
 		if m == settings.Model {

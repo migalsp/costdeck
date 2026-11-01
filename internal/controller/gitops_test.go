@@ -49,7 +49,7 @@ var _ = Describe("Pausing GitOps", func() {
 		GinkgoHelper()
 		sel := map[string]string{"app": name}
 		Expect(k8sClient.Create(ctx, &appsv1.Deployment{
-			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns, Labels: labels, Annotations: annotations},
+			Name: name, Namespace: ns, Labels: labels, Annotations: annotations,
 			Spec: appsv1.DeploymentSpec{
 				Replicas: new(int32(1)), Selector: &metav1.LabelSelector{MatchLabels: sel},
 				Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: sel}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "c", Image: "busybox"}}}},
@@ -59,7 +59,7 @@ var _ = Describe("Pausing GitOps", func() {
 	var objects []client.Object
 
 	BeforeEach(func() {
-		Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}}))).To(Succeed())
+		Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, &corev1.Namespace{Name: ns}))).To(Succeed())
 		workload("kustomized", map[string]string{"kustomize.toolkit.fluxcd.io/name": "apps", "kustomize.toolkit.fluxcd.io/namespace": "default"}, nil)
 		workload("released", map[string]string{"helm.toolkit.fluxcd.io/name": "web", "helm.toolkit.fluxcd.io/namespace": "default"}, nil)
 		workload("argo", nil, map[string]string{"argocd.argoproj.io/tracking-id": "default_shop:apps/Deployment:gitops-app/argo"})
@@ -81,12 +81,12 @@ var _ = Describe("Pausing GitOps", func() {
 		for _, o := range objects {
 			Expect(k8sClient.Create(ctx, o)).To(Succeed())
 		}
-		Expect(k8sClient.Create(ctx, &finopsv1.ScalingGroup{ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace},
+		Expect(k8sClient.Create(ctx, &finopsv1.ScalingGroup{Name: key.Name, Namespace: key.Namespace,
 			Spec: finopsv1.ScalingGroupSpec{Category: "Test", Namespaces: []string{ns}, Schedules: closed, PauseGitOps: true}})).To(Succeed())
 	})
 
 	AfterEach(func() {
-		Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, &finopsv1.ScalingGroup{ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace}}))).To(Succeed())
+		Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, &finopsv1.ScalingGroup{Name: key.Name, Namespace: key.Namespace}))).To(Succeed())
 		for _, o := range objects {
 			Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, o))).To(Succeed())
 		}

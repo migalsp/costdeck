@@ -9,7 +9,6 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -21,8 +20,8 @@ import (
 
 func finOps(name, target string) *finopsv1.NamespaceFinOps {
 	return &finopsv1.NamespaceFinOps{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "costdeck"},
-		Spec:       finopsv1.NamespaceFinOpsSpec{TargetNamespace: target},
+		Name: name, Namespace: "costdeck",
+		Spec: finopsv1.NamespaceFinOpsSpec{TargetNamespace: target},
 	}
 }
 
@@ -32,11 +31,10 @@ func TestDiscoveryForgetsDeletedNamespaces(t *testing.T) {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	utilruntime.Must(finopsv1.AddToScheme(scheme))
 
-	terminating := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
-		Name: "leaving", DeletionTimestamp: &metav1.Time{Time: time.Now()}, Finalizers: []string{"kubernetes"},
-	}}
+	terminating := &corev1.Namespace{
+		Name: "leaving", DeletionTimestamp: &metav1.Time{Time: time.Now()}, Finalizers: []string{"kubernetes"}}
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
-		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "kept"}},
+		&corev1.Namespace{Name: "kept"},
 		terminating,
 		finOps("kept", "kept"),
 		finOps("gone", "gone"),
@@ -45,7 +43,7 @@ func TestDiscoveryForgetsDeletedNamespaces(t *testing.T) {
 	r := &NamespaceDiscoveryReconciler{Client: c, Scheme: scheme}
 
 	for _, ns := range []string{"gone", "leaving", "kept"} {
-		if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Name: ns}}); err != nil {
+		if _, err := r.Reconcile(context.Background(), ctrl.Request{Name: ns}); err != nil {
 			t.Fatalf("Reconcile(%s): %v", ns, err)
 		}
 	}

@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	storagev1 "k8s.io/api/storage/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
 )
@@ -41,8 +40,8 @@ func TestEstimateEndpoint(t *testing.T) {
 	if rr := send(t, server, "PUT", "/api/settings", `{"pricing":{"cpuCoreHour":"0.05","memoryGiBHour":"0.01","storageGiBMonth":"0.1","currency":"`+remoteCurrency+`"}}`); rr.Code != http.StatusOK {
 		t.Fatal(rr.Body.String())
 	}
-	_ = server.Client.Create(ctx, &storagev1.StorageClass{ObjectMeta: metav1.ObjectMeta{Name: "standard", Annotations: map[string]string{"storageclass.kubernetes.io/is-default-class": "true"}}, Provisioner: "ebs.csi.aws.com"})
-	g := &finopsv1.ScalingGroup{ObjectMeta: metav1.ObjectMeta{Name: "dev", Namespace: "costdeck"}, Spec: finopsv1.ScalingGroupSpec{Namespaces: []string{"shop-dev"},
+	_ = server.Client.Create(ctx, &storagev1.StorageClass{Name: "standard", Annotations: map[string]string{"storageclass.kubernetes.io/is-default-class": "true"}, Provisioner: "ebs.csi.aws.com"})
+	g := &finopsv1.ScalingGroup{Name: "dev", Namespace: "costdeck", Spec: finopsv1.ScalingGroupSpec{Namespaces: []string{"shop-dev"},
 		Schedules: []finopsv1.ScalingSchedule{{Days: []int{0, 1, 2, 3, 4, 5, 6}, StartTime: "00:00", EndTime: "11:59", Timezone: "UTC"}}}}
 	if err := server.Client.Create(ctx, g); err != nil {
 		t.Fatal(err)

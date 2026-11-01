@@ -25,8 +25,6 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
 	"github.com/migalsp/costdeck-operator/internal/scaling"
 )
@@ -48,10 +46,8 @@ var _ = Describe("ScalingConfig Controller", func() {
 			err := k8sClient.Get(ctx, typeNamespacedName, scalingconfig)
 			if err != nil && errors.IsNotFound(err) {
 				resource := &finopsv1.ScalingConfig{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      resourceName,
-						Namespace: "default",
-					},
+					Name:      resourceName,
+					Namespace: "default",
 					Spec: finopsv1.ScalingConfigSpec{
 						TargetNamespace: "default",
 					},

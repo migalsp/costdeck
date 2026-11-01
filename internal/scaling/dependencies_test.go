@@ -12,9 +12,9 @@ import (
 
 func group(name string, created time.Time, spec finopsv1.ScalingGroupSpec, phase string) finopsv1.ScalingGroup {
 	return finopsv1.ScalingGroup{
-		ObjectMeta: metav1.ObjectMeta{Name: name, CreationTimestamp: metav1.NewTime(created)},
-		Spec:       spec,
-		Status:     finopsv1.ScalingGroupStatus{Phase: phase},
+		Name: name, CreationTimestamp: metav1.NewTime(created),
+		Spec:   spec,
+		Status: finopsv1.ScalingGroupStatus{Phase: phase},
 	}
 }
 

@@ -33,13 +33,13 @@ func TestRightsizingPolicies(t *testing.T) {
 	ctx := context.Background()
 	cpuMin := resource.MustParse("400m")
 	objects := []client.Object{
-		&finopsv1.CostDeckConfig{ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: "costdeck"}, Spec: finopsv1.CostDeckConfigSpec{Rightsizing: finopsv1.RightsizingConfig{Apply: true}}},
+		&finopsv1.CostDeckConfig{Name: "default", Namespace: "costdeck", Spec: finopsv1.CostDeckConfigSpec{Rightsizing: finopsv1.RightsizingConfig{Apply: true}}},
 		labelledDeployment("api"), labelledDeployment("batch"), labelledDeployment("web"),
-		&finopsv1.RightsizingPolicy{ObjectMeta: metav1.ObjectMeta{Name: "payments", Namespace: "shop"}, Spec: finopsv1.RightsizingPolicySpec{
+		&finopsv1.RightsizingPolicy{Name: "payments", Namespace: "shop", Spec: finopsv1.RightsizingPolicySpec{
 			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "api"}}, Apply: finopsv1.RightsizingApplyForbidden,
 			CPU: finopsv1.ResourcePolicy{Min: &cpuMin},
 		}},
-		&finopsv1.RightsizingPolicy{ObjectMeta: metav1.ObjectMeta{Name: "jobs", Namespace: "shop"}, Spec: finopsv1.RightsizingPolicySpec{
+		&finopsv1.RightsizingPolicy{Name: "jobs", Namespace: "shop", Spec: finopsv1.RightsizingPolicySpec{
 			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "batch"}}, Exclude: true,
 		}},
 	}
@@ -51,7 +51,7 @@ func TestRightsizingPolicies(t *testing.T) {
 	metricsClient := metricsfake.NewSimpleClientset() //nolint:staticcheck // k8s.io/metrics generates no NewClientset
 	for _, pod := range []string{"api-7d9f8c-abcde", "batch-5c6b7d-fghij", "web-6f7a8b-klmno"} {
 		pm := &metricsv1beta1.PodMetrics{
-			ObjectMeta: metav1.ObjectMeta{Name: pod, Namespace: "shop"},
+			Name: pod, Namespace: "shop",
 			Containers: []metricsv1beta1.ContainerMetrics{{Name: "main", Usage: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("50m"), corev1.ResourceMemory: resource.MustParse("100Mi")}}},
 		}
 		if err := metricsClient.Tracker().Create(metricsv1beta1.SchemeGroupVersion.WithResource("pods"), pm, "shop"); err != nil {

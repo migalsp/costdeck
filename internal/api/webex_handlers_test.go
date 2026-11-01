@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
 )
@@ -27,13 +26,13 @@ func TestWebexWebhookRequiresValidSignature(t *testing.T) {
 	server := buildMockServer()
 	ctx := context.Background()
 	if err := server.Client.Create(ctx, &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "wx", Namespace: "costdeck"},
-		Data:       map[string][]byte{"BOT_TOKEN": []byte("t"), "WEBHOOK_SECRET": []byte("s3cr3t")},
+		Name: "wx", Namespace: "costdeck",
+		Data: map[string][]byte{"BOT_TOKEN": []byte("t"), "WEBHOOK_SECRET": []byte("s3cr3t")},
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := server.Client.Create(ctx, &finopsv1.CostDeckConfig{
-		ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: "costdeck"},
+		Name: "default", Namespace: "costdeck",
 		Spec: finopsv1.CostDeckConfigSpec{Integrations: finopsv1.IntegrationsConfig{
 			Messenger: &finopsv1.MessengerIntegrationConfig{Webex: &finopsv1.WebexConfig{Enabled: true, SecretRef: "wx"}},
 		}},

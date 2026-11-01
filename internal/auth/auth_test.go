@@ -18,7 +18,6 @@ import (
 
 	jose "github.com/go-jose/go-jose/v4"
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -299,9 +298,9 @@ func (f *fakeEntra) authorize(location string) (code, state string) {
 
 func entraService(t *testing.T, f *fakeEntra, mapping map[string]string, autoProvision *bool) *Service {
 	return newTestService(t,
-		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "entra", Namespace: "costdeck"}, Data: map[string][]byte{SecretKeyClientSecret: []byte(f.secret)}},
+		&corev1.Secret{Name: "entra", Namespace: "costdeck", Data: map[string][]byte{SecretKeyClientSecret: []byte(f.secret)}},
 		&finopsv1.CostDeckConfig{
-			ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: "costdeck"},
+			Name: "default", Namespace: "costdeck",
 			Spec: finopsv1.CostDeckConfigSpec{Auth: finopsv1.AuthConfig{Entra: &finopsv1.EntraConfig{
 				Enabled: true, TenantID: f.tenant, ClientID: f.client, ClientSecretRef: "entra",
 				AuthorityHost: f.srv.URL, GroupRoleMapping: mapping, AutoProvision: autoProvision,

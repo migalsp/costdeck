@@ -28,12 +28,12 @@ var _ = Describe("Realized savings", func() {
 		GinkgoHelper()
 		sel := map[string]string{"app": name}
 		Expect(k8sClient.Create(ctx, &appsv1.Deployment{
-			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+			Name: name, Namespace: ns,
 			Spec: appsv1.DeploymentSpec{Replicas: new(int32(1)), Selector: &metav1.LabelSelector{MatchLabels: sel},
 				Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: sel}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "c", Image: "busybox"}}}}},
 		})).To(Succeed())
 		// envtest schedules nothing: bind the pod to its node and report it running.
-		p := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name + "-1", Namespace: ns, Labels: sel},
+		p := &corev1.Pod{Name: name + "-1", Namespace: ns, Labels: sel,
 			Spec: corev1.PodSpec{NodeName: node, Containers: []corev1.Container{{Name: "c", Image: "busybox"}}}}
 		Expect(k8sClient.Create(ctx, p)).To(Succeed())
 		p.Status.Phase = corev1.PodRunning
@@ -41,17 +41,17 @@ var _ = Describe("Realized savings", func() {
 	}
 
 	It("records the nodes a scale-down should free, once, and forgets them when up", func() {
-		Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}}))).To(Succeed())
-		node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "real-node-a"}}
+		Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, &corev1.Namespace{Name: ns}))).To(Succeed())
+		node := &corev1.Node{Name: "real-node-a"}
 		Expect(k8sClient.Create(ctx, node)).To(Succeed())
 		node.Status.Capacity = corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("4"), corev1.ResourceMemory: resource.MustParse("16Gi")}
 		Expect(k8sClient.Status().Update(ctx, node)).To(Succeed())
 		workload("app", "real-node-a")
 		workload("cache", "real-node-b") // kept running by the workload rules
-		rules := &finopsv1.ScalingConfig{ObjectMeta: metav1.ObjectMeta{Name: "real-shop-rules", Namespace: "default"},
+		rules := &finopsv1.ScalingConfig{Name: "real-shop-rules", Namespace: "default",
 			Spec: finopsv1.ScalingConfigSpec{TargetNamespace: ns, Exclusions: []string{"cache"}}}
 		Expect(k8sClient.Create(ctx, rules)).To(Succeed())
-		g := &finopsv1.ScalingGroup{ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace},
+		g := &finopsv1.ScalingGroup{Name: key.Name, Namespace: key.Namespace,
 			Spec: finopsv1.ScalingGroupSpec{Category: "Test", Namespaces: []string{ns}, Schedules: closed}}
 		Expect(k8sClient.Create(ctx, g)).To(Succeed())
 		DeferCleanup(func() {

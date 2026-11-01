@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -148,7 +147,7 @@ func (s *Server) changeExceptions(ctx context.Context, target, name string, chan
 	var obj client.Object
 	switch target {
 	case targetGroup:
-		obj = &finopsv1.ScalingGroup{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: config.OperatorNamespace()}}
+		obj = &finopsv1.ScalingGroup{Name: name, Namespace: config.OperatorNamespace()}
 	case targetNamespace:
 		cfg, err := s.configForNamespace(ctx, name)
 		if err != nil {

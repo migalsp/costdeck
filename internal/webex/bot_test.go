@@ -11,7 +11,6 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -101,7 +100,7 @@ func newTestBot(t *testing.T, clusterName string, objs ...client.Object) (*Bot, 
 
 func scheduledGroup(name string) *finopsv1.ScalingGroup {
 	return &finopsv1.ScalingGroup{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "costdeck"},
+		Name: name, Namespace: "costdeck",
 		Spec: finopsv1.ScalingGroupSpec{
 			Namespaces: []string{name + "-ns"},
 			Schedules:  []finopsv1.ScalingSchedule{{Days: []int{1, 2, 3, 4, 5}, StartTime: "09:00", EndTime: "18:00", Timezone: "UTC"}},
@@ -244,9 +243,9 @@ func TestPollerProcessesOnlyNewMessages(t *testing.T) {
 	api.rooms = []Room{{ID: "room", Title: "Ops", Type: "group"}}
 	api.messages["room"] = []Message{{ID: "old", RoomID: "room", Text: "FinOps Bot help", PersonID: "u1", Created: time.Now().Add(-time.Hour)}}
 	for _, obj := range []client.Object{
-		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "wx", Namespace: "costdeck"}, Data: map[string][]byte{SecretKeyBotToken: []byte("t")}},
+		&corev1.Secret{Name: "wx", Namespace: "costdeck", Data: map[string][]byte{SecretKeyBotToken: []byte("t")}},
 		&finopsv1.CostDeckConfig{
-			ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: "costdeck"},
+			Name: "default", Namespace: "costdeck",
 			Spec: finopsv1.CostDeckConfigSpec{Integrations: finopsv1.IntegrationsConfig{
 				Messenger: &finopsv1.MessengerIntegrationConfig{Webex: &finopsv1.WebexConfig{Enabled: true, SecretRef: "wx"}},
 			}},
@@ -301,13 +300,13 @@ func TestNotifierPostsOnlyWhenEnabled(t *testing.T) {
 	t.Setenv("POD_NAMESPACE", "costdeck")
 	ctx := context.Background()
 	cfg := &finopsv1.CostDeckConfig{
-		ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: "costdeck"},
+		Name: "default", Namespace: "costdeck",
 		Spec: finopsv1.CostDeckConfigSpec{ClusterName: "prod", Integrations: finopsv1.IntegrationsConfig{
 			Messenger: &finopsv1.MessengerIntegrationConfig{Webex: &finopsv1.WebexConfig{Enabled: true, SecretRef: "wx", RoomID: "room"}},
 		}},
 	}
 	for _, obj := range []client.Object{
-		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "wx", Namespace: "costdeck"}, Data: map[string][]byte{SecretKeyBotToken: []byte("t")}},
+		&corev1.Secret{Name: "wx", Namespace: "costdeck", Data: map[string][]byte{SecretKeyBotToken: []byte("t")}},
 		cfg,
 	} {
 		if err := k8s.Create(ctx, obj); err != nil {

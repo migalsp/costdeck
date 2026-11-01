@@ -279,12 +279,12 @@ func (r *Reaper) warn(ctx context.Context, e Entry) error {
 		}
 	}
 	patch := fmt.Sprintf(`{"metadata":{"annotations":{%q:%q}}}`, WarnedAnnotation, e.ExpiresAt.UTC().Format(time.RFC3339))
-	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: e.Namespace}}
+	ns := &corev1.Namespace{Name: e.Namespace}
 	return r.Client.Patch(ctx, ns, client.RawPatch(types.MergePatchType, []byte(patch)))
 }
 
 func (r *Reaper) delete(ctx context.Context, e Entry, now time.Time) error {
-	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: e.Namespace}}
+	ns := &corev1.Namespace{Name: e.Namespace}
 	// The UID precondition keeps a namespace recreated under the same name safe.
 	err := r.Client.Delete(ctx, ns, client.PropagationPolicy(metav1.DeletePropagationBackground), client.Preconditions{UID: &e.uid})
 	if apierrors.IsNotFound(err) || apierrors.IsConflict(err) {
@@ -356,8 +356,8 @@ func record(ctx context.Context, c client.Client, d Deletion) error {
 	if err != nil {
 		return err
 	}
-	cm := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Namespace: config.OperatorNamespace(), Name: logConfigMap,
-		Labels: map[string]string{"app.kubernetes.io/managed-by": "costdeck"}}}
+	cm := &corev1.ConfigMap{Namespace: config.OperatorNamespace(), Name: logConfigMap,
+		Labels: map[string]string{"app.kubernetes.io/managed-by": "costdeck"}}
 	err = c.Get(ctx, client.ObjectKeyFromObject(cm), cm)
 	if apierrors.IsNotFound(err) {
 		cm.Data = map[string]string{logKey: string(raw)}
@@ -393,7 +393,7 @@ func Extend(ctx context.Context, c client.Client, t finopsv1.NamespaceTTLConfig,
 		}
 		e.ExpiresAt, e.Source, e.Warned = from.Add(by).Truncate(time.Second), SourceExtended, false
 		patch := fmt.Sprintf(`{"metadata":{"annotations":{%q:%q,%q:null}}}`, ExpiresAnnotation, e.ExpiresAt.UTC().Format(time.RFC3339), WarnedAnnotation)
-		ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: namespace}}
+		ns := &corev1.Namespace{Name: namespace}
 		return e, c.Patch(ctx, ns, client.RawPatch(types.MergePatchType, []byte(patch)))
 	}
 	return Entry{}, apierrors.NewNotFound(corev1.Resource("namespaces"), namespace)

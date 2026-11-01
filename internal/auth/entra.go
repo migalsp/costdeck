@@ -479,8 +479,7 @@ func (e *Entra) TestEntra(ctx context.Context, cfg finopsv1.EntraConfig, clientS
 
 func redirectWithError(w http.ResponseWriter, r *http.Request, returnTo string, err error) {
 	code, detail := "sign_in_failed", err.Error()
-	var sie *SignInError
-	if errors.As(err, &sie) {
+	if sie, ok := errors.AsType[*SignInError](err); ok {
 		code, detail = sie.Code, sie.Detail
 	}
 	q := url.Values{"sso_error": {code}, "sso_detail": {detail}}

@@ -26,7 +26,7 @@ var now = time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC)
 func q(s string) resource.Quantity { return resource.MustParse(s) }
 
 func deploy(name string, containers ...corev1.Container) *appsv1.Deployment {
-	return &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "shop"}, Spec: appsv1.DeploymentSpec{
+	return &appsv1.Deployment{Name: name, Namespace: "shop", Spec: appsv1.DeploymentSpec{
 		Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": name}},
 		Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": name}}, Spec: corev1.PodSpec{Containers: containers}},
 	}}
@@ -135,7 +135,7 @@ func TestApplyRefusesAndCaps(t *testing.T) {
 func TestRevertALegacyRecord(t *testing.T) {
 	ctx := context.Background()
 	api := deploy("api", container("main", corev1.ResourceList{"cpu": q("100m")}, nil))
-	opt := &finopsv1.NamespaceOptimization{ObjectMeta: metav1.ObjectMeta{Name: "shop", Namespace: "costdeck"}, Spec: finopsv1.NamespaceOptimizationSpec{TargetNamespace: "shop"},
+	opt := &finopsv1.NamespaceOptimization{Name: "shop", Namespace: "costdeck", Spec: finopsv1.NamespaceOptimizationSpec{TargetNamespace: "shop"},
 		Status: finopsv1.NamespaceOptimizationStatus{Active: true, Workloads: []finopsv1.WorkloadOptimization{{Name: "api", Kind: "Deployment",
 			Original: finopsv1.ResourceValues{CPURequest: "1", MemoryRequest: "1Gi", MemoryLimit: "2Gi"}}}}}
 	c := client_(t, api, opt)
@@ -160,14 +160,14 @@ func TestGuard(t *testing.T) {
 	ctx := context.Background()
 	at := metav1.NewTime(now.Add(-10 * time.Minute))
 	pod := func(name string, created time.Time, restarts int32) *corev1.Pod {
-		return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "shop", Labels: map[string]string{"app": "api"}, CreationTimestamp: metav1.NewTime(created)},
+		return &corev1.Pod{Name: name, Namespace: "shop", Labels: map[string]string{"app": "api"}, CreationTimestamp: metav1.NewTime(created),
 			Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{Name: "main", RestartCount: restarts}}}}
 	}
 	record := func(name string, appliedAt metav1.Time) finopsv1.WorkloadOptimization {
 		return finopsv1.WorkloadOptimization{Name: name, Kind: "Deployment", State: StateApplied, AppliedAt: &appliedAt,
 			Containers: []finopsv1.ContainerOptimization{{Name: "main", Original: finopsv1.ResourceValues{CPURequest: "2"}, Optimized: finopsv1.ResourceValues{CPURequest: "100m"}}}}
 	}
-	opt := &finopsv1.NamespaceOptimization{ObjectMeta: metav1.ObjectMeta{Name: "shop", Namespace: "costdeck"}, Spec: finopsv1.NamespaceOptimizationSpec{TargetNamespace: "shop"},
+	opt := &finopsv1.NamespaceOptimization{Name: "shop", Namespace: "costdeck", Spec: finopsv1.NamespaceOptimizationSpec{TargetNamespace: "shop"},
 		Status: finopsv1.NamespaceOptimizationStatus{Active: true, Workloads: []finopsv1.WorkloadOptimization{record("api", at), record("quiet", metav1.NewTime(now.Add(-2*time.Hour)))}}}
 	c := client_(t, opt,
 		deploy("api", container("main", corev1.ResourceList{"cpu": q("100m")}, nil)),

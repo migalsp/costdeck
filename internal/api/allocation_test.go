@@ -10,7 +10,6 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/migalsp/costdeck-operator/internal/config"
 	"github.com/migalsp/costdeck-operator/internal/finops"
@@ -50,7 +49,7 @@ func TestAllocationEndpoints(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, labels := range map[string]map[string]string{"shop-dev": {"team": "payments", "cost-center": "cc-1"}, "shop-prod": {"team": "payments"}} {
-		_ = server.Client.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: name, Labels: labels}})
+		_ = server.Client.Create(ctx, &corev1.Namespace{Name: name, Labels: labels})
 	}
 
 	for body, why := range map[string]string{

@@ -14,7 +14,6 @@ import (
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -52,7 +51,7 @@ func dispatcher(t *testing.T, slackURL, teamsURL string, mails *[]Mail) *Dispatc
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
 	_ = finopsv1.AddToScheme(scheme)
-	cfg := &finopsv1.CostDeckConfig{ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: "costdeck"}, Spec: finopsv1.CostDeckConfigSpec{
+	cfg := &finopsv1.CostDeckConfig{Name: "default", Namespace: "costdeck", Spec: finopsv1.CostDeckConfigSpec{
 		ClusterName: "prod-eu",
 		Integrations: finopsv1.IntegrationsConfig{Notifications: &finopsv1.NotificationsConfig{
 			Slack: &finopsv1.WebhookChannelConfig{Enabled: true, SecretRef: "slack", Events: []finopsv1.NotificationEvent{EventAlerts}},
@@ -62,7 +61,7 @@ func dispatcher(t *testing.T, slackURL, teamsURL string, mails *[]Mail) *Dispatc
 		}},
 	}}
 	secret := func(name, key, value string) *corev1.Secret {
-		return &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "costdeck"}, Data: map[string][]byte{key: []byte(value)}}
+		return &corev1.Secret{Name: name, Namespace: "costdeck", Data: map[string][]byte{key: []byte(value)}}
 	}
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cfg,
 		secret("slack", SecretKeyWebhookURL, slackURL), secret("teams", SecretKeyWebhookURL, teamsURL), secret("smtp", SecretKeyPassword, "s3cret")).Build()

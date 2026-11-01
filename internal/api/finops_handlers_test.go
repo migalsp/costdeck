@@ -9,7 +9,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
@@ -20,14 +19,14 @@ func TestFinOpsOverview(t *testing.T) {
 	t.Setenv("POD_NAMESPACE", "costdeck")
 	server := buildMockServerWithK8s()
 	ctx := context.Background()
-	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n1"}}
+	node := &corev1.Node{Name: "n1"}
 	node.Status.Capacity = corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("4"), corev1.ResourceMemory: resource.MustParse("16Gi")}
 	for _, o := range []client.Object{
 		node,
-		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "dev-api"}},
+		&corev1.Namespace{Name: "dev-api"},
 		&finopsv1.NamespaceFinOps{
-			ObjectMeta: metav1.ObjectMeta{Name: "dev-api", Namespace: "costdeck"},
-			Spec:       finopsv1.NamespaceFinOpsSpec{TargetNamespace: "dev-api"},
+			Name: "dev-api", Namespace: "costdeck",
+			Spec: finopsv1.NamespaceFinOpsSpec{TargetNamespace: "dev-api"},
 			Status: finopsv1.NamespaceFinOpsStatus{History: []finopsv1.MetricDataPoint{{
 				CPU:    finopsv1.ResourceMetrics{Requests: "1", Usage: "100m"},
 				Memory: finopsv1.ResourceMetrics{Requests: "2Gi", Usage: "1Gi"},
@@ -63,7 +62,7 @@ func TestFinOpsOverview(t *testing.T) {
 func TestCostOverviewTool(t *testing.T) {
 	t.Setenv("POD_NAMESPACE", "costdeck")
 	server := buildMockServerWithK8s()
-	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n1"}}
+	node := &corev1.Node{Name: "n1"}
 	node.Status.Capacity = corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("2"), corev1.ResourceMemory: resource.MustParse("8Gi")}
 	if err := server.Client.Create(context.Background(), node); err != nil {
 		t.Fatal(err)

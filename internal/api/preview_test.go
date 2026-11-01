@@ -23,7 +23,7 @@ func seedWorkload(t *testing.T, server *Server, ns, name string, replicas int32,
 	t.Helper()
 	labels := map[string]string{"app": name}
 	d := &appsv1.Deployment{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+		Name: name, Namespace: ns,
 		Spec: appsv1.DeploymentSpec{
 			Replicas: &replicas, Selector: &metav1.LabelSelector{MatchLabels: labels},
 			Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: labels}, Spec: corev1.PodSpec{Containers: []corev1.Container{{
@@ -42,24 +42,24 @@ func TestPreviewSchedule(t *testing.T) {
 	server := buildMockServerWithK8s()
 	ctx := context.Background()
 	// Custom rates: 0.04 per core-hour, 0.005 per GiB-hour.
-	if err := server.Client.Create(ctx, &finopsv1.CostDeckConfig{ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: "costdeck"},
+	if err := server.Client.Create(ctx, &finopsv1.CostDeckConfig{Name: "default", Namespace: "costdeck",
 		Spec: finopsv1.CostDeckConfigSpec{Pricing: finopsv1.PricingConfig{CPUCoreHour: "0.04", MemoryGBHour: "0.005", Currency: "EUR"}}}); err != nil {
 		t.Fatal(err)
 	}
 	server.Pricing = &pricing.Resolver{Client: server.Client}
 	for _, ns := range []string{"shop-dev", "shop-qa", "pay-dev"} {
-		if err := server.Client.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns, Labels: map[string]string{"env": "dev"}}}); err != nil {
+		if err := server.Client.Create(ctx, &corev1.Namespace{Name: ns, Labels: map[string]string{"env": "dev"}}); err != nil {
 			t.Fatal(err)
 		}
 	}
 	seedWorkload(t, server, "shop-dev", "api", 2, "500m", "1Gi")
 	seedWorkload(t, server, "shop-dev", "redis", 1, "1", "2Gi") // excluded by the workload rules below
 	seedWorkload(t, server, "pay-dev", "api", 1, "1", "1Gi")
-	if err := server.Client.Create(ctx, &finopsv1.ScalingConfig{ObjectMeta: metav1.ObjectMeta{Name: "shop-dev", Namespace: "costdeck"},
+	if err := server.Client.Create(ctx, &finopsv1.ScalingConfig{Name: "shop-dev", Namespace: "costdeck",
 		Spec: finopsv1.ScalingConfigSpec{TargetNamespace: "shop-dev", Exclusions: []string{"redis"}}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := server.Client.Create(ctx, &finopsv1.ScalingGroup{ObjectMeta: metav1.ObjectMeta{Name: "pay", Namespace: "costdeck"},
+	if err := server.Client.Create(ctx, &finopsv1.ScalingGroup{Name: "pay", Namespace: "costdeck",
 		Spec: finopsv1.ScalingGroupSpec{Namespaces: []string{"pay-dev"}}}); err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +115,7 @@ func TestPreviewWarnsAndReports(t *testing.T) {
 	t.Setenv("POD_NAMESPACE", "costdeck")
 	server := buildMockServerWithK8s()
 	seedCalendars(t, server)
-	if err := server.Client.Create(context.Background(), &finopsv1.ScalingGroup{ObjectMeta: metav1.ObjectMeta{Name: "shop", Namespace: "costdeck"},
+	if err := server.Client.Create(context.Background(), &finopsv1.ScalingGroup{Name: "shop", Namespace: "costdeck",
 		Spec: finopsv1.ScalingGroupSpec{Namespaces: []string{"shop-dev"}}}); err != nil {
 		t.Fatal(err)
 	}
@@ -158,11 +158,11 @@ func TestPreviewTool(t *testing.T) {
 	server := buildMockServerWithK8s()
 	seedCalendars(t, server)
 	ctx := context.Background()
-	if err := server.Client.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "shop-dev"}}); err != nil {
+	if err := server.Client.Create(ctx, &corev1.Namespace{Name: "shop-dev"}); err != nil {
 		t.Fatal(err)
 	}
 	seedWorkload(t, server, "shop-dev", "api", 2, "500m", "1Gi")
-	if err := server.Client.Create(ctx, &finopsv1.ScalingGroup{ObjectMeta: metav1.ObjectMeta{Name: "shop", Namespace: "costdeck"},
+	if err := server.Client.Create(ctx, &finopsv1.ScalingGroup{Name: "shop", Namespace: "costdeck",
 		Spec: finopsv1.ScalingGroupSpec{Namespaces: []string{"shop-dev"}, Schedules: []finopsv1.ScalingSchedule{{Days: []int{1, 2, 3, 4, 5}, StartTime: "08:00", EndTime: "20:00", Timezone: "UTC"}}}}); err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +185,7 @@ func TestPreviewWarnsAboutGitOps(t *testing.T) {
 	server := buildMockServerWithK8s()
 	seedCalendars(t, server)
 	ctx := context.Background()
-	if err := server.Client.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "shop-dev"}}); err != nil {
+	if err := server.Client.Create(ctx, &corev1.Namespace{Name: "shop-dev"}); err != nil {
 		t.Fatal(err)
 	}
 	seedWorkload(t, server, "shop-dev", "api", 1, "100m", "128Mi")

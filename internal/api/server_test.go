@@ -109,7 +109,7 @@ func TestHandleNamespaces(t *testing.T) {
 	server := buildMockServerWithK8s()
 
 	ns := &finopsv1.NamespaceFinOps{
-		ObjectMeta: metav1.ObjectMeta{Name: "test-ns", Namespace: "costdeck"},
+		Name: "test-ns", Namespace: "costdeck",
 	}
 	if err := server.Client.Create(context.Background(), ns); err != nil {
 		t.Fatal(err)
@@ -189,7 +189,7 @@ func TestServeHistory(t *testing.T) {
 	server := buildMockServerWithK8s()
 
 	ns := &finopsv1.NamespaceFinOps{
-		ObjectMeta: metav1.ObjectMeta{Name: "test-ns", Namespace: "costdeck"},
+		Name: "test-ns", Namespace: "costdeck",
 		Status: finopsv1.NamespaceFinOpsStatus{
 			History: []finopsv1.MetricDataPoint{
 				{Timestamp: metav1.Now(), CPU: finopsv1.ResourceMetrics{Usage: "100m"}},
@@ -228,13 +228,13 @@ func TestServeHistoryRange(t *testing.T) {
 		CPU:    finopsv1.ResourceMetrics{Usage: "100m", Requests: "1", Limits: "2"},
 		Memory: finopsv1.ResourceMetrics{Usage: "64Mi", Requests: "1Gi", Limits: "2Gi"}}
 	if err := server.Client.Create(ctx, &finopsv1.NamespaceFinOps{
-		ObjectMeta: metav1.ObjectMeta{Name: "shop", Namespace: "costdeck"},
-		Spec:       finopsv1.NamespaceFinOpsSpec{TargetNamespace: "shop"},
-		Status:     finopsv1.NamespaceFinOpsStatus{History: []finopsv1.MetricDataPoint{recent}},
+		Name: "shop", Namespace: "costdeck",
+		Spec:   finopsv1.NamespaceFinOpsSpec{TargetNamespace: "shop"},
+		Status: finopsv1.NamespaceFinOpsStatus{History: []finopsv1.MetricDataPoint{recent}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	cfg := &finopsv1.CostDeckConfig{ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: "costdeck"}}
+	cfg := &finopsv1.CostDeckConfig{Name: "default", Namespace: "costdeck"}
 	if err := server.Client.Create(ctx, cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -331,7 +331,7 @@ func TestHandleNamespaceRevert(t *testing.T) {
 
 	// Pre-create the required finops object
 	opt := &finopsv1.NamespaceOptimization{
-		ObjectMeta: metav1.ObjectMeta{Name: "test-ns", Namespace: "costdeck"},
+		Name: "test-ns", Namespace: "costdeck",
 		Status: finopsv1.NamespaceOptimizationStatus{
 			Workloads: []finopsv1.WorkloadOptimization{
 				{
@@ -364,7 +364,7 @@ func TestHandleScalingGroups(t *testing.T) {
 	server := buildMockServerWithK8s()
 
 	group := &finopsv1.ScalingGroup{
-		ObjectMeta: metav1.ObjectMeta{Name: "test-group", Namespace: "costdeck"},
+		Name: "test-group", Namespace: "costdeck",
 		Spec: finopsv1.ScalingGroupSpec{
 			Active: new(bool),
 		},
@@ -396,7 +396,7 @@ func TestHandleScalingConfigs(t *testing.T) {
 	server := buildMockServerWithK8s()
 
 	config := &finopsv1.ScalingConfig{
-		ObjectMeta: metav1.ObjectMeta{Name: "test-config", Namespace: "costdeck"},
+		Name: "test-config", Namespace: "costdeck",
 		Spec: finopsv1.ScalingConfigSpec{
 			Active: new(bool),
 		},
@@ -427,7 +427,7 @@ func TestHandleClusterNodes(t *testing.T) {
 
 	// Add a dummy node
 	node := &corev1.Node{
-		ObjectMeta: metav1.ObjectMeta{Name: "test-node"},
+		Name: "test-node",
 		Status: corev1.NodeStatus{
 			Allocatable: corev1.ResourceList{
 				corev1.ResourceCPU:    resource.MustParse("2"),

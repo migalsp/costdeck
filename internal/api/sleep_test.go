@@ -45,8 +45,8 @@ func TestSleepPagesAndWakeStatus(t *testing.T) {
 	next := metav1.NewTime(time.Date(2026, 10, 26, 7, 0, 0, 0, time.UTC))
 	objs := []client.Object{
 		route,
-		&finopsv1.CostDeckConfig{ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: "costdeck"}, Spec: finopsv1.CostDeckConfigSpec{DashboardURL: "https://costdeck.example.com"}},
-		&finopsv1.ScalingGroup{ObjectMeta: metav1.ObjectMeta{Name: "shop", Namespace: "costdeck"}, Spec: finopsv1.ScalingGroupSpec{Namespaces: []string{"shop-dev"}, SleepPage: true},
+		&finopsv1.CostDeckConfig{Name: "default", Namespace: "costdeck", Spec: finopsv1.CostDeckConfigSpec{DashboardURL: "https://costdeck.example.com"}},
+		&finopsv1.ScalingGroup{Name: "shop", Namespace: "costdeck", Spec: finopsv1.ScalingGroupSpec{Namespaces: []string{"shop-dev"}, SleepPage: true},
 			Status: finopsv1.ScalingGroupStatus{Phase: "ScaledDown", ScheduleStatus: finopsv1.ScheduleStatus{DesiredState: "Down", Mode: "Schedule",
 				NextTransition: &finopsv1.ScheduledTransition{Time: next, DesiredState: "Up"}}}},
 	}

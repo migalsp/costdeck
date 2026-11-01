@@ -218,7 +218,7 @@ func Record(ctx context.Context, c client.Client, ns string, rec finopsv1.Worklo
 	key := client.ObjectKey{Namespace: config.OperatorNamespace(), Name: ns}
 	err := c.Get(ctx, key, opt)
 	if apierrors.IsNotFound(err) {
-		opt = &finopsv1.NamespaceOptimization{ObjectMeta: metav1.ObjectMeta{Namespace: key.Namespace, Name: ns}, Spec: finopsv1.NamespaceOptimizationSpec{TargetNamespace: ns}}
+		opt = &finopsv1.NamespaceOptimization{Namespace: key.Namespace, Name: ns, Spec: finopsv1.NamespaceOptimizationSpec{TargetNamespace: ns}}
 		if err := c.Create(ctx, opt); err != nil {
 			return err
 		}

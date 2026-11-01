@@ -9,7 +9,6 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	metricsfake "k8s.io/metrics/pkg/client/clientset/versioned/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -29,14 +28,14 @@ func TestRiskAlerterSendsNewCriticalRisksOncePerDay(t *testing.T) {
 	server := buildMockServerWithK8s()
 	server.MetricsClient = metricsfake.NewSimpleClientset() //nolint:staticcheck // k8s.io/metrics generates no NewClientset
 	ctx := context.Background()
-	cfg := &finopsv1.CostDeckConfig{ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: "costdeck"},
+	cfg := &finopsv1.CostDeckConfig{Name: "default", Namespace: "costdeck",
 		Spec: finopsv1.CostDeckConfigSpec{Alerts: finopsv1.AlertsConfig{PerformanceRisks: &finopsv1.PerformanceRiskAlerts{Enabled: true}}}}
 	oom := corev1.PodStatus{Phase: corev1.PodRunning, ContainerStatuses: []corev1.ContainerStatus{{
 		Name: "main", RestartCount: 1, LastTerminationState: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{Reason: "OOMKilled", ExitCode: 137}},
 	}}}
 	for _, obj := range []client.Object{
 		cfg,
-		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "shop"}}, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "costdeck"}},
+		&corev1.Namespace{Name: "shop"}, &corev1.Namespace{Name: "costdeck"},
 		riskDeployment("api"), riskPod("api-7d9f8c-abcde", oom),
 	} {
 		if err := server.Client.Create(ctx, obj); err != nil {

@@ -10,7 +10,6 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -41,11 +40,11 @@ func billingClient(t *testing.T, days int) client.Client {
 	_ = clientgoscheme.AddToScheme(scheme)
 	_ = finopsv1.AddToScheme(scheme)
 	cfg := &finopsv1.CostDeckConfig{
-		ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: "costdeck"},
-		Spec:       finopsv1.CostDeckConfigSpec{Billing: finopsv1.BillingConfig{Enabled: true, AWS: &finopsv1.AWSBilling{TagValue: "prod"}}},
+		Name: "default", Namespace: "costdeck",
+		Spec: finopsv1.CostDeckConfigSpec{Billing: finopsv1.BillingConfig{Enabled: true, AWS: &finopsv1.AWSBilling{TagValue: "prod"}}},
 	}
 	return fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&finopsv1.CostDeckConfig{}).WithObjects(cfg,
-		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: LedgerConfigMap, Namespace: "costdeck"}, Data: map[string]string{ledgerKey: string(raw)}}).Build()
+		&corev1.ConfigMap{Name: LedgerConfigMap, Namespace: "costdeck", Data: map[string]string{ledgerKey: string(raw)}}).Build()
 }
 
 func fixedBill(per float64, err error) BillReader {

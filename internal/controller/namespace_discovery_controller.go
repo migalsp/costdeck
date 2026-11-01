@@ -5,9 +5,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -75,10 +73,8 @@ func (r *NamespaceDiscoveryReconciler) Reconcile(ctx context.Context, req ctrl.R
 	// Create it!
 	l.Info("Auto-discovering namespace", "name", ns.Name)
 	newFinOps := &finopsv1.NamespaceFinOps{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      finOpsName,
-			Namespace: operatorNs,
-		},
+		Name:      finOpsName,
+		Namespace: operatorNs,
 		Spec: finopsv1.NamespaceFinOpsSpec{
 			TargetNamespace: ns.Name,
 		},
@@ -124,7 +120,7 @@ func (r *NamespaceDiscoveryReconciler) SetupWithManager(mgr ctrl.Manager) error 
 				if !ok || nf.Spec.TargetNamespace == "" {
 					return nil
 				}
-				return []reconcile.Request{{NamespacedName: types.NamespacedName{Name: nf.Spec.TargetNamespace}}}
+				return []reconcile.Request{{Name: nf.Spec.TargetNamespace}}
 			}),
 			// Status writes (usage history every minute) change nothing here.
 			builder.WithPredicates(predicate.GenerationChangedPredicate{}),
@@ -133,7 +129,7 @@ func (r *NamespaceDiscoveryReconciler) SetupWithManager(mgr ctrl.Manager) error 
 			&corev1.Pod{},
 			handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
 				return []reconcile.Request{
-					{NamespacedName: types.NamespacedName{Name: obj.GetNamespace()}},
+					{Name: obj.GetNamespace()},
 				}
 			}),
 		).

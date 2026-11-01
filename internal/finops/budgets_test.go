@@ -10,7 +10,6 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
 	"github.com/migalsp/costdeck-operator/internal/pricing"
@@ -134,12 +133,12 @@ func TestAlerterFiresOnce(t *testing.T) {
 	now := time.Date(2026, 10, 11, 0, 0, 0, 0, time.UTC)
 	raw, _ := json.Marshal(monthLedger(now))
 	cfg := &finopsv1.CostDeckConfig{
-		ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: "costdeck"},
+		Name: "default", Namespace: "costdeck",
 		Spec: finopsv1.CostDeckConfigSpec{Budgets: []finopsv1.Budget{
 			{Name: "cluster", Scope: ScopeCluster, MonthlyLimit: "150"},
 		}},
 	}
-	c := testClient(cfg, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: LedgerConfigMap, Namespace: "costdeck"}, Data: map[string]string{ledgerKey: string(raw)}})
+	c := testClient(cfg, &corev1.ConfigMap{Name: LedgerConfigMap, Namespace: "costdeck", Data: map[string]string{ledgerKey: string(raw)}})
 	t.Setenv("POD_NAMESPACE", "costdeck")
 	poster := &stubPoster{err: errors.New("webex is down")}
 	a := &Alerter{Client: c, Pricing: &pricing.Resolver{Client: c}, Poster: poster, Namespace: "costdeck", Now: func() time.Time { return now }}

@@ -29,8 +29,8 @@ func (s *sent) Send(_ context.Context, _ finopsv1.NotificationEvent, md string) 
 }
 
 func namespace(name string, age time.Duration, labels, annotations map[string]string) *corev1.Namespace {
-	return &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: name, UID: types.UID("uid-" + name), Labels: labels, Annotations: annotations,
-		CreationTimestamp: metav1.NewTime(now.Add(-age))}}
+	return &corev1.Namespace{Name: name, UID: types.UID("uid-" + name), Labels: labels, Annotations: annotations,
+		CreationTimestamp: metav1.NewTime(now.Add(-age))}
 }
 
 func preview(extra ...map[string]string) map[string]string {
@@ -49,8 +49,8 @@ func setup(t *testing.T, ttl finopsv1.NamespaceTTLConfig, objs ...client.Object)
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
 	_ = finopsv1.AddToScheme(scheme)
-	cfg := &finopsv1.CostDeckConfig{ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: "costdeck"}, Spec: finopsv1.CostDeckConfigSpec{NamespaceTTL: ttl}}
-	group := &finopsv1.ScalingGroup{ObjectMeta: metav1.ObjectMeta{Name: "shop", Namespace: "costdeck"}, Spec: finopsv1.ScalingGroupSpec{Namespaces: []string{"pr-named"}}}
+	cfg := &finopsv1.CostDeckConfig{Name: "default", Namespace: "costdeck", Spec: finopsv1.CostDeckConfigSpec{NamespaceTTL: ttl}}
+	group := &finopsv1.ScalingGroup{Name: "shop", Namespace: "costdeck", Spec: finopsv1.ScalingGroupSpec{Namespaces: []string{"pr-named"}}}
 	return fake.NewClientBuilder().WithScheme(scheme).WithObjects(append(objs, cfg, group)...).Build()
 }
 

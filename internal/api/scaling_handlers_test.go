@@ -35,10 +35,8 @@ func TestHandleScalingGroupsGET(t *testing.T) {
 
 	// Seed one item
 	group := &finopsv1.ScalingGroup{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-group",
-			Namespace: "costdeck",
-		},
+		Name:      "test-group",
+		Namespace: "costdeck",
 		Spec: finopsv1.ScalingGroupSpec{
 			Namespaces: []string{"default"},
 		},
@@ -105,10 +103,8 @@ func TestHandleScalingConfigsGET(t *testing.T) {
 	server := buildMockServer()
 
 	config := &finopsv1.ScalingConfig{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-config",
-			Namespace: "costdeck",
-		},
+		Name:      "test-config",
+		Namespace: "costdeck",
 		Spec: finopsv1.ScalingConfigSpec{
 			TargetNamespace: "app-ns",
 		},
@@ -146,10 +142,8 @@ func TestHandleScalingConfigActionsGETAndDELETE(t *testing.T) {
 	server := buildMockServer()
 
 	config := &finopsv1.ScalingConfig{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-config-action",
-			Namespace: "costdeck",
-		},
+		Name:      "test-config-action",
+		Namespace: "costdeck",
 	}
 	if err := server.Client.Create(context.Background(), config); err != nil {
 		t.Fatal(err)
@@ -180,7 +174,7 @@ func seedGroup(t *testing.T, server *Server, name string) {
 	t.Helper()
 	forcedUp := true
 	group := &finopsv1.ScalingGroup{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "costdeck"},
+		Name: name, Namespace: "costdeck",
 		Spec: finopsv1.ScalingGroupSpec{
 			Namespaces: []string{"default"},
 			Active:     &forcedUp,

@@ -7,7 +7,6 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"k8s.io/apimachinery/pkg/api/resource"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
@@ -32,8 +31,8 @@ var _ = Describe("NamespaceFinOps sampling", func() {
 
 	It("samples every minute but writes the status in batches", func() {
 		Expect(k8sClient.Create(ctx, &finopsv1.NamespaceFinOps{
-			ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace},
-			Spec:       finopsv1.NamespaceFinOpsSpec{TargetNamespace: "batch-sampling-target"},
+			Name: key.Name, Namespace: key.Namespace,
+			Spec: finopsv1.NamespaceFinOpsSpec{TargetNamespace: "batch-sampling-target"},
 		})).To(Succeed())
 		r := &NamespaceFinOpsReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), Metrics: metrics.NewProvider(k8sClient, fixedUsage{})}
 		get := func() finopsv1.NamespaceFinOps {
@@ -66,6 +65,6 @@ var _ = Describe("NamespaceFinOps sampling", func() {
 		Expect(get().Status.History).To(HaveLen(3), "one write carries every buffered sample")
 		Expect(r.pending[key.Name]).To(BeEmpty())
 
-		Expect(k8sClient.Delete(ctx, &finopsv1.NamespaceFinOps{ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace}})).To(Succeed())
+		Expect(k8sClient.Delete(ctx, &finopsv1.NamespaceFinOps{Name: key.Name, Namespace: key.Namespace})).To(Succeed())
 	})
 })

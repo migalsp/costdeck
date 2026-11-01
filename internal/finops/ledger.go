@@ -9,7 +9,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -236,11 +235,9 @@ func SaveLedger(ctx context.Context, c client.Client, namespace string, l *Ledge
 	err = c.Get(ctx, client.ObjectKey{Namespace: namespace, Name: LedgerConfigMap}, &cm)
 	if apierrors.IsNotFound(err) {
 		cm = corev1.ConfigMap{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: LedgerConfigMap, Namespace: namespace,
-				Labels: map[string]string{"app.kubernetes.io/managed-by": "costdeck"},
-			},
-			Data: map[string]string{ledgerKey: string(data)},
+			Name: LedgerConfigMap, Namespace: namespace,
+			Labels: map[string]string{"app.kubernetes.io/managed-by": "costdeck"},
+			Data:   map[string]string{ledgerKey: string(data)},
 		}
 		return c.Create(ctx, &cm)
 	}

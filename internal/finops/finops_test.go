@@ -10,7 +10,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -235,7 +234,7 @@ func TestBuild(t *testing.T) {
 	_ = clientgoscheme.AddToScheme(scheme)
 	_ = finopsv1.AddToScheme(scheme)
 	node := func(name string, spot bool) *corev1.Node {
-		n := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: name, Labels: map[string]string{}}}
+		n := &corev1.Node{Name: name, Labels: map[string]string{}}
 		if spot {
 			n.Labels["karpenter.sh/capacity-type"] = "spot"
 		}
@@ -243,32 +242,32 @@ func TestBuild(t *testing.T) {
 		return n
 	}
 	tracked := &finopsv1.NamespaceFinOps{
-		ObjectMeta: metav1.ObjectMeta{Name: "dev", Namespace: "costdeck"},
-		Spec:       finopsv1.NamespaceFinOpsSpec{TargetNamespace: "dev"},
+		Name: "dev", Namespace: "costdeck",
+		Spec: finopsv1.NamespaceFinOpsSpec{TargetNamespace: "dev"},
 		Status: finopsv1.NamespaceFinOpsStatus{History: []finopsv1.MetricDataPoint{{
 			CPU:    finopsv1.ResourceMetrics{Requests: "2", Usage: "500m", Limits: "4"},
 			Memory: finopsv1.ResourceMetrics{Requests: "4Gi", Usage: "6Gi", Limits: "8Gi"},
 		}}},
 	}
 	gone := &finopsv1.NamespaceFinOps{
-		ObjectMeta: metav1.ObjectMeta{Name: "gone", Namespace: "costdeck"},
-		Spec:       finopsv1.NamespaceFinOpsSpec{TargetNamespace: "gone"},
+		Name: "gone", Namespace: "costdeck",
+		Spec: finopsv1.NamespaceFinOpsSpec{TargetNamespace: "gone"},
 	}
 	group := &finopsv1.ScalingGroup{
-		ObjectMeta: metav1.ObjectMeta{Name: "dev", Namespace: "costdeck"},
-		Spec:       finopsv1.ScalingGroupSpec{Category: "Env", Namespaces: []string{"dev"}},
-		Status:     finopsv1.ScalingGroupStatus{ScheduleStatus: finopsv1.ScheduleStatus{EstimatedHourlySavings: "0.2500"}},
+		Name: "dev", Namespace: "costdeck",
+		Spec:   finopsv1.ScalingGroupSpec{Category: "Env", Namespaces: []string{"dev"}},
+		Status: finopsv1.ScalingGroupStatus{ScheduleStatus: finopsv1.ScheduleStatus{EstimatedHourlySavings: "0.2500"}},
 	}
 	rulesOnly := &finopsv1.ScalingConfig{
-		ObjectMeta: metav1.ObjectMeta{Name: "web", Namespace: "costdeck"},
-		Spec:       finopsv1.ScalingConfigSpec{TargetNamespace: "web"},
-		Status:     finopsv1.ScalingConfigStatus{ScheduleStatus: finopsv1.ScheduleStatus{Mode: "AlwaysOn"}},
+		Name: "web", Namespace: "costdeck",
+		Spec:   finopsv1.ScalingConfigSpec{TargetNamespace: "web"},
+		Status: finopsv1.ScalingConfigStatus{ScheduleStatus: finopsv1.ScheduleStatus{Mode: "AlwaysOn"}},
 	}
-	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "dev"}, Status: corev1.PodStatus{Phase: corev1.PodRunning}}
+	pod := &corev1.Pod{Name: "api", Namespace: "dev", Status: corev1.PodStatus{Phase: corev1.PodRunning}}
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
 		node("a", false), node("b", true), tracked, gone, group, rulesOnly, pod,
-		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "dev", Labels: map[string]string{"team": "core"}}},
-		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "web"}},
+		&corev1.Namespace{Name: "dev", Labels: map[string]string{"team": "core"}},
+		&corev1.Namespace{Name: "web"},
 	).Build()
 
 	rates := pricing.Rates{CPUCoreHour: 0.04, MemoryGBHour: 0.004, Currency: "USD"}

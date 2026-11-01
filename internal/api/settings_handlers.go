@@ -16,7 +16,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -1571,13 +1570,11 @@ func (s *Server) upsertSecret(ctx context.Context, namespace, name string, data 
 	if apierrors.IsNotFound(err) {
 		// Create new secret
 		secret = &corev1.Secret{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      name,
-				Namespace: namespace,
-				Labels: map[string]string{
-					"app.kubernetes.io/managed-by": "costdeck-operator",
-					"costdeck.io/secret-type":      "provider-credentials",
-				},
+			Name:      name,
+			Namespace: namespace,
+			Labels: map[string]string{
+				"app.kubernetes.io/managed-by": "costdeck-operator",
+				"costdeck.io/secret-type":      "provider-credentials",
 			},
 			Type: corev1.SecretTypeOpaque,
 			Data: data,

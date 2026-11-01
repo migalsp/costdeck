@@ -12,7 +12,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -210,7 +209,7 @@ func TestProviderFollowsConfigChangesAndFallsBack(t *testing.T) {
 	srv := httptest.NewServer(&fakePromQL{answer: func(string) []map[string]any { return []map[string]any{sample(nil, "3")} }})
 	defer srv.Close()
 
-	cfg := &finopsv1.CostDeckConfig{ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: "costdeck"}}
+	cfg := &finopsv1.CostDeckConfig{Name: "default", Namespace: "costdeck"}
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cfg).Build()
 	p := NewProvider(c, stubSource{cpuMilli: 100})
 	p.TTL = 0 // Re-resolve on every call so the test sees each config change.
@@ -223,8 +222,8 @@ func TestProviderFollowsConfigChangesAndFallsBack(t *testing.T) {
 	// Enabling VictoriaMetrics must take effect without a restart.
 	setVM(t, c, &finopsv1.VictoriaMetricsConfig{Enabled: true, Endpoint: srv.URL, SecretRef: "vm-creds"})
 	if err := c.Create(ctx, &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "vm-creds", Namespace: "costdeck"},
-		Data:       map[string][]byte{SecretKeyBearerToken: []byte("t")},
+		Name: "vm-creds", Namespace: "costdeck",
+		Data: map[string][]byte{SecretKeyBearerToken: []byte("t")},
 	}); err != nil {
 		t.Fatal(err)
 	}

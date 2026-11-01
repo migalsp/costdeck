@@ -12,7 +12,7 @@ import (
 )
 
 func ns(name string, labels map[string]string) corev1.Namespace {
-	return corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: name, Labels: labels}}
+	return corev1.Namespace{Name: name, Labels: labels}
 }
 
 func TestSelectNamespaces(t *testing.T) {
@@ -79,12 +79,12 @@ func TestOwnershipPrefersListedOverSelected(t *testing.T) {
 	older := metav1.NewTime(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	newer := metav1.NewTime(older.Add(time.Hour))
 	groups := []finopsv1.ScalingGroup{
-		{ObjectMeta: metav1.ObjectMeta{Name: "previews", CreationTimestamp: older},
+		{Name: "previews", CreationTimestamp: older,
 			Spec:   finopsv1.ScalingGroupSpec{NamespaceSelector: &metav1.LabelSelector{}},
 			Status: finopsv1.ScalingGroupStatus{SelectedNamespaces: []string{"pr-1", "shop"}}},
-		{ObjectMeta: metav1.ObjectMeta{Name: "shop", CreationTimestamp: newer},
+		{Name: "shop", CreationTimestamp: newer,
 			Spec: finopsv1.ScalingGroupSpec{Namespaces: []string{"shop"}}},
-		{ObjectMeta: metav1.ObjectMeta{Name: "late-previews", CreationTimestamp: newer},
+		{Name: "late-previews", CreationTimestamp: newer,
 			Spec:   finopsv1.ScalingGroupSpec{NamespaceSelector: &metav1.LabelSelector{}},
 			Status: finopsv1.ScalingGroupStatus{SelectedNamespaces: []string{"pr-1"}}},
 	}
@@ -103,9 +103,9 @@ func TestOwnershipPrefersListedOverSelected(t *testing.T) {
 // A dependency in dry run leaves its workloads as they are, so dependents do not wait.
 func TestDryRunDependencyCountsAsUp(t *testing.T) {
 	groups := []finopsv1.ScalingGroup{
-		{ObjectMeta: metav1.ObjectMeta{Name: "platform"}, Spec: finopsv1.ScalingGroupSpec{Namespaces: []string{"p"}, DryRun: true},
+		{Name: "platform", Spec: finopsv1.ScalingGroupSpec{Namespaces: []string{"p"}, DryRun: true},
 			Status: finopsv1.ScalingGroupStatus{Phase: PhaseDryRun}},
-		{ObjectMeta: metav1.ObjectMeta{Name: "env"}, Spec: finopsv1.ScalingGroupSpec{Namespaces: []string{"e"}, DependsOn: []string{"platform"}}},
+		{Name: "env", Spec: finopsv1.ScalingGroupSpec{Namespaces: []string{"e"}, DependsOn: []string{"platform"}}},
 	}
 	if p := (&Engine{}).PlanGroups(time.Now(), groups, nil)["env"]; len(p.WaitingFor) != 0 || p.BlockedOnDependencies() {
 		t.Errorf("env waits for a dependency in dry run: %+v", p)

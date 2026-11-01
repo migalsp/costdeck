@@ -38,8 +38,7 @@ func (s *Server) handleScheduleSuggestion(w http.ResponseWriter, r *http.Request
 	}
 	resp, err := s.scheduleSuggestion(r.Context(), r.PathValue("ns"), tz)
 	if err != nil {
-		var bad badRequest
-		if errors.As(err, &bad) {
+		if _, ok := errors.AsType[badRequest](err); ok {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}

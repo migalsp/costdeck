@@ -11,7 +11,6 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	metricsv1beta1 "k8s.io/metrics/pkg/apis/metrics/v1beta1"
 	metricsfake "k8s.io/metrics/pkg/client/clientset/versioned/fake"
 
@@ -22,7 +21,7 @@ import (
 func javaDeployment(name string, annotations map[string]string) *appsv1.Deployment {
 	replicas := int32(1)
 	return &appsv1.Deployment{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "shop", Annotations: annotations},
+		Name: name, Namespace: "shop", Annotations: annotations,
 		Spec: appsv1.DeploymentSpec{
 			Replicas: &replicas,
 			Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{
@@ -49,7 +48,7 @@ func TestRecommendationsReadTheJVMFromThePodSpec(t *testing.T) {
 	metricsClient := metricsfake.NewSimpleClientset() //nolint:staticcheck // k8s.io/metrics generates no NewClientset
 	for _, pod := range []string{"orders-7d9f8c-abcde", "legacy-5c6b7d-fghij"} {
 		pm := &metricsv1beta1.PodMetrics{
-			ObjectMeta: metav1.ObjectMeta{Name: pod, Namespace: "shop"},
+			Name: pod, Namespace: "shop",
 			Containers: []metricsv1beta1.ContainerMetrics{{Name: "app", Usage: corev1.ResourceList{
 				corev1.ResourceCPU: resource.MustParse("100m"), corev1.ResourceMemory: resource.MustParse("900Mi"),
 			}}},

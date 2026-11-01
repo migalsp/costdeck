@@ -67,7 +67,7 @@ func (s *Server) writeRealized(w http.ResponseWriter, r *http.Request, st *finop
 // realized checks the nodes a schedule recorded when its scale-down began.
 func (s *Server) realized(ctx context.Context, st *finopsv1.ScheduleStatus, now time.Time) (realizedResponse, error) {
 	resp := realizedResponse{State: realizedNone, SettleMinutes: int(finops.SettleTime / time.Minute), Currency: st.Currency,
-		NodeCheckSummary: finops.NodeCheckSummary{Nodes: []finops.NodeCheck{}}}
+		Nodes: []finops.NodeCheck{}}
 	resp.EstimatedHourly, _ = strconv.ParseFloat(st.EstimatedHourlySavings, 64)
 	if resp.Currency == "" {
 		resp.Currency = s.costRates(ctx).Currency

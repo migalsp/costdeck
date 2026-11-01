@@ -51,10 +51,8 @@ var _ = Describe("ScalingGroup Controller", func() {
 			err := k8sClient.Get(ctx, typeNamespacedName, scalinggroup)
 			if err != nil && errors.IsNotFound(err) {
 				resource := &finopsv1.ScalingGroup{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      resourceName,
-						Namespace: "default",
-					},
+					Name:      resourceName,
+					Namespace: "default",
 					Spec: finopsv1.ScalingGroupSpec{
 						Namespaces: []string{"default"},
 					},

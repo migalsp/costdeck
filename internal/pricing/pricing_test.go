@@ -13,7 +13,6 @@ import (
 	awspricing "github.com/aws/aws-sdk-go-v2/service/pricing"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -29,8 +28,8 @@ func awsNode(name, instanceType string, cpu, mem string, spot bool) *corev1.Node
 		labels["karpenter.sh/capacity-type"] = "spot"
 	}
 	return &corev1.Node{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Labels: labels},
-		Spec:       corev1.NodeSpec{ProviderID: "aws:///eu-central-1a/i-" + name},
+		Name: name, Labels: labels,
+		Spec: corev1.NodeSpec{ProviderID: "aws:///eu-central-1a/i-" + name},
 		Status: corev1.NodeStatus{Capacity: corev1.ResourceList{
 			corev1.ResourceCPU: resource.MustParse(cpu), corev1.ResourceMemory: resource.MustParse(mem),
 		}},
@@ -43,7 +42,7 @@ func resolver(t *testing.T, spec finopsv1.CostDeckConfigSpec, pricer NodePricer,
 	scheme := runtime.NewScheme()
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	utilruntime.Must(finopsv1.AddToScheme(scheme))
-	objs = append(objs, &finopsv1.CostDeckConfig{ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: "costdeck"}, Spec: spec})
+	objs = append(objs, &finopsv1.CostDeckConfig{Name: "default", Namespace: "costdeck", Spec: spec})
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objs...).Build()
 	return &Resolver{Client: c, AWS: func(context.Context, *finopsv1.CostDeckConfig) (NodePricer, error) {
 		if pricer == nil {
@@ -152,13 +151,13 @@ func TestAzureNodesArePricedFromRetailPrices(t *testing.T) {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	utilruntime.Must(finopsv1.AddToScheme(scheme))
 	node := &corev1.Node{
-		ObjectMeta: metav1.ObjectMeta{Name: "aks-1", Labels: map[string]string{corev1.LabelTopologyRegion: "westeurope", corev1.LabelInstanceTypeStable: "Standard_D4s_v5"}},
-		Spec:       corev1.NodeSpec{ProviderID: "azure:///subscriptions/x/resourceGroups/mc/providers/Microsoft.Compute/virtualMachineScaleSets/aks/virtualMachines/0"},
-		Status:     corev1.NodeStatus{Capacity: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("4"), corev1.ResourceMemory: resource.MustParse("16Gi")}},
+		Name: "aks-1", Labels: map[string]string{corev1.LabelTopologyRegion: "westeurope", corev1.LabelInstanceTypeStable: "Standard_D4s_v5"},
+		Spec:   corev1.NodeSpec{ProviderID: "azure:///subscriptions/x/resourceGroups/mc/providers/Microsoft.Compute/virtualMachineScaleSets/aks/virtualMachines/0"},
+		Status: corev1.NodeStatus{Capacity: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("4"), corev1.ResourceMemory: resource.MustParse("16Gi")}},
 	}
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(node, &finopsv1.CostDeckConfig{
-		ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: "costdeck"},
-		Spec:       finopsv1.CostDeckConfigSpec{Features: finopsv1.FeaturesConfig{CloudPricingAPI: true}},
+		Name: "default", Namespace: "costdeck",
+		Spec: finopsv1.CostDeckConfigSpec{Features: finopsv1.FeaturesConfig{CloudPricingAPI: true}},
 	}).Build()
 	r := &Resolver{Client: c, Azure: func(context.Context, *finopsv1.CostDeckConfig) (NodePricer, error) {
 		return fakePricer{"westeurope/Standard_D4s_v5": 0.192}, nil
