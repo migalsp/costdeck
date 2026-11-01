@@ -1,6 +1,8 @@
 package api
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
 	"net/http"
 	"sync"
 
@@ -28,15 +30,39 @@ func handleOpenAPIJSON(w http.ResponseWriter, r *http.Request) {
 
 func handleSwaggerUI(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Content-Security-Policy", swaggerPolicy)
 	_, _ = w.Write([]byte(swaggerPage))
 }
+
+const swaggerUI = "https://unpkg.com/swagger-ui-dist@5.33.3"
+
+const swaggerInit = `
+    SwaggerUIBundle({
+      url: '/api/openapi.yaml',
+      dom_id: '#swagger-ui',
+      presets: [
+        SwaggerUIBundle.presets.apis,
+        SwaggerUIBundle.SwaggerUIStandalonePreset
+      ],
+      layout: 'BaseLayout',
+      deepLinking: true,
+      defaultModelsExpandDepth: 1,
+    });
+  `
+
+var swaggerPolicy = func() string {
+	sum := sha256.Sum256([]byte(swaggerInit))
+	return "default-src 'self'; script-src 'self' https://unpkg.com 'sha256-" + base64.StdEncoding.EncodeToString(sum[:]) + "'; " +
+		"style-src 'self' 'unsafe-inline' https://unpkg.com; img-src 'self' data:; connect-src 'self'; object-src 'none'; " +
+		"base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+}()
 
 const swaggerPage = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <title>Cost Deck API - Swagger UI</title>
-  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css">
+  <link rel="stylesheet" href="` + swaggerUI + `/swagger-ui.css" integrity="sha384-Ov4/wv3j2bmct8cDc5X4ngJZohVPzEmc6uDPH8WeljUxO5vtoykvMEfbu9Vh6RaW" crossorigin="anonymous">
   <style>
     body { margin: 0; background: #fafafa; }
     .swagger-ui .topbar { display: none; }
@@ -70,19 +96,7 @@ const swaggerPage = `<!DOCTYPE html>
     </div>
   </div>
   <div id="swagger-ui"></div>
-  <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
-  <script>
-    SwaggerUIBundle({
-      url: '/api/openapi.yaml',
-      dom_id: '#swagger-ui',
-      presets: [
-        SwaggerUIBundle.presets.apis,
-        SwaggerUIBundle.SwaggerUIStandalonePreset
-      ],
-      layout: 'BaseLayout',
-      deepLinking: true,
-      defaultModelsExpandDepth: 1,
-    });
-  </script>
+  <script src="` + swaggerUI + `/swagger-ui-bundle.js" integrity="sha384-h00llMzD1afyNow1pDmnZKlHsUZgp9KE9HXLFXF2CvbwsBY0+WBO4f75SfGwvM4K" crossorigin="anonymous"></script>
+  <script>` + swaggerInit + `</script>
 </body>
 </html>`

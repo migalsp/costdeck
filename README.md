@@ -204,7 +204,8 @@ and every chart value.
   document.
 - **[Installation guide](docs/installation.md)**: chart values, Ingress, single sign-on,
   cloud permissions, monitoring, upgrades.
-- **API**: Swagger UI at `/api/docs`, the specification at `/api/openapi.yaml` and
+- **API**: Swagger UI at `/api/docs` (swagger-ui comes from unpkg.com, pinned to one
+  version and checked against its hash), the specification at `/api/openapi.yaml` and
   `/api/openapi.json`. Every operation names the role it needs.
 
 ## How it fits together
