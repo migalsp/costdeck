@@ -7,12 +7,44 @@ import ApiTokens from './ApiTokens'
 import ChangePasswordDialog from './ChangePasswordDialog'
 import OverrideDialog from './OverrideDialog'
 import AuthCallback from '../pages/AuthCallback'
+import { toast } from '../lib/toast'
 
 vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
 
 const passwords = () => [...document.querySelectorAll('input[type="password"]')] as HTMLInputElement[]
 
 describe('API tokens', () => {
+  it('names every field so it can be found by its label', async () => {
+    mockFetch(on('GET', '/api/tokens', () => json([])))
+    render(<ApiTokens />)
+    expect(await screen.findByLabelText('Name')).toBeTruthy()
+    expect((screen.getByLabelText('Role') as HTMLSelectElement).value).toBe('viewer')
+    expect((screen.getByLabelText('Expires (days)') as HTMLInputElement).value).toBe('90')
+  })
+
+  it('says when the token list could not be loaded instead of showing none', async () => {
+    mockFetch(on('GET', '/api/tokens', () => json({ error: 'secrets "costdeck-api-tokens" is forbidden' }, 403)))
+    render(<ApiTokens />)
+    expect(await screen.findByText('Could not load the tokens: secrets "costdeck-api-tokens" is forbidden')).toBeTruthy()
+  })
+
+  it('does not claim a token was copied when the clipboard refuses', async () => {
+    mockFetch(
+      on('GET', '/api/tokens', () => json([])),
+      on('POST', '/api/tokens', () => json({ token: 'cdk_secret123', info: { name: 'ci', role: 'viewer', createdAt: '2026-10-31T00:00:00Z' } }, 201)),
+    )
+    const failure = vi.spyOn(toast, 'error')
+    render(<ApiTokens />)
+    const user = userEvent.setup()
+    await user.type(await screen.findByLabelText('Name'), 'ci')
+    await user.click(screen.getByRole('button', { name: 'Create' }))
+    expect(await screen.findByText('cdk_secret123')).toBeTruthy()
+    vi.spyOn(navigator.clipboard, 'writeText').mockRejectedValue(new Error('denied'))
+    await user.click(screen.getByRole('button', { name: 'Copy' }))
+    await waitFor(() => expect(failure).toHaveBeenCalledWith('Could not copy the token; select it and copy it by hand.'))
+    expect(screen.queryByRole('button', { name: 'Copied' })).toBeNull()
+  })
+
   it('creates a token, shows it once and lists it', async () => {
     let list = [{ name: 'ci', role: 'viewer', createdAt: '2026-10-01T00:00:00Z' }]
     const fetch = mockFetch(
@@ -71,6 +103,16 @@ describe('API tokens', () => {
 })
 
 describe('Change password', () => {
+  it('is a named dialog whose fields are found by their labels', () => {
+    mockFetch()
+    render(<ChangePasswordDialog required onDone={() => {}} onClose={() => {}} onSignOut={() => {}} />)
+    const dialog = screen.getByRole('dialog', { name: 'Choose your own password' })
+    expect(dialog.getAttribute('aria-modal')).toBe('true')
+    expect(within(dialog).getByLabelText('Password you were given')).toBe(passwords()[0])
+    expect(within(dialog).getByLabelText('New password')).toBe(passwords()[1])
+    expect(within(dialog).getByLabelText('New password again')).toBe(passwords()[2])
+  })
+
   it('says what is wrong with the new password and sends nothing until it is right', async () => {
     const fetch = mockFetch()
     render(<ChangePasswordDialog onDone={() => {}} onClose={() => {}} onSignOut={() => {}} />)

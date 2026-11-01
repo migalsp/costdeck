@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import { Check, Copy, KeyRound, Loader2, Pencil, Plus, ShieldCheck, Trash2, UserX, UserCheck } from 'lucide-react'
 import { Badge, Button, Modal } from '../ui'
 import { apiError, errorMessage } from '../../lib/api'
@@ -261,6 +261,7 @@ function RolePicker({ value, onChange, disabled }: { value: Role; onChange: (r: 
 function UserForm({ user, self, min, onClose, onDone }: {
   user?: LocalUser; self?: boolean; min: number; onClose: () => void; onDone: (username: string, password?: string) => void
 }) {
+  const ids = useId()
   const [username, setUsername] = useState(user?.username || '')
   const [name, setName] = useState(user?.name || '')
   const [email, setEmail] = useState(user?.email || '')
@@ -299,18 +300,18 @@ function UserForm({ user, self, min, onClose, onDone }: {
       <div className="space-y-4">
         <div className="grid gap-4 sm:grid-cols-2">
           <div>
-            <label className={label}>Username</label>
-            <input className={`${field} font-mono`} value={username} onChange={e => setUsername(e.target.value)} disabled={!!user} placeholder="anna" autoFocus={!user} />
+            <label htmlFor={`${ids}-username`} className={label}>Username</label>
+            <input id={`${ids}-username`} className={`${field} font-mono`} value={username} onChange={e => setUsername(e.target.value)} disabled={!!user} placeholder="anna" autoFocus={!user} />
             {!user && <p className="mt-1 text-xs text-slate-400">Lower-case letters, digits, dots and dashes. Used to sign in.</p>}
           </div>
           <div>
-            <label className={label}>Display name <span className="font-normal text-slate-400">(optional)</span></label>
-            <input className={field} value={name} onChange={e => setName(e.target.value)} placeholder="Anna Petrova" />
+            <label htmlFor={`${ids}-name`} className={label}>Display name <span className="font-normal text-slate-400">(optional)</span></label>
+            <input id={`${ids}-name`} className={field} value={name} onChange={e => setName(e.target.value)} placeholder="Anna Petrova" />
           </div>
         </div>
         <div>
-          <label className={label}>Email <span className="font-normal text-slate-400">(optional)</span></label>
-          <input className={field} type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="anna@example.com" />
+          <label htmlFor={`${ids}-email`} className={label}>Email <span className="font-normal text-slate-400">(optional)</span></label>
+          <input id={`${ids}-email`} className={field} type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="anna@example.com" />
         </div>
         <div>
           <label className={label}>Role</label>
@@ -328,7 +329,7 @@ function UserForm({ user, self, min, onClose, onDone }: {
                 </button>
               ))}
             </div>
-            {mode === 'set' && <input className={field} type="password" autoComplete="new-password" value={password} onChange={e => setPassword(e.target.value)} placeholder={`At least ${min} characters`} />}
+            {mode === 'set' && <input aria-label="Password" className={field} type="password" autoComplete="new-password" value={password} onChange={e => setPassword(e.target.value)} placeholder={`At least ${min} characters`} />}
             {mode === 'generate' && <p className="text-xs text-slate-500">You will see it once, to hand over.</p>}
             <label className="mt-3 flex items-start gap-2 text-sm text-slate-700">
               <input type="checkbox" className="mt-0.5 accent-brand-600" checked={mustChange} onChange={e => setMustChange(e.target.checked)} />

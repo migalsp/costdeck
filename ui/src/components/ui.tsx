@@ -1,7 +1,7 @@
 // Shared building blocks. One accent colour (brand, the emerald of the logo), slate for
 // everything neutral, and status colours only where they carry meaning: emerald up/ok,
 // sky in progress, amber manual or warning, rose danger.
-import { useEffect, type ButtonHTMLAttributes, type ReactNode } from 'react'
+import { useEffect, useId, type ButtonHTMLAttributes, type ReactNode } from 'react'
 import { ArrowLeft, X } from 'lucide-react'
 
 type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'success' | 'warning'
@@ -147,14 +147,15 @@ const modalWidths = { sm: 'max-w-md', md: 'max-w-xl', lg: 'max-w-3xl', xl: 'max-
 // header, close button, backdrop and footer.
 export function Modal({ title, subtitle, onClose, children, footer, headerExtra, size = 'md', tall, dismissOnBackdrop = true }: ModalProps) {
   useEscape(onClose)
+  const titleId = useId()
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby={titleId}>
       <div className="absolute inset-0 bg-slate-900/40 dark:bg-black/60" onClick={dismissOnBackdrop ? onClose : undefined} />
       <div className={`relative w-full ${modalWidths[size]} ${tall ? 'h-[85vh]' : 'max-h-[90vh]'} bg-white rounded-2xl shadow-2xl flex flex-col animate-pop`}>
         <div className={`px-6 pt-5 ${headerExtra ? 'pb-0' : 'pb-4'} border-b border-slate-200`}>
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0">
-              <h2 className="text-lg font-bold text-slate-900 truncate">{title}</h2>
+              <h2 id={titleId} className="text-lg font-bold text-slate-900 truncate">{title}</h2>
               {subtitle && <div className="text-sm text-slate-500">{subtitle}</div>}
             </div>
             <button onClick={onClose} className="p-1.5 -mr-1.5 rounded-lg text-slate-400 hover:bg-slate-100" title="Close"><X size={18} /></button>
