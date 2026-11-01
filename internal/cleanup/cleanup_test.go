@@ -48,6 +48,12 @@ func preview(extra ...map[string]string) map[string]string {
 
 const day = 24 * time.Hour
 
+func warnedFor(expiry time.Time) map[string]string {
+	return map[string]string{WarnedAnnotation: expiry.UTC().Format(time.RFC3339)}
+}
+
+var warnedOld = warnedFor(now.Add(-day))
+
 func setup(t *testing.T, ttl finopsv1.NamespaceTTLConfig, objs ...client.Object) client.Client {
 	t.Helper()
 	t.Setenv("POD_NAMESPACE", "costdeck")
@@ -132,7 +138,7 @@ func TestPlanProtectsWhatMustStay(t *testing.T) {
 func TestReaperWarnsOnceDeletesAndRecords(t *testing.T) {
 	ctx := context.Background()
 	objs := []client.Object{
-		namespace("pr-old", 8*day, preview(), nil),
+		namespace("pr-old", 8*day, preview(), warnedOld),
 		namespace("pr-soon", 6*day+time.Hour, preview(), nil), // 23h left, inside the 24h warning
 		namespace("pr-later", 2*day, preview(), nil),
 		namespace("pr-kept", 30*day, preview(map[string]string{TTLLabel: "off"}), nil),
@@ -194,16 +200,82 @@ func TestReaperWarnsOnceDeletesAndRecords(t *testing.T) {
 func TestReaperDeletesAFewAtATime(t *testing.T) {
 	objs := make([]client.Object, 0, 25)
 	for i := range 25 {
-		objs = append(objs, namespace(fmt.Sprintf("pr-%02d", i), 8*day, preview(), nil))
+		objs = append(objs, namespace(fmt.Sprintf("pr-%02d", i), 8*day, preview(), warnedOld))
 	}
 	c := setup(t, ttl(false), objs...)
-	if err := (&Reaper{Client: c, Now: func() time.Time { return now }}).Run(context.Background()); err != nil {
+	left := func(at time.Time) int {
+		t.Helper()
+		if err := (&Reaper{Client: c, Now: func() time.Time { return at }}).Run(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		var list corev1.NamespaceList
+		_ = c.List(context.Background(), &list)
+		return len(list.Items)
+	}
+	if n := left(now); n != 5 {
+		t.Errorf("%d left after the first run, want 5: at most 20 deletions an hour", n)
+	}
+	if n := left(now.Add(30 * time.Second)); n != 5 {
+		t.Errorf("%d left 30 s later, want still 5: the limit is per hour, not per run", n)
+	}
+	if n := left(now.Add(time.Hour)); n != 0 {
+		t.Errorf("%d left an hour later, want the rest deleted", n)
+	}
+}
+
+func TestReaperWarnsBeforeDeletingANamespaceThatExpiredUnwarned(t *testing.T) {
+	ctx := context.Background()
+	c := setup(t, ttl(false), namespace("pr-old", 8*day, preview(), nil))
+	s := &sent{}
+	r := &Reaper{Client: c, Notify: s, Now: func() time.Time { return now }}
+	if err := r.Run(ctx); err != nil {
 		t.Fatal(err)
 	}
-	var left corev1.NamespaceList
-	_ = c.List(context.Background(), &left)
-	if len(left.Items) != 5 {
-		t.Errorf("%d left, want 5: at most 20 deletions a run", len(left.Items))
+	var ns corev1.Namespace
+	if err := c.Get(ctx, client.ObjectKey{Name: "pr-old"}, &ns); err != nil {
+		t.Fatalf("a namespace nobody was warned about was deleted at once: %v", err)
+	}
+	postponed := now.Add(day).Format(time.RFC3339)
+	if ns.Annotations[ExpiresAnnotation] != postponed || ns.Annotations[WarnedAnnotation] != postponed {
+		t.Errorf("annotations = %v, want the deletion moved to %s and the warning recorded for it", ns.Annotations, postponed)
+	}
+	if len(s.messages) != 1 || !strings.Contains(s.messages[0], "`pr-old` will be deleted at Fri 23 Oct 12:00 UTC") || !strings.Contains(s.messages[0], "before Cost Deck could warn") {
+		t.Errorf("messages = %v", s.messages)
+	}
+	plan, err := Plan(ctx, c, ttl(false))
+	if err != nil || len(plan) != 1 || !plan[0].ExpiresAt.Equal(now.Add(day)) || !plan[0].Warned {
+		t.Errorf("plan = %+v, %v; the namespace page must show the new time", plan, err)
+	}
+
+	if err := (&Reaper{Client: c, Notify: s, Now: func() time.Time { return now.Add(day - time.Minute) }}).Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Get(ctx, client.ObjectKey{Name: "pr-old"}, &corev1.Namespace{}); err != nil {
+		t.Fatalf("deleted before the warning lead was over: %v", err)
+	}
+	if err := (&Reaper{Client: c, Notify: s, Now: func() time.Time { return now.Add(day) }}).Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Get(ctx, client.ObjectKey{Name: "pr-old"}, &corev1.Namespace{}); !apierrors.IsNotFound(err) {
+		t.Errorf("still there once the lead was over: %v", err)
+	}
+	if len(s.messages) != 2 || !strings.Contains(s.messages[1], "Deleted namespace `pr-old`") {
+		t.Errorf("messages = %v", s.messages)
+	}
+}
+
+func TestReaperKeepsANamespaceWhoseLateWarningFailed(t *testing.T) {
+	c := setup(t, ttl(false), namespace("pr-old", 8*day, preview(), nil))
+	err := (&Reaper{Client: c, Notify: &failingSender{}, Now: func() time.Time { return now }}).Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "warn about pr-old: slack is down") {
+		t.Errorf("Run = %v", err)
+	}
+	var ns corev1.Namespace
+	if err := c.Get(context.Background(), client.ObjectKey{Name: "pr-old"}, &ns); err != nil {
+		t.Fatalf("a namespace whose warning failed was deleted: %v", err)
+	}
+	if ns.Annotations[WarnedAnnotation] != "" || ns.Annotations[ExpiresAnnotation] != "" {
+		t.Errorf("annotations = %v; a warning that was not sent must not be recorded", ns.Annotations)
 	}
 }
 
@@ -215,7 +287,7 @@ func (f *failingSender) Send(context.Context, finopsv1.NotificationEvent, string
 }
 
 func TestReaperStartRunsRightAway(t *testing.T) {
-	c := setup(t, ttl(false), namespace("pr-old", 8*day, preview(), nil), namespace("pr-later", 2*day, preview(), nil))
+	c := setup(t, ttl(false), namespace("pr-old", 8*day, preview(), warnedOld), namespace("pr-later", 2*day, preview(), nil))
 	r := &Reaper{Client: c, Now: func() time.Time { return now }}
 	if !r.NeedLeaderElection() {
 		t.Fatal("the reaper must run on the leader only, so a namespace is deleted once")
@@ -298,7 +370,7 @@ func TestReaperDeletesOnlyTheNamespaceItPlanned(t *testing.T) {
 			_ = clientgoscheme.AddToScheme(scheme)
 			_ = finopsv1.AddToScheme(scheme)
 			cfg := &finopsv1.CostDeckConfig{Name: "default", Namespace: "costdeck", Spec: finopsv1.CostDeckConfigSpec{NamespaceTTL: ttl(false)}}
-			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cfg, namespace("pr-old", 8*day, preview(), nil)).
+			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cfg, namespace("pr-old", 8*day, preview(), warnedOld)).
 				WithInterceptorFuncs(interceptor.Funcs{Delete: func(ctx context.Context, w client.WithWatch, obj client.Object, o ...client.DeleteOption) error {
 					opts.ApplyOptions(o)
 					if tc.deleteErr != nil {
@@ -368,7 +440,7 @@ func TestReaperWarningLeadAndFailures(t *testing.T) {
 }
 
 func TestReaperLogsAFailedAnnouncementAndKeepsTheRecord(t *testing.T) {
-	c := setup(t, ttl(false), namespace("pr-old", 8*day, preview(), nil))
+	c := setup(t, ttl(false), namespace("pr-old", 8*day, preview(), warnedOld))
 	var logged []string
 	ctx := logf.IntoContext(context.Background(), funcr.New(func(prefix, args string) { logged = append(logged, prefix+" "+args) }, funcr.Options{}))
 	if err := (&Reaper{Client: c, Notify: &failingSender{}, Now: func() time.Time { return now }}).Run(ctx); err != nil {

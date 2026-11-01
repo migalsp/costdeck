@@ -34,12 +34,12 @@ const (
 	// WarnedAnnotation records the expiry a warning was sent for, so an extension warns again.
 	WarnedAnnotation = "costdeck.io/ttl-warned"
 
-	logConfigMap      = "costdeck-namespace-ttl"
-	logKey            = "deleted.json"
-	logSize           = 100
-	maxDeletions      = 20
-	defaultWarnBefore = 24 * time.Hour
-	interval          = 30 * time.Second
+	logConfigMap       = "costdeck-namespace-ttl"
+	logKey             = "deleted.json"
+	logSize            = 100
+	maxDeletionsAnHour = 20
+	defaultWarnBefore  = 24 * time.Hour
+	interval           = 30 * time.Second
 )
 
 // Sources of a namespace's expiry.
@@ -222,8 +222,10 @@ func (r *Reaper) Start(ctx context.Context) error {
 	}
 }
 
-// Run sends due warnings and deletes expired namespaces, at most maxDeletions at a time
-// so that a selector that matches too much cannot empty the cluster in one go.
+// Run sends due warnings and deletes expired namespaces, at most maxDeletionsAnHour, so
+// that a selector that matches too much cannot empty the cluster in one go. A namespace
+// that expired before it was warned about is warned about first and deleted only after
+// the warning lead time.
 func (r *Reaper) Run(ctx context.Context) error {
 	cfg, err := config.Get(ctx, r.Client)
 	if err != nil {
@@ -246,23 +248,34 @@ func (r *Reaper) Run(ctx context.Context) error {
 		warnBefore = t.WarnBefore.Duration
 	}
 	log := logf.FromContext(ctx).WithName("namespace-ttl")
-	deleted := 0
+	budget, err := deletionBudget(ctx, r.Client, now)
+	if err != nil {
+		return err
+	}
 	for _, e := range plan {
+		expired := !now.Before(e.ExpiresAt)
 		switch {
 		case e.Protected != "":
 			continue
-		case !now.Before(e.ExpiresAt):
-			if deleted >= maxDeletions {
-				log.Info("Left expired namespaces for the next run", "limit", maxDeletions)
+		case expired && warnBefore > 0 && !e.Warned:
+			late := e
+			late.ExpiresAt = now.Add(warnBefore)
+			if err := r.warn(ctx, late, true); err != nil {
+				return err
+			}
+			log.Info("Postponed the deletion of a namespace nobody was warned about", "namespace", e.Namespace, "expiresAt", late.ExpiresAt)
+		case expired:
+			if budget <= 0 {
+				log.Info("Left expired namespaces for later", "limitPerHour", maxDeletionsAnHour)
 				return nil
 			}
 			if err := r.delete(ctx, e, now); err != nil {
 				return err
 			}
-			deleted++
+			budget--
 			log.Info("Deleted an expired preview namespace", "namespace", e.Namespace, "expiresAt", e.ExpiresAt)
 		case warnBefore > 0 && !e.Warned && !now.Before(e.ExpiresAt.Add(-warnBefore)):
-			if err := r.warn(ctx, e); err != nil {
+			if err := r.warn(ctx, e, false); err != nil {
 				return err
 			}
 		}
@@ -270,17 +283,43 @@ func (r *Reaper) Run(ctx context.Context) error {
 	return nil
 }
 
-func (r *Reaper) warn(ctx context.Context, e Entry) error {
-	msg := fmt.Sprintf("⏳ Namespace `%s` will be deleted at %s: preview cleanup deletes it %s. To keep it longer, extend it in Cost Deck (Settings → Preview cleanup) or label it %s=off.",
-		e.Namespace, e.ExpiresAt.UTC().Format("Mon 2 Jan 15:04 MST"), describe(e), TTLLabel)
+func deletionBudget(ctx context.Context, c client.Reader, now time.Time) (int, error) {
+	done, err := Deleted(ctx, c)
+	if err != nil {
+		return 0, err
+	}
+	budget := maxDeletionsAnHour
+	for _, d := range done {
+		if now.Sub(d.DeletedAt) < time.Hour {
+			budget--
+		}
+	}
+	return budget, nil
+}
+
+func (r *Reaper) warn(ctx context.Context, e Entry, postponed bool) error {
+	why := "preview cleanup deletes it " + describe(e)
+	if postponed {
+		why = "it had expired before Cost Deck could warn about it, so it gets this much notice"
+	}
+	msg := fmt.Sprintf("⏳ Namespace `%s` will be deleted at %s: %s. To keep it longer, extend it in Cost Deck (Settings → Preview cleanup) or label it %s=off.",
+		e.Namespace, e.ExpiresAt.UTC().Format("Mon 2 Jan 15:04 MST"), why, TTLLabel)
 	if r.Notify != nil {
 		if _, err := r.Notify.Send(ctx, notify.EventAlerts, msg); err != nil {
 			return fmt.Errorf("warn about %s: %w", e.Namespace, err)
 		}
 	}
-	patch := fmt.Sprintf(`{"metadata":{"annotations":{%q:%q}}}`, WarnedAnnotation, e.ExpiresAt.UTC().Format(time.RFC3339))
+	at := e.ExpiresAt.UTC().Format(time.RFC3339)
+	annotations := map[string]string{WarnedAnnotation: at}
+	if postponed {
+		annotations[ExpiresAnnotation] = at
+	}
+	patch, err := json.Marshal(map[string]any{"metadata": map[string]any{"annotations": annotations}})
+	if err != nil {
+		return err
+	}
 	ns := &corev1.Namespace{Name: e.Namespace}
-	return r.Client.Patch(ctx, ns, client.RawPatch(types.MergePatchType, []byte(patch)))
+	return r.Client.Patch(ctx, ns, client.RawPatch(types.MergePatchType, patch))
 }
 
 func (r *Reaper) delete(ctx context.Context, e Entry, now time.Time) error {

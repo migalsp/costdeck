@@ -736,10 +736,12 @@ run that only lists what would be deleted and when.
   `costdeck.io/ttl=3d` (or `36h`).
 - **Warnings**: by default a day before, the notification channels that take alerts are
   told which namespace goes when. **Keep 3 more days** in the dashboard moves the time
-  (annotation `costdeck.io/expires-at`) and warns again.
-- **Pace and record**: at most 20 namespaces go in one run, every 30 seconds, each only
-  if it is still the namespace that was planned (by UID). Deletions are recorded in the
-  ConfigMap `costdeck-namespace-ttl` and shown in the dashboard.
+  (annotation `costdeck.io/expires-at`) and warns again. A namespace that is already past
+  its time when cleanup first sees it, for example right after it is switched on, is
+  warned about and kept for the warning lead before it goes.
+- **Pace and record**: at most 20 namespaces go in an hour, each only if it is still the
+  namespace that was planned (by UID). Deletions are recorded in the ConfigMap
+  `costdeck-namespace-ttl` and shown in the dashboard.
 
 ### Realized savings
 
