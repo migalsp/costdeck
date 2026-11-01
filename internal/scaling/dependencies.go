@@ -105,7 +105,7 @@ func (e *Engine) PlanGroups(now time.Time, groups []finopsv1.ScalingGroup, calen
 		resolve(name)
 	}
 
-	owners := namespaceOwners(groups)
+	owners := NamespaceOwners(groups)
 	for name, g := range byName {
 		plan := plans[name]
 		if !plan.InCycle {
@@ -154,11 +154,11 @@ func (e *Engine) ownDecision(now time.Time, g *finopsv1.ScalingGroup, calendars 
 	return ApplyIdle(d, IdleUntil(&g.Status.ScheduleStatus), now, at), problems
 }
 
-// namespaceOwners assigns every namespace to exactly one group, so a namespace shared by
+// NamespaceOwners assigns every namespace to exactly one group, so a namespace shared by
 // mistake is scaled once: a group that lists it by name wins over one whose selector
 // matched it, and among equals the oldest group (ties broken by name). A group in a dry
 // run changes nothing, so it owns nothing either.
-func namespaceOwners(groups []finopsv1.ScalingGroup) map[string]string {
+func NamespaceOwners(groups []finopsv1.ScalingGroup) map[string]string {
 	ordered := make([]*finopsv1.ScalingGroup, 0, len(groups))
 	for i := range groups {
 		if !groups[i].Spec.DryRun {

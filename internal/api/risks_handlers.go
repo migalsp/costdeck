@@ -15,6 +15,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
+	"github.com/migalsp/costdeck-operator/internal/config"
 	"github.com/migalsp/costdeck-operator/internal/metrics"
 	"github.com/migalsp/costdeck-operator/internal/pricing"
 	"github.com/migalsp/costdeck-operator/internal/rightsizing"
@@ -307,20 +308,17 @@ func (s *Server) risks(ctx context.Context, ns string) (risks.Report, error) {
 
 func (s *Server) scheduleOwner(ctx context.Context, ns string) (client.Object, string, *finopsv1.ScheduleStatus, *finopsv1.Prewarm) {
 	var groups finopsv1.ScalingGroupList
-	if err := s.Client.List(ctx, &groups); err == nil {
-		var owner *finopsv1.ScalingGroup
-		for i := range groups.Items {
-			g := &groups.Items[i]
-			if slices.Contains(g.Members(), ns) && (owner == nil || g.CreationTimestamp.Before(&owner.CreationTimestamp)) {
-				owner = g
+	if err := s.Client.List(ctx, &groups, client.InNamespace(config.OperatorNamespace())); err == nil {
+		if name, ok := scaling.NamespaceOwners(groups.Items)[ns]; ok {
+			for i := range groups.Items {
+				if g := &groups.Items[i]; g.Name == name {
+					return g, kindScalingGroup, &g.Status.ScheduleStatus, g.Spec.Prewarm
+				}
 			}
-		}
-		if owner != nil {
-			return owner, kindScalingGroup, &owner.Status.ScheduleStatus, owner.Spec.Prewarm
 		}
 	}
 	var configs finopsv1.ScalingConfigList
-	if err := s.Client.List(ctx, &configs); err == nil {
+	if err := s.Client.List(ctx, &configs, client.InNamespace(config.OperatorNamespace())); err == nil {
 		for i := range configs.Items {
 			c := &configs.Items[i]
 			if c.Spec.TargetNamespace == ns {

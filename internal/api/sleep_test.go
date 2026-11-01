@@ -150,3 +150,29 @@ func TestSleepingNamespacesAreListedAtMostEveryTenSeconds(t *testing.T) {
 		t.Errorf("a failed refresh dropped what was known: %v", got)
 	}
 }
+
+func TestEveryAnswerAgreesWithTheOperatorOnWhoseNamespaceItIs(t *testing.T) {
+	t.Setenv("POD_NAMESPACE", operatorNamespace)
+	server := buildMockServerWithK8s()
+	older := metav1.NewTime(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	newer := metav1.NewTime(time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC))
+	always := []finopsv1.ScalingSchedule{{Days: []int{0, 1, 2, 3, 4, 5, 6}, StartTime: "00:00", EndTime: "23:59", Timezone: "UTC"}}
+	createAll(t, server.Client,
+		&finopsv1.ScalingGroup{Name: "by-label", Namespace: operatorNamespace, CreationTimestamp: older,
+			Spec:   finopsv1.ScalingGroupSpec{NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"env": "dev"}}},
+			Status: finopsv1.ScalingGroupStatus{SelectedNamespaces: []string{"ns-x"}}},
+		&finopsv1.ScalingGroup{Name: "by-name", Namespace: operatorNamespace, CreationTimestamp: newer,
+			Spec: finopsv1.ScalingGroupSpec{Namespaces: []string{"ns-x"}, Schedules: always}},
+	)
+	ctx := context.Background()
+	if _, _, name := server.scheduleOf(ctx, "ns-x"); name != "by-name" {
+		t.Errorf("the wake page and sleep page name %q, the operator scales ns-x with by-name: listing it by name wins", name)
+	}
+	if owner, _, _, _ := server.scheduleOwner(ctx, "ns-x"); owner == nil || owner.GetName() != "by-name" {
+		t.Errorf("wake-up risks read %v", owner)
+	}
+	shares, err := server.scheduleShares(ctx, time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC))
+	if err != nil || !strings.Contains(shares["ns-x"].note, "by-name") {
+		t.Errorf("the estimate prices ns-x with %+v, %v", shares["ns-x"], err)
+	}
+}

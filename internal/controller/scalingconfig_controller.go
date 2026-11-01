@@ -19,7 +19,6 @@ package controller
 import (
 	"context"
 	"fmt"
-	"slices"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -248,12 +247,8 @@ func (r *ScalingConfigReconciler) isManagedByGroup(ctx context.Context, ns strin
 	if err := r.List(ctx, groups); err != nil {
 		return false, "", err
 	}
-	for _, g := range groups.Items {
-		if !g.Spec.DryRun && slices.Contains(g.Members(), ns) {
-			return true, g.Name, nil
-		}
-	}
-	return false, "", nil
+	owner, ok := scaling.NamespaceOwners(groups.Items)[ns]
+	return ok, owner, nil
 }
 
 func (r *ScalingConfigReconciler) markAsOverridden(ctx context.Context, config *finopsv1.ScalingConfig, before *finopsv1.ScalingConfigStatus, groupName string) (ctrl.Result, error) {

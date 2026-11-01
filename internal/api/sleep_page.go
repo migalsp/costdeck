@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -144,29 +143,17 @@ func (c *sleepingNamespaces) get(ctx context.Context, load func(context.Context)
 	return names
 }
 
-// scheduleOf finds the schedule that scales a namespace: the group it belongs to (the
-// older one, if several), else its own config.
+// scheduleOf finds the schedule that scales a namespace: the group that owns it, else its
+// own config.
 func (s *Server) scheduleOf(ctx context.Context, ns string) (*finopsv1.ScheduleStatus, string, string) {
-	var groups finopsv1.ScalingGroupList
-	if err := s.Client.List(ctx, &groups, client.InNamespace(config.OperatorNamespace())); err == nil {
-		sort.Slice(groups.Items, func(i, j int) bool {
-			return groups.Items[i].CreationTimestamp.Before(&groups.Items[j].CreationTimestamp)
-		})
-		for i := range groups.Items {
-			if slices.Contains(groups.Items[i].Members(), ns) {
-				return &groups.Items[i].Status.ScheduleStatus, targetGroup, groups.Items[i].Name
-			}
-		}
+	owner, kind, st, _ := s.scheduleOwner(ctx, ns)
+	switch {
+	case owner == nil:
+		return nil, "", ""
+	case kind == kindScalingGroup:
+		return st, targetGroup, owner.GetName()
 	}
-	var configs finopsv1.ScalingConfigList
-	if err := s.Client.List(ctx, &configs, client.InNamespace(config.OperatorNamespace())); err == nil {
-		for i := range configs.Items {
-			if configs.Items[i].Spec.TargetNamespace == ns {
-				return &configs.Items[i].Status.ScheduleStatus, kindConfig, configs.Items[i].Name
-			}
-		}
-	}
-	return nil, "", ""
+	return st, kindConfig, owner.GetName()
 }
 
 // wakeStatusResponse is GET /api/wake/{ns}: what the dashboard's wake page needs.

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"sort"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -135,13 +134,12 @@ func (s *Server) scheduleShares(ctx context.Context, now time.Time) (map[string]
 	if err := s.Client.List(ctx, &groups, client.InNamespace(config.OperatorNamespace())); err != nil {
 		return nil, err
 	}
-	// The older group owns a namespace two groups claim.
-	sort.Slice(groups.Items, func(i, j int) bool {
-		return groups.Items[i].CreationTimestamp.Before(&groups.Items[j].CreationTimestamp)
-	})
+	owners := scaling.NamespaceOwners(groups.Items)
 	for _, g := range groups.Items {
 		for _, ns := range g.Members() {
-			add(ns, "schedule", g.Name, g.Spec)
+			if owners[ns] == g.Name {
+				add(ns, "schedule", g.Name, g.Spec)
+			}
 		}
 	}
 	var configs finopsv1.ScalingConfigList
