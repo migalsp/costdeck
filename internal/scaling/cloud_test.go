@@ -302,7 +302,6 @@ func TestBuildProviderAWSCredentialSources(t *testing.T) {
 }
 
 func TestBuildProviderAWSPodIdentityUsesTheConfiguredRegion(t *testing.T) {
-	t.Skip("bug: BuildProvider ignores spec.providers.aws.region when credentials come from the pod identity (cloud.go:101)")
 	isolateAWSEnvironment(t)
 	t.Setenv("AWS_ACCESS_KEY_ID", "AKIDPODIDENTITY")
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "pod-identity-secret")
