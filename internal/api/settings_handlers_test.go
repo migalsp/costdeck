@@ -471,10 +471,10 @@ func TestEntraTestNeedsATenantAndClient(t *testing.T) {
 	}
 }
 
-func fakeWebex(t *testing.T) *requestLog {
+func fakeWebex(t *testing.T) (*requestLog, string) {
 	t.Helper()
 	log := &requestLog{}
-	answerHostInProcess(t, "webexapis.com", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	url := fakeWebexAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		log.add(r)
 		switch r.URL.Path {
 		case webexMePath:
@@ -485,13 +485,14 @@ func fakeWebex(t *testing.T) *requestLog {
 			http.Error(w, `{"message":"not found"}`, http.StatusNotFound)
 		}
 	}))
-	return log
+	return log, url
 }
 
 func TestWebexTestChecksTheBotAndItsSpace(t *testing.T) {
 	t.Setenv("POD_NAMESPACE", operatorNamespace)
-	webex := fakeWebex(t)
+	webex, url := fakeWebex(t)
 	server := buildMockServerWithK8s()
+	server.WebexAPI = url
 
 	if got := testProvider(t, server, "webex", `{}`); got.Connected || got.Error != "the Webex credentials Secret has no BOT_TOKEN" {
 		t.Errorf("no token anywhere = %+v", got)

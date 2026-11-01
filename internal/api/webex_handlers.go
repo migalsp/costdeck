@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"sync"
+	"time"
 
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -70,14 +72,63 @@ func (s *Server) handleWebexWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !s.webexDeliveries.first(payload.Data.ID, time.Now()) {
+		log.Info("Ignoring a Webex message delivered again", "messageId", payload.Data.ID)
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	go s.processWebexMessage(settings, payload.Data.ID)
 	w.WriteHeader(http.StatusAccepted)
+}
+
+const (
+	deliveriesKept = 1000
+	deliveryWindow = time.Hour
+)
+
+type recentDeliveries struct {
+	mu   sync.Mutex
+	seen map[string]time.Time
+}
+
+func (d *recentDeliveries) first(id string, now time.Time) bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.seen == nil {
+		d.seen = map[string]time.Time{}
+	}
+	if at, ok := d.seen[id]; ok && now.Sub(at) < deliveryWindow {
+		return false
+	}
+	if len(d.seen) >= deliveriesKept {
+		for k, at := range d.seen {
+			if now.Sub(at) >= deliveryWindow {
+				delete(d.seen, k)
+			}
+		}
+		for k := range d.seen {
+			if len(d.seen) < deliveriesKept {
+				break
+			}
+			delete(d.seen, k)
+		}
+	}
+	d.seen[id] = now
+	return true
+}
+
+func (s *Server) webexClient(token string) *webex.Client {
+	c := webex.NewClient(token)
+	if s.WebexAPI != "" {
+		c.BaseURL = s.WebexAPI
+	}
+	return c
 }
 
 func (s *Server) processWebexMessage(settings *webex.Settings, messageID string) {
 	ctx := s.backgroundContext()
 	log := logf.FromContext(ctx).WithName("webex-webhook")
-	api := webex.NewClient(settings.Token)
+	api := s.webexClient(settings.Token)
 
 	me, err := api.Me(ctx)
 	if err != nil {

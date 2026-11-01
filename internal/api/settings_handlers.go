@@ -1481,7 +1481,7 @@ func (s *Server) testWebex(w http.ResponseWriter, ctx context.Context, r *http.R
 	if req.RoomID != nil {
 		settings.RoomID = strings.TrimSpace(*req.RoomID)
 	}
-	msg, err := webex.Check(ctx, webex.NewClient(settings.Token), settings)
+	msg, err := webex.Check(ctx, s.webexClient(settings.Token), settings)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"connected": false, "error": err.Error()})
 		return

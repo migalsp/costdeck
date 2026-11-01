@@ -3,18 +3,15 @@ package api
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
 	"math"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"regexp"
 	"slices"
-	"strings"
 	"sync"
 	"testing"
 
@@ -156,21 +153,11 @@ func recordingServer(t *testing.T, answer http.HandlerFunc) (*httptest.Server, *
 	return srv, log
 }
 
-func answerHostInProcess(t *testing.T, host string, handler http.Handler) {
+func fakeWebexAPI(t *testing.T, handler http.Handler) string {
 	t.Helper()
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
-	original := http.DefaultTransport
-	redirected := original.(*http.Transport).Clone()
-	redirected.DialTLSContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
-		name, _, _ := net.SplitHostPort(addr)
-		if strings.EqualFold(name, host) {
-			return (&net.Dialer{}).DialContext(ctx, "tcp", srv.Listener.Addr().String())
-		}
-		return (&tls.Dialer{Config: &tls.Config{ServerName: name, MinVersion: tls.VersionTLS12}}).DialContext(ctx, network, addr)
-	}
-	http.DefaultTransport = redirected
-	t.Cleanup(func() { http.DefaultTransport = original })
+	return srv.URL + "/v1"
 }
 
 type handlerCalls struct {

@@ -7,6 +7,7 @@ import (
 	"crypto/sha1" //nolint:gosec // Mirrors the Webex signature scheme under test.
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -78,11 +79,11 @@ type webexReply struct {
 	Markdown string `json:"markdown"`
 }
 
-func webexBot(t *testing.T, message map[string]any) (*requestLog, chan webexReply) {
+func webexBot(t *testing.T, message map[string]any) (*requestLog, chan webexReply, string) {
 	t.Helper()
 	log := &requestLog{}
 	replies := make(chan webexReply, 4)
-	answerHostInProcess(t, "webexapis.com", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	url := fakeWebexAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		r.Body = io.NopCloser(bytes.NewReader(body))
 		log.add(r)
@@ -104,7 +105,7 @@ func webexBot(t *testing.T, message map[string]any) (*requestLog, chan webexRepl
 			http.Error(w, `{"message":"not found"}`, http.StatusNotFound)
 		}
 	}))
-	return log, replies
+	return log, replies, url
 }
 
 func webexServer(t *testing.T, token string) *Server {
@@ -131,8 +132,9 @@ func postWebhook(t *testing.T, server *Server, body string) int {
 }
 
 func TestWebexWebhookMessageIsAnsweredInItsThread(t *testing.T) {
-	calls, replies := webexBot(t, map[string]any{"id": "msg-1", "roomId": "room-ops", "roomType": "group", "text": "CostDeck Bot status group nightly", "personEmail": "anna@example.com"})
+	calls, replies, url := webexBot(t, map[string]any{"id": "msg-1", "roomId": "room-ops", "roomType": "group", "text": "CostDeck Bot status group nightly", "personEmail": "anna@example.com"})
 	server := webexServer(t, "bot-token")
+	server.WebexAPI = url
 
 	if code := postWebhook(t, server, `{"resource":"messages","event":"created","data":{"id":"msg-1","roomId":"room-elsewhere"}}`); code != http.StatusNoContent {
 		t.Errorf("a message from another space = %d, want 204", code)
@@ -155,8 +157,9 @@ func TestWebexWebhookMessageIsAnsweredInItsThread(t *testing.T) {
 }
 
 func TestWebexMessageIsDroppedWhenTheBotCannotSignIn(t *testing.T) {
-	calls, replies := webexBot(t, map[string]any{"id": "msg-1", "roomId": "room-ops", "text": "help"})
+	calls, replies, url := webexBot(t, map[string]any{"id": "msg-1", "roomId": "room-ops", "text": "help"})
 	server := webexServer(t, "revoked-token")
+	server.WebexAPI = url
 
 	server.processWebexMessage(&webex.Settings{Token: "revoked-token", RoomID: "room-ops"}, "msg-1")
 	c := calls.all()
@@ -165,5 +168,45 @@ func TestWebexMessageIsDroppedWhenTheBotCannotSignIn(t *testing.T) {
 	}
 	if len(replies) != 0 {
 		t.Error("a bot that cannot sign in must not answer")
+	}
+}
+
+func TestWebexWebhookRunsAReplayedDeliveryOnce(t *testing.T) {
+	_, replies, url := webexBot(t, map[string]any{"id": "msg-1", "roomId": "room-ops", "roomType": "group", "text": "CostDeck Bot status group nightly"})
+	server := webexServer(t, "bot-token")
+	server.WebexAPI = url
+	delivery := `{"resource":"messages","event":"created","data":{"id":"msg-1","roomId":"room-ops"}}`
+
+	if code := postWebhook(t, server, delivery); code != http.StatusAccepted {
+		t.Fatalf("first delivery = %d, want 202", code)
+	}
+	select {
+	case <-replies:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the bot never answered the first delivery")
+	}
+	if code := postWebhook(t, server, delivery); code != http.StatusNoContent {
+		t.Errorf("the same signed delivery again = %d, want 204 without running the command again", code)
+	}
+	select {
+	case reply := <-replies:
+		t.Errorf("a replayed delivery ran the command again: %+v", reply)
+	case <-time.After(300 * time.Millisecond):
+	}
+}
+
+func TestRecentDeliveriesStayBounded(t *testing.T) {
+	var d recentDeliveries
+	now := time.Now()
+	for i := range deliveriesKept + 50 {
+		if !d.first(fmt.Sprintf("msg-%d", i), now) {
+			t.Fatalf("msg-%d counted as seen", i)
+		}
+	}
+	if len(d.seen) > deliveriesKept {
+		t.Errorf("%d message ids kept, want at most %d", len(d.seen), deliveriesKept)
+	}
+	if !d.first("msg-0", now.Add(deliveryWindow)) {
+		t.Error("a message id is remembered past the replay window")
 	}
 }

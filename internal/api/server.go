@@ -43,6 +43,7 @@ type Server struct {
 	K8sClient     kubernetes.Interface
 	MetricsClient metricsv.Interface
 	Metrics       *metrics.Provider
+	WebexAPI      string
 	// Auth authenticates users. Start creates it when it is nil; handler tests leave it
 	// nil, which skips authentication entirely.
 	Auth *auth.Service
@@ -59,6 +60,7 @@ type Server struct {
 
 	recommendationCache recommendationCache
 	pressureCache       pressureCache
+	webexDeliveries     recentDeliveries
 	warm                warmup
 
 	versionMu sync.Mutex
