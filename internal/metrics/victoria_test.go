@@ -3,6 +3,7 @@ package metrics
 import (
 	"context"
 	"encoding/json"
+	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -28,6 +29,7 @@ type fakePromQL struct {
 	auth    []string
 	answer  func(query string) []map[string]any
 	status  int
+	failOn  func(query string) bool
 }
 
 func (f *fakePromQL) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -38,6 +40,10 @@ func (f *fakePromQL) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if f.status != 0 {
 		w.WriteHeader(f.status)
+		return
+	}
+	if f.failOn != nil && f.failOn(r.URL.Query().Get("query")) {
+		http.Error(w, "query execution failed", http.StatusInternalServerError)
 		return
 	}
 	if !strings.HasSuffix(r.URL.Path, "/api/v1/query") {
@@ -289,5 +295,137 @@ func TestContainerDemandQueriesP95AndPeak(t *testing.T) {
 		if !strings.Contains(q, `namespace="shop"`) || !strings.Contains(q, "[7d:5m]") {
 			t.Errorf("query %q must be scoped to the namespace and the window", q)
 		}
+	}
+}
+
+func TestVMClientReportsQueryFailures(t *testing.T) {
+	longBody := strings.Repeat("x", 400)
+	tests := []struct {
+		name   string
+		status int
+		body   string
+		want   []string
+	}{
+		{name: "server error with a long body", status: http.StatusBadGateway, body: longBody, want: []string{"query namespace CPU: ", "returned HTTP 502: " + strings.Repeat("x", 300) + "…"}},
+		{name: "forbidden", status: http.StatusForbidden, body: "denied", want: []string{"rejected the credentials (HTTP 403)"}},
+		{name: "PromQL error payload", status: http.StatusOK, body: `{"status":"error","errorType":"bad_data","error":"parse error at char 5"}`, want: []string{"query namespace CPU: query failed: bad_data: parse error at char 5"}},
+		{name: "not a Prometheus payload", status: http.StatusOK, body: "<html>Grafana</html>", want: []string{"is not a Prometheus API payload"}},
+		{name: "numeric sample value", status: http.StatusOK, body: `{"status":"success","data":{"resultType":"vector","result":[{"metric":{},"value":[1700000000,1.5]}]}}`, want: []string{"unexpected sample value type float64"}},
+		{name: "unparseable sample value", status: http.StatusOK, body: `{"status":"success","data":{"resultType":"vector","result":[{"metric":{},"value":[1700000000,"abc"]}]}}`, want: []string{`parse sample value "abc"`}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tt.status)
+				_, _ = w.Write([]byte(tt.body))
+			}))
+			defer srv.Close()
+			c, err := NewVMClient(VMOptions{Endpoint: srv.URL})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = c.NamespaceUsage(context.Background(), "shop")
+			if err == nil {
+				t.Fatal("NamespaceUsage() succeeded")
+			}
+			for _, want := range tt.want {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error = %q, want it to contain %q", err, want)
+				}
+			}
+			if strings.Contains(err.Error(), strings.Repeat("x", 301)) {
+				t.Errorf("the response body was not truncated: %d bytes in the error", len(err.Error()))
+			}
+		})
+	}
+}
+
+func TestSampleValueTreatsNaNAndInfAsZero(t *testing.T) {
+	for in, want := range map[string]float64{"NaN": 0, "+Inf": 0, "-Inf": 0, "Inf": 0, "1e3": 1000, "0.25": 0.25} {
+		got, err := sampleValue([2]any{1700000000, in})
+		if err != nil || got != want {
+			t.Errorf("sampleValue(%q) = %v, %v; want %v", in, got, err, want)
+		}
+	}
+}
+
+func TestVMClientKeepsEndpointParametersAndPrefersTheBearerToken(t *testing.T) {
+	var path, extraLabel, query, auth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if query == "" {
+			path, extraLabel, query, auth = r.URL.Path, r.URL.Query().Get("extra_label"), r.URL.Query().Get("query"), r.Header.Get("Authorization")
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "success", "data": map[string]any{"resultType": "vector", "result": []any{}}})
+	}))
+	defer srv.Close()
+
+	c, err := NewVMClient(VMOptions{Endpoint: srv.URL + "/select/0/prometheus/api/v1/query?extra_label=cluster%3Dprod", BearerToken: "tok", Username: "u", Password: "p"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Name() != SourceVictoriaMetrics {
+		t.Errorf("Name() = %q", c.Name())
+	}
+	if _, err := c.NamespaceUsage(context.Background(), "shop"); err != nil {
+		t.Fatal(err)
+	}
+	if path != "/select/0/prometheus/api/v1/query" || extraLabel != "cluster=prod" || !strings.HasPrefix(query, "sum(rate(container_cpu_usage_seconds_total{") {
+		t.Errorf("request path %q, extra_label %q, query %q", path, extraLabel, query)
+	}
+	if auth != "Bearer tok" {
+		t.Errorf("Authorization = %q, want the bearer token to win over basic auth", auth)
+	}
+}
+
+func TestTruncate(t *testing.T) {
+	tests := []struct {
+		in   string
+		n    int
+		want string
+	}{
+		{"  short body \n", 20, "short body"},
+		{"exact", 5, "exact"},
+		{"abcdef", 3, "abc…"},
+		{"", 3, ""},
+	}
+	for _, tt := range tests {
+		if got := truncate(tt.in, tt.n); got != tt.want {
+			t.Errorf("truncate(%q, %d) = %q, want %q", tt.in, tt.n, got, tt.want)
+		}
+	}
+}
+
+func TestVMClientTrustsTheConfiguredCA(t *testing.T) {
+	srv := httptest.NewTLSServer(&fakePromQL{answer: func(string) []map[string]any { return []map[string]any{sample(nil, "1")} }})
+	defer srv.Close()
+	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw})
+
+	tests := []struct {
+		name    string
+		opts    VMOptions
+		wantErr string
+	}{
+		{name: "unknown authority", opts: VMOptions{Endpoint: srv.URL}, wantErr: "certificate"},
+		{name: "private CA", opts: VMOptions{Endpoint: srv.URL, CACert: caPEM}},
+		{name: "verification skipped", opts: VMOptions{Endpoint: srv.URL, InsecureSkipVerify: true}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, err := NewVMClient(tt.opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = c.Validate(context.Background())
+			if tt.wantErr == "" && err != nil {
+				t.Errorf("Validate() = %v", err)
+			}
+			if tt.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tt.wantErr)) {
+				t.Errorf("Validate() = %v, want a TLS verification error", err)
+			}
+		})
+	}
+
+	if _, err := NewVMClient(VMOptions{Endpoint: srv.URL, CACert: []byte("not a certificate")}); err == nil || !strings.Contains(err.Error(), "CA certificate is not valid PEM") {
+		t.Errorf("NewVMClient() with a broken CA = %v", err)
 	}
 }

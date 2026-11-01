@@ -354,3 +354,89 @@ func TestAnthropicOfficialEndpointEnablesFallbacks(t *testing.T) {
 		t.Errorf("request against the Anthropic API should opt into fallbacks and eager input streaming: %s", body)
 	}
 }
+
+func TestValidateArgs(t *testing.T) {
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"name":    map[string]any{"type": "string"},
+			"action":  map[string]any{"type": "string", "enum": []string{"up", "down"}},
+			"minutes": map[string]any{"type": "integer"},
+			"ratio":   map[string]any{"type": "number"},
+			"dryRun":  map[string]any{"type": "boolean"},
+			"note":    map[string]any{"description": "free-form"},
+		},
+		"required": []any{"name", 7},
+	}
+	tests := []struct {
+		name    string
+		args    map[string]any
+		wantErr string
+	}{
+		{name: "valid", args: map[string]any{"name": "pps1", "action": "down", "minutes": float64(30), "ratio": 0.5, "dryRun": true, "note": []any{"x"}}},
+		{name: "missing required", args: map[string]any{"action": "up"}, wantErr: `missing required argument "name"`},
+		{name: "required but null", args: map[string]any{"name": nil}, wantErr: `missing required argument "name"`},
+		{name: "required but empty", args: map[string]any{"name": ""}, wantErr: `missing required argument "name"`},
+		{name: "hallucinated argument", args: map[string]any{"name": "a", "force": true}, wantErr: `unknown argument "force"`},
+		{name: "string expected", args: map[string]any{"name": float64(1)}, wantErr: `argument "name" must be a string`},
+		{name: "outside the enum", args: map[string]any{"name": "a", "action": "sideways"}, wantErr: `argument "action" must be one of up, down`},
+		{name: "number as text", args: map[string]any{"name": "a", "minutes": "30"}, wantErr: `argument "minutes" must be a number`},
+		{name: "ratio as text", args: map[string]any{"name": "a", "ratio": "half"}, wantErr: `argument "ratio" must be a number`},
+		{name: "boolean as text", args: map[string]any{"name": "a", "dryRun": "yes"}, wantErr: `argument "dryRun" must be a boolean`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateArgs(schema, tt.args)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Errorf("ValidateArgs() = %v", err)
+				}
+				return
+			}
+			if err == nil || err.Error() != tt.wantErr {
+				t.Errorf("ValidateArgs() = %v, want %q", err, tt.wantErr)
+			}
+		})
+	}
+	if err := ValidateArgs(map[string]any{}, map[string]any{}); err != nil {
+		t.Errorf("a tool without parameters called without arguments: %v", err)
+	}
+}
+
+func TestAgentShortensToolResultsForDisplayOnly(t *testing.T) {
+	long := strings.Repeat("z", 200)
+	multiLine := "first line\nsecond line"
+	outputs := map[string]string{"long": long, "lines": multiLine}
+	tool := Tool{
+		Name:       "report",
+		Parameters: map[string]any{"type": "object", "properties": map[string]any{"which": map[string]any{"type": "string"}}},
+		Run: func(_ context.Context, args map[string]any) (string, error) {
+			if args["which"] == "fail" {
+				return "", fmt.Errorf("group not found")
+			}
+			return outputs[args["which"].(string)], nil
+		},
+	}
+	sess := &scriptedSession{steps: [][]ToolCall{{
+		{ID: "1", Name: "report", Args: map[string]any{"which": "long"}},
+		{ID: "2", Name: "report", Args: map[string]any{"which": "lines"}},
+		{ID: "3", Name: "report", Args: map[string]any{"which": "fail"}},
+	}}}
+	events, emit := collect()
+	if err := (&Agent{Provider: scriptedProvider{sess}, Tools: []Tool{tool}}).Run(context.Background(), nil, emit); err != nil {
+		t.Fatal(err)
+	}
+	var shown []Event
+	for _, e := range *events {
+		if e.Type == "tool_result" {
+			shown = append(shown, e)
+		}
+	}
+	if len(shown) != 3 || shown[0].Text != strings.Repeat("z", 160)+"…" || shown[1].Text != "first line …" || !shown[2].IsError || shown[2].Text != "group not found" {
+		t.Errorf("displayed results = %+v", shown)
+	}
+	results := sess.results[0]
+	if results[0].Content != long || results[1].Content != multiLine || !results[2].IsError || results[2].Content != "group not found" {
+		t.Errorf("the model must get the full results: %+v", results)
+	}
+}

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -359,5 +360,343 @@ func TestBotScalesOnlyInTheConfiguredSpace(t *testing.T) {
 				t.Errorf("replies = %v, want a refusal containing %q", replies, tc.refusal)
 			}
 		})
+	}
+}
+
+func lastReply(t *testing.T, api *fakeWebex) map[string]string {
+	t.Helper()
+	replies := api.replies()
+	if len(replies) == 0 {
+		t.Fatal("no reply")
+	}
+	return replies[len(replies)-1]
+}
+
+func TestBotListsGroupsAndConfigs(t *testing.T) {
+	down := &finopsv1.ScalingGroup{Name: "b-group", Namespace: "costdeck"}
+	down.Status.Phase = scaling.PhaseScaledUp
+	down.Status.Mode = scaling.ModeManualUp
+	down.Status.NamespacesReady, down.Status.NamespacesTotal = 1, 2
+	down.Status.NextTransition = &finopsv1.ScheduledTransition{DesiredState: "Down", Time: metav1.NewTime(time.Date(2026, 11, 2, 18, 0, 0, 0, time.UTC))}
+	fresh := &finopsv1.ScalingGroup{Name: "a-group", Namespace: "costdeck"}
+	cfg := &finopsv1.ScalingConfig{Name: "shop-config", Namespace: "costdeck", Spec: finopsv1.ScalingConfigSpec{TargetNamespace: "shop"}}
+	cfg.Status.Phase = scaling.PhaseScaledDown
+	cfg.Status.Mode = scaling.ModeSchedule
+	elsewhere := &finopsv1.ScalingGroup{Name: "other-ns", Namespace: "default"}
+	bot, api, _ := newTestBot(t, "", down, fresh, cfg, elsewhere)
+
+	for _, text := range []string{"FinOps Bot list", "FinOps Bot groups", "FinOps Bot overview", "FinOps Bot status", "FinOps Bot status namespaces"} {
+		if err := bot.ProcessMessage(context.Background(), groupMsg(text)); err != nil {
+			t.Fatal(err)
+		}
+		got := lastReply(t, api)["markdown"]
+		want := "**Groups**\n" +
+			"- `a-group` **Pending** (unknown) · 0/0 ready\n" +
+			"- `b-group` **ScaledUp** (manual) · 1/2 ready · down at Mon 18:00 UTC\n" +
+			"\n**Namespace configs**\n" +
+			"- `shop-config` (shop) **ScaledDown** (schedule)\n"
+		if got != want {
+			t.Errorf("%q answered\n%s\nwant\n%s", text, got, want)
+		}
+	}
+
+	empty, emptyAPI, _ := newTestBot(t, "")
+	if err := empty.ProcessMessage(context.Background(), groupMsg("FinOps Bot list")); err != nil {
+		t.Fatal(err)
+	}
+	if got := lastReply(t, emptyAPI)["markdown"]; got != "No ScalingGroups or ScalingConfigs are defined yet." {
+		t.Errorf("empty list = %q", got)
+	}
+}
+
+func TestBotStatus(t *testing.T) {
+	g := scheduledGroup("pps1")
+	g.Spec.DependsOn = []string{"db"}
+	g.Spec.NamespaceSelector = &metav1.LabelSelector{MatchLabels: map[string]string{"team": "pps"}}
+	g.Status.RequiredBy = []string{"frontend"}
+	g.Status.SelectedNamespaces = []string{"pps1-extra"}
+	g.Status.Phase = scaling.PhaseScaledUp
+	cfg := &finopsv1.ScalingConfig{Name: "shop-config", Namespace: "costdeck", Spec: finopsv1.ScalingConfigSpec{TargetNamespace: "shop"}}
+	cfg.Status.Phase = scaling.PhaseScaledDown
+	tests := []struct {
+		cluster string
+		text    string
+		want    []string
+		silent  bool
+	}{
+		{text: "FinOps Bot status group pps1", want: []string{"**Group `pps1`**", "**ScaledUp** (unknown)", "Namespaces: 0/0 ready", "Depends on: db", "Kept up for: frontend", "- `pps1-extra`\n", "- `pps1-ns`\n"}},
+		{text: "FinOps Bot status config shop-config", want: []string{"**Config `shop-config`** (shop)", "**ScaledDown** (unknown)"}},
+		{text: "FinOps Bot status config shop", want: []string{"**Config `shop-config`** (shop)"}},
+		{text: "FinOps Bot status group", want: []string{"⚠️ which group? usage: `status group <name>`"}},
+		{text: "FinOps Bot status config", want: []string{"⚠️ which namespace? usage: `status config <namespace>`"}},
+		{text: "FinOps Bot status cluster prod", want: []string{"⚠️ usage: `status group <name>` or `status config <name>`"}},
+		{text: "FinOps Bot status config payments", want: []string{"⚠️ no namespace config `payments`"}},
+		{cluster: "prod", text: "FinOps Bot status config payments", silent: true},
+		{cluster: "prod", text: "FinOps Bot prod status config payments", want: []string{"**[prod]** ⚠️ no namespace config `payments`"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.cluster+" "+tt.text, func(t *testing.T) {
+			bot, api, _ := newTestBot(t, tt.cluster, g.DeepCopy(), cfg.DeepCopy())
+			if err := bot.ProcessMessage(context.Background(), groupMsg(tt.text)); err != nil {
+				t.Fatal(err)
+			}
+			replies := api.replies()
+			if tt.silent {
+				if len(replies) != 0 {
+					t.Errorf("replies = %v; another cluster in the space may own it", replies)
+				}
+				return
+			}
+			if len(replies) != 1 {
+				t.Fatalf("replies = %v", replies)
+			}
+			for _, want := range tt.want {
+				if !strings.Contains(replies[0]["markdown"], want) {
+					t.Errorf("reply %q lacks %q", replies[0]["markdown"], want)
+				}
+			}
+		})
+	}
+}
+
+func TestBotScalesAConfigFoundByItsNamespace(t *testing.T) {
+	cfg := &finopsv1.ScalingConfig{Name: "shop-config", Namespace: "costdeck", Spec: finopsv1.ScalingConfigSpec{TargetNamespace: "shop"}}
+	bot, api, k8s := newTestBot(t, "", cfg)
+	before := time.Now()
+	if err := bot.ProcessMessage(context.Background(), groupMsg("FinOps Bot scale config shop down for 90m")); err != nil {
+		t.Fatal(err)
+	}
+	got := &finopsv1.ScalingConfig{}
+	if err := k8s.Get(context.Background(), client.ObjectKey{Name: "shop-config", Namespace: "costdeck"}, got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Spec.Active == nil || *got.Spec.Active {
+		t.Fatalf("spec.active = %v, want false", got.Spec.Active)
+	}
+	if until := got.Spec.ActiveUntil; until == nil || until.Time.Before(before.Add(89*time.Minute)) || until.After(time.Now().Add(90*time.Minute)) {
+		t.Errorf("activeUntil = %v, want about 90 minutes from now", until)
+	}
+	reply := lastReply(t, api)["markdown"]
+	if !strings.Contains(reply, "Scaling config `shop-config` down") || !strings.Contains(reply, "holding for 1h30m0s") {
+		t.Errorf("reply = %q", reply)
+	}
+}
+
+func TestBotScaleUsageErrors(t *testing.T) {
+	tests := []struct{ text, want string }{
+		{"FinOps Bot scale group pps1 sideways", "⚠️ usage: `scale group <name> up|down [for 4h | until next | forever]`"},
+		{"FinOps Bot scale", "⚠️ usage: `scale group <name> up|down"},
+		{"FinOps Bot scale config shop sideways", "⚠️ usage: `scale config <name> up|down"},
+		{"FinOps Bot scale cluster pps1 up", "⚠️ usage: `scale group <name> up|down` or `scale config <namespace> up|down`"},
+		{"FinOps Bot scale group pps1 up for a while", "⚠️ could not read \"a while\" as a duration; use e.g. `for 4h`, `until next` or `forever`"},
+		{"FinOps Bot scale group pps1 up for -2h", "⚠️ could not read \"-2h\" as a duration"},
+		{"FinOps Bot scale group missing up", "⚠️ group `missing` not found"},
+		{"FinOps Bot scale config missing up", "⚠️ no namespace config `missing`"},
+		{"FinOps Bot resume cluster pps1", "⚠️ usage: `resume group <name>` or `resume config <namespace>`"},
+		{"FinOps Bot resume group", "⚠️ which group? usage: `resume group <name>`"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.text, func(t *testing.T) {
+			bot, api, k8s := newTestBot(t, "", scheduledGroup("pps1"))
+			if err := bot.ProcessMessage(context.Background(), groupMsg(tt.text)); err != nil {
+				t.Fatal(err)
+			}
+			if got := lastReply(t, api)["markdown"]; !strings.HasPrefix(got, tt.want) {
+				t.Errorf("reply = %q, want it to start with %q", got, tt.want)
+			}
+			g := &finopsv1.ScalingGroup{}
+			if err := k8s.Get(context.Background(), client.ObjectKey{Name: "pps1", Namespace: "costdeck"}, g); err != nil {
+				t.Fatal(err)
+			}
+			if g.Spec.Active != nil || g.Spec.ActiveUntil != nil {
+				t.Errorf("a refused command changed the group: active=%v until=%v", g.Spec.Active, g.Spec.ActiveUntil)
+			}
+		})
+	}
+}
+
+func TestBotResumeClearsEveryOverride(t *testing.T) {
+	yes := true
+	until := metav1.NewTime(time.Now().Add(time.Hour))
+	cfg := &finopsv1.ScalingConfig{
+		Name: "shop-config", Namespace: "costdeck",
+		Annotations: map[string]string{scaling.LegacyOverrideAnnotation: "up", "keep": "me"},
+		Spec:        finopsv1.ScalingConfigSpec{TargetNamespace: "shop", Active: &yes, ActiveUntil: &until},
+	}
+	g := scheduledGroup("pps1")
+	g.Spec.Active = &yes
+	bot, api, k8s := newTestBot(t, "", cfg, g)
+	ctx := context.Background()
+
+	if err := bot.ProcessMessage(ctx, groupMsg("FinOps Bot resume config shop")); err != nil {
+		t.Fatal(err)
+	}
+	got := &finopsv1.ScalingConfig{}
+	if err := k8s.Get(ctx, client.ObjectKey{Name: "shop-config", Namespace: "costdeck"}, got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Spec.Active != nil || got.Spec.ActiveUntil != nil || got.Annotations[scaling.LegacyOverrideAnnotation] != "" || got.Annotations["keep"] != "me" {
+		t.Errorf("after resume: active=%v until=%v annotations=%v", got.Spec.Active, got.Spec.ActiveUntil, got.Annotations)
+	}
+	if reply := lastReply(t, api)["markdown"]; reply != "📅 Config `shop-config` follows its schedule again." {
+		t.Errorf("reply = %q", reply)
+	}
+
+	for _, alias := range []string{"follow", "schedule"} {
+		if err := bot.ProcessMessage(ctx, groupMsg("FinOps Bot "+alias+" group pps1")); err != nil {
+			t.Fatal(err)
+		}
+		if reply := lastReply(t, api)["markdown"]; reply != "📅 Group `pps1` follows its schedule again." {
+			t.Errorf("%s: reply = %q", alias, reply)
+		}
+	}
+	group := &finopsv1.ScalingGroup{}
+	if err := k8s.Get(ctx, client.ObjectKey{Name: "pps1", Namespace: "costdeck"}, group); err != nil || group.Spec.Active != nil {
+		t.Errorf("group after resume: active=%v err=%v", group.Spec.Active, err)
+	}
+}
+
+func TestBotHoldsUntilResumedWithoutASchedule(t *testing.T) {
+	for _, tt := range []struct{ text, want string }{
+		{"FinOps Bot scale group always-on up", "holding until you `resume` the schedule"},
+		{"FinOps Bot scale group always-on up until next", "holding until you `resume` (the schedule never changes)"},
+	} {
+		t.Run(tt.text, func(t *testing.T) {
+			bot, api, k8s := newTestBot(t, "", &finopsv1.ScalingGroup{Name: "always-on", Namespace: "costdeck", Spec: finopsv1.ScalingGroupSpec{Namespaces: []string{"a"}}})
+			if err := bot.ProcessMessage(context.Background(), groupMsg(tt.text)); err != nil {
+				t.Fatal(err)
+			}
+			g := &finopsv1.ScalingGroup{}
+			if err := k8s.Get(context.Background(), client.ObjectKey{Name: "always-on", Namespace: "costdeck"}, g); err != nil {
+				t.Fatal(err)
+			}
+			if g.Spec.Active == nil || !*g.Spec.Active || g.Spec.ActiveUntil != nil {
+				t.Errorf("active=%v until=%v; without a schedule change the override has no end", g.Spec.Active, g.Spec.ActiveUntil)
+			}
+			if reply := lastReply(t, api)["markdown"]; !strings.Contains(reply, tt.want) {
+				t.Errorf("reply = %q, want %q", reply, tt.want)
+			}
+		})
+	}
+}
+
+func waitForReplies(t *testing.T, api *fakeWebex, n int, within time.Duration) []map[string]string {
+	t.Helper()
+	deadline := time.Now().Add(within)
+	for len(api.replies()) < n && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	return api.replies()
+}
+
+func TestBotMonitorReportsProgressInTheThread(t *testing.T) {
+	setPhase := func(t *testing.T, k8s client.Client, phase string, active *bool) {
+		t.Helper()
+		g := &finopsv1.ScalingGroup{}
+		if err := k8s.Get(context.Background(), client.ObjectKey{Name: "pps1", Namespace: "costdeck"}, g); err != nil {
+			t.Fatal(err)
+		}
+		g.Status.Phase = phase
+		if active != nil {
+			g.Spec.Active = active
+		}
+		if err := k8s.Update(context.Background(), g); err != nil {
+			t.Fatal(err)
+		}
+	}
+	threaded := &Message{ID: "reply-1", ParentID: "root-1", RoomID: "room", RoomType: "group", Text: "FinOps Bot scale group pps1 up for 1h", PersonID: "u1"}
+
+	t.Run("target reached", func(t *testing.T) {
+		bot, api, k8s := newTestBot(t, "prod", scheduledGroup("pps1"))
+		bot.Background, bot.MonitorInterval, bot.MonitorTimeout = t.Context(), 5*time.Millisecond, 5*time.Second
+		if err := bot.ProcessMessage(context.Background(), threaded); err != nil {
+			t.Fatal(err)
+		}
+		setPhase(t, k8s, scaling.PhaseScaledUp, nil)
+		replies := waitForReplies(t, api, 2, 5*time.Second)
+		if len(replies) != 2 || replies[1]["markdown"] != "**[prod]** ✅ Group `pps1` is ScaledUp." || replies[1]["parentId"] != "root-1" || replies[0]["parentId"] != "root-1" {
+			t.Errorf("replies = %v; progress goes to the root of the command's thread", replies)
+		}
+	})
+
+	t.Run("target not reached in time", func(t *testing.T) {
+		bot, api, _ := newTestBot(t, "", scheduledGroup("pps1"))
+		bot.Background, bot.MonitorInterval, bot.MonitorTimeout = context.Background(), 5*time.Millisecond, 40*time.Millisecond
+		if err := bot.ProcessMessage(context.Background(), groupMsg("FinOps Bot scale group pps1 down for 1h")); err != nil {
+			t.Fatal(err)
+		}
+		replies := waitForReplies(t, api, 2, 5*time.Second)
+		if len(replies) != 2 || !strings.HasPrefix(replies[1]["markdown"], "⏳ Group `pps1` has not reached ScaledDown after 40ms") || !strings.Contains(replies[1]["markdown"], "check `status group pps1`") {
+			t.Errorf("replies = %v", replies)
+		}
+	})
+
+	t.Run("overridden by a newer command", func(t *testing.T) {
+		bot, api, k8s := newTestBot(t, "", scheduledGroup("pps1"))
+		bot.Background, bot.MonitorInterval, bot.MonitorTimeout = context.Background(), 5*time.Millisecond, 100*time.Millisecond
+		if err := bot.ProcessMessage(context.Background(), groupMsg("FinOps Bot scale group pps1 up for 1h")); err != nil {
+			t.Fatal(err)
+		}
+		no := false
+		setPhase(t, k8s, scaling.PhaseScaledUp, &no)
+		time.Sleep(300 * time.Millisecond)
+		if replies := api.replies(); len(replies) != 1 {
+			t.Errorf("replies = %v; the newer command reports instead", replies)
+		}
+	})
+
+	t.Run("no background context", func(t *testing.T) {
+		bot, api, _ := newTestBot(t, "", scheduledGroup("pps1"))
+		bot.MonitorInterval, bot.MonitorTimeout = time.Millisecond, 10*time.Millisecond
+		if err := bot.ProcessMessage(context.Background(), groupMsg("FinOps Bot scale group pps1 up")); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(50 * time.Millisecond)
+		if replies := api.replies(); len(replies) != 1 {
+			t.Errorf("replies = %v; without a background context nothing is monitored", replies)
+		}
+	})
+}
+
+func TestBotHelpVariants(t *testing.T) {
+	for _, tt := range []struct {
+		cluster, text, prefix string
+	}{
+		{"", "FinOps Bot", ""},
+		{"", "FinOps Bot /help", ""},
+		{"", "FinOps Bot ?", ""},
+		{"prod", "FinOps Bot help", "**[prod]** "},
+		{"prod", "@FinOps: HELP", "**[prod]** "},
+	} {
+		t.Run(tt.cluster+" "+tt.text, func(t *testing.T) {
+			bot, api, _ := newTestBot(t, tt.cluster)
+			if err := bot.ProcessMessage(context.Background(), groupMsg(tt.text)); err != nil {
+				t.Fatal(err)
+			}
+			reply := lastReply(t, api)["markdown"]
+			if !strings.HasPrefix(reply, tt.prefix+"**CostDeck commands**") {
+				t.Errorf("reply = %q", reply)
+			}
+			if tt.cluster != "" && (!strings.Contains(reply, "`prod list`") || !strings.Contains(reply, "start with the cluster name")) {
+				t.Errorf("a named cluster's help must show its prefix: %q", reply)
+			}
+		})
+	}
+
+	bot, api, _ := newTestBot(t, "prod")
+	if err := bot.ProcessMessage(context.Background(), groupMsg("FinOps Bot")); err != nil {
+		t.Fatal(err)
+	}
+	if replies := api.replies(); len(replies) != 0 {
+		t.Errorf("a bare mention in a shared space is not addressed to one cluster: %v", replies)
+	}
+}
+
+func TestIsOwnMessageMatchesTheBotEmail(t *testing.T) {
+	bot, api, _ := newTestBot(t, "")
+	own := groupMsg("FinOps Bot help")
+	own.PersonID, own.PersonEmail = "", "FINOPS@webex.bot"
+	if err := bot.ProcessMessage(context.Background(), own); err != nil || len(api.replies()) != 0 {
+		t.Errorf("a message from the bot's own address was answered: %v, %v", err, api.replies())
 	}
 }
