@@ -65,6 +65,7 @@ PY
 curl -sf "localhost:$VM_PORT/internal/force_flush" >/dev/null
 curl -sf "localhost:$VM_PORT/internal/resetRollupResultCache" >/dev/null
 ok "imported"
+wait_for "VictoriaMetrics serves the JVM heap series" vm_series_at_least 'jvm_memory_used_bytes{namespace="smoke-java"}' 5
 
 log "The advice reads the JVM: flags from the pod spec, the heap from its metrics"
 JAVA_ADVICE=$(mktemp)
@@ -72,7 +73,7 @@ java_advice_ready() {
   api GET /api/namespaces/smoke-java/recommendations >"$JAVA_ADVICE" &&
     jq -e '.workloads[] | select(.name == "java-big") | .containers[0].jvm.recommendedHeap != null' "$JAVA_ADVICE" >/dev/null
 }
-wait_for "Java advice with the heap from VictoriaMetrics" java_advice_ready
+TIMEOUT=330 wait_for "Java advice with the heap from VictoriaMetrics, within the five minutes advice is cached" java_advice_ready
 java_jvm() { jq -c --arg n "$1" '.workloads[] | select(.name == $n) | .containers[0].jvm' "$JAVA_ADVICE"; }
 java_expect() {
   echo "$2" | jq -e "$3" >/dev/null || fail "$1: $2"
