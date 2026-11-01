@@ -1,8 +1,8 @@
 import { useMemo, useState } from 'react'
-import { AlertTriangle, BellRing, Check, Loader2, Pencil, Plus, Search, Target, TrendingUp, Wallet } from 'lucide-react'
+import { Activity, AlertTriangle, BellRing, Check, Loader2, Pencil, Plus, Search, Target, TrendingUp, Wallet } from 'lucide-react'
 import { Badge, Button, Card, Modal, PageHeader, SectionTitle, type Tone } from '../components/ui'
 import { useAuth } from '../lib/auth'
-import { environmentLabel, fetchBudgets, saveSettings, type AnomalySettings, type Budget, type BudgetScope, type BudgetStatus, type BudgetsResponse, type Environment, type RiskAlertSettings } from '../lib/finops'
+import { environmentLabel, fetchBudgets, saveSettings, type AlertEvent, type AnomalySettings, type Budget, type BudgetScope, type BudgetStatus, type BudgetsResponse, type Environment, type RiskAlertSettings } from '../lib/finops'
 import { formatMoney } from '../lib/format'
 import { errorMessage } from '../lib/api'
 import { toast } from '../lib/toast'
@@ -32,6 +32,13 @@ const scopeText = (b: Budget) => {
 }
 
 const when = (iso: string) => new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+
+const budgetAlertLook = { label: 'Budget alert', tile: 'bg-brand-50 text-brand-700', icon: <Wallet size={16} /> }
+const alertLooks: Partial<Record<AlertEvent['kind'], typeof budgetAlertLook>> = {
+  anomaly: { label: 'Spending anomaly', tile: 'bg-amber-50 text-amber-600', icon: <TrendingUp size={16} /> },
+  risk: { label: 'Performance risk', tile: 'bg-rose-50 text-rose-600', icon: <Activity size={16} /> },
+}
+const alertLook = (kind: AlertEvent['kind']) => alertLooks[kind] ?? budgetAlertLook
 
 // Mark is a hoverable marker on a budget bar with a tooltip naming it.
 function Mark({ left, label, children }: { left: string; label: string; children: React.ReactNode }) {
@@ -390,8 +397,8 @@ export default function BudgetsPage() {
             <Card className="divide-y divide-slate-100">
               {data.events.map((ev, i) => (
                 <div key={i} className="flex items-start gap-3 p-4">
-                  <span className={`mt-0.5 w-8 h-8 shrink-0 rounded-lg flex items-center justify-center ${ev.kind === 'anomaly' ? 'bg-amber-50 text-amber-600' : 'bg-brand-50 text-brand-700'}`}>
-                    {ev.kind === 'anomaly' ? <TrendingUp size={16} /> : <Wallet size={16} />}
+                  <span role="img" aria-label={alertLook(ev.kind).label} className={`mt-0.5 w-8 h-8 shrink-0 rounded-lg flex items-center justify-center ${alertLook(ev.kind).tile}`}>
+                    {alertLook(ev.kind).icon}
                   </span>
                   <div className="min-w-0 flex-1">
                     <div className="text-sm font-semibold text-slate-800">{ev.title}</div>

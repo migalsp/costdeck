@@ -400,7 +400,7 @@ export interface BudgetStatus {
 
 export interface AlertEvent {
   at: string
-  kind: 'budget' | 'forecast' | 'anomaly'
+  kind: 'budget' | 'forecast' | 'anomaly' | 'risk'
   title: string
   detail: string
   budget?: string
