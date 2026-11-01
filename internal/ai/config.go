@@ -71,6 +71,16 @@ func LoadSettings(ctx context.Context, c client.Reader) (*Settings, error) {
 // FromConfig resolves settings from an AI config. apiKey overrides the stored Secret
 // (used to test unsaved settings).
 func FromConfig(ctx context.Context, c client.Reader, ai *finopsv1.AIIntegrationConfig, apiKey string) (*Settings, error) {
+	s, err := Load(ctx, c, ai, apiKey)
+	if err != nil {
+		return s, err
+	}
+	return s, s.Validate()
+}
+
+// Load resolves the settings and the API key without checking them, for a form that is
+// still being filled in.
+func Load(ctx context.Context, c client.Reader, ai *finopsv1.AIIntegrationConfig, apiKey string) (*Settings, error) {
 	s := &Settings{
 		Provider:      strings.ToLower(strings.TrimSpace(ai.Provider)),
 		Model:         strings.TrimSpace(ai.Model),
@@ -91,20 +101,27 @@ func FromConfig(ctx context.Context, c client.Reader, ai *finopsv1.AIIntegration
 		}
 		s.APIKey = string(data[SecretKeyAPIKey])
 	}
-	return s, s.Validate()
+	return s, nil
 }
 
 // Validate checks the provider, model and endpoint. Cloud providers may not be pointed at
 // loopback or link-local addresses (cloud metadata endpoints); only the "local" provider
 // may talk to in-cluster or on-host model servers.
 func (s *Settings) Validate() error {
+	if err := s.validateEndpoint(); err != nil {
+		return err
+	}
+	if s.Model == "" {
+		return fmt.Errorf("no model configured for provider %q", s.Provider)
+	}
+	return nil
+}
+
+func (s *Settings) validateEndpoint() error {
 	switch s.Provider {
 	case ProviderAnthropic, ProviderOpenAI, ProviderGemini, ProviderLocal:
 	default:
 		return fmt.Errorf("unsupported AI provider %q", s.Provider)
-	}
-	if s.Model == "" {
-		return fmt.Errorf("no model configured for provider %q", s.Provider)
 	}
 	if s.BaseURL == "" {
 		return nil
@@ -161,12 +178,24 @@ func NewProvider(s *Settings) (Provider, error) {
 	if err := s.Validate(); err != nil {
 		return nil, err
 	}
+	return newProvider(s), nil
+}
+
+// NewModelLister returns a provider to list models with, before a model is chosen.
+func NewModelLister(s *Settings) (Provider, error) {
+	if err := s.validateEndpoint(); err != nil {
+		return nil, err
+	}
+	return newProvider(s), nil
+}
+
+func newProvider(s *Settings) Provider {
 	switch s.Provider {
 	case ProviderAnthropic:
-		return newAnthropic(s), nil
+		return newAnthropic(s)
 	case ProviderGemini:
-		return &geminiProvider{s: s}, nil
+		return &geminiProvider{s: s}
 	default:
-		return &openAIProvider{s: s}, nil
+		return &openAIProvider{s: s}
 	}
 }

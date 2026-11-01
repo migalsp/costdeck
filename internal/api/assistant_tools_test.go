@@ -379,7 +379,6 @@ func TestConfirmedRevertRestoresTheOriginalRequests(t *testing.T) {
 }
 
 func TestConfirmedActionReportsClientErrorsAsClientErrors(t *testing.T) {
-	t.Skip("bug: POST /api/ai/tools/{name} answers 500 for an unknown action, invalid arguments or a namespace without a ScalingConfig")
 	t.Setenv("POD_NAMESPACE", operatorNamespace)
 	server := buildMockServer()
 	seedGroup(t, server, "pps1")

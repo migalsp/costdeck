@@ -135,15 +135,18 @@ func (s *Server) handleAIExecuteTool(w http.ResponseWriter, r *http.Request) {
 	}
 	name := r.PathValue("name")
 	result, err := s.executeMutatingTool(r.Context(), name, req.Args)
-	if err != nil {
-		if bad, ok := errors.AsType[errBadOverride](err); ok {
-			writeError(w, http.StatusBadRequest, bad.Error())
-			return
-		}
-		if errors.Is(err, errAdminOnly) {
-			writeError(w, http.StatusForbidden, err.Error())
-			return
-		}
+	switch {
+	case err == nil:
+	case errors.As(err, new(errBadOverride)), errors.As(err, new(errInvalidArgs)):
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	case errors.Is(err, errAdminOnly), errors.Is(err, errNeedsOperator):
+		writeError(w, http.StatusForbidden, err.Error())
+		return
+	case errors.As(err, new(errUnknownAction)), errors.As(err, new(errNoScalingConfig)):
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	default:
 		writeK8sError(w, err)
 		return
 	}
@@ -189,7 +192,7 @@ func (s *Server) settingsFromRequest(ctx context.Context, req aiTestRequest) (*a
 	if req.SkipSSLVerify != nil {
 		merged.SkipSSLVerify = *req.SkipSSLVerify
 	}
-	return ai.FromConfig(ctx, s.Client, &merged, req.APIKey)
+	return ai.Load(ctx, s.Client, &merged, req.APIKey)
 }
 
 // handleAIModels lists the models the configured account can use:
@@ -205,7 +208,7 @@ func (s *Server) handleAIModels(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	provider, err := ai.NewProvider(settings)
+	provider, err := ai.NewModelLister(settings)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return

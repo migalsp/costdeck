@@ -134,7 +134,6 @@ func TestAIModelsReportsAProviderFailureAsBadGateway(t *testing.T) {
 }
 
 func TestAIModelsListsALocalServersModelsBeforeOneIsChosen(t *testing.T) {
-	t.Skip("bug: listing models for the local provider fails with \"no model configured\" until a model is saved, though the list is how one is chosen")
 	t.Setenv("POD_NAMESPACE", operatorNamespace)
 	server := buildMockServerWithK8s()
 	catalog, _ := modelCatalog(t, "llama3", "qwen")

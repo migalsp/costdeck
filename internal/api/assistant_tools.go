@@ -330,16 +330,16 @@ func (s *Server) executeMutatingTool(ctx context.Context, name string, args map[
 		}
 	}
 	if tool == nil {
-		return "", fmt.Errorf("unknown action %q", name)
+		return "", errUnknownAction{name}
 	}
 	if !toolAllowed(ctx, *tool) {
 		if tool.AdminOnly {
 			return "", errAdminOnly
 		}
-		return "", fmt.Errorf("this action needs the operator role")
+		return "", errNeedsOperator
 	}
 	if err := ai.ValidateArgs(tool.Parameters, args); err != nil {
-		return "", err
+		return "", errInvalidArgs{err}
 	}
 	arg := func(k string) string { v, _ := args[k].(string); return v }
 
@@ -389,7 +389,21 @@ func (s *Server) executeMutatingTool(ctx context.Context, name string, args map[
 		}
 		return fmt.Sprintf("Restored the original requests and limits in namespace %s.", arg("namespace")), nil
 	}
-	return "", fmt.Errorf("unknown action %q", name)
+	return "", errUnknownAction{name}
+}
+
+type errUnknownAction struct{ name string }
+
+func (e errUnknownAction) Error() string { return fmt.Sprintf("unknown action %q", e.name) }
+
+var errNeedsOperator = errors.New("this action needs the operator role")
+
+type errInvalidArgs struct{ error }
+
+type errNoScalingConfig struct{ namespace string }
+
+func (e errNoScalingConfig) Error() string {
+	return fmt.Sprintf("namespace %s has no ScalingConfig; create one on the Workload Scaling page first", e.namespace)
 }
 
 // applyOverride sets or clears the manual override of a group or config.
@@ -461,7 +475,7 @@ func (s *Server) configForNamespace(ctx context.Context, ns string) (*finopsv1.S
 			return &list.Items[i], nil
 		}
 	}
-	return nil, fmt.Errorf("namespace %s has no ScalingConfig; create one on the Workload Scaling page first", ns)
+	return nil, errNoScalingConfig{ns}
 }
 
 func toJSON(v any) (string, error) {
