@@ -89,12 +89,13 @@ func (s *Server) pressure(ctx context.Context, ns string, workloads []rightsizin
 	}
 	obs := observations{containers: map[containerRef]risks.Pressure{}, workloads: map[workloadRef]*workloadPressure{}}
 	owner := func(pod string) (workloadRef, bool) {
+		var best workloadRef
 		for _, w := range workloads {
-			if rightsizing.OwnsPod(w.Kind, w.Name, pod) {
-				return workloadRef{w.Kind, w.Name}, true
+			if rightsizing.OwnsPod(w.Kind, w.Name, pod) && len(w.Name) > len(best.Name) {
+				best = workloadRef{w.Kind, w.Name}
 			}
 		}
-		return workloadRef{}, false
+		return best, best.Name != ""
 	}
 	var pods corev1.PodList
 	if err := s.Client.List(ctx, &pods, client.InNamespace(ns)); err != nil {

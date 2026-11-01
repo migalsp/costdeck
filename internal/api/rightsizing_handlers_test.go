@@ -42,7 +42,7 @@ func TestRecommendationsAdviseWithoutChangingWorkloads(t *testing.T) {
 	// an object passed to NewSimpleClientset under "podmetricses", so add it explicitly.
 	metricsClient := metricsfake.NewSimpleClientset() //nolint:staticcheck // k8s.io/metrics generates no NewClientset
 	podMetrics := &metricsv1beta1.PodMetrics{
-		Name: "api-7d9f8c-abcde", Namespace: "shop",
+		Name: "api-7d9f8c-bcdfg", Namespace: "shop",
 		Containers: []metricsv1beta1.ContainerMetrics{{Name: "api", Usage: corev1.ResourceList{
 			corev1.ResourceCPU: resource.MustParse("50m"), corev1.ResourceMemory: resource.MustParse("100Mi"),
 		}}},

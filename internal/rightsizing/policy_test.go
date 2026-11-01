@@ -10,7 +10,7 @@ func TestPolicyBoundsAndPadsTheAdvice(t *testing.T) {
 	half := 1.5
 	workloads := []Workload{{Kind: "Deployment", Name: "api", Replicas: 1, Containers: []Container{{Name: "api", CPURequest: 1, MemoryRequest: 2048 * mi}},
 		Policy: &Policy{Name: "team-a", ApplyForbidden: true, CPU: Bounds{Min: 0.3, Headroom: &half}, Memory: Bounds{Max: 512 * mi}}}}
-	demand := map[metrics.ContainerKey]metrics.Usage{{Pod: "api-7d9f8c-abcde", Container: "api"}: usage("100m", "300Mi")}
+	demand := map[metrics.ContainerKey]metrics.Usage{{Pod: "api-7d9f8c-bcdfg", Container: "api"}: usage("100m", "300Mi")}
 
 	w := Analyze(workloads, demand, nil, rates, DefaultSettings(true)).Workloads[0]
 	c := w.Containers[0]
@@ -24,7 +24,7 @@ func TestPolicyBoundsAndPadsTheAdvice(t *testing.T) {
 		t.Errorf("workload advice = %+v, want the policy named and applying forbidden", w)
 	}
 
-	demand[metrics.ContainerKey{Pod: "api-7d9f8c-abcde", Container: "api"}] = usage("100m", "1200Mi")
+	demand[metrics.ContainerKey{Pod: "api-7d9f8c-bcdfg", Container: "api"}] = usage("100m", "1200Mi")
 	if m := Analyze(workloads, demand, nil, rates, DefaultSettings(true)).Workloads[0].Containers[0].Memory; m.Recommended != "512Mi" {
 		t.Errorf("memory advice = %+v, want the policy's 512Mi maximum", m)
 	}

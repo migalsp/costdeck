@@ -49,7 +49,7 @@ func TestRightsizingPolicies(t *testing.T) {
 		}
 	}
 	metricsClient := metricsfake.NewSimpleClientset() //nolint:staticcheck // k8s.io/metrics generates no NewClientset
-	for _, pod := range []string{"api-7d9f8c-abcde", "batch-5c6b7d-fghij", "web-6f7a8b-klmno"} {
+	for _, pod := range []string{"api-7d9f8c-bcdfg", "batch-5c6b7d-fghjk", "web-6f7c8b-klmnp"} {
 		pm := &metricsv1beta1.PodMetrics{
 			Name: pod, Namespace: "shop",
 			Containers: []metricsv1beta1.ContainerMetrics{{Name: "main", Usage: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("50m"), corev1.ResourceMemory: resource.MustParse("100Mi")}}},

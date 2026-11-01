@@ -72,7 +72,7 @@ series({"__name__": "container_cpu_usage_seconds_total", **container(throttled)}
 series({"__name__": "container_memory_working_set_bytes", **container(throttled)}, lambda t: 40 * mi)
 series({"__name__": "container_cpu_usage_seconds_total", **container(near)}, lambda t: round((t - start) * 0.005, 3))
 series({"__name__": "container_memory_working_set_bytes", **container(near)}, lambda t: 240 * mi)
-series({"__name__": "kube_pod_status_reason", "namespace": "smoke-risks", "pod": "risk-evicted-5c6b7d8f9-abcde", "reason": "Evicted"},
+series({"__name__": "kube_pod_status_reason", "namespace": "smoke-risks", "pod": "risk-evicted-5c6b7d8f9-bcdfg", "reason": "Evicted"},
        lambda t: 1 if now - t < 86400 else 0)
 PY
 curl -sf "localhost:$VM_PORT/internal/force_flush" >/dev/null

@@ -364,14 +364,17 @@ func adviseJVM(java jvm.Runtime, c Container, heapUse jvm.Usage, rates pricing.R
 }
 
 // podPattern matches the pods a workload creates: <deployment>-<replicaset hash>-<suffix>
-// or <statefulset>-<ordinal>. Hash segments never contain dashes, so "api" does not
-// claim the pods of "api-gateway".
+// or <statefulset>-<ordinal>. Kubernetes writes the hash and the five-character suffix in
+// an alphabet without vowels, so "api" claims neither the pods of "api-gateway" nor those
+// of the StatefulSet "api-postgresql" or the Job "api-migrate".
 func podPattern(kind, name string) *regexp.Regexp {
 	if kind == "StatefulSet" {
 		return regexp.MustCompile("^" + regexp.QuoteMeta(name) + `-[0-9]+$`)
 	}
-	return regexp.MustCompile("^" + regexp.QuoteMeta(name) + `-[a-z0-9]+-[a-z0-9]+$`)
+	return regexp.MustCompile("^" + regexp.QuoteMeta(name) + `-` + safeAlphabet + `{1,10}-` + safeAlphabet + `{5}$`)
 }
+
+const safeAlphabet = `[bcdfghjklmnpqrstvwxz2456789]`
 
 // roundingSlack keeps float noise (0.1*1.5 = 0.15000000000000002) from rounding a value
 // that is already on a step up to the next one.

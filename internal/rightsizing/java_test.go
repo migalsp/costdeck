@@ -27,7 +27,7 @@ func findingCodes(a *JVMAdvice) []string {
 
 func TestJavaMemoryAdviceCoversTheHeap(t *testing.T) {
 	workloads := javaWorkload("orders", Container{Name: "app", CPURequest: 1, MemoryRequest: 4096 * mi, MemoryLimit: 4096 * mi, CPULimit: 2, Java: javaWith("-Xmx2g", "-XX:+UseG1GC")})
-	demand := map[metrics.ContainerKey]metrics.Usage{{Pod: "orders-7d9f8c-abcde", Container: "app"}: usage("200m", "1200Mi")}
+	demand := map[metrics.ContainerKey]metrics.Usage{{Pod: "orders-7d9f8c-bcdfg", Container: "app"}: usage("200m", "1200Mi")}
 
 	c := Analyze(workloads, demand, nil, rates, DefaultSettings(true)).Workloads[0].Containers[0]
 	if c.Memory.Action != ActionReduce || c.Memory.Recommended != "2560Mi" {
@@ -43,10 +43,10 @@ func TestJavaMemoryAdviceCoversTheHeap(t *testing.T) {
 
 func TestJavaHeapAdviceFromMetrics(t *testing.T) {
 	workloads := javaWorkload("orders", Container{Name: "app", CPURequest: 1, MemoryRequest: 4096 * mi, MemoryLimit: 4096 * mi, CPULimit: 2, Java: javaWith("-Xmx3g", "-XX:+UseG1GC")})
-	demand := map[metrics.ContainerKey]metrics.Usage{{Pod: "orders-7d9f8c-abcde", Container: "app"}: usage("200m", "3500Mi")}
+	demand := map[metrics.ContainerKey]metrics.Usage{{Pod: "orders-7d9f8c-bcdfg", Container: "app"}: usage("200m", "3500Mi")}
 	heap := map[metrics.ContainerKey]metrics.HeapUsage{
-		{Pod: "orders-7d9f8c-abcde", Container: "app"}: {Used: 2900 * mi, AfterGC: 300 * mi, NonHeap: 150 * mi},
-		{Pod: "orders-7d9f8c-fghij", Container: "app"}: {Used: 2800 * mi, AfterGC: 400 * mi, NonHeap: 160 * mi},
+		{Pod: "orders-7d9f8c-bcdfg", Container: "app"}: {Used: 2900 * mi, AfterGC: 300 * mi, NonHeap: 150 * mi},
+		{Pod: "orders-7d9f8c-fghjk", Container: "app"}: {Used: 2800 * mi, AfterGC: 400 * mi, NonHeap: 160 * mi},
 	}
 
 	r := Analyze(workloads, demand, heap, rates, DefaultSettings(true))
@@ -68,7 +68,7 @@ func TestJavaHeapAdviceFromMetrics(t *testing.T) {
 
 func TestJavaHeapAdviceOnlyWhenTheHeapIsOff(t *testing.T) {
 	workloads := javaWorkload("orders", Container{Name: "app", MemoryRequest: 2048 * mi, MemoryLimit: 2048 * mi, CPULimit: 2, Java: javaWith("-Xmx1g", "-XX:+UseG1GC")})
-	heap := map[metrics.ContainerKey]metrics.HeapUsage{{Pod: "orders-7d9f8c-abcde", Container: "app"}: {Used: 900 * mi, AfterGC: 450 * mi}}
+	heap := map[metrics.ContainerKey]metrics.HeapUsage{{Pod: "orders-7d9f8c-bcdfg", Container: "app"}: {Used: 900 * mi, AfterGC: 450 * mi}}
 	a := Analyze(workloads, nil, heap, rates, DefaultSettings(true)).Workloads[0].Containers[0].JVM
 	if a.HeapAfterGC != "450Mi" || a.RecommendedHeap != "" || a.RecommendedOptions != "" || a.MonthlySavings != 0 {
 		t.Errorf("JVM advice = %+v: a 1Gi heap for 450Mi left after GC is fine, so no heap advice", a)
@@ -76,7 +76,7 @@ func TestJavaHeapAdviceOnlyWhenTheHeapIsOff(t *testing.T) {
 }
 
 func TestJavaFoundByItsMetrics(t *testing.T) {
-	heap := map[metrics.ContainerKey]metrics.HeapUsage{{Pod: "billing-7d9f8c-abcde"}: {Used: 700 * mi, AfterGC: 200 * mi}}
+	heap := map[metrics.ContainerKey]metrics.HeapUsage{{Pod: "billing-7d9f8c-bcdfg"}: {Used: 700 * mi, AfterGC: 200 * mi}}
 	for _, tc := range []struct {
 		name       string
 		containers []Container
@@ -106,7 +106,7 @@ func TestJavaFoundByItsMetrics(t *testing.T) {
 }
 
 func TestNonJavaContainersGetNoJVMAdvice(t *testing.T) {
-	r := Analyze(javaWorkload("web", Container{Name: "nginx", MemoryRequest: 256 * mi}), map[metrics.ContainerKey]metrics.Usage{{Pod: "web-7d9f8c-abcde", Container: "nginx"}: usage("10m", "50Mi")}, nil, rates, DefaultSettings(true))
+	r := Analyze(javaWorkload("web", Container{Name: "nginx", MemoryRequest: 256 * mi}), map[metrics.ContainerKey]metrics.Usage{{Pod: "web-7d9f8c-bcdfg", Container: "nginx"}: usage("10m", "50Mi")}, nil, rates, DefaultSettings(true))
 	if c := r.Workloads[0].Containers[0]; c.JVM != nil || r.JavaMonthlySavings != 0 {
 		t.Errorf("container = %+v, report Java savings = %v", c, r.JavaMonthlySavings)
 	}
@@ -116,7 +116,7 @@ func TestPressureHoldsReductions(t *testing.T) {
 	workloads := []Workload{{Kind: "Deployment", Name: "api", Replicas: 2, Containers: []Container{{
 		Name: "api", CPURequest: 2, MemoryRequest: 4096 * mi, HoldCPU: "throttled in 30% of CPU periods at busy times", HoldMemory: "OOM-killed",
 	}}}}
-	demand := map[metrics.ContainerKey]metrics.Usage{{Pod: "api-7d9f8c-abcde", Container: "api"}: usage("100m", "300Mi")}
+	demand := map[metrics.ContainerKey]metrics.Usage{{Pod: "api-7d9f8c-bcdfg", Container: "api"}: usage("100m", "300Mi")}
 	r := Analyze(workloads, demand, nil, rates, DefaultSettings(true))
 	c := r.Workloads[0].Containers[0]
 	if c.CPU.Action != ActionKeep || c.CPU.Held != "throttled in 30% of CPU periods at busy times" || c.CPU.Recommended != "" {

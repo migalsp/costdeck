@@ -46,7 +46,7 @@ func TestRecommendationsReadTheJVMFromThePodSpec(t *testing.T) {
 		}
 	}
 	metricsClient := metricsfake.NewSimpleClientset() //nolint:staticcheck // k8s.io/metrics generates no NewClientset
-	for _, pod := range []string{"orders-7d9f8c-abcde", "legacy-5c6b7d-fghij"} {
+	for _, pod := range []string{"orders-7d9f8c-bcdfg", "legacy-5c6b7d-fghjk"} {
 		pm := &metricsv1beta1.PodMetrics{
 			Name: pod, Namespace: "shop",
 			Containers: []metricsv1beta1.ContainerMetrics{{Name: "app", Usage: corev1.ResourceList{

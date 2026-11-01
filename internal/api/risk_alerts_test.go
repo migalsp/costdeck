@@ -36,7 +36,7 @@ func TestRiskAlerterSendsNewCriticalRisksOncePerDay(t *testing.T) {
 	for _, obj := range []client.Object{
 		cfg,
 		&corev1.Namespace{Name: "shop"}, &corev1.Namespace{Name: "costdeck"},
-		riskDeployment("api"), riskPod("api-7d9f8c-abcde", oom),
+		riskDeployment("api"), riskPod("api-7d9f8c-bcdfg", oom),
 	} {
 		if err := server.Client.Create(ctx, obj); err != nil {
 			t.Fatal(err)
@@ -128,7 +128,7 @@ func TestRiskAlerterChecksAtOnceAndStopsWithItsContext(t *testing.T) {
 	}}}
 	createAll(t, server.Client,
 		&finopsv1.CostDeckConfig{Name: "default", Namespace: "costdeck", Spec: finopsv1.CostDeckConfigSpec{Alerts: finopsv1.AlertsConfig{PerformanceRisks: &finopsv1.PerformanceRiskAlerts{Enabled: true}}}},
-		&corev1.Namespace{Name: "shop"}, riskDeployment("api"), riskPod("api-7d9f8c-abcde", oom),
+		&corev1.Namespace{Name: "shop"}, riskDeployment("api"), riskPod("api-7d9f8c-bcdfg", oom),
 	)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

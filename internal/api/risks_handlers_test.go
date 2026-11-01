@@ -71,14 +71,14 @@ func TestRisksReadPodsAndAutoscalers(t *testing.T) {
 	}
 	for _, obj := range []client.Object{
 		riskDeployment("api"), riskDeployment("worker"), riskDeployment("web"),
-		riskPod("api-7d9f8c-abcde", oomStatus), riskPod("worker-5c6b7d-fghij", crashStatus), riskPod("web-6f7a8b-klmno", evicted), hpa,
+		riskPod("api-7d9f8c-bcdfg", oomStatus), riskPod("worker-5c6b7d-fghjk", crashStatus), riskPod("web-6f7c8b-klmnp", evicted), hpa,
 	} {
 		if err := server.Client.Create(ctx, obj); err != nil {
 			t.Fatalf("creating %s: %v", obj.GetName(), err)
 		}
 	}
 	metricsClient := metricsfake.NewSimpleClientset() //nolint:staticcheck // k8s.io/metrics generates no NewClientset
-	for _, pod := range []string{"api-7d9f8c-abcde", "worker-5c6b7d-fghij"} {
+	for _, pod := range []string{"api-7d9f8c-bcdfg", "worker-5c6b7d-fghjk"} {
 		pm := &metricsv1beta1.PodMetrics{
 			Name: pod, Namespace: "shop",
 			Containers: []metricsv1beta1.ContainerMetrics{{Name: "main", Usage: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("50m"), corev1.ResourceMemory: resource.MustParse("100Mi")}}},
@@ -197,9 +197,9 @@ func TestRisksReadTheHistoryFromVictoriaMetrics(t *testing.T) {
 	server := buildMockServerWithK8s()
 	main := func(pod string) map[string]string { return map[string]string{"pod": pod, "container": "main"} }
 	vm := fakeVictoriaMetrics(t, map[string][]map[string]any{
-		"container_cpu_cfs_throttled_periods_total":        {sample(main("api-7d9f8c-aaaaa"), "0.4")},
-		"kube_pod_container_status_last_terminated_reason": {sample(main("api-7d9f8c-aaaaa"), "1"), sample(main("api-7d9f8c-bbbbb"), "1"), sample(main("stranger-0"), "1")},
-		"kube_pod_container_status_restarts_total":         {sample(main("api-7d9f8c-aaaaa"), "2"), sample(main("api-7d9f8c-bbbbb"), "1"), sample(main("stranger-0"), "9")},
+		"container_cpu_cfs_throttled_periods_total":        {sample(main("api-7d9f8c-xxxxx"), "0.4")},
+		"kube_pod_container_status_last_terminated_reason": {sample(main("api-7d9f8c-xxxxx"), "1"), sample(main("api-7d9f8c-zzzzz"), "1"), sample(main("stranger-0"), "1")},
+		"kube_pod_container_status_restarts_total":         {sample(main("api-7d9f8c-xxxxx"), "2"), sample(main("api-7d9f8c-zzzzz"), "1"), sample(main("stranger-0"), "9")},
 		"kube_pod_status_reason":                           {sample(map[string]string{"pod": "api-7d9f8c-ccccc"}, "1"), sample(map[string]string{"pod": "stranger-0"}, "1")},
 	})
 	api := riskDeployment("api")
