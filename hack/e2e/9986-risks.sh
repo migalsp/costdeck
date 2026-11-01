@@ -33,10 +33,10 @@ risk_hpa_limited() { [[ "$(kubectl get hpa risk-hpa -n smoke-risks -o jsonpath='
 log "Workloads in trouble: an OOM kill, a crash loop and an HPA at its maximum, from real pods"
 start_victoriametrics 7
 new_namespace smoke-risks
-risk_workload risk-oom 'dd if=/dev/zero of=/dev/null bs=48M count=1; sleep 3600' '{requests: {cpu: 10m, memory: 16Mi}, limits: {memory: 16Mi}}'
+risk_workload risk-oom 'exec dd if=/dev/zero of=/dev/null bs=48M count=1' '{requests: {cpu: 10m, memory: 16Mi}, limits: {memory: 16Mi}}'
 risk_workload risk-crash 'echo starting; exit 3' '{requests: {cpu: 10m, memory: 16Mi}}'
 risk_workload risk-hpa 'while :; do :; done' '{requests: {cpu: 10m, memory: 16Mi}, limits: {cpu: 100m}}'
-risk_workload risk-throttled 'sleep 3600' '{requests: {cpu: 500m, memory: 64Mi}, limits: {cpu: 200m, memory: 256Mi}}'
+risk_workload risk-throttled 'sleep 3600' '{requests: {cpu: 200m, memory: 64Mi}, limits: {cpu: 200m, memory: 256Mi}}'
 risk_workload risk-near 'sleep 3600' '{requests: {cpu: 10m, memory: 256Mi}, limits: {memory: 256Mi}}'
 risk_workload risk-evicted 'sleep 3600' '{requests: {cpu: 10m, memory: 64Mi}}'
 kubectl apply -f - >/dev/null <<'YAML' || fail "applying the HorizontalPodAutoscaler"
