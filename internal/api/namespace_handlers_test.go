@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -175,5 +176,39 @@ func TestServePodsMatchesTheDashboardShape(t *testing.T) {
 	}
 	if m := byName["migrate"]; m.Cost != nil || m.Status != "Succeeded" {
 		t.Errorf("a finished pod costs nothing: %+v", m)
+	}
+}
+
+func TestWorkloadsOfProtectedNamespacesCannotBeChanged(t *testing.T) {
+	t.Setenv("POD_NAMESPACE", operatorNamespace)
+	server := buildMockServerWithK8s()
+	ctx := context.Background()
+	optedOut := &corev1.Namespace{Name: "legacy", Labels: map[string]string{finopsv1.OptOutLabel: "off"}}
+	createAll(t, server.Client, optedOut,
+		&finopsv1.CostDeckConfig{Name: "default", Namespace: operatorNamespace, Spec: finopsv1.CostDeckConfigSpec{Rightsizing: finopsv1.RightsizingConfig{Apply: true}}})
+	for _, ns := range []string{"kube-system", operatorNamespace, "legacy", "shop"} {
+		createAll(t, server.Client, &appsv1.Deployment{Name: "app", Namespace: ns, Spec: appsv1.DeploymentSpec{Replicas: new(int32(2))}})
+	}
+	replicas := func(ns string) int32 {
+		var d appsv1.Deployment
+		if err := server.Client.Get(ctx, client.ObjectKey{Namespace: ns, Name: "app"}, &d); err != nil {
+			t.Fatal(err)
+		}
+		return *d.Spec.Replicas
+	}
+	for ns, why := range map[string]string{"kube-system": "belongs to Kubernetes", operatorNamespace: "runs Cost Deck itself", "legacy": "labelled costdeck.io/schedule=off"} {
+		rr := send(t, server, http.MethodPut, "/api/namespaces/"+ns+"/workloads/app", `{"kind":"Deployment","replicas":0}`)
+		if rr.Code != http.StatusForbidden || !strings.Contains(rr.Body.String(), why) {
+			t.Errorf("scaling app in %s = %d %s, want 403 saying it %s", ns, rr.Code, rr.Body.String(), why)
+		}
+		if got := replicas(ns); got != 2 {
+			t.Errorf("app in %s has %d replicas, want it untouched", ns, got)
+		}
+		if rr := send(t, server, http.MethodPost, "/api/namespaces/"+ns+"/rightsizing/apply", `{"kind":"Deployment","name":"app"}`); rr.Code != http.StatusForbidden {
+			t.Errorf("applying advice in %s = %d %s, want 403", ns, rr.Code, rr.Body.String())
+		}
+	}
+	if rr := send(t, server, http.MethodPut, "/api/namespaces/shop/workloads/app", `{"kind":"Deployment","replicas":0}`); rr.Code != http.StatusOK || replicas("shop") != 0 {
+		t.Errorf("scaling app in shop = %d %s, want it scaled", rr.Code, rr.Body.String())
 	}
 }

@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
+
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -20,6 +22,7 @@ import (
 	"github.com/migalsp/costdeck-operator/internal/netguard"
 	"github.com/migalsp/costdeck-operator/internal/optimize"
 	"github.com/migalsp/costdeck-operator/internal/rightsizing"
+	"github.com/migalsp/costdeck-operator/internal/scaling"
 )
 
 const gitTokenSecret = "costdeck-git-credentials"
@@ -74,6 +77,9 @@ func (s *Server) applyRightsizing(ctx context.Context, ns string, ref workloadRe
 	if !cfg.Spec.Rightsizing.Apply {
 		return finopsv1.WorkloadOptimization{}, errApplyOff
 	}
+	if err := s.changeableNamespace(ctx, ns); err != nil {
+		return finopsv1.WorkloadOptimization{}, err
+	}
 	advice, _, err := s.adviceFor(ctx, ns, ref)
 	if err != nil {
 		return finopsv1.WorkloadOptimization{}, err
@@ -83,6 +89,24 @@ func (s *Server) applyRightsizing(ctx context.Context, ns string, ref workloadRe
 		s.recommendationCache.drop(ns, ref.Kind, ref.Name)
 	}
 	return rec, err
+}
+
+type errProtectedNamespace struct{ namespace, reason string }
+
+func (e errProtectedNamespace) Error() string {
+	return fmt.Sprintf("workloads in %s are not changed through Cost Deck: %s", e.namespace, e.reason)
+}
+
+func (s *Server) changeableNamespace(ctx context.Context, name string) error {
+	ns := &corev1.Namespace{}
+	if err := s.Client.Get(ctx, client.ObjectKey{Name: name}, ns); err != nil && !apierrors.IsNotFound(err) {
+		return err
+	}
+	ns.Name = name
+	if reason := scaling.ProtectedNamespace(ns, config.OperatorNamespace()); reason != "" {
+		return errProtectedNamespace{namespace: name, reason: reason}
+	}
+	return nil
 }
 
 type errPolicyForbids struct{ policy, workload string }
@@ -235,7 +259,7 @@ func writeRightsizing(w http.ResponseWriter, rec finopsv1.WorkloadOptimization, 
 		writeJSON(w, http.StatusOK, rec)
 	case errors.As(err, &forbids) && forbids.policy == policiesUnreadable:
 		writeError(w, http.StatusServiceUnavailable, err.Error())
-	case errors.Is(err, errApplyOff), errors.Is(err, errNoRepository), errors.As(err, new(errPolicyForbids)):
+	case errors.Is(err, errApplyOff), errors.Is(err, errNoRepository), errors.As(err, new(errPolicyForbids)), errors.As(err, new(errProtectedNamespace)):
 		writeError(w, http.StatusForbidden, err.Error())
 	case errors.Is(err, optimize.ErrManagedByGitOps):
 		writeError(w, http.StatusConflict, err.Error())

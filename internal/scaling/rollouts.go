@@ -185,5 +185,5 @@ func (e *Engine) SetWorkloadReplicas(ctx context.Context, ns, kind, name string,
 			return err
 		}
 	}
-	return e.Client.Patch(ctx, obj, patch)
+	return e.Client.Patch(ctx, obj, patch, client.FieldOwner(FieldManager))
 }

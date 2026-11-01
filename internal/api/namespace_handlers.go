@@ -301,6 +301,10 @@ func (s *Server) serveWorkloadAction(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "replicas must not be negative")
 		return
 	}
+	if err := s.changeableNamespace(ctx, key.Namespace); err != nil {
+		writeRightsizing(w, finopsv1.WorkloadOptimization{}, err)
+		return
+	}
 
 	err := (&scaling.Engine{Client: s.Client}).SetWorkloadReplicas(ctx, key.Namespace, req.Kind, key.Name, req.Replicas)
 	switch {
