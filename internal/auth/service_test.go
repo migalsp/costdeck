@@ -415,3 +415,72 @@ func TestCrossSiteGuardCoversEveryWriteMethod(t *testing.T) {
 		}
 	}
 }
+
+func TestAuthDisabledEndsOnceOIDCIsOn(t *testing.T) {
+	cfg := &finopsv1.CostDeckConfig{Name: "default", Namespace: "costdeck", Spec: finopsv1.CostDeckConfigSpec{Auth: finopsv1.AuthConfig{
+		OIDC: &finopsv1.OIDCConfig{Enabled: true, IssuerURL: "https://sso.example.com/realms/acme", ClientID: "costdeck"},
+	}}}
+	svc := newTestService(t, cfg)
+	svc.disabled = true
+	if svc.Disabled(context.Background()) {
+		t.Fatal("COSTDECK_AUTH_DISABLED left over from an evaluation still makes everyone an admin after OIDC was switched on")
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/thing", nil)
+	rr := httptest.NewRecorder()
+	protectedMux(svc).ServeHTTP(rr, req)
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("GET /api/thing without a session = %d, want 401", rr.Code)
+	}
+}
+
+func TestPublicWritesRefuseOtherSites(t *testing.T) {
+	svc := newTestService(t)
+	reached := false
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/login", svc.HandleLogin)
+	mux.HandleFunc("POST /api/logout", svc.HandleLogout)
+	mux.HandleFunc("POST /api/webex/webhook", func(w http.ResponseWriter, r *http.Request) { reached = true })
+	h := svc.Middleware(mux)
+	send := func(path, site string) int {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"username":"admin","password":"pw"}`))
+		req.RemoteAddr = uniqueRemoteAddr()
+		req.Header.Set("Content-Type", "text/plain")
+		if site != "" {
+			req.Header.Set("Sec-Fetch-Site", site)
+		}
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		return rr.Code
+	}
+	for _, path := range []string{"/api/login", "/api/logout"} {
+		if code := send(path, "cross-site"); code != http.StatusForbidden {
+			t.Errorf("cross-site POST %s = %d, want 403 (login CSRF)", path, code)
+		}
+	}
+	if code := send("/api/login", "same-origin"); code != http.StatusOK {
+		t.Errorf("same-origin login = %d, want 200", code)
+	}
+	if code := send("/api/webex/webhook", "cross-site"); code == http.StatusForbidden || !reached {
+		t.Errorf("the Webex webhook = %d, reached %v; it is called by Webex, not a browser, and checks its own signature", code, reached)
+	}
+}
+
+func TestFailedLoginsAreLimitedPerAccountWhateverTheAddress(t *testing.T) {
+	svc := newTestService(t)
+	h := protectedMux(svc)
+	for range loginBurst {
+		if rr := postJSON(h, "/api/login", map[string]string{"username": "admin", "password": "guess"}); rr.Code != http.StatusUnauthorized {
+			t.Fatalf("a wrong password = %d, want 401", rr.Code)
+		}
+	}
+	rr := postJSON(h, "/api/login", map[string]string{"username": "ADMIN ", "password": "pw"})
+	if rr.Code != http.StatusTooManyRequests || sessionCookieOf(rr) != nil {
+		t.Errorf("after %d failures from %d addresses the account still takes attempts: %d", loginBurst, loginBurst, rr.Code)
+	}
+	if _, err := svc.Users.Create(context.Background(), User{Username: "anna", Role: RoleViewer}, "anna's long password", false, ""); err != nil {
+		t.Fatal(err)
+	}
+	if rr := postJSON(h, "/api/login", map[string]string{"username": "anna", "password": "anna's long password"}); rr.Code != http.StatusOK {
+		t.Errorf("another account = %d, want 200: the limit is per account", rr.Code)
+	}
+}
