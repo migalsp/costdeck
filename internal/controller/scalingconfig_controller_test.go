@@ -18,11 +18,25 @@ package controller
 
 import (
 	"context"
+	"slices"
+	"testing"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/tools/events"
+	"k8s.io/utils/ptr"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
@@ -76,5 +90,155 @@ var _ = Describe("ScalingConfig Controller", func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 		})
+	})
+})
+
+var _ = Describe("ScalingConfig and ScalingGroup claiming the same namespace", func() {
+	const claimed = "claimed-ns"
+	ctx := context.Background()
+	configKey := types.NamespacedName{Name: "claimed-config", Namespace: "default"}
+	groupKey := types.NamespacedName{Name: "claimer", Namespace: "default"}
+	webKey := types.NamespacedName{Name: "web", Namespace: claimed}
+
+	var (
+		configReconciler *ScalingConfigReconciler
+		groupReconciler  *ScalingGroupReconciler
+	)
+
+	reconcileConfig := func() (reconcile.Result, *finopsv1.ScalingConfig) {
+		GinkgoHelper()
+		res, err := configReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: configKey})
+		Expect(err).NotTo(HaveOccurred())
+		c := &finopsv1.ScalingConfig{}
+		Expect(k8sClient.Get(ctx, configKey, c)).To(Succeed())
+		return res, c
+	}
+	reconcileGroup := func() {
+		GinkgoHelper()
+		_, err := groupReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: groupKey})
+		Expect(err).NotTo(HaveOccurred())
+	}
+	webReplicas := func() int32 {
+		GinkgoHelper()
+		d := &appsv1.Deployment{}
+		Expect(k8sClient.Get(ctx, webKey, d)).To(Succeed())
+		return ptr.Deref(d.Spec.Replicas, -1)
+	}
+
+	BeforeEach(func() {
+		GinkgoT().Setenv("POD_NAMESPACE", "default")
+		Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, &corev1.Namespace{Name: claimed}))).To(Succeed())
+		labels := map[string]string{"app": "web"}
+		Expect(k8sClient.Create(ctx, &appsv1.Deployment{
+			Name: webKey.Name, Namespace: webKey.Namespace,
+			Spec: appsv1.DeploymentSpec{
+				Replicas: ptr.To[int32](2),
+				Selector: &metav1.LabelSelector{MatchLabels: labels},
+				Template: corev1.PodTemplateSpec{
+					ObjectMeta: metav1.ObjectMeta{Labels: labels},
+					Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "web", Image: "busybox"}}},
+				},
+			},
+		})).To(Succeed())
+		Expect(k8sClient.Create(ctx, &finopsv1.ScalingConfig{
+			Name: configKey.Name, Namespace: configKey.Namespace,
+			Spec: finopsv1.ScalingConfigSpec{TargetNamespace: claimed, Active: new(false)},
+		})).To(Succeed())
+		configReconciler = &ScalingConfigReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), Engine: &scaling.Engine{Client: k8sClient}}
+		groupReconciler = &ScalingGroupReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), Engine: &scaling.Engine{Client: k8sClient}, Recorder: events.NewFakeRecorder(100)}
+	})
+
+	AfterEach(func() {
+		Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, &finopsv1.ScalingGroup{Name: groupKey.Name, Namespace: groupKey.Namespace}))).To(Succeed())
+		Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, &finopsv1.ScalingConfig{Name: configKey.Name, Namespace: configKey.Namespace}))).To(Succeed())
+		Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, &appsv1.Deployment{Name: webKey.Name, Namespace: webKey.Namespace}))).To(Succeed())
+	})
+
+	It("lets the group win, keeps the config inert while it does, and hands the namespace back afterwards", func() {
+		By("scaling the namespace down on its own while no group lists it")
+		_, c := reconcileConfig()
+		Expect(webReplicas()).To(BeZero())
+		Expect(c.Status.Mode).To(Equal(scaling.ModeManualDown))
+
+		By("standing back once a group lists the namespace")
+		Expect(k8sClient.Create(ctx, &finopsv1.ScalingGroup{
+			Name: groupKey.Name, Namespace: groupKey.Namespace,
+			Spec: finopsv1.ScalingGroupSpec{Category: "Team", Namespaces: []string{claimed}},
+		})).To(Succeed())
+		res, c := reconcileConfig()
+		Expect(res.RequeueAfter).To(Equal(5 * time.Minute))
+		Expect(c.Status.Phase).To(Equal(PhaseOverriddenByGroup))
+		Expect(c.Status.ScheduleStatus).To(Equal(finopsv1.ScheduleStatus{}), "the config no longer explains a desired state it does not drive")
+		ready := meta.FindStatusCondition(c.Status.Conditions, ConditionReady)
+		Expect(ready).NotTo(BeNil())
+		Expect(ready.Status).To(Equal(metav1.ConditionFalse))
+		Expect(ready.Reason).To(Equal(PhaseOverriddenByGroup))
+		Expect(ready.Message).To(ContainSubstring("Namespace claimed-ns is managed by ScalingGroup claimer"))
+		Expect(c.Status.LastAction.IsZero()).To(BeFalse())
+
+		By("not fighting the group, which brings the workloads back")
+		reconcileGroup()
+		Expect(webReplicas()).To(Equal(int32(2)))
+		_, again := reconcileConfig()
+		Expect(webReplicas()).To(Equal(int32(2)))
+		Expect(again.ResourceVersion).To(Equal(c.ResourceVersion), "an overridden config is not rewritten on every reconcile")
+
+		By("taking the namespace back when the group lets go of it")
+		Expect(k8sClient.Delete(ctx, &finopsv1.ScalingGroup{Name: groupKey.Name, Namespace: groupKey.Namespace})).To(Succeed())
+		_, c = reconcileConfig()
+		Expect(c.Status.Phase).NotTo(Equal(PhaseOverriddenByGroup))
+		Expect(c.Status.Mode).To(Equal(scaling.ModeManualDown))
+		Expect(webReplicas()).To(BeZero())
+	})
+
+	It("counts a namespace a group selects by label as claimed", func() {
+		n := &corev1.Namespace{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: claimed}, n)).To(Succeed())
+		n.Labels = map[string]string{"claim-test": "selected"}
+		Expect(k8sClient.Update(ctx, n)).To(Succeed())
+		DeferCleanup(func() {
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: claimed}, n)).To(Succeed())
+			n.Labels = nil
+			Expect(k8sClient.Update(ctx, n)).To(Succeed())
+		})
+		Expect(k8sClient.Create(ctx, &finopsv1.ScalingGroup{
+			Name: groupKey.Name, Namespace: groupKey.Namespace,
+			Spec: finopsv1.ScalingGroupSpec{Category: "Team", NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"claim-test": "selected"}}},
+		})).To(Succeed())
+		reconcileGroup()
+
+		_, c := reconcileConfig()
+		Expect(c.Status.Phase).To(Equal(PhaseOverriddenByGroup))
+		Expect(webReplicas()).To(Equal(int32(2)), "the config must not scale a namespace the group selected")
+	})
+})
+
+func TestConfigsWithCalendarsMapsSettingsChangesToConfigsThatUseCalendars(t *testing.T) {
+	s := runtime.NewScheme()
+	utilruntime.Must(clientgoscheme.AddToScheme(s))
+	utilruntime.Must(finopsv1.AddToScheme(s))
+	config := func(name, ns string, calendars ...string) *finopsv1.ScalingConfig {
+		return &finopsv1.ScalingConfig{Name: name, Namespace: ns, Spec: finopsv1.ScalingConfigSpec{TargetNamespace: name, Calendars: calendars}}
+	}
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(
+		config("uses-holidays", "costdeck", "company"),
+		config("plain-schedule", "costdeck"),
+		config("other-install", "team-b", "company"),
+	).Build()
+	r := &ScalingConfigReconciler{Client: c}
+
+	got := r.configsWithCalendars(context.Background(), &finopsv1.CostDeckConfig{Name: "default", Namespace: "costdeck"})
+	want := []reconcile.Request{{Name: "uses-holidays", Namespace: "costdeck"}}
+	if !slices.Equal(got, want) {
+		t.Errorf("configsWithCalendars() = %v, want %v", got, want)
+	}
+}
+
+var _ = Describe("ScalingConfig controller setup", func() {
+	It("builds a scaling engine on the reconciler's client when none is given", func() {
+		r := &ScalingConfigReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+		Expect(r.SetupWithManager(newTestManager())).To(Succeed())
+		Expect(r.Engine).NotTo(BeNil())
+		Expect(r.Engine.Client).To(BeIdenticalTo(r.Client))
 	})
 })

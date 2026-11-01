@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 
@@ -136,5 +137,54 @@ func TestOIDCOnTheLoginPage(t *testing.T) {
 	}
 	if _, err := svc.OIDC.TestOIDC(t.Context(), finopsv1.OIDCConfig{IssuerURL: f.srv.URL + "/nowhere", ClientID: f.client}); err == nil {
 		t.Error("an issuer without discovery passed the test")
+	}
+}
+
+func TestOIDCRejectsIDTokensFromTheWrongIssuerAudienceOrTime(t *testing.T) {
+	f := newFakeEntra(t)
+	for name, claims := range map[string]map[string]any{
+		"another issuer":          {"iss": "https://idp.evil.example/realms/costdeck"},
+		"audience of another app": {"aud": "someone-else"},
+		"expired":                 {"exp": time.Now().Add(-time.Hour).Unix()},
+	} {
+		f.claims = claims
+		svc := oidcService(t, f, finopsv1.OIDCConfig{})
+		rr, _ := oidcSignIn(t, svc, f, false)
+		if !strings.Contains(rr.Header().Get("Location"), "sso_error=invalid_token") || sessionFrom(t, svc, rr) != nil {
+			t.Errorf("%s: callback -> %q, want invalid_token without a session", name, rr.Header().Get("Location"))
+		}
+	}
+}
+
+func TestOIDCCallbackNeedsAFreshTransactionFromThisServer(t *testing.T) {
+	f := newFakeEntra(t)
+	svc := oidcService(t, f, finopsv1.OIDCConfig{})
+	other, err := NewSessions([]byte(strings.Repeat("o", 32)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookieFor := func(s *Sessions, expires time.Time) *http.Cookie {
+		token, err := s.Sign(oidcTxn{State: "st", Nonce: "n", Verifier: "v", ReturnTo: "/budgets", ExpiresAt: expires.Unix()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return &http.Cookie{Name: oidcTxnCookie, Value: token}
+	}
+	for name, cookie := range map[string]*http.Cookie{
+		"no transaction":                       nil,
+		"expired transaction":                  cookieFor(svc.Sessions, time.Now().Add(-time.Second)),
+		"transaction signed by another server": cookieFor(other, time.Now().Add(time.Minute)),
+		"Entra transaction cookie":             {Name: txnCookie, Value: cookieFor(svc.Sessions, time.Now().Add(time.Minute)).Value},
+	} {
+		req := httptest.NewRequest(http.MethodGet, OIDCCallbackPath+"?code=c&state=st", nil)
+		if cookie != nil {
+			req.AddCookie(cookie)
+		}
+		rr := httptest.NewRecorder()
+		svc.OIDC.HandleCallback(rr, req)
+		loc, _ := url.Parse(rr.Header().Get("Location"))
+		if loc.Path != "/" || loc.Query().Get("sso_error") != "sign_in_expired" || sessionFrom(t, svc, rr) != nil {
+			t.Errorf("%s: callback -> %q, want sign_in_expired on / without a session", name, loc)
+		}
 	}
 }
