@@ -21,55 +21,6 @@ import (
 	"github.com/migalsp/costdeck-operator/internal/config"
 )
 
-func TestCalculatePodRequestsCountsLikeTheScheduler(t *testing.T) {
-	for _, tc := range []struct {
-		name      string
-		pod       corev1.PodSpec
-		cpu, mem  string
-		explained string
-	}{
-		{"containers add up", corev1.PodSpec{Containers: []corev1.Container{{Resources: requests("500m", "1Gi")}, {Resources: requests("250m", "512Mi")}}},
-			"750m", "1536Mi", "the requests of all containers are summed"},
-		{"a larger init container wins", corev1.PodSpec{
-			InitContainers: []corev1.Container{{Resources: requests("2", "256Mi")}},
-			Containers:     []corev1.Container{{Resources: requests("500m", "1Gi")}}},
-			"2", "1Gi", "init containers run alone, so only the largest counts, per resource"},
-		{"no requests", corev1.PodSpec{Containers: []corev1.Container{{Name: "app"}}}, "0", "0", "a container without requests reserves nothing"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			cpu, mem := calculatePodRequests(corev1.Pod{Spec: tc.pod})
-			if cpu.Cmp(resource.MustParse(tc.cpu)) != 0 || mem.Cmp(resource.MustParse(tc.mem)) != 0 {
-				t.Errorf("requests = %s / %s, want %s / %s: %s", cpu, mem, tc.cpu, tc.mem, tc.explained)
-			}
-		})
-	}
-}
-
-func TestCalculatePodRequestsAddsNativeSidecars(t *testing.T) {
-	t.Skip("bug: calculatePodRequests treats an init container with restartPolicy Always (a native sidecar) as a one-off init container; the scheduler adds its requests to the pod's")
-	always := corev1.ContainerRestartPolicyAlways
-	pod := corev1.Pod{Spec: corev1.PodSpec{
-		InitContainers: []corev1.Container{{Name: "mesh-proxy", RestartPolicy: &always, Resources: requests("500m", "256Mi")}},
-		Containers:     []corev1.Container{{Name: "app", Resources: requests("1", "1Gi")}},
-	}}
-	cpu, mem := calculatePodRequests(pod)
-	if cpu.Cmp(resource.MustParse("1500m")) != 0 || mem.Cmp(resource.MustParse("1280Mi")) != 0 {
-		t.Errorf("requests = %s / %s, want 1500m / 1280Mi: the sidecar runs next to the app for the pod's whole life", cpu, mem)
-	}
-}
-
-func TestCalculatePodRequestsIncludesPodOverhead(t *testing.T) {
-	t.Skip("bug: calculatePodRequests ignores spec.overhead (RuntimeClass), which the scheduler and finops.PodRequests both count")
-	pod := corev1.Pod{Spec: corev1.PodSpec{
-		Overhead:   corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("250m"), corev1.ResourceMemory: resource.MustParse("160Mi")},
-		Containers: []corev1.Container{{Name: "app", Resources: requests("1", "1Gi")}},
-	}}
-	cpu, mem := calculatePodRequests(pod)
-	if cpu.Cmp(resource.MustParse("1250m")) != 0 || mem.Cmp(resource.MustParse("1184Mi")) != 0 {
-		t.Errorf("requests = %s / %s, want 1250m / 1184Mi", cpu, mem)
-	}
-}
-
 func holdLease(t *testing.T, server *Server, holder string) {
 	t.Helper()
 	lease := &coordinationv1.Lease{Name: config.LeaderElectionID, Namespace: operatorNamespace, Spec: coordinationv1.LeaseSpec{HolderIdentity: &holder}}

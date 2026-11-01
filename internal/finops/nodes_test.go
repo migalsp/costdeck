@@ -153,3 +153,42 @@ func TestPodRequestsCountsInitContainersAndOverhead(t *testing.T) {
 		t.Errorf("got cpu %s mem %s", cpu.String(), mem.String())
 	}
 }
+
+func TestPodRequestsCountLikeTheScheduler(t *testing.T) {
+	req := func(cpu, mem string) corev1.ResourceRequirements {
+		return corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse(cpu), corev1.ResourceMemory: resource.MustParse(mem)}}
+	}
+	always := corev1.ContainerRestartPolicyAlways
+	for _, tc := range []struct {
+		name     string
+		pod      corev1.PodSpec
+		cpu, mem string
+	}{
+		{"containers add up", corev1.PodSpec{Containers: []corev1.Container{{Name: "a", Resources: req("500m", "1Gi")}, {Name: "b", Resources: req("250m", "512Mi")}}},
+			"750m", "1536Mi"},
+		{"a larger init container wins per resource", corev1.PodSpec{
+			InitContainers: []corev1.Container{{Name: "migrate", Resources: req("2", "256Mi")}},
+			Containers:     []corev1.Container{{Name: "app", Resources: req("500m", "1Gi")}}},
+			"2", "1Gi"},
+		{"a native sidecar runs next to the app for the pod's whole life", corev1.PodSpec{
+			InitContainers: []corev1.Container{{Name: "mesh-proxy", RestartPolicy: &always, Resources: req("500m", "256Mi")}},
+			Containers:     []corev1.Container{{Name: "app", Resources: req("1", "1Gi")}}},
+			"1500m", "1280Mi"},
+		{"an init container after a sidecar runs next to it", corev1.PodSpec{
+			InitContainers: []corev1.Container{{Name: "mesh-proxy", RestartPolicy: &always, Resources: req("500m", "256Mi")}, {Name: "migrate", Resources: req("2", "128Mi")}},
+			Containers:     []corev1.Container{{Name: "app", Resources: req("1", "1Gi")}}},
+			"2500m", "1280Mi"},
+		{"the RuntimeClass overhead is added", corev1.PodSpec{
+			Overhead:   corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("250m"), corev1.ResourceMemory: resource.MustParse("160Mi")},
+			Containers: []corev1.Container{{Name: "app", Resources: req("1", "1Gi")}}},
+			"1250m", "1184Mi"},
+		{"no requests reserve nothing", corev1.PodSpec{Containers: []corev1.Container{{Name: "app"}}}, "0", "0"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cpu, mem := PodRequests(&corev1.Pod{Spec: tc.pod})
+			if cpu.Cmp(resource.MustParse(tc.cpu)) != 0 || mem.Cmp(resource.MustParse(tc.mem)) != 0 {
+				t.Errorf("requests = %s / %s, want %s / %s", cpu.String(), mem.String(), tc.cpu, tc.mem)
+			}
+		})
+	}
+}

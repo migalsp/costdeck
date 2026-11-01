@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 
+	resourcehelper "k8s.io/component-helpers/resource"
+
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -497,21 +499,9 @@ func (e *Engine) KeptDown(ctx context.Context, ns string, originals map[string]i
 	return cpu, mem, nil
 }
 
-// PodRequests returns the effective requests of a pod spec: the sum of its containers,
-// or its largest init container when that is bigger, as the scheduler counts them.
+// PodRequests returns the effective requests of a pod spec as the scheduler counts them:
+// containers, native sidecars, init containers and the RuntimeClass overhead.
 func PodRequests(spec corev1.PodSpec) (resource.Quantity, resource.Quantity) {
-	var cpu, mem resource.Quantity
-	for _, c := range spec.Containers {
-		cpu.Add(*c.Resources.Requests.Cpu())
-		mem.Add(*c.Resources.Requests.Memory())
-	}
-	for _, c := range spec.InitContainers {
-		if q := c.Resources.Requests.Cpu(); q.Cmp(cpu) > 0 {
-			cpu = q.DeepCopy()
-		}
-		if q := c.Resources.Requests.Memory(); q.Cmp(mem) > 0 {
-			mem = q.DeepCopy()
-		}
-	}
-	return cpu, mem
+	reqs := resourcehelper.PodRequests(&corev1.Pod{Spec: spec}, resourcehelper.PodResourcesOptions{})
+	return reqs.Cpu().DeepCopy(), reqs.Memory().DeepCopy()
 }

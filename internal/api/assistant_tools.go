@@ -24,6 +24,7 @@ import (
 	"github.com/migalsp/costdeck-operator/internal/ai"
 	"github.com/migalsp/costdeck-operator/internal/auth"
 	"github.com/migalsp/costdeck-operator/internal/config"
+	"github.com/migalsp/costdeck-operator/internal/finops"
 	"github.com/migalsp/costdeck-operator/internal/pricing"
 	"github.com/migalsp/costdeck-operator/internal/rightsizing"
 	"github.com/migalsp/costdeck-operator/internal/scaling"
@@ -494,9 +495,9 @@ func (s *Server) toolClusterOverview(ctx context.Context) (string, error) {
 			continue
 		}
 		running++
-		cpu, mem := calculatePodRequests(p)
-		reqCPU.Add(*cpu)
-		reqMem.Add(*mem)
+		cpu, mem := finops.PodRequests(&p)
+		reqCPU.Add(cpu)
+		reqMem.Add(mem)
 	}
 	rates := s.costRates(ctx)
 	return toJSON(map[string]any{
