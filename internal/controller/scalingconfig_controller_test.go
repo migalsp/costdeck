@@ -294,6 +294,22 @@ var _ = Describe("ScalingConfig letting go of its namespace", func() {
 		Expect(replicas()).To(Equal(int32(2)))
 	})
 
+	It("keeps scheduling its namespace while a group only dry-runs over it", func() {
+		trial := &finopsv1.ScalingGroup{Name: "config-letgo-trial", Namespace: "default",
+			Spec: finopsv1.ScalingGroupSpec{Category: "Trial", Namespaces: []string{ns}, DryRun: true, Active: new(true)}}
+		Expect(k8sClient.Create(ctx, trial)).To(Succeed())
+		DeferCleanup(func() { Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, trial))).To(Succeed()) })
+
+		c := &finopsv1.ScalingConfig{}
+		Expect(k8sClient.Get(ctx, key, c)).To(Succeed())
+		c.Spec.Active = new(true)
+		Expect(k8sClient.Update(ctx, c)).To(Succeed())
+		reconcileConfig()
+		Expect(k8sClient.Get(ctx, key, c)).To(Succeed())
+		Expect(c.Status.Phase).NotTo(Equal(PhaseOverriddenByGroup))
+		Expect(replicas()).To(Equal(int32(2)))
+	})
+
 	It("refuses to move to another namespace, which would strand this one at zero", func() {
 		c := &finopsv1.ScalingConfig{}
 		Expect(k8sClient.Get(ctx, key, c)).To(Succeed())

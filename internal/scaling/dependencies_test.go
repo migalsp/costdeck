@@ -180,3 +180,24 @@ func TestPlanGroupsNamespaceConflicts(t *testing.T) {
 		t.Errorf("the older group keeps its namespaces, got conflicts %v", plans["older"].ConflictingNamespaces)
 	}
 }
+
+func TestPlanGroupsDryRunGroupsOwnNothing(t *testing.T) {
+	t0 := time.Now()
+	groups := []finopsv1.ScalingGroup{
+		group("trial", t0, finopsv1.ScalingGroupSpec{Namespaces: []string{"shared", "only-trial"}, DryRun: true}, PhaseDryRun),
+		group("live", t0.Add(time.Hour), finopsv1.ScalingGroupSpec{Namespaces: []string{"shared"}}, ""),
+	}
+	plans := (&Engine{}).PlanGroups(t0, groups, nil)
+	if got := plans["live"].ConflictingNamespaces; len(got) != 0 {
+		t.Errorf("an older dry run took %v from the live group", got)
+	}
+	if got := plans["trial"].ConflictingNamespaces; !slices.Equal(got, []string{"shared"}) {
+		t.Errorf("trial conflicts = %v, want [shared]: the live group owns it", got)
+	}
+	if owner := plans["trial"].NamespaceOwners["shared"]; owner != "live" {
+		t.Errorf("owner of shared = %q, want live", owner)
+	}
+	if _, conflicting := plans["trial"].NamespaceOwners["only-trial"]; conflicting {
+		t.Error("a namespace nobody else schedules is not a conflict for the dry run")
+	}
+}

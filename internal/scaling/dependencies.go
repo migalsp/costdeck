@@ -121,7 +121,7 @@ func (e *Engine) PlanGroups(now time.Time, groups []finopsv1.ScalingGroup, calen
 			}
 		}
 		for _, ns := range g.Members() {
-			if owner := owners[ns]; owner != name {
+			if owner, owned := owners[ns]; owned && owner != name {
 				plan.ConflictingNamespaces = append(plan.ConflictingNamespaces, ns)
 				if plan.NamespaceOwners == nil {
 					plan.NamespaceOwners = map[string]string{}
@@ -156,11 +156,14 @@ func (e *Engine) ownDecision(now time.Time, g *finopsv1.ScalingGroup, calendars 
 
 // namespaceOwners assigns every namespace to exactly one group, so a namespace shared by
 // mistake is scaled once: a group that lists it by name wins over one whose selector
-// matched it, and among equals the oldest group (ties broken by name).
+// matched it, and among equals the oldest group (ties broken by name). A group in a dry
+// run changes nothing, so it owns nothing either.
 func namespaceOwners(groups []finopsv1.ScalingGroup) map[string]string {
-	ordered := make([]*finopsv1.ScalingGroup, len(groups))
+	ordered := make([]*finopsv1.ScalingGroup, 0, len(groups))
 	for i := range groups {
-		ordered[i] = &groups[i]
+		if !groups[i].Spec.DryRun {
+			ordered = append(ordered, &groups[i])
+		}
 	}
 	sort.SliceStable(ordered, func(i, j int) bool {
 		ti, tj := ordered[i].CreationTimestamp, ordered[j].CreationTimestamp
