@@ -252,6 +252,7 @@ func (r *Reaper) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	leftForLater := 0
 	for _, e := range plan {
 		expired := !now.Before(e.ExpiresAt)
 		switch {
@@ -264,11 +265,9 @@ func (r *Reaper) Run(ctx context.Context) error {
 				return err
 			}
 			log.Info("Postponed the deletion of a namespace nobody was warned about", "namespace", e.Namespace, "expiresAt", late.ExpiresAt)
+		case expired && budget <= 0:
+			leftForLater++
 		case expired:
-			if budget <= 0 {
-				log.Info("Left expired namespaces for later", "limitPerHour", maxDeletionsAnHour)
-				return nil
-			}
 			if err := r.delete(ctx, e, now); err != nil {
 				return err
 			}
@@ -279,6 +278,9 @@ func (r *Reaper) Run(ctx context.Context) error {
 				return err
 			}
 		}
+	}
+	if leftForLater > 0 {
+		log.Info("Left expired namespaces for later", "count", leftForLater, "limitPerHour", maxDeletionsAnHour)
 	}
 	return nil
 }

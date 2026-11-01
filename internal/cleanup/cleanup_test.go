@@ -223,6 +223,32 @@ func TestReaperDeletesAFewAtATime(t *testing.T) {
 	}
 }
 
+func TestReaperStillWarnsOnceTheHourlyDeletionsAreUsedUp(t *testing.T) {
+	ctx := context.Background()
+	objs := make([]client.Object, 0, 23)
+	for i := range 22 {
+		objs = append(objs, namespace(fmt.Sprintf("pr-%02d", i), 8*day, preview(), warnedOld))
+	}
+	objs = append(objs, namespace("pr-soon", 7*day-12*time.Hour, preview(), nil))
+	c := setup(t, ttl(false), objs...)
+	s := &sent{}
+	if err := (&Reaper{Client: c, Notify: s, Now: func() time.Time { return now }}).Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var soon corev1.Namespace
+	if err := c.Get(ctx, client.ObjectKey{Name: "pr-soon"}, &soon); err != nil {
+		t.Fatal(err)
+	}
+	if soon.Annotations[WarnedAnnotation] == "" {
+		t.Error("a namespace that expires in 12 hours was not warned because the hour's 20 deletions were used up")
+	}
+	var list corev1.NamespaceList
+	_ = c.List(ctx, &list)
+	if len(list.Items) != 3 {
+		t.Errorf("%d namespaces left, want the 2 expired ones over the limit and pr-soon", len(list.Items))
+	}
+}
+
 func TestReaperWarnsBeforeDeletingANamespaceThatExpiredUnwarned(t *testing.T) {
 	ctx := context.Background()
 	c := setup(t, ttl(false), namespace("pr-old", 8*day, preview(), nil))
