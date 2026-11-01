@@ -71,8 +71,9 @@ var _ = Describe("Pausing GitOps", func() {
 		objects = []client.Object{
 			gitops("Kustomization", "apps", map[string]any{"spec": map[string]any{"suspend": false},
 				"status": map[string]any{"inventory": map[string]any{"entries": []any{map[string]any{"id": ns + "_kustomized_apps_Deployment"}}}}}),
-			gitops("HelmRelease", "web", map[string]any{"spec": map[string]any{}}),
-			gitops("Application", "shop", map[string]any{"spec": map[string]any{"syncPolicy": map[string]any{"automated": map[string]any{"selfHeal": true}}}}),
+			gitops("HelmRelease", "web", map[string]any{"spec": map[string]any{"targetNamespace": ns}}),
+			gitops("Application", "shop", map[string]any{"spec": map[string]any{"syncPolicy": map[string]any{"automated": map[string]any{"selfHeal": true}}},
+				"status": map[string]any{"resources": []any{map[string]any{"group": "apps", "kind": "Deployment", "namespace": ns, "name": "argo"}}}}),
 			preview,
 			gitops("Kustomization", "platform", map[string]any{"spec": map[string]any{},
 				"status": map[string]any{"inventory": map[string]any{"entries": []any{map[string]any{"id": ns + "_shared_apps_Deployment"}, map[string]any{"id": "monitoring_grafana_apps_Deployment"}}}}}),

@@ -84,12 +84,24 @@ func byArgoApp(instance string) map[string]string {
 	return map[string]string{argoTrackingAnnotation: instance + ":apps/Deployment:shop-dev/x"}
 }
 
-func inventory(namespaces ...string) map[string]any {
-	entries := make([]any, 0, len(namespaces))
-	for _, ns := range namespaces {
-		entries = append(entries, map[string]any{"id": ns + "_x_apps_Deployment"})
+func inventoryOf(ids ...string) map[string]any {
+	entries := make([]any, 0, len(ids))
+	for _, id := range ids {
+		entries = append(entries, map[string]any{"id": id})
 	}
 	return map[string]any{"inventory": map[string]any{"entries": entries}}
+}
+
+func argoResource(group, kind, ns, name string) map[string]any {
+	return map[string]any{"group": group, "kind": kind, "namespace": ns, "name": name}
+}
+
+func listing(resources ...map[string]any) []any {
+	out := make([]any, 0, len(resources))
+	for _, r := range resources {
+		out = append(out, r)
+	}
+	return out
 }
 
 func gitOpsEngine(t *testing.T, funcs *interceptor.Funcs, objs ...client.Object) *Engine {
@@ -124,12 +136,17 @@ func TestGitOpsOwnersListsEachManagerOnceInOrder(t *testing.T) {
 func TestPauseAndResumeGitOpsRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	apps := gitOpsResource(kustomizationGVK, "flux-system", "apps", map[string]any{
-		"spec": map[string]any{"interval": "10m", "path": "./shop"}, "status": inventory("shop-dev", ""),
+		"spec":   map[string]any{"interval": "10m", "path": "./shop"},
+		"status": inventoryOf("shop-dev_api_apps_Deployment", "shop-dev_api__Service", "_shop-dev__Namespace"),
 	})
 	web := gitOpsResource(helmReleaseGVK, "shop-dev", "web", map[string]any{"spec": map[string]any{"interval": "5m"}})
-	shop := gitOpsResource(applicationGVK, "argocd", "shop", map[string]any{"spec": map[string]any{
-		"project": "default", "syncPolicy": map[string]any{"automated": map[string]any{"prune": true, "selfHeal": true}},
-	}})
+	shop := gitOpsResource(applicationGVK, "argocd", "shop", map[string]any{
+		"spec": map[string]any{
+			"project": "default", "destination": map[string]any{"namespace": "shop-dev"},
+			"syncPolicy": map[string]any{"automated": map[string]any{"prune": true, "selfHeal": true}},
+		},
+		"status": map[string]any{"resources": listing(argoResource("apps", "Deployment", "shop-dev", "ui"), argoResource("", "Service", "shop-dev", "ui"))},
+	})
 	e := gitOpsEngine(t, nil, apps, web, shop,
 		managedDeployment("api", byKustomization("apps"), nil),
 		managedDeployment("web", map[string]string{fluxHelmReleaseName: "web", fluxHelmReleaseNS: "shop-dev"}, nil),
@@ -183,12 +200,14 @@ func TestPauseAndResumeGitOpsRoundTrip(t *testing.T) {
 func TestPauseGitOpsLeavesWhatItMustNotPause(t *testing.T) {
 	ctx := context.Background()
 	shared := gitOpsResource(kustomizationGVK, "flux-system", "shared", map[string]any{
-		"spec": map[string]any{"interval": "10m"}, "status": inventory("shop-dev", "shop-qa", "monitoring", "monitoring"),
+		"spec":   map[string]any{"interval": "10m"},
+		"status": inventoryOf("shop-dev_a1_apps_Deployment", "shop-qa_x_apps_Deployment", "monitoring_x_apps_Deployment", "monitoring_y__Service"),
 	})
 	manual := gitOpsResource(kustomizationGVK, "flux-system", "manual", map[string]any{"spec": map[string]any{"suspend": true}})
-	fromSet := gitOpsResource(applicationGVK, "argocd", "from-set", map[string]any{"spec": map[string]any{
-		"syncPolicy": map[string]any{"automated": map[string]any{"selfHeal": true}},
-	}})
+	fromSet := gitOpsResource(applicationGVK, "argocd", "from-set", map[string]any{
+		"spec":   map[string]any{"syncPolicy": map[string]any{"automated": map[string]any{"selfHeal": true}}},
+		"status": map[string]any{"resources": listing(argoResource("apps", "Deployment", "shop-dev", "a3"))},
+	})
 	fromSet.SetOwnerReferences([]metav1.OwnerReference{{APIVersion: "argoproj.io/v1alpha1", Kind: "ApplicationSet", Name: "team-apps", UID: "u1"}})
 	manualSync := gitOpsResource(applicationGVK, "argocd", "manual-sync", map[string]any{"spec": map[string]any{"project": "default"}})
 	e := gitOpsEngine(t, nil, shared, manual, fromSet, manualSync,
@@ -238,7 +257,7 @@ func TestPauseGitOpsLeavesWhatItMustNotPause(t *testing.T) {
 }
 
 func TestPauseGitOpsExplainsWhyItCouldNotPause(t *testing.T) {
-	apps := gitOpsResource(kustomizationGVK, "flux-system", "apps", map[string]any{"spec": map[string]any{}})
+	apps := gitOpsResource(kustomizationGVK, "flux-system", "apps", map[string]any{"spec": map[string]any{}, "status": inventoryOf("shop-dev_api_apps_Deployment")})
 	web := gitOpsResource(helmReleaseGVK, "shop-dev", "web", map[string]any{"spec": map[string]any{}})
 	shop := gitOpsResource(applicationGVK, "argocd", "shop", map[string]any{"spec": map[string]any{
 		"syncPolicy": map[string]any{"automated": map[string]any{"selfHeal": true}},
@@ -326,14 +345,14 @@ func TestGitOpsReturnsWorkloadListingErrors(t *testing.T) {
 }
 
 func TestPauseGitOpsPicksTheApplicationInArgoCDsOwnNamespace(t *testing.T) {
-	t.Skip("bug: gitOpsObject takes the first Application with the tracked name in any namespace, not the one in Argo CD's namespace (gitops.go:198)")
-	selfHealing := func(ns string) *unstructured.Unstructured {
-		return gitOpsResource(applicationGVK, ns, "shop", map[string]any{"spec": map[string]any{
-			"syncPolicy": map[string]any{"automated": map[string]any{"selfHeal": true}},
-		}})
+	selfHealing := func(ns string, resources []any) *unstructured.Unstructured {
+		return gitOpsResource(applicationGVK, ns, "shop", map[string]any{
+			"spec":   map[string]any{"syncPolicy": map[string]any{"automated": map[string]any{"selfHeal": true}}},
+			"status": map[string]any{"resources": resources},
+		})
 	}
-	controlPlane := selfHealing("gitops")
-	otherTeam := selfHealing("apps-team")
+	controlPlane := selfHealing("gitops", listing(argoResource("apps", "Deployment", "shop-dev", "ui")))
+	otherTeam := selfHealing("apps-team", listing(argoResource("apps", "Deployment", "apps-team", "ui")))
 	e := gitOpsEngine(t, nil, controlPlane, otherTeam, managedDeployment("ui", nil, byArgoApp("shop")))
 
 	if notes, err := e.PauseGitOps(context.Background(), "shop-dev", nil, []string{"shop-dev"}); err != nil || len(notes) != 0 {
@@ -346,5 +365,84 @@ func TestPauseGitOpsPicksTheApplicationInArgoCDsOwnNamespace(t *testing.T) {
 	if selfHeal(controlPlane) || !selfHeal(otherTeam) {
 		t.Errorf("self-heal gitops/shop=%v apps-team/shop=%v; the workload tracked as \"shop\" belongs to the Application in Argo CD's namespace, "+
 			"apps-team/shop would be tracked as \"apps-team_shop\"", selfHeal(controlPlane), selfHeal(otherTeam))
+	}
+}
+
+func TestPauseGitOpsRefusesObjectsAWorkloadOnlyClaims(t *testing.T) {
+	ctx := context.Background()
+	selfHeal := map[string]any{"syncPolicy": map[string]any{"automated": map[string]any{"selfHeal": true}}}
+	security := gitOpsResource(applicationGVK, "argocd", "platform-security", map[string]any{
+		"spec":   map[string]any{"destination": map[string]any{"namespace": "security"}, "syncPolicy": selfHeal["syncPolicy"]},
+		"status": map[string]any{"resources": listing(argoResource("apps", "Deployment", "security", "falco"))},
+	})
+	wide := gitOpsResource(applicationGVK, "argocd", "wide", map[string]any{
+		"spec": map[string]any{"syncPolicy": selfHeal["syncPolicy"]},
+		"status": map[string]any{"resources": listing(
+			argoResource("apps", "Deployment", "shop-dev", "w1"),
+			argoResource("apps", "Deployment", "monitoring", "grafana"),
+			argoResource("rbac.authorization.k8s.io", "ClusterRole", "", "wide-reader"),
+		)},
+	})
+	ingress := gitOpsResource(helmReleaseGVK, "ingress", "ingress-nginx", map[string]any{"spec": map[string]any{"targetNamespace": "ingress"}})
+	crds := gitOpsResource(kustomizationGVK, "flux-system", "crds", map[string]any{
+		"spec":   map[string]any{},
+		"status": inventoryOf("shop-dev_k1_apps_Deployment", "_widgets.example.com_apiextensions.k8s.io_CustomResourceDefinition"),
+	})
+	silent := gitOpsResource(kustomizationGVK, "flux-system", "silent", map[string]any{
+		"spec": map[string]any{}, "status": inventoryOf("shop-dev_other_apps_Deployment"),
+	})
+	e := gitOpsEngine(t, nil, security, wide, ingress, crds, silent,
+		managedDeployment("forged", nil, byArgoApp("platform-security")),
+		managedDeployment("w1", nil, byArgoApp("wide")),
+		managedDeployment("h1", map[string]string{fluxHelmReleaseName: "ingress-nginx", fluxHelmReleaseNS: "ingress"}, nil),
+		managedDeployment("k1", byKustomization("crds"), nil),
+		managedDeployment("k2", byKustomization("silent"), nil),
+	)
+	watched := []*unstructured.Unstructured{security, wide, ingress, crds, silent}
+	versions := func() []string {
+		out := make([]string, 0, len(watched))
+		for _, u := range watched {
+			out = append(out, reread(t, e, u).GetResourceVersion())
+		}
+		return out
+	}
+	before := versions()
+
+	notes, err := e.PauseGitOps(ctx, "shop-dev", nil, []string{"shop-dev"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"Argo CD application platform-security does not list Deployment forged among its resources, so it is left running",
+		"Argo CD application wide also manages cluster-scoped resources, monitoring, so it is left running",
+		"Flux HelmRelease ingress/ingress-nginx installs into ingress, not shop-dev, so it is left running",
+		"Flux Kustomization flux-system/crds also applies to cluster-scoped resources, so it is left running",
+		"Flux Kustomization flux-system/silent does not list Deployment k2 in its inventory, so it is left running",
+	}
+	if !slices.Equal(notes, want) {
+		t.Errorf("notes =\n%s\nwant\n%s", strings.Join(notes, "\n"), strings.Join(want, "\n"))
+	}
+	if after := versions(); !slices.Equal(after, before) {
+		t.Errorf("objects the workloads only claimed were paused: %v -> %v", before, after)
+	}
+}
+
+func TestResumeGitOpsLeavesASyncSwitchedToManualAlone(t *testing.T) {
+	shop := gitOpsResource(applicationGVK, "argocd", "shop", map[string]any{
+		"spec":   map[string]any{"syncPolicy": map[string]any{"syncOptions": []any{"CreateNamespace=true"}}},
+		"status": map[string]any{"resources": listing(argoResource("apps", "Deployment", "shop-dev", "ui"))},
+	})
+	shop.SetAnnotations(map[string]string{GitOpsPausedAnnotation: pausedSelfHeal})
+	e := gitOpsEngine(t, nil, shop, managedDeployment("ui", nil, byArgoApp("shop")))
+
+	if err := e.ResumeGitOps(context.Background(), "shop-dev", nil); err != nil {
+		t.Fatal(err)
+	}
+	after := reread(t, e, shop)
+	if _, found, _ := unstructured.NestedFieldNoCopy(after.Object, "spec", "syncPolicy", "automated"); found {
+		t.Error("resuming turned automated sync back on, though someone switched it to manual during the pause")
+	}
+	if after.GetAnnotations()[GitOpsPausedAnnotation] != "" {
+		t.Error("the pause marker was left behind")
 	}
 }
