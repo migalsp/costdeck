@@ -705,7 +705,7 @@ func (r *ScalingGroupReconciler) rulesFor(ctx context.Context, group *finopsv1.S
 	originals := namespaceOriginals(group, ns)
 	return namespaceRules{
 		exclusions: exclusions, sequence: sequence, hibernate: hibernate, originals: originals,
-		scaledByThem: group.Status.Phase != scaling.PhaseScaledUp || len(originals) > 0,
+		scaledByThem: phaseReachedByScaling(group.Status.Phase) || len(originals) > 0,
 	}
 }
 
@@ -772,7 +772,7 @@ func (r *ScalingGroupReconciler) releaseEverything(ctx context.Context, group *f
 			errs = append(errs, err)
 		}
 	}
-	if group.Status.Phase != scaling.PhaseScaledUp {
+	if phaseReachedByScaling(group.Status.Phase) {
 		for _, target := range group.Spec.ExternalTargets {
 			if _, err := r.reconcileExternalTarget(ctx, group, "ext:"+target.Identifier, true); err != nil {
 				errs = append(errs, fmt.Errorf("start %s: %w", target.Identifier, err))

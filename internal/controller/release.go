@@ -43,6 +43,10 @@ func releaseNamespace(ctx context.Context, engine *scaling.Engine, ns string, ru
 	return nil
 }
 
+func phaseReachedByScaling(phase string) bool {
+	return phase != "" && phase != scaling.PhaseScaledUp && phase != scaling.PhaseDryRun
+}
+
 func syncSleepGrantAfterRelease(ctx context.Context, engine *scaling.Engine) error {
 	if err := engine.SyncSleepGrant(ctx, SleepBackend()); err != nil && !apierrors.IsForbidden(err) {
 		return fmt.Errorf("update the sleep page ReferenceGrant: %w", err)

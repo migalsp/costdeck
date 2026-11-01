@@ -238,7 +238,7 @@ func (r *ScalingConfigReconciler) releaseEverything(ctx context.Context, config 
 		sequence:     config.Spec.Sequence,
 		hibernate:    config.Spec.Hibernate,
 		originals:    config.Status.OriginalReplicas,
-		scaledByThem: config.Status.Phase != scaling.PhaseScaledUp || len(config.Status.OriginalReplicas) > 0,
+		scaledByThem: phaseReachedByScaling(config.Status.Phase) || len(config.Status.OriginalReplicas) > 0,
 	})
 	if err != nil {
 		return err

@@ -310,6 +310,41 @@ var _ = Describe("ScalingConfig letting go of its namespace", func() {
 		Expect(replicas()).To(Equal(int32(2)))
 	})
 
+	It("leaves a workload stopped by hand at zero when a dry-run config is deleted", func() {
+		const trialNS = "config-letgo-dry"
+		trialKey := types.NamespacedName{Name: "config-letgo-dry", Namespace: "default"}
+		Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, &corev1.Namespace{Name: trialNS}))).To(Succeed())
+		labels := map[string]string{"app": "app"}
+		stopped := &appsv1.Deployment{
+			Name: "app", Namespace: trialNS,
+			Spec: appsv1.DeploymentSpec{
+				Replicas: ptr.To[int32](0), Selector: &metav1.LabelSelector{MatchLabels: labels},
+				Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: labels}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "app", Image: "busybox"}}}},
+			},
+		}
+		Expect(k8sClient.Create(ctx, stopped)).To(Succeed())
+		DeferCleanup(func() { Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, stopped))).To(Succeed()) })
+		Expect(k8sClient.Create(ctx, &finopsv1.ScalingConfig{
+			Name: trialKey.Name, Namespace: trialKey.Namespace,
+			Spec: finopsv1.ScalingConfigSpec{TargetNamespace: trialNS, Active: new(false), DryRun: true},
+		})).To(Succeed())
+		_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: trialKey})
+		Expect(err).NotTo(HaveOccurred())
+		c := &finopsv1.ScalingConfig{}
+		Expect(k8sClient.Get(ctx, trialKey, c)).To(Succeed())
+		Expect(c.Status.Phase).To(Equal(scaling.PhaseDryRun))
+
+		Expect(rawClient.Delete(ctx, &finopsv1.ScalingConfig{Name: trialKey.Name, Namespace: trialKey.Namespace})).To(Succeed())
+		_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: trialKey})
+		Expect(err).NotTo(HaveOccurred())
+		Eventually(func() error {
+			return k8sClient.Get(ctx, trialKey, &finopsv1.ScalingConfig{})
+		}).Should(Satisfy(errors.IsNotFound))
+		d := &appsv1.Deployment{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "app", Namespace: trialNS}, d)).To(Succeed())
+		Expect(ptr.Deref(d.Spec.Replicas, -1)).To(BeZero(), "the dry run never stopped it")
+	})
+
 	It("refuses to move to another namespace, which would strand this one at zero", func() {
 		c := &finopsv1.ScalingConfig{}
 		Expect(k8sClient.Get(ctx, key, c)).To(Succeed())
