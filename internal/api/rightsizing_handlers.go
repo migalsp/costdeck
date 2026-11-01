@@ -192,7 +192,7 @@ func (s *Server) workloadRequests(ctx context.Context, ns string) ([]rightsizing
 		policy := policyFor(policies.Items, wl.Template.Labels)
 		replicas := wl.Replicas
 		runtimeOverride := cmp.Or(wl.Annotations[jvm.RuntimeAnnotation], wl.Template.Annotations[jvm.RuntimeAnnotation])
-		w := toWorkload(wl.Kind, wl.Name, &replicas, wl.Template.Spec, runtimeOverride)
+		w := toWorkload(wl.Kind, wl.Name, &replicas, wl.Template, runtimeOverride)
 		switch {
 		case !policiesRead:
 			w.Policy = &rightsizing.Policy{Name: policiesUnreadable, ApplyForbidden: true}
@@ -239,12 +239,15 @@ func toPolicy(p finopsv1.RightsizingPolicy) *rightsizing.Policy {
 	}
 }
 
-func toWorkload(kind, name string, replicas *int32, spec corev1.PodSpec, runtimeOverride string) rightsizing.Workload {
+const defaultContainerAnnotation = "kubectl.kubernetes.io/default-container"
+
+func toWorkload(kind, name string, replicas *int32, template corev1.PodTemplateSpec, runtimeOverride string) rightsizing.Workload {
 	w := rightsizing.Workload{Kind: kind, Name: name, Replicas: 1}
 	if replicas != nil {
 		w.Replicas = *replicas
 	}
-	for _, c := range spec.Containers {
+	mainContainer := mainContainerName(template)
+	for _, c := range template.Spec.Containers {
 		container := rightsizing.Container{
 			Name:          c.Name,
 			CPURequest:    c.Resources.Requests.Cpu().AsApproximateFloat64(),
@@ -252,12 +255,27 @@ func toWorkload(kind, name string, replicas *int32, spec corev1.PodSpec, runtime
 			MemoryLimit:   c.Resources.Limits.Memory().AsApproximateFloat64(),
 			CPULimit:      c.Resources.Limits.Cpu().AsApproximateFloat64(),
 		}
-		if java, ok := jvm.Inspect(c, runtimeOverride); ok {
+		override := runtimeOverride
+		if override == jvm.RuntimeJava && c.Name != mainContainer {
+			override = ""
+		}
+		if java, ok := jvm.Inspect(c, override); ok {
 			container.Java = &java
 		}
 		w.Containers = append(w.Containers, container)
 	}
 	return w
+}
+
+func mainContainerName(template corev1.PodTemplateSpec) string {
+	named := template.Annotations[defaultContainerAnnotation]
+	if slices.ContainsFunc(template.Spec.Containers, func(c corev1.Container) bool { return c.Name == named }) {
+		return named
+	}
+	if len(template.Spec.Containers) == 0 {
+		return ""
+	}
+	return template.Spec.Containers[0].Name
 }
 
 func hasJavaAdvice(r rightsizing.Report) bool {

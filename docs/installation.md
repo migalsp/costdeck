@@ -833,7 +833,9 @@ the operator reads RightsizingPolicies cluster-wide.
 A container counts as Java when it runs `java`, sets `JAVA_TOOL_OPTIONS`,
 `JDK_JAVA_OPTIONS`, `JAVA_OPTS` or `_JAVA_OPTIONS`, uses a JVM image, or has JVM heap
 series in VictoriaMetrics. Set the annotation `costdeck.io/runtime` to `java` or `none` on
-the workload or its pod template to correct that. Cost Deck reads the JVM flags in the order
+the workload or its pod template to correct that: `none` covers every container of the pod,
+`java` only its main one, the container `kubectl.kubernetes.io/default-container` names or
+else the first, so sidecars keep their own detection. Cost Deck reads the JVM flags in the order
 the JVM applies them and works out the heap the JVM takes under the container limit. The
 memory advice then never goes below that heap plus native memory, and the namespace page
 lists what is wrong with the setup: a heap at the limit, the default 25% heap, no limit, a
