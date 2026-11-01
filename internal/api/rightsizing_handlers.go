@@ -10,6 +10,8 @@ import (
 	"sync"
 	"time"
 
+	"k8s.io/apimachinery/pkg/api/meta"
+
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -24,6 +26,8 @@ import (
 )
 
 // +kubebuilder:rbac:groups=finops.costdeck.io,resources=rightsizingpolicies,verbs=get;list
+
+const policiesUnreadable = "right-sizing policies could not be read"
 
 // recommendationTTL bounds how often one namespace's demand is recomputed. A two-week p95
 // barely moves in minutes, and every dashboard card asks for its namespace.
@@ -153,7 +157,9 @@ func (s *Server) recommendations(ctx context.Context, ns string) (rightsizing.Re
 	case heapErr != nil:
 		report.Warning = "JVM heap metrics could not be read, so Java advice rests on the JVM flags alone: " + heapErr.Error()
 	}
-	s.recommendationCache.put(ns, report)
+	if !slices.ContainsFunc(workloads, func(w rightsizing.Workload) bool { return w.Policy != nil && w.Policy.Name == policiesUnreadable }) {
+		s.recommendationCache.put(ns, report)
+	}
 	return report, nil
 }
 
@@ -165,8 +171,10 @@ func (s *Server) workloadRequests(ctx context.Context, ns string) ([]rightsizing
 		return nil, err
 	}
 	var policies finopsv1.RightsizingPolicyList
-	if err := s.Client.List(ctx, &policies, client.InNamespace(ns)); err != nil {
-		logf.FromContext(ctx).V(1).Info("Could not read right-sizing policies", "namespace", ns, "err", err.Error())
+	policiesRead := true
+	if err := s.Client.List(ctx, &policies, client.InNamespace(ns)); err != nil && !meta.IsNoMatchError(err) {
+		policiesRead = false
+		logf.FromContext(ctx).Error(err, "Could not read right-sizing policies; advice cannot be applied until they can be", "namespace", ns)
 	}
 	slices.SortStableFunc(policies.Items, func(a, b finopsv1.RightsizingPolicy) int {
 		return cmp.Or(a.CreationTimestamp.Compare(b.CreationTimestamp.Time), cmp.Compare(a.Name, b.Name))
@@ -180,7 +188,10 @@ func (s *Server) workloadRequests(ctx context.Context, ns string) ([]rightsizing
 		replicas := wl.Replicas
 		runtimeOverride := cmp.Or(wl.Annotations[jvm.RuntimeAnnotation], wl.Template.Annotations[jvm.RuntimeAnnotation])
 		w := toWorkload(wl.Kind, wl.Name, &replicas, wl.Template.Spec, runtimeOverride)
-		if policy != nil {
+		switch {
+		case !policiesRead:
+			w.Policy = &rightsizing.Policy{Name: policiesUnreadable, ApplyForbidden: true}
+		case policy != nil:
 			w.Policy = toPolicy(*policy)
 		}
 		out = append(out, w)

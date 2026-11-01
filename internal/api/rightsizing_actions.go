@@ -88,6 +88,9 @@ func (s *Server) applyRightsizing(ctx context.Context, ns string, ref workloadRe
 type errPolicyForbids struct{ policy, workload string }
 
 func (e errPolicyForbids) Error() string {
+	if e.policy == policiesUnreadable {
+		return fmt.Sprintf("the right-sizing policies of this namespace could not be read, so advice for %s cannot be applied or proposed until they can", e.workload)
+	}
 	return fmt.Sprintf("the RightsizingPolicy %s forbids applying advice to %s or proposing it", e.policy, e.workload)
 }
 
@@ -226,9 +229,12 @@ func firstOf(v ...string) string {
 }
 
 func writeRightsizing(w http.ResponseWriter, rec finopsv1.WorkloadOptimization, err error) {
+	var forbids errPolicyForbids
 	switch {
 	case err == nil:
 		writeJSON(w, http.StatusOK, rec)
+	case errors.As(err, &forbids) && forbids.policy == policiesUnreadable:
+		writeError(w, http.StatusServiceUnavailable, err.Error())
 	case errors.Is(err, errApplyOff), errors.Is(err, errNoRepository), errors.As(err, new(errPolicyForbids)):
 		writeError(w, http.StatusForbidden, err.Error())
 	case errors.Is(err, optimize.ErrManagedByGitOps):
