@@ -28,7 +28,7 @@ describe('Operator health', () => {
       on('GET', '/api/operator/health', () => json(healthy)),
       on('GET', '/api/operator/logs', () => logs('I1031 Reconciled ScalingGroup team-a\nI1031 Collected the cost ledger')),
     )
-    render(<OperatorHealth />)
+    render(<AuthContext.Provider value={asRole('admin')}><OperatorHealth /></AuthContext.Provider>)
     expect(await screen.findByRole('heading', { name: 'Replicas' })).toBeTruthy()
     expect(tile('Status').textContent).toContain('Healthy')
     expect(tile('Status').textContent).toContain('No errors in the recent logs')
@@ -57,7 +57,7 @@ describe('Operator health', () => {
       on('GET', '/api/operator/health', () => json({ current: { ...sample, replicas: [replicas[0]] }, history: [] })),
       on('GET', '/api/operator/logs', () => logs('I1031 fine\n{"level":"error","msg":"Reconciler error"}\nE1031 ERROR could not list nodes\nI1031 no terrors here')),
     )
-    render(<OperatorHealth />)
+    render(<AuthContext.Provider value={asRole('admin')}><OperatorHealth /></AuthContext.Provider>)
     expect(await screen.findByText('2 errors')).toBeTruthy()
     expect(tile('Status').textContent).toContain('In the last log lines below')
     expect(screen.getByText('One replica: the dashboard is down while it restarts.')).toBeTruthy()
@@ -69,25 +69,39 @@ describe('Operator health', () => {
       on('GET', '/api/operator/health', () => { calls++; return json({ current: { ...sample, managedNamespaces: calls }, history: [] }) }),
       on('GET', '/api/operator/logs', () => logs('')),
     )
-    render(<OperatorHealth />)
+    render(<AuthContext.Provider value={asRole('admin')}><OperatorHealth /></AuthContext.Provider>)
     expect(await screen.findByText('No logs available...')).toBeTruthy()
     expect(tile('Namespaces tracked').textContent).toContain('1')
     await userEvent.setup().click(screen.getByRole('button', { name: 'Refresh' }))
     await waitFor(() => expect(tile('Namespaces tracked').textContent).toContain('2'))
   })
 
-  it.skip('bug: a viewer is shown the 403 answer of the logs endpoint as logs and counted as an error', async () => {
-    mockFetch(
+  it('a viewer neither fetches the operator logs nor counts a refusal as an error', async () => {
+    const fetchMock = mockFetch(
       on('GET', '/api/operator/health', () => json({ current: sample, history: [] })),
       on('GET', '/api/operator/logs', () => json({ error: 'This action needs the operator role; you are signed in as viewer.' }, 403)),
     )
     render(<AuthContext.Provider value={asRole('viewer')}><OperatorHealth /></AuthContext.Provider>)
     expect(await screen.findByText('Cost Deck Health')).toBeTruthy()
+    expect(screen.getByText('Reading the logs needs the operator role.')).toBeTruthy()
     expect(screen.queryByText(/"error"/)).toBeNull()
     expect(tile('Status').textContent).toContain('Healthy')
+    expect(tile('Status').textContent).toContain('Logs not checked')
+    expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith('/api/operator/logs'))).toBe(false)
   })
 
-  it.skip('bug: the download of the full logs is offered to operators and viewers, whom the server refuses', async () => {
+  it('shows why the logs could not be read instead of showing the refusal as logs', async () => {
+    mockFetch(
+      on('GET', '/api/operator/health', () => json({ current: sample, history: [] })),
+      on('GET', '/api/operator/logs', () => json({ error: 'The leader pod is not reachable.' }, 502)),
+    )
+    render(<AuthContext.Provider value={asRole('operator')}><OperatorHealth /></AuthContext.Provider>)
+    expect(await screen.findByText('The leader pod is not reachable.')).toBeTruthy()
+    expect(tile('Status').textContent).toContain('Healthy')
+    expect(tile('Status').textContent).toContain('Logs not checked')
+  })
+
+  it('offers the full log download to admins only', async () => {
     mockFetch(
       on('GET', '/api/operator/health', () => json({ current: sample, history: [] })),
       on('GET', '/api/operator/logs', () => logs('I1031 fine')),
@@ -95,5 +109,15 @@ describe('Operator health', () => {
     render(<AuthContext.Provider value={asRole('operator')}><OperatorHealth /></AuthContext.Provider>)
     expect(await screen.findByText(/I1031 fine/)).toBeTruthy()
     expect(screen.queryByRole('link', { name: 'Download full logs' })).toBeNull()
+  })
+
+  it('gives admins the full log download', async () => {
+    mockFetch(
+      on('GET', '/api/operator/health', () => json({ current: sample, history: [] })),
+      on('GET', '/api/operator/logs', () => logs('I1031 fine')),
+    )
+    render(<AuthContext.Provider value={asRole('admin')}><OperatorHealth /></AuthContext.Provider>)
+    expect(await screen.findByText(/I1031 fine/)).toBeTruthy()
+    expect(screen.getByRole('link', { name: 'Download full logs' }).getAttribute('href')).toBe('/api/operator/logs/download')
   })
 })
