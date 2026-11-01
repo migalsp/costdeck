@@ -1,0 +1,24 @@
+{
+  "comment": "Which hibernate rules the operator accepts, shared by internal/scaling (hibernate_shared_test.go) and the dashboard (ui/src/lib/hibernate.test.ts), so the editor flags exactly what saving would refuse.",
+  "cases": [
+    { "name": "a preset alone", "rule": { "preset": "cnpg" }, "valid": true },
+    { "name": "a preset with names and globs", "rule": { "preset": "strimzi", "names": ["connect-*", "mm2-[a-c]", "bridge?"] }, "valid": true },
+    { "name": "a preset with fields of its own", "rule": { "preset": "cnpg", "kind": "Cluster" }, "valid": false },
+    { "name": "a generic rule", "rule": { "apiVersion": "redis.example.com/v1", "kind": "Redis", "replicasField": "spec.replicas", "readyField": "status.readyReplicas" }, "valid": true },
+    { "name": "field keys with characters JSON allows", "rule": { "apiVersion": "redis.example.com/v1", "kind": "Redis", "replicasField": "spec.number of instances", "readyField": "status.ready:count" }, "valid": true },
+    { "name": "a field under metadata", "rule": { "apiVersion": "redis.example.com/v1", "kind": "Redis", "replicasField": "metadata.replicas" }, "valid": false },
+    { "name": "a field of one key", "rule": { "apiVersion": "redis.example.com/v1", "kind": "Redis", "replicasField": "replicas" }, "valid": false },
+    { "name": "a field with an empty key", "rule": { "apiVersion": "redis.example.com/v1", "kind": "Redis", "replicasField": "spec..replicas" }, "valid": false },
+    { "name": "a core apiVersion", "rule": { "apiVersion": "v1", "kind": "Pod", "replicasField": "spec.replicas" }, "valid": false },
+    { "name": "an apiVersion with two slashes", "rule": { "apiVersion": "a/b/c", "kind": "X", "replicasField": "spec.replicas" }, "valid": false },
+    { "name": "a generic rule without a kind", "rule": { "apiVersion": "redis.example.com/v1", "replicasField": "spec.replicas" }, "valid": false },
+    { "name": "an unclosed class", "rule": { "preset": "cnpg", "names": ["pg-["] }, "valid": false },
+    { "name": "an empty class", "rule": { "preset": "cnpg", "names": ["pg-[]"] }, "valid": false },
+    { "name": "a range without an end", "rule": { "preset": "cnpg", "names": ["pg-[a-]"] }, "valid": false },
+    { "name": "a range without a start", "rule": { "preset": "cnpg", "names": ["pg-[-a]"] }, "valid": false },
+    { "name": "a negated class with nothing in it", "rule": { "preset": "cnpg", "names": ["pg-[^]"] }, "valid": false },
+    { "name": "a trailing backslash", "rule": { "preset": "cnpg", "names": ["pg\\"] }, "valid": false },
+    { "name": "an escaped bracket in a class", "rule": { "preset": "cnpg", "names": ["pg-[\\]]"] }, "valid": true },
+    { "name": "a negated class", "rule": { "preset": "cnpg", "names": ["pg-[^0-9]"] }, "valid": true }
+  ]
+}
