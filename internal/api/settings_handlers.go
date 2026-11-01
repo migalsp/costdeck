@@ -196,6 +196,8 @@ type VictoriaMetricsSettingsResponse struct {
 // SettingsUpdateRequest is the payload for updating settings.
 // Credentials are provided here in plaintext and then stored in K8s Secrets.
 type SettingsUpdateRequest struct {
+	secrets []pendingSecret
+
 	DashboardURL *string                    `json:"dashboardUrl,omitempty"`
 	NamespaceTTL *NamespaceTTLUpdateRequest `json:"namespaceTTL,omitempty"`
 	Allocation   *AllocationUpdateRequest   `json:"allocation,omitempty"`
@@ -582,10 +584,14 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		if cfg, err = s.getOrCreateDefaultConfig(ctx); err != nil {
 			return err
 		}
+		req.secrets = nil
 		for _, apply := range appliers {
 			if err := apply(ctx, cfg, &req); err != nil {
 				return err
 			}
+		}
+		if err := s.writeSecrets(ctx, req.secrets); err != nil {
+			return err
 		}
 		return s.Client.Update(ctx, cfg)
 	})
@@ -637,7 +643,8 @@ func (s *Server) applyAWSSettings(ctx context.Context, cfg *finopsv1.CostDeckCon
 	if aws.Region != "" {
 		data["AWS_REGION"] = []byte(aws.Region)
 	}
-	return s.storeCredentials(ctx, "costdeck-aws-credentials", data, &aws.SecretRef)
+	s.storeCredentials(req, "costdeck-aws-credentials", data, &aws.SecretRef)
+	return nil
 }
 
 func (s *Server) applyAzureSettings(ctx context.Context, cfg *finopsv1.CostDeckConfig, req *SettingsUpdateRequest) error {
@@ -673,11 +680,12 @@ func (s *Server) applyAzureSettings(ctx context.Context, cfg *finopsv1.CostDeckC
 	if azure.TenantID == "" {
 		return badRequestf("a tenant ID is required with a client secret")
 	}
-	return s.storeCredentials(ctx, "costdeck-azure-credentials", map[string][]byte{
+	s.storeCredentials(req, "costdeck-azure-credentials", map[string][]byte{
 		"AZURE_CLIENT_ID":     []byte(azureReq.ClientID),
 		"AZURE_CLIENT_SECRET": []byte(azureReq.ClientSecret),
 		"AZURE_TENANT_ID":     []byte(azureReq.TenantID),
 	}, &azure.SecretRef)
+	return nil
 }
 
 func (s *Server) applyGCPSettings(ctx context.Context, cfg *finopsv1.CostDeckConfig, req *SettingsUpdateRequest) error {
@@ -707,9 +715,10 @@ func (s *Server) applyGCPSettings(ctx context.Context, cfg *finopsv1.CostDeckCon
 	if err := validServiceAccountKey(gcpReq.ServiceAccountJSON); err != nil {
 		return badRequest{err}
 	}
-	return s.storeCredentials(ctx, "costdeck-gcp-credentials", map[string][]byte{
+	s.storeCredentials(req, "costdeck-gcp-credentials", map[string][]byte{
 		"credentials.json": []byte(gcpReq.ServiceAccountJSON),
 	}, &gcp.SecretRef)
+	return nil
 }
 
 func (s *Server) applyAISettings(ctx context.Context, cfg *finopsv1.CostDeckConfig, req *SettingsUpdateRequest) error {
@@ -743,7 +752,8 @@ func (s *Server) applyAISettings(ctx context.Context, cfg *finopsv1.CostDeckConf
 	if aiReq.APIKey == "" {
 		return nil
 	}
-	return s.storeCredentials(ctx, "costdeck-ai-credentials", map[string][]byte{"API_KEY": []byte(aiReq.APIKey)}, &ai.SecretRef)
+	s.storeCredentials(req, "costdeck-ai-credentials", map[string][]byte{"API_KEY": []byte(aiReq.APIKey)}, &ai.SecretRef)
+	return nil
 }
 
 func (s *Server) applyWebexSettings(ctx context.Context, cfg *finopsv1.CostDeckConfig, req *SettingsUpdateRequest) error {
@@ -788,7 +798,8 @@ func (s *Server) applyWebexSettings(ctx context.Context, cfg *finopsv1.CostDeckC
 			data[webex.SecretKeyWebhookSecret] = []byte(*wxReq.WebhookSecret)
 		}
 	}
-	return s.storeCredentials(ctx, secretName, data, &wx.SecretRef)
+	s.storeCredentials(req, secretName, data, &wx.SecretRef)
+	return nil
 }
 
 func (s *Server) applyVictoriaMetricsSettings(ctx context.Context, cfg *finopsv1.CostDeckConfig, req *SettingsUpdateRequest) error {
@@ -822,7 +833,8 @@ func (s *Server) applyVictoriaMetricsSettings(ctx context.Context, cfg *finopsv1
 	if data == nil {
 		return nil
 	}
-	return s.storeCredentials(ctx, "costdeck-vm-credentials", data, &vm.SecretRef)
+	s.storeCredentials(req, "costdeck-vm-credentials", data, &vm.SecretRef)
+	return nil
 }
 
 func applyMCPSettings(_ context.Context, cfg *finopsv1.CostDeckConfig, req *SettingsUpdateRequest) error {
@@ -1066,7 +1078,7 @@ func (s *Server) applyAuthSettings(ctx context.Context, cfg *finopsv1.CostDeckCo
 	if req.Auth.DisableLocalLogin != nil {
 		cfg.Spec.Auth.DisableLocalLogin = *req.Auth.DisableLocalLogin
 	}
-	if err := s.applyOIDCSettings(ctx, cfg, req.Auth.OIDC); err != nil {
+	if err := s.applyOIDCSettings(cfg, req, req.Auth.OIDC); err != nil {
 		return err
 	}
 	er := req.Auth.Entra
@@ -1120,8 +1132,9 @@ func (s *Server) applyAuthSettings(ctx context.Context, cfg *finopsv1.CostDeckCo
 	if er.ClientSecret == "" {
 		return nil
 	}
-	return s.storeCredentials(ctx, "costdeck-entra-credentials",
+	s.storeCredentials(req, "costdeck-entra-credentials",
 		map[string][]byte{auth.SecretKeyClientSecret: []byte(er.ClientSecret)}, &e.ClientSecretRef)
+	return nil
 }
 
 // applyDashboardURL sets the address people open Cost Deck at; an empty one clears it.
@@ -1153,7 +1166,7 @@ func roleMapping(in map[string]string) (map[string]string, error) {
 }
 
 // applyOIDCSettings applies the OpenID Connect section of a settings update.
-func (s *Server) applyOIDCSettings(ctx context.Context, cfg *finopsv1.CostDeckConfig, or *OIDCUpdateRequest) error {
+func (s *Server) applyOIDCSettings(cfg *finopsv1.CostDeckConfig, req *SettingsUpdateRequest, or *OIDCUpdateRequest) error {
 	if or == nil {
 		return nil
 	}
@@ -1217,16 +1230,29 @@ func (s *Server) applyOIDCSettings(ctx context.Context, cfg *finopsv1.CostDeckCo
 	if or.ClientSecret == "" {
 		return nil
 	}
-	return s.storeCredentials(ctx, "costdeck-oidc-credentials",
+	s.storeCredentials(req, "costdeck-oidc-credentials",
 		map[string][]byte{auth.SecretKeyClientSecret: []byte(or.ClientSecret)}, &o.ClientSecretRef)
+	return nil
 }
 
-// storeCredentials writes a credentials Secret and points the config field at it.
-func (s *Server) storeCredentials(ctx context.Context, name string, data map[string][]byte, ref *string) error {
-	if err := s.upsertSecret(ctx, config.OperatorNamespace(), name, data); err != nil {
-		return fmt.Errorf("store credentials in %s: %w", name, err)
-	}
+// storeCredentials points the config field at a credentials Secret and queues the Secret,
+// which is written once every section of the save is valid.
+type pendingSecret struct {
+	name string
+	data map[string][]byte
+}
+
+func (s *Server) storeCredentials(req *SettingsUpdateRequest, name string, data map[string][]byte, ref *string) {
+	req.secrets = append(req.secrets, pendingSecret{name: name, data: data})
 	*ref = name
+}
+
+func (s *Server) writeSecrets(ctx context.Context, secrets []pendingSecret) error {
+	for _, sec := range secrets {
+		if err := s.upsertSecret(ctx, config.OperatorNamespace(), sec.name, sec.data); err != nil {
+			return fmt.Errorf("store credentials in %s: %w", sec.name, err)
+		}
+	}
 	return nil
 }
 

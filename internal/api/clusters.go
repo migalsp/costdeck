@@ -334,7 +334,8 @@ func (s *Server) applyClusterSettings(ctx context.Context, cfg *finopsv1.CostDec
 		return nil
 	}
 	ref := clusterTokensSecret
-	return s.storeCredentials(ctx, clusterTokensSecret, tokens, &ref)
+	s.storeCredentials(req, clusterTokensSecret, tokens, &ref)
+	return nil
 }
 
 // testCluster reaches another installation with the unsaved values of the form, the

@@ -232,7 +232,6 @@ func TestSettingsValidationRejectsTheWholeSave(t *testing.T) {
 }
 
 func TestRejectedSettingsSaveKeepsTheStoredCredentials(t *testing.T) {
-	t.Skip("bug: a settings save rejected with 400 has already overwritten the credentials Secrets of the sections applied before the failing one")
 	t.Setenv("POD_NAMESPACE", operatorNamespace)
 	server := buildMockServerWithK8s()
 	if rr := send(t, server, http.MethodPut, "/api/settings", `{"providers":{"aws":{"accessKeyId":"OLD-ID","secretAccessKey":"old-secret"}}}`); rr.Code != http.StatusOK {

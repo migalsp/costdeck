@@ -419,9 +419,7 @@ func (s *Server) applyRightsizingSettings(ctx context.Context, cfg *finopsv1.Cos
 	}
 	if u.Git.Token != "" {
 		ref = gitTokenSecret
-		if err := s.storeCredentials(ctx, gitTokenSecret, map[string][]byte{"TOKEN": []byte(strings.TrimSpace(u.Git.Token))}, &ref); err != nil {
-			return err
-		}
+		s.storeCredentials(req, gitTokenSecret, map[string][]byte{"TOKEN": []byte(strings.TrimSpace(u.Git.Token))}, &ref)
 	}
 	if ref == "" {
 		return badRequestf("right-sizing: enter an access token that can push branches and open pull requests")
