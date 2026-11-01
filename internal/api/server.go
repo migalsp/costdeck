@@ -1,6 +1,7 @@
 package api
 
 import (
+	"cmp"
 	"context"
 	"embed"
 	"errors"
@@ -46,8 +47,9 @@ type Server struct {
 	WebexAPI      string
 	// Auth authenticates users. Start creates it when it is nil; handler tests leave it
 	// nil, which skips authentication entirely.
-	Auth *auth.Service
-	Port string
+	Auth      *auth.Service
+	Port      string
+	SleepPort string
 	// UI holds the dashboard files; nil means the assets embedded at build time.
 	UI fs.FS
 
@@ -61,6 +63,7 @@ type Server struct {
 	recommendationCache recommendationCache
 	pressureCache       pressureCache
 	webexDeliveries     recentDeliveries
+	sleeping            sleepingNamespaces
 	warm                warmup
 
 	versionMu sync.Mutex
@@ -118,11 +121,7 @@ func (s *Server) Start(ctx context.Context) error {
 		return err
 	}
 
-	addr := ":" + s.Port
-	if s.Port == "" {
-		addr = ":8082"
-	}
-
+	addr := ":" + cmp.Or(s.Port, "8082")
 	server := &http.Server{
 		Addr:              addr,
 		Handler:           handler,
@@ -130,23 +129,46 @@ func (s *Server) Start(ctx context.Context) error {
 		IdleTimeout:       2 * time.Minute,
 		// No WriteTimeout: AI chat and report generation stream for minutes.
 	}
+	sleepAddr := ":" + cmp.Or(s.SleepPort, "8083")
+	sleep := &http.Server{
+		Addr:              sleepAddr,
+		Handler:           s.SleepHandler(),
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       2 * time.Minute,
+	}
 
-	log.Info("Starting API server", "addr", addr)
+	log.Info("Starting API server", "addr", addr, "sleepPageAddr", sleepAddr)
 
 	go func() {
 		<-ctx.Done()
 		log.Info("Shutting down API server")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		if err := server.Shutdown(shutdownCtx); err != nil {
-			log.Error(err, "Could not shut down API server cleanly")
+		for _, srv := range []*http.Server{server, sleep} {
+			if err := srv.Shutdown(shutdownCtx); err != nil {
+				log.Error(err, "Could not shut down API server cleanly", "addr", srv.Addr)
+			}
 		}
 	}()
 
-	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	errs := make(chan error, 2)
+	for _, srv := range []*http.Server{server, sleep} {
+		go func() {
+			if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				errs <- fmt.Errorf("serve %s: %w", srv.Addr, err)
+				return
+			}
+			errs <- nil
+		}()
+	}
+	if err := <-errs; err != nil {
+		_ = server.Close()
+		_ = sleep.Close()
 		return err
 	}
-	return nil
+	return <-errs
 }
 
 // Handler builds the complete HTTP handler: API routes, the dashboard and middleware.
@@ -169,7 +191,13 @@ func (s *Server) Handler() (http.Handler, error) {
 	if s.Auth != nil {
 		h = s.Auth.Middleware(h)
 	}
-	return securityHeaders(s.sleepPages(h)), nil
+	return securityHeaders(h), nil
+}
+
+// SleepHandler serves only the sleep page, on a listener and Service of its own that the
+// sleeping routes may reach; nothing of the API or the dashboard is behind it.
+func (s *Server) SleepHandler() http.Handler {
+	return securityHeaders(http.HandlerFunc(s.serveSleepPage))
 }
 
 // routes registers every API endpoint with the minimum role it requires. Method-qualified

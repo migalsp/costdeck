@@ -120,3 +120,42 @@ func TestSleepPageWithoutGatewayAPI(t *testing.T) {
 		t.Errorf("SyncSleepGrant = %v", err)
 	}
 }
+
+func TestRoutesAsleepOnAnEarlierServiceMoveToTheSleepPageService(t *testing.T) {
+	ctx := context.Background()
+	original := []any{map[string]any{"backendRefs": []any{map[string]any{"name": "web", "port": int64(80)}}}}
+	shop := route(sleepNS, "shop", original)
+	e := hibernateEngine(t, []schema.GroupVersionKind{routeGVK, grantGVK}, nil, shop)
+	earlier := SleepBackend{Name: "costdeck-operator-api", Namespace: "costdeck", Port: 8082}
+	current := SleepBackend{Name: "costdeck-operator-sleep", Namespace: "costdeck", Port: 80}
+	if _, err := e.SleepRoutes(ctx, sleepNS, earlier); err != nil {
+		t.Fatal(err)
+	}
+	saved := reread(t, e, shop).GetAnnotations()[SleepingAnnotation]
+
+	if n, err := e.SleepRoutes(ctx, sleepNS, current); err != nil || n != 1 {
+		t.Fatalf("SleepRoutes = %d, %v", n, err)
+	}
+	moved := reread(t, e, shop)
+	rules, _, _ := unstructured.NestedSlice(moved.Object, "spec", "rules")
+	ref := rules[0].(map[string]any)["backendRefs"].([]any)[0].(map[string]any)
+	if ref["name"] != current.Name || ref["port"] != current.Port {
+		t.Errorf("backend = %v, want the sleep page Service %s:%d", ref, current.Name, current.Port)
+	}
+	if got := moved.GetAnnotations()[SleepingAnnotation]; got != saved {
+		t.Errorf("the saved backends changed when the route moved: %s, want %s", got, saved)
+	}
+	version := moved.GetResourceVersion()
+	if _, err := e.SleepRoutes(ctx, sleepNS, current); err != nil {
+		t.Fatal(err)
+	}
+	if reread(t, e, shop).GetResourceVersion() != version {
+		t.Error("a route already on the current Service was written again")
+	}
+	if _, err := e.WakeRoutes(ctx, sleepNS); err != nil {
+		t.Fatal(err)
+	}
+	if got, _, _ := unstructured.NestedSlice(reread(t, e, shop).Object, "spec", "rules"); !reflect.DeepEqual(got, original) {
+		t.Errorf("woken rules = %v, want the application's own %v", got, original)
+	}
+}

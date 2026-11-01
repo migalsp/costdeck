@@ -671,11 +671,15 @@ run.
   checks every 20 seconds and shows the application once it is back. A person wakes it,
   not every request, so bots and health checks do not keep it up.
 - **How the routes are changed.** Each rule's backends and filters are kept in the
-  `costdeck.io/sleeping` annotation. Meanwhile the rule points at the `<release>-api`
-  Service with a header naming the namespace. A ReferenceGrant `costdeck-sleep-page` in the
-  operator namespace opens that Service to the sleeping routes.
+  `costdeck.io/sleeping` annotation. Meanwhile the rule points at the `<release>-sleep`
+  Service with a header naming the namespace. That Service serves the sleep page and
+  nothing else, on a listener of its own (port 8083), so a route someone adds to it
+  cannot publish the dashboard or the API. A ReferenceGrant `costdeck-sleep-page` in the
+  operator namespace opens only that Service to the sleeping routes. Routes put to sleep
+  by an earlier version, on the `<release>-api` Service, move over by themselves.
 - **Permissions.** Install with `--set sleepPage.enabled=true`, which grants read and patch
-  on HTTPRoutes cluster-wide and ReferenceGrants in the operator namespace.
+  on HTTPRoutes cluster-wide and ReferenceGrants in the operator namespace, and adds the
+  `<release>-sleep` Service.
 - **Ingress controllers.** Ingress-based routing is not covered. ingress-nginx, the usual
   one, was retired in March 2026, and Gateway API is its recommended successor.
 
@@ -936,7 +940,7 @@ helm upgrade costdeck-operator oci://ghcr.io/migalsp/costdeck/charts/costdeck-op
 | `gitops.pause` | `false` | Lets schedules with `spec.pauseGitOps` pause Flux and Argo CD (cluster-wide read and patch on their objects) |
 | `hibernation.enabled` | `false` | Lets hibernate rules stop CloudNativePG and Zalando Postgres clusters and Strimzi Connect, MirrorMaker 2 and Bridge (cluster-wide read and patch on them) |
 | `hibernation.extraRules` | `[]` | `apiGroups` and `resources` of other operators' kinds that hibernate rules stop |
-| `sleepPage.enabled` | `false` | Lets schedules with `spec.sleepPage` point their HTTPRoutes at the sleep page (read and patch on HTTPRoutes, ReferenceGrants in the release namespace) |
+| `sleepPage.enabled` | `false` | Lets schedules with `spec.sleepPage` point their HTTPRoutes at the sleep page (read and patch on HTTPRoutes, ReferenceGrants in the release namespace, the `<release>-sleep` Service) |
 | `namespaceTTL.enabled` | `false` | Lets preview cleanup delete namespaces past their time to live (patch and delete on namespaces) |
 
 `values.schema.json` rejects malformed values at install time.

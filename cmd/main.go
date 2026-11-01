@@ -159,6 +159,7 @@ func main() {
 		Metrics:       metricsProvider,
 		Pricing:       pricingResolver,
 		Port:          "8082",
+		SleepPort:     "8083",
 	}
 	if err := mgr.Add(apiServer); err != nil {
 		setupLog.Error(err, "Failed to add API server to manager")

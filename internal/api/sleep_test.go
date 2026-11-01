@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -55,10 +56,7 @@ func TestSleepPagesAndWakeStatus(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	h, err := server.Handler()
-	if err != nil {
-		t.Fatal(err)
-	}
+	h := server.SleepHandler()
 	visit := func(ns, accept string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodGet, "http://shop-dev.example.com/cart", nil)
 		req.Header.Set(scaling.SleepingHeader, ns)
@@ -96,5 +94,59 @@ func TestSleepPagesAndWakeStatus(t *testing.T) {
 	_ = json.Unmarshal(send(t, server, "GET", "/api/settings", "").Body.Bytes(), &settings)
 	if settings.DashboardURL != "https://costdeck.example.org" {
 		t.Errorf("dashboard URL = %q", settings.DashboardURL)
+	}
+}
+
+func TestTheSleepPageListenerServesNothingElse(t *testing.T) {
+	t.Setenv("POD_NAMESPACE", operatorNamespace)
+	server := buildMockServerWithK8s()
+	server.UI = testUI
+	sleep := server.SleepHandler()
+	for _, path := range []string{"/api/settings", "/api/tokens", "/mcp", "/", "/settings"} {
+		req := httptest.NewRequest(http.MethodGet, "http://shop-dev.example.com"+path, nil)
+		req.Header.Set("Accept", "text/html")
+		rr := httptest.NewRecorder()
+		sleep.ServeHTTP(rr, req)
+		if rr.Code != http.StatusServiceUnavailable || !strings.Contains(rr.Body.String(), "This application is asleep") {
+			t.Errorf("GET %s through the sleep page Service = %d; a route there must reach nothing but the page", path, rr.Code)
+		}
+	}
+
+	main, err := server.Handler()
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/version", nil)
+	req.Header.Set(scaling.SleepingHeader, "shop-dev")
+	rr := httptest.NewRecorder()
+	main.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK || strings.Contains(rr.Body.String(), "asleep") {
+		t.Errorf("the API with the sleeping header = %d %s; the API listener no longer answers for sleeping routes", rr.Code, rr.Body.String())
+	}
+}
+
+func TestSleepingNamespacesAreListedAtMostEveryTenSeconds(t *testing.T) {
+	var cache sleepingNamespaces
+	lists := 0
+	load := func(context.Context) ([]string, error) {
+		lists++
+		return []string{"shop-dev"}, nil
+	}
+	now := time.Now()
+	for i := range 100 {
+		if got := cache.get(context.Background(), load, now.Add(time.Duration(i)*50*time.Millisecond)); len(got) != 1 {
+			t.Fatalf("sleeping = %v", got)
+		}
+	}
+	if lists != 1 {
+		t.Errorf("HTTPRoutes listed %d times for 100 page views in 5 s, want once", lists)
+	}
+	cache.get(context.Background(), load, now.Add(sleepingRefresh))
+	if lists != 2 {
+		t.Errorf("listed %d times in total once 10 s passed, want 2", lists)
+	}
+	failing := func(context.Context) ([]string, error) { return nil, errors.New("apiserver down") }
+	if got := cache.get(context.Background(), failing, now.Add(3*sleepingRefresh)); len(got) != 1 {
+		t.Errorf("a failed refresh dropped what was known: %v", got)
 	}
 }
