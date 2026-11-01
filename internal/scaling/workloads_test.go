@@ -69,20 +69,23 @@ func TestScaleUpForgetsRecordedReplicasOnceTheStageIsReady(t *testing.T) {
 }
 
 func TestScaleUpRestoresAndClearsTheRecordOfAWorkloadAlreadyRunning(t *testing.T) {
-	t.Skip("bug: a stage already ready returns before scaleResource, so a workload partly started by hand is neither restored to its record nor cleared of it (workloads.go:112)")
 	e := buildMockEngine()
 	ctx := context.Background()
 	must(t, e.Client.Create(ctx, stoppedDeployment("api", "4")))
 	must(t, e.SetWorkloadReplicas(ctx, "shop", kindDeployment, "api", 2))
 	markReady(t, e, "api")
 
-	if _, done, err := e.ScaleTarget(ctx, "shop", true, nil, nil, nil, false); err != nil || !done {
-		t.Fatalf("ScaleTarget = done %v, %v", done, err)
+	if _, done, err := e.ScaleTarget(ctx, "shop", true, nil, nil, nil, false); err != nil || done {
+		t.Fatalf("ScaleTarget = done %v, %v; want it to wait for the restored replicas", done, err)
 	}
 	api := readDeployment(t, e, "api")
 	if *api.Spec.Replicas != 4 || api.Annotations[OriginalReplicasAnnotation] != "" {
 		t.Errorf("api = %d replicas, record %q after the namespace came up; want the recorded 4 restored over the partial manual start "+
 			"(targetReplicas) and the record removed, so a later manual scale-to-zero does not inherit it", *api.Spec.Replicas, api.Annotations[OriginalReplicasAnnotation])
+	}
+	markReady(t, e, "api")
+	if _, done, err := e.ScaleTarget(ctx, "shop", true, nil, nil, nil, false); err != nil || !done {
+		t.Fatalf("ScaleTarget once the four replicas are ready = done %v, %v", done, err)
 	}
 }
 

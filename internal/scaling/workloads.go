@@ -109,21 +109,20 @@ func (e *Engine) groupAndSortPriorities(resources []client.Object, sequence []st
 func (e *Engine) scalePriorityGroup(ctx context.Context, ns string, objs []client.Object, p int, active bool, originalReplicas map[string]int32, timeoutPassed bool) (bool, error) {
 	l := log.FromContext(ctx).WithValues("namespace", ns, "targetActive", active)
 
-	if e.isGroupReady(ctx, objs, active) {
-		if active {
-			cleanupOriginals(objs, originalReplicas)
+	ready := e.isGroupReady(ctx, objs, active)
+	if !ready || active {
+		if !ready {
+			l.Info("Scaling priority group", "priority", p, "count", len(objs))
 		}
-		return true, nil
+		for _, obj := range objs {
+			if err := e.scaleResource(ctx, obj, active, originalReplicas); err != nil {
+				return false, err
+			}
+		}
+		ready = e.isGroupReady(ctx, objs, active)
 	}
 
-	l.Info("Scaling priority group", "priority", p, "count", len(objs))
-	for _, obj := range objs {
-		if err := e.scaleResource(ctx, obj, active, originalReplicas); err != nil {
-			return false, err
-		}
-	}
-
-	if !e.isGroupReady(ctx, objs, active) {
+	if !ready {
 		if timeoutPassed {
 			l.Info("Priority group not ready, bypassing due to timeout", "priority", p)
 			return true, nil
