@@ -409,12 +409,18 @@ type OIDCConfig struct {
 	// +optional
 	GroupsClaim string `json:"groupsClaim,omitempty"`
 
-	// RolesClaim is a claim listing roles named viewer, operator or admin, which are honoured
-	// as they are, e.g. realm_access.roles (Keycloak realm roles) or
-	// resource_access.costdeck.roles (client roles).
+	// RolesClaim is a claim listing roles, e.g. realm_access.roles (Keycloak realm roles) or
+	// resource_access.costdeck.roles (client roles). A role counts when RoleMapping maps it,
+	// or when it is named costdeck.viewer, costdeck.operator or costdeck.admin: plain names
+	// such as admin are often shared by every application of a realm.
 	// +kubebuilder:validation:MaxLength=128
 	// +optional
 	RolesClaim string `json:"rolesClaim,omitempty"`
+
+	// RoleMapping maps roles (as RolesClaim lists them) to a role. The most privileged match
+	// wins.
+	// +optional
+	RoleMapping map[string]string `json:"roleMapping,omitempty"`
 
 	// DefaultRole is granted to users who match no group or role: viewer, operator or admin.
 	// +kubebuilder:validation:Enum=viewer;operator;admin
@@ -423,7 +429,8 @@ type OIDCConfig struct {
 	DefaultRole string `json:"defaultRole,omitempty"`
 
 	// AutoProvision lets anyone the provider signs in use CostDeck with DefaultRole. When
-	// false, only users matched by GroupRoleMapping or RolesClaim may sign in.
+	// false, only users matched by GroupRoleMapping, RoleMapping or a costdeck. role may
+	// sign in.
 	// +kubebuilder:default=true
 	// +optional
 	AutoProvision *bool `json:"autoProvision,omitempty"`

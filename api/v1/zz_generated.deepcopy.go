@@ -1036,6 +1036,13 @@ func (in *OIDCConfig) DeepCopyInto(out *OIDCConfig) {
 		*out = make([]string, len(*in))
 		copy(*out, *in)
 	}
+	if in.RoleMapping != nil {
+		in, out := &in.RoleMapping, &out.RoleMapping
+		*out = make(map[string]string, len(*in))
+		for key, val := range *in {
+			(*out)[key] = val
+		}
+	}
 	if in.AutoProvision != nil {
 		in, out := &in.AutoProvision, &out.AutoProvision
 		*out = new(bool)

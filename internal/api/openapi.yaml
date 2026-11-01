@@ -229,9 +229,9 @@ paths:
       description: >
         Register https://<host>/api/auth/oidc/callback as the client's redirect URI. Verifies
         state, PKCE, the ID token signature, audience, issuer and nonce, maps the groups claim
-        (spec.auth.oidc.groupsClaim, default groups) through groupRoleMapping and honours
-        roles named viewer, operator or admin in rolesClaim, sets the session cookie and
-        redirects back. Failures redirect with ?sso_error=<code>&sso_detail=<text>.
+        (spec.auth.oidc.groupsClaim, default groups) through groupRoleMapping, maps the roles in
+        rolesClaim through roleMapping and honours roles named costdeck.viewer,
+        costdeck.operator or costdeck.admin, sets the session cookie and redirects back. Failures redirect with ?sso_error=<code>&sso_detail=<text>.
       responses:
         "302":
           description: Redirect back into the dashboard

@@ -65,11 +65,39 @@ func TestOIDCSignInWithKeycloakClaims(t *testing.T) {
 		t.Fatalf("session = %+v", id)
 	}
 
-	// A realm role named admin wins over the group's operator.
 	f.claims["realm_access"] = map[string]any{"roles": []string{"admin"}}
 	rr, _ = oidcSignIn(t, svc, f, false)
+	if id := sessionFrom(t, svc, rr); id == nil || id.Role != RoleOperator {
+		t.Errorf("a realm role plainly named admin, which other applications of the realm share, made %+v", id)
+	}
+	f.claims["realm_access"] = map[string]any{"roles": []string{"costdeck.admin"}}
+	rr, _ = oidcSignIn(t, svc, f, false)
 	if id := sessionFrom(t, svc, rr); id == nil || id.Role != RoleAdmin {
-		t.Errorf("realm role admin: %+v", id)
+		t.Errorf("realm role costdeck.admin: %+v", id)
+	}
+}
+
+func TestOIDCRolesCountOnlyWhenMappedOrNamedForCostDeck(t *testing.T) {
+	mapped := finopsv1.OIDCConfig{RoleMapping: map[string]string{"platform-admins": "admin", "readers": "viewer", "typo": "superuser"}}
+	for _, tt := range []struct {
+		name  string
+		cfg   finopsv1.OIDCConfig
+		roles []string
+		want  Role
+	}{
+		{"plain names shared across a realm count for nothing", finopsv1.OIDCConfig{}, []string{"admin", "editor", "owner"}, ""},
+		{"names for Cost Deck count as they are", finopsv1.OIDCConfig{}, []string{"CostDeck.Operator"}, RoleOperator},
+		{"a mapped role counts", mapped, []string{"platform-admins"}, RoleAdmin},
+		{"the most privileged of mapped roles wins", mapped, []string{"readers", "platform-admins"}, RoleAdmin},
+		{"a mapping to no known role counts for nothing", mapped, []string{"typo"}, ""},
+		{"an unmapped plain name still counts for nothing with a mapping", mapped, []string{"admin"}, ""},
+	} {
+		no := false
+		tt.cfg.AutoProvision = &no
+		got, _ := ResolveOIDCRole(tt.cfg, nil, tt.roles)
+		if got != tt.want {
+			t.Errorf("%s: role = %q, want %q", tt.name, got, tt.want)
+		}
 	}
 }
 

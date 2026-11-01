@@ -160,10 +160,12 @@ checked against the issuer's keys, audience and expiry.
    - the issuer `https://keycloak.example.com/realms/<realm>`, which must be HTTPS;
    - the client ID and the client secret, stored in the `costdeck-oidc-credentials`
      Secret.
-3. **Map groups to roles.** Keycloak sends full paths (`/costdeck-admins`); a mapping
-   matches with or without the leading slash. Roles named `viewer`, `operator` or `admin`
-   in the roles claim count as they are; client roles are at
-   `resource_access.<client>.roles`.
+3. **Map groups and roles to Cost Deck roles.** Keycloak sends full paths
+   (`/costdeck-admins`); a mapping matches with or without the leading slash. A role in
+   the roles claim counts when **Role → role mapping** maps it, or when it is named
+   `costdeck.viewer`, `costdeck.operator` or `costdeck.admin`. Plain names such as `admin`
+   grant nothing by themselves, because every application of a realm may share them;
+   client roles are at `resource_access.<client>.roles`.
 4. **Choose who else gets in.** Turn off auto-provisioning to admit only users with a
    mapped group or role.
 

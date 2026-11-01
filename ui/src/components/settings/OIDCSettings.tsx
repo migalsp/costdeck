@@ -58,7 +58,7 @@ export default function OIDCSettings({ value, onChange }: { value: OIDCForm; onC
         {field('clientId', 'Client ID', 'costdeck')}
         {field('clientSecret', 'Client secret', value.hasClientSecret ? '•••••••• (stored)' : 'empty for a public client', { type: 'password' })}
         {field('groupsClaim', 'Groups claim', 'groups', { hint: 'Dotted paths reach nested claims.' })}
-        {field('rolesClaim', 'Roles claim', 'realm_access.roles', { hint: 'Roles named viewer, operator or admin count as they are.' })}
+        {field('rolesClaim', 'Roles claim', 'realm_access.roles', { hint: 'Roles named costdeck.viewer, costdeck.operator or costdeck.admin count as they are; map other names below.' })}
         {field('scopes', 'Extra scopes', 'profile email')}
         {field('redirectUrl', 'Redirect URL', 'derived from the address in use')}
         <div>
@@ -94,6 +94,24 @@ export default function OIDCSettings({ value, onChange }: { value: OIDCForm; onC
           ))}
         </div>
         <Button size="sm" variant="secondary" icon={<Plus size={13} />} className="mt-2" onClick={() => set({ mapping: [...value.mapping, { group: '', role: 'viewer' }] })}>Add a group</Button>
+      </div>
+
+      <div>
+        <span className={label}>Role → role mapping</span>
+        <p className={hintClass}>Roles from the roles claim, such as a realm role every application shares, grant nothing unless they are mapped here.</p>
+        <div className="space-y-2">
+          {value.roleMapping.map((m, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <input value={m.name} aria-label="Role in the claim" placeholder="platform-admins"
+                onChange={e => set({ roleMapping: value.roleMapping.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)) })} className={input} />
+              <select value={m.role} aria-label="Cost Deck role" onChange={e => set({ roleMapping: value.roleMapping.map((x, j) => (j === i ? { ...x, role: e.target.value } : x)) })} className={`${input} w-36`}>
+                {['viewer', 'operator', 'admin'].map(r => <option key={r} value={r}>{r}</option>)}
+              </select>
+              <button type="button" title="Remove role mapping" onClick={() => set({ roleMapping: value.roleMapping.filter((_, j) => j !== i) })} className="p-1 text-slate-400 hover:text-rose-600"><X size={14} /></button>
+            </div>
+          ))}
+        </div>
+        <Button size="sm" variant="secondary" icon={<Plus size={13} />} className="mt-2" onClick={() => set({ roleMapping: [...value.roleMapping, { name: '', role: 'viewer' }] })}>Add a role</Button>
       </div>
 
       {problem && <p className="text-xs font-medium text-rose-600">{problem}</p>}

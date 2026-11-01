@@ -82,6 +82,7 @@ type OIDCSettingsResponse struct {
 	Scopes           []string          `json:"scopes,omitempty"`
 	GroupsClaim      string            `json:"groupsClaim,omitempty"`
 	RolesClaim       string            `json:"rolesClaim,omitempty"`
+	RoleMapping      map[string]string `json:"roleMapping,omitempty"`
 	DefaultRole      string            `json:"defaultRole,omitempty"`
 	AutoProvision    bool              `json:"autoProvision"`
 	GroupRoleMapping map[string]string `json:"groupRoleMapping,omitempty"`
@@ -244,8 +245,8 @@ type AuthUpdateRequest struct {
 	OIDC              *OIDCUpdateRequest  `json:"oidc,omitempty"`
 }
 
-// OIDCUpdateRequest changes OpenID Connect sign-in. Scopes and GroupRoleMapping replace
-// the whole list or mapping when present.
+// OIDCUpdateRequest changes OpenID Connect sign-in. Scopes, GroupRoleMapping and
+// RoleMapping replace the whole list or mapping when present.
 type OIDCUpdateRequest struct {
 	Enabled          *bool             `json:"enabled,omitempty"`
 	DisplayName      *string           `json:"displayName,omitempty"`
@@ -256,6 +257,7 @@ type OIDCUpdateRequest struct {
 	Scopes           []string          `json:"scopes,omitempty"`
 	GroupsClaim      *string           `json:"groupsClaim,omitempty"`
 	RolesClaim       *string           `json:"rolesClaim,omitempty"`
+	RoleMapping      map[string]string `json:"roleMapping,omitempty"`
 	DefaultRole      *string           `json:"defaultRole,omitempty"`
 	AutoProvision    *bool             `json:"autoProvision,omitempty"`
 	GroupRoleMapping map[string]string `json:"groupRoleMapping,omitempty"`
@@ -548,7 +550,7 @@ func (s *Server) buildSettingsResponse(ctx context.Context, cfg *finopsv1.CostDe
 		resp.Auth.OIDC = &OIDCSettingsResponse{
 			Enabled: o.Enabled, DisplayName: o.DisplayName, IssuerURL: o.IssuerURL, ClientID: o.ClientID, RedirectURL: o.RedirectURL,
 			Scopes: o.Scopes, GroupsClaim: o.GroupsClaim, RolesClaim: o.RolesClaim, DefaultRole: o.DefaultRole,
-			AutoProvision: o.AutoProvision == nil || *o.AutoProvision, GroupRoleMapping: o.GroupRoleMapping, SkipSSLVerify: o.SkipSSLVerify,
+			AutoProvision: o.AutoProvision == nil || *o.AutoProvision, GroupRoleMapping: o.GroupRoleMapping, RoleMapping: o.RoleMapping, SkipSSLVerify: o.SkipSSLVerify,
 			HasClientSecret: o.ClientSecretRef != "" && s.secretExists(ctx, o.ClientSecretRef, cfg.Namespace),
 		}
 	}
@@ -1191,6 +1193,13 @@ func (s *Server) applyOIDCSettings(ctx context.Context, cfg *finopsv1.CostDeckCo
 			return err
 		}
 		o.GroupRoleMapping = mapping
+	}
+	if or.RoleMapping != nil {
+		mapping, err := roleMapping(or.RoleMapping)
+		if err != nil {
+			return err
+		}
+		o.RoleMapping = mapping
 	}
 	if or.AutoProvision != nil {
 		v := *or.AutoProvision
