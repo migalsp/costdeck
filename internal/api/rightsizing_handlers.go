@@ -190,9 +190,6 @@ func (s *Server) workloadRequests(ctx context.Context, ns string) ([]rightsizing
 	out := make([]rightsizing.Workload, 0, len(workloads))
 	for _, wl := range workloads {
 		policy := policyFor(policies.Items, wl.Template.Labels)
-		if policy != nil && policy.Spec.Exclude {
-			continue
-		}
 		replicas := wl.Replicas
 		runtimeOverride := cmp.Or(wl.Annotations[jvm.RuntimeAnnotation], wl.Template.Annotations[jvm.RuntimeAnnotation])
 		w := toWorkload(wl.Kind, wl.Name, &replicas, wl.Template.Spec, runtimeOverride)
@@ -237,7 +234,7 @@ func toPolicy(p finopsv1.RightsizingPolicy) *rightsizing.Policy {
 		return b
 	}
 	return &rightsizing.Policy{
-		Name: p.Name, ApplyForbidden: p.Spec.Apply == finopsv1.RightsizingApplyForbidden,
+		Name: p.Name, ApplyForbidden: p.Spec.Apply == finopsv1.RightsizingApplyForbidden, Exclude: p.Spec.Exclude,
 		CPU: bounds(p.Spec.CPU), Memory: bounds(p.Spec.Memory),
 	}
 }

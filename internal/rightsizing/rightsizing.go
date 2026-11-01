@@ -69,6 +69,7 @@ type Workload struct {
 type Policy struct {
 	Name           string
 	ApplyForbidden bool
+	Exclude        bool
 	CPU            Bounds
 	Memory         Bounds
 }
@@ -169,6 +170,9 @@ type ResourceAdvice struct {
 func Analyze(workloads []Workload, demand map[metrics.ContainerKey]metrics.Usage, heapDemand map[metrics.ContainerKey]metrics.HeapUsage, rates pricing.Rates, s Settings) Report {
 	report := Report{Currency: rates.Currency, Workloads: []WorkloadAdvice{}}
 	for _, w := range workloads {
+		if w.Policy != nil && w.Policy.Exclude {
+			continue
+		}
 		peaks := peakDemand(w, demand)
 		heapPeaks := peakHeapDemand(w, heapDemand)
 		advice := WorkloadAdvice{Kind: w.Kind, Name: w.Name, Replicas: w.Replicas}

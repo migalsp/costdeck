@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -21,6 +22,7 @@ import (
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
 	"github.com/migalsp/costdeck-operator/internal/rightsizing"
+	"github.com/migalsp/costdeck-operator/internal/risks"
 )
 
 func labelledDeployment(name string) *appsv1.Deployment {
@@ -35,7 +37,12 @@ func TestRightsizingPolicies(t *testing.T) {
 	server := buildMockServerWithK8s()
 	ctx := context.Background()
 	cpuMin := resource.MustParse("400m")
+	oomKilled := corev1.PodStatus{Phase: corev1.PodRunning, ContainerStatuses: []corev1.ContainerStatus{{
+		Name: "main", RestartCount: 1,
+		LastTerminationState: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{Reason: "OOMKilled", ExitCode: 137}},
+	}}}
 	objects := []client.Object{
+		riskPod("batch-5c6b7d-fghjk", oomKilled),
 		&finopsv1.CostDeckConfig{Name: "default", Namespace: "costdeck", Spec: finopsv1.CostDeckConfigSpec{Rightsizing: finopsv1.RightsizingConfig{Apply: true}}},
 		labelledDeployment("api"), labelledDeployment("batch"), labelledDeployment("web"),
 		&finopsv1.RightsizingPolicy{Name: "payments", Namespace: "shop", Spec: finopsv1.RightsizingPolicySpec{
@@ -75,6 +82,15 @@ func TestRightsizingPolicies(t *testing.T) {
 	}
 	if _, ok := advice["batch"]; ok {
 		t.Error("a workload the policy excludes still gets advice")
+	}
+	rr = httptest.NewRecorder()
+	server.routes().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/namespaces/shop/risks", nil))
+	var riskReport risks.Report
+	if err := json.Unmarshal(rr.Body.Bytes(), &riskReport); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.ContainsFunc(riskReport.Risks, func(r risks.Risk) bool { return r.Workload == "batch" && r.Code == risks.CodeOOMKilled }) {
+		t.Errorf("risks = %+v; excluding a workload from right-sizing advice hid its OOM kill", riskReport.Risks)
 	}
 	api := advice["api"]
 	if api.Policy != "payments" || !api.ApplyForbidden || api.Containers[0].CPU.Recommended != "400m" {
