@@ -10,6 +10,8 @@ import (
 	"slices"
 	"time"
 
+	"k8s.io/client-go/util/retry"
+
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -40,7 +42,8 @@ var (
 	// ErrNothingToApply is advice that changes nothing.
 	ErrNothingToApply = errors.New("the advice changes no request of this workload")
 	// ErrUnsupported is a workload this cannot change.
-	ErrUnsupported = errors.New("only Deployments, StatefulSets and Argo Rollouts with their own pod template can be changed")
+	ErrUnsupported       = errors.New("only Deployments, StatefulSets and Argo Rollouts with their own pod template can be changed")
+	ErrAmbiguousWorkload = errors.New("more than one workload matches")
 )
 
 var rolloutGVK = schema.GroupVersionKind{Group: "argoproj.io", Version: "v1alpha1", Kind: "Rollout"}
@@ -199,7 +202,13 @@ func Apply(ctx context.Context, c client.Client, ns string, advice rightsizing.W
 	at := metav1.NewTime(now)
 	rec.AppliedAt = &at
 	rec.Original, rec.Optimized = rec.Containers[0].Original, rec.Containers[0].Optimized
-	return rec, Record(ctx, c, ns, rec)
+	if err := Record(ctx, c, ns, rec); err != nil {
+		if undoErr := restore(ctx, c, ns, rec); undoErr != nil {
+			return rec, fmt.Errorf("could not record the change (%w), and putting the old requests back failed too: %w", err, undoErr)
+		}
+		return rec, fmt.Errorf("could not record the change, so it was undone: %w", err)
+	}
+	return rec, nil
 }
 
 func adviceFor(a rightsizing.WorkloadAdvice, container string) *rightsizing.ContainerAdvice {
@@ -212,8 +221,12 @@ func adviceFor(a rightsizing.WorkloadAdvice, container string) *rightsizing.Cont
 }
 
 // Record adds a change to the namespace's NamespaceOptimization, replacing an earlier
-// one of the workload.
+// one of the workload. A concurrent change of the record is read again and retried.
 func Record(ctx context.Context, c client.Client, ns string, rec finopsv1.WorkloadOptimization) error {
+	return retry.RetryOnConflict(retry.DefaultBackoff, func() error { return recordOnce(ctx, c, ns, rec) })
+}
+
+func recordOnce(ctx context.Context, c client.Client, ns string, rec finopsv1.WorkloadOptimization) error {
 	opt := &finopsv1.NamespaceOptimization{}
 	key := client.ObjectKey{Namespace: config.OperatorNamespace(), Name: ns}
 	err := c.Get(ctx, key, opt)
@@ -225,7 +238,7 @@ func Record(ctx context.Context, c client.Client, ns string, rec finopsv1.Worklo
 	} else if err != nil {
 		return err
 	}
-	opt.Status.Workloads = slices.DeleteFunc(opt.Status.Workloads, func(w finopsv1.WorkloadOptimization) bool { return w.Name == rec.Name })
+	opt.Status.Workloads = slices.DeleteFunc(opt.Status.Workloads, func(w finopsv1.WorkloadOptimization) bool { return w.Kind == rec.Kind && w.Name == rec.Name })
 	opt.Status.Workloads = append(opt.Status.Workloads, rec)
 	if rec.AppliedAt != nil {
 		opt.Status.OptimizedAt = *rec.AppliedAt
@@ -236,17 +249,26 @@ func Record(ctx context.Context, c client.Client, ns string, rec finopsv1.Worklo
 	return c.Status().Update(ctx, opt)
 }
 
-// Revert puts back what a change replaced and marks it reverted, with why.
-func Revert(ctx context.Context, c client.Client, ns, name, reason string) (finopsv1.WorkloadOptimization, error) {
+// Revert puts back what a change replaced and marks it reverted, with why. An empty kind
+// matches any kind, as long as only one workload of that name has a change.
+func Revert(ctx context.Context, c client.Client, ns, kind, name, reason string) (finopsv1.WorkloadOptimization, error) {
 	opt := &finopsv1.NamespaceOptimization{}
 	if err := c.Get(ctx, client.ObjectKey{Namespace: config.OperatorNamespace(), Name: ns}, opt); err != nil {
 		return finopsv1.WorkloadOptimization{}, err
 	}
-	i := slices.IndexFunc(opt.Status.Workloads, func(w finopsv1.WorkloadOptimization) bool { return w.Name == name })
-	if i < 0 {
-		return finopsv1.WorkloadOptimization{}, apierrors.NewNotFound(schema.GroupResource{Group: "finops.costdeck.io", Resource: "workloadoptimizations"}, name)
+	var matches []finopsv1.WorkloadOptimization
+	for _, w := range opt.Status.Workloads {
+		if w.Name == name && (kind == "" || w.Kind == kind) {
+			matches = append(matches, w)
+		}
 	}
-	rec := opt.Status.Workloads[i]
+	switch {
+	case len(matches) == 0:
+		return finopsv1.WorkloadOptimization{}, apierrors.NewNotFound(schema.GroupResource{Group: "finops.costdeck.io", Resource: "workloadoptimizations"}, name)
+	case len(matches) > 1:
+		return finopsv1.WorkloadOptimization{}, fmt.Errorf("%w: %d workloads named %s have a change; say which kind", ErrAmbiguousWorkload, len(matches), name)
+	}
+	rec := matches[0]
 	if rec.State != StateProposed && rec.State != StateReverted {
 		if err := restore(ctx, c, ns, rec); err != nil && !apierrors.IsNotFound(err) {
 			return rec, err
@@ -295,7 +317,7 @@ func RevertAll(ctx context.Context, c client.Client, ns, reason string) error {
 		if w.State == StateReverted || w.State == StateProposed {
 			continue
 		}
-		if _, err := Revert(ctx, c, ns, w.Name, reason); err != nil {
+		if _, err := Revert(ctx, c, ns, w.Kind, w.Name, reason); err != nil {
 			return fmt.Errorf("could not restore %s %s: %w", w.Kind, w.Name, err)
 		}
 	}

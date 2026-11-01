@@ -109,7 +109,7 @@ func (s *Server) handleRevertRightsizing(w http.ResponseWriter, r *http.Request)
 	if by := actorName(r); by != "" {
 		reason = "put back by " + by
 	}
-	rec, err := optimize.Revert(r.Context(), s.Client, r.PathValue("ns"), ref.Name, reason)
+	rec, err := optimize.Revert(r.Context(), s.Client, r.PathValue("ns"), ref.Kind, ref.Name, reason)
 	if err == nil {
 		s.recommendationCache.forget(r.PathValue("ns"))
 	}
@@ -233,7 +233,8 @@ func writeRightsizing(w http.ResponseWriter, rec finopsv1.WorkloadOptimization, 
 		writeError(w, http.StatusForbidden, err.Error())
 	case errors.Is(err, optimize.ErrManagedByGitOps):
 		writeError(w, http.StatusConflict, err.Error())
-	case errors.Is(err, optimize.ErrNothingToApply), errors.Is(err, optimize.ErrUnsupported), errors.Is(err, gitrepo.ErrNotFound):
+	case errors.Is(err, optimize.ErrNothingToApply), errors.Is(err, optimize.ErrUnsupported), errors.Is(err, optimize.ErrAmbiguousWorkload),
+		errors.Is(err, gitrepo.ErrNotFound):
 		writeError(w, http.StatusBadRequest, err.Error())
 	case errors.As(err, new(errNoUsage)):
 		writeError(w, http.StatusServiceUnavailable, err.Error())

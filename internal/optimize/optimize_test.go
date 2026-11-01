@@ -7,6 +7,10 @@ import (
 	"testing"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
+
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -22,6 +26,8 @@ import (
 )
 
 var now = time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC)
+
+const quarterCore = "250m"
 
 func q(s string) resource.Quantity { return resource.MustParse(s) }
 
@@ -57,20 +63,20 @@ func TestApplyAndRevert(t *testing.T) {
 		container("main", corev1.ResourceList{"cpu": q("2"), "memory": q("4Gi")}, corev1.ResourceList{"memory": q("4Gi")}),
 		container("sidecar", corev1.ResourceList{"cpu": q("100m")}, nil))
 	c := client_(t, api)
-	advice := rightsizing.WorkloadAdvice{Kind: "Deployment", Name: "api", Containers: []rightsizing.ContainerAdvice{reduce("250m", "512Mi"),
+	advice := rightsizing.WorkloadAdvice{Kind: "Deployment", Name: "api", Containers: []rightsizing.ContainerAdvice{reduce(quarterCore, "512Mi"),
 		{Name: "sidecar", CPU: rightsizing.ResourceAdvice{Action: rightsizing.ActionKeep}}}}
 
 	rec, err := Apply(ctx, c, "shop", advice, "ops", now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rec.Containers) != 1 || rec.Containers[0].Original.CPURequest != "2" || rec.Containers[0].Optimized.CPURequest != "250m" || rec.State != StateApplied || rec.AppliedBy != "ops" {
+	if len(rec.Containers) != 1 || rec.Containers[0].Original.CPURequest != "2" || rec.Containers[0].Optimized.CPURequest != quarterCore || rec.State != StateApplied || rec.AppliedBy != "ops" {
 		t.Fatalf("record = %+v", rec)
 	}
 	var got appsv1.Deployment
 	_ = c.Get(ctx, client.ObjectKeyFromObject(api), &got)
 	main := got.Spec.Template.Spec.Containers[0].Resources
-	if main.Requests.Cpu().String() != "250m" || main.Requests.Memory().String() != "512Mi" || main.Limits.Memory().String() != "4Gi" {
+	if main.Requests.Cpu().String() != quarterCore || main.Requests.Memory().String() != "512Mi" || main.Limits.Memory().String() != "4Gi" {
 		t.Errorf("main = %+v", main)
 	}
 	if got.Spec.Template.Spec.Containers[1].Resources.Requests.Cpu().String() != "100m" {
@@ -81,7 +87,7 @@ func TestApplyAndRevert(t *testing.T) {
 		t.Fatalf("record in the cluster = %+v, %v", opt.Status, err)
 	}
 
-	back, err := Revert(ctx, c, "shop", "api", "reverted by ops")
+	back, err := Revert(ctx, c, "shop", "Deployment", "api", "reverted by ops")
 	if err != nil || back.State != StateReverted || back.Reason != "reverted by ops" {
 		t.Fatalf("revert = %+v, %v", back, err)
 	}
@@ -113,7 +119,7 @@ func TestApplyRefusesAndCaps(t *testing.T) {
 	ref.SetName("ref")
 	c := client_(t, gitops, capped, own, ref)
 
-	if _, err := Apply(ctx, c, "shop", rightsizing.WorkloadAdvice{Kind: "Deployment", Name: "managed", Containers: []rightsizing.ContainerAdvice{reduce("250m", "")}}, "ops", now); !errors.Is(err, ErrManagedByGitOps) || !strings.Contains(err.Error(), "Argo CD") {
+	if _, err := Apply(ctx, c, "shop", rightsizing.WorkloadAdvice{Kind: "Deployment", Name: "managed", Containers: []rightsizing.ContainerAdvice{reduce(quarterCore, "")}}, "ops", now); !errors.Is(err, ErrManagedByGitOps) || !strings.Contains(err.Error(), "Argo CD") {
 		t.Errorf("gitops: %v", err)
 	}
 	keep := rightsizing.ContainerAdvice{Name: "main", CPU: rightsizing.ResourceAdvice{Action: rightsizing.ActionKeep}, Memory: rightsizing.ResourceAdvice{Action: rightsizing.ActionUnknown}}
@@ -330,5 +336,121 @@ func TestGuardLeavesSettledRecordsAlone(t *testing.T) {
 	states := workloadStates(t, c)
 	if states["api"].State != StateKept || states["web"].State != StateApplied || len(s.messages) != 0 {
 		t.Errorf("states = %+v, messages %v; a kept change and one without an apply time must not be reverted", states, s.messages)
+	}
+}
+
+func TestRecordRetriesAChangeMadeMeanwhile(t *testing.T) {
+	ctx := context.Background()
+	t.Setenv("POD_NAMESPACE", "costdeck")
+	scheme := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(scheme)
+	_ = finopsv1.AddToScheme(scheme)
+	conflicts := 0
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(guardedNamespace(guardedRecord("web", now))).
+		WithStatusSubresource(&finopsv1.NamespaceOptimization{}).
+		WithInterceptorFuncs(interceptor.Funcs{SubResourceUpdate: func(ctx context.Context, w client.Client, sub string, obj client.Object, opts ...client.SubResourceUpdateOption) error {
+			if conflicts == 0 {
+				conflicts++
+				return apierrors.NewConflict(schema.GroupResource{Group: "finops.costdeck.io", Resource: "namespaceoptimizations"}, obj.GetName(), errors.New("the object has been modified"))
+			}
+			return w.SubResource(sub).Update(ctx, obj, opts...)
+		}}).Build()
+	if err := Record(ctx, c, "shop", guardedRecord("api", now)); err != nil {
+		t.Fatalf("Record = %v; a conflict must be read again and retried", err)
+	}
+	if states := workloadStates(t, c); len(states) != 2 {
+		t.Errorf("records = %v, want web and api", states)
+	}
+}
+
+func TestRecordsKeepWorkloadsOfTheSameNameApart(t *testing.T) {
+	ctx := context.Background()
+	api := deploy("api", container("main", corev1.ResourceList{"cpu": q("2")}, nil))
+	db := &appsv1.StatefulSet{Name: "api", Namespace: "shop", Spec: appsv1.StatefulSetSpec{
+		Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "api-db"}},
+		Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "api-db"}},
+			Spec: corev1.PodSpec{Containers: []corev1.Container{container("main", corev1.ResourceList{"cpu": q("4")}, nil)}}},
+	}}
+	c := client_(t, api, db)
+	if _, err := Apply(ctx, c, "shop", rightsizing.WorkloadAdvice{Kind: "Deployment", Name: "api", Containers: []rightsizing.ContainerAdvice{reduce(quarterCore, "")}}, "ops", now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Apply(ctx, c, "shop", rightsizing.WorkloadAdvice{Kind: "StatefulSet", Name: "api", Containers: []rightsizing.ContainerAdvice{reduce("1", "")}}, "ops", now); err != nil {
+		t.Fatal(err)
+	}
+	var opt finopsv1.NamespaceOptimization
+	if err := c.Get(ctx, client.ObjectKey{Namespace: "costdeck", Name: "shop"}, &opt); err != nil || len(opt.Status.Workloads) != 2 {
+		t.Fatalf("records = %+v, %v; the StatefulSet's change replaced the Deployment's", opt.Status.Workloads, err)
+	}
+	if _, err := Revert(ctx, c, "shop", "", "api", "by hand"); !errors.Is(err, ErrAmbiguousWorkload) {
+		t.Errorf("Revert without a kind = %v, want ErrAmbiguousWorkload", err)
+	}
+	if _, err := Revert(ctx, c, "shop", "StatefulSet", "api", "by hand"); err != nil {
+		t.Fatal(err)
+	}
+	var gotDB appsv1.StatefulSet
+	var gotAPI appsv1.Deployment
+	_ = c.Get(ctx, client.ObjectKeyFromObject(db), &gotDB)
+	_ = c.Get(ctx, client.ObjectKeyFromObject(api), &gotAPI)
+	if gotDB.Spec.Template.Spec.Containers[0].Resources.Requests.Cpu().String() != "4" {
+		t.Error("the StatefulSet's request is not back")
+	}
+	if gotAPI.Spec.Template.Spec.Containers[0].Resources.Requests.Cpu().String() != quarterCore {
+		t.Error("reverting the StatefulSet put back the Deployment too")
+	}
+}
+
+func TestApplyUndoesAChangeItCannotRecord(t *testing.T) {
+	ctx := context.Background()
+	t.Setenv("POD_NAMESPACE", "costdeck")
+	scheme := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(scheme)
+	_ = finopsv1.AddToScheme(scheme)
+	api := deploy("api", container("main", corev1.ResourceList{"cpu": q("2")}, nil))
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(api).WithStatusSubresource(&finopsv1.NamespaceOptimization{}).
+		WithInterceptorFuncs(interceptor.Funcs{SubResourceUpdate: func(context.Context, client.Client, string, client.Object, ...client.SubResourceUpdateOption) error {
+			return apierrors.NewForbidden(schema.GroupResource{Group: "finops.costdeck.io", Resource: "namespaceoptimizations"}, "shop", errors.New("RBAC"))
+		}}).Build()
+	_, err := Apply(ctx, c, "shop", rightsizing.WorkloadAdvice{Kind: "Deployment", Name: "api", Containers: []rightsizing.ContainerAdvice{reduce(quarterCore, "")}}, "ops", now)
+	if err == nil || !strings.Contains(err.Error(), "so it was undone") {
+		t.Fatalf("Apply = %v", err)
+	}
+	var got appsv1.Deployment
+	_ = c.Get(ctx, client.ObjectKeyFromObject(api), &got)
+	if cpu := got.Spec.Template.Spec.Containers[0].Resources.Requests.Cpu().String(); cpu != "2" {
+		t.Errorf("cpu request = %s; a change without a record cannot be reverted, so it must not stay", cpu)
+	}
+}
+
+func TestGuardKeepsGoingAfterARestoreFails(t *testing.T) {
+	ctx := context.Background()
+	opt := guardedNamespace(guardedRecord("first", now.Add(-10*time.Minute)), guardedRecord("second", now.Add(-10*time.Minute)))
+	t.Setenv("POD_NAMESPACE", "costdeck")
+	scheme := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(scheme)
+	_ = finopsv1.AddToScheme(scheme)
+	crashing := corev1.ContainerStatus{RestartCount: 3}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&finopsv1.NamespaceOptimization{}).
+		WithObjects(opt,
+			deploy("first", container("main", corev1.ResourceList{"cpu": q("100m")}, nil)),
+			deploy("second", container("main", corev1.ResourceList{"cpu": q("100m")}, nil)),
+			podWith("first-1", "first", now.Add(-5*time.Minute), crashing),
+			podWith("second-1", "second", now.Add(-5*time.Minute), crashing)).
+		WithInterceptorFuncs(interceptor.Funcs{Patch: func(ctx context.Context, w client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+			if obj.GetName() == "first" {
+				return apierrors.NewForbidden(schema.GroupResource{Group: "apps", Resource: "deployments"}, "first", errors.New("admission policy"))
+			}
+			return w.Patch(ctx, obj, patch, opts...)
+		}}).Build()
+	err := (&Guard{Client: c, Now: func() time.Time { return now }}).Check(ctx)
+	if err == nil || !strings.Contains(err.Error(), "put back Deployment shop/first") {
+		t.Errorf("Check = %v, want the failed restore reported", err)
+	}
+	states := workloadStates(t, c)
+	if states["second"].State != StateReverted {
+		t.Errorf("second = %+v; one failed restore stopped the guard for every other workload", states["second"])
+	}
+	if states["first"].State != StateApplied {
+		t.Errorf("first = %+v; it stays applied, so the next check tries again", states["first"])
 	}
 }

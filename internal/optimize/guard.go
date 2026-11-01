@@ -2,6 +2,7 @@ package optimize
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -69,6 +70,7 @@ func (g *Guard) Check(ctx context.Context) error {
 		return err
 	}
 	log := logf.FromContext(ctx).WithName("rightsizing-guard")
+	var errs []error
 	for _, opt := range list.Items {
 		ns := opt.Spec.TargetNamespace
 		for _, w := range opt.Status.Workloads {
@@ -76,8 +78,9 @@ func (g *Guard) Check(ctx context.Context) error {
 				continue
 			}
 			if trouble := g.trouble(ctx, ns, w); trouble != "" {
-				if _, err := Revert(ctx, g.Client, ns, w.Name, trouble); err != nil {
-					return err
+				if _, err := Revert(ctx, g.Client, ns, w.Kind, w.Name, trouble); err != nil {
+					errs = append(errs, fmt.Errorf("put back %s %s/%s: %w", w.Kind, ns, w.Name, err))
+					continue
 				}
 				log.Info("Put back the requests of a right-sized workload", "namespace", ns, "workload", w.Name, "reason", trouble)
 				if g.Notify != nil {
@@ -89,12 +92,12 @@ func (g *Guard) Check(ctx context.Context) error {
 			if now.Sub(w.AppliedAt.Time) >= period {
 				w.State = StateKept
 				if err := Record(ctx, g.Client, ns, w); err != nil {
-					return err
+					errs = append(errs, fmt.Errorf("keep %s %s/%s: %w", w.Kind, ns, w.Name, err))
 				}
 			}
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // trouble says what went wrong with the pods a change started, if anything.
