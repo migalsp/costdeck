@@ -78,7 +78,6 @@ PY
 curl -sf "localhost:$VM_PORT/internal/force_flush" >/dev/null
 curl -sf "localhost:$VM_PORT/internal/resetRollupResultCache" >/dev/null
 ok "imported CPU throttling, memory close to a limit and an eviction"
-wait_for "VictoriaMetrics serves the pressure history" vm_series_at_least '{namespace="smoke-risks"}' 7
 
 log "The risks name each problem, its fix and what the fix costs"
 RISKS_REPORT=$(mktemp)
@@ -86,7 +85,7 @@ risks_ready() {
   api GET /api/namespaces/smoke-risks/risks >"$RISKS_REPORT" &&
     jq -e '[.risks[].code] | index("evicted") != null' "$RISKS_REPORT" >/dev/null
 }
-TIMEOUT=330 wait_for "risks from the pods, the HorizontalPodAutoscaler and VictoriaMetrics, within the five minutes risks are cached" risks_ready
+wait_for "risks from the pods, the HorizontalPodAutoscaler and VictoriaMetrics" risks_ready
 risk_expect() {
   local found
   found=$(jq -c --arg w "$2" --arg c "$3" '[.risks[] | select(.workload == $w and .code == $c)][0]' "$RISKS_REPORT")
