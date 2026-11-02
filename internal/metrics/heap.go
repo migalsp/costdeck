@@ -25,7 +25,10 @@ var jvmMemoryNamings = []jvmMemorySeries{
 	{metric: "jvm_memory_used_bytes", heap: `jvm_memory_type="heap"`, nonHeap: `jvm_memory_type="non_heap"`},
 }
 
-const heapAfterGCWindow = "15m:1m"
+const (
+	heapAfterGCWindow     = "15m:1m"
+	heapAfterGCMinSamples = 10
+)
 
 func (p *Provider) HeapDemand(ctx context.Context, namespace string) (map[ContainerKey]HeapUsage, error) {
 	vm, lookback, err := p.resolve(ctx)
@@ -45,7 +48,8 @@ func (c *VMClient) HeapDemand(ctx context.Context, namespace string, window time
 	if len(used) == 0 {
 		return nil, nil
 	}
-	afterGC, err := c.containerVector(ctx, fmt.Sprintf("max_over_time(min_over_time((%s)[%s])[%s:5m])", heap, heapAfterGCWindow, rng))
+	afterGC, err := c.containerVector(ctx, fmt.Sprintf("max_over_time((min_over_time((%[1]s)[%[2]s]) and count_over_time((%[1]s)[%[2]s]) >= %[3]d)[%[4]s:5m])",
+		heap, heapAfterGCWindow, heapAfterGCMinSamples, rng))
 	if err != nil {
 		return nil, fmt.Errorf("query JVM heap after garbage collection: %w", err)
 	}

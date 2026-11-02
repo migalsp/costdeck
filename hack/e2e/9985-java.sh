@@ -46,7 +46,8 @@ python3 - "$JAVA_BIG_POD" "$JAVA_ORDERS_POD" <<'PY' | curl -sf --data-binary @- 
 import json, sys, time
 big, orders = sys.argv[1], sys.argv[2]
 now = int(time.time()) // 60 * 60
-start, step, mi = now - 2 * 86400, 60, 2**20
+first_window_before_any_gc = (now - 2 * 86400) // 1200 * 1200 + 300
+start, step, mi = first_window_before_any_gc, 60, 2**20
 def series(labels, fn):
     ts = list(range(start, now + 1, step))
     print(json.dumps({"metric": labels, "values": [fn(t) for t in ts], "timestamps": [t * 1000 for t in ts]}))

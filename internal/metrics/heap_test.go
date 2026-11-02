@@ -14,7 +14,7 @@ func TestHeapDemandReadsEveryJVMNaming(t *testing.T) {
 	orders := map[string]string{"pod": "orders-7d9f8-abcde", "container": "app"}
 	prom := &fakePromQL{answer: func(q string) []map[string]any {
 		switch {
-		case strings.HasPrefix(q, "max_over_time(min_over_time("):
+		case strings.Contains(q, "min_over_time("):
 			return []map[string]any{sample(orders, "419430400")}
 		case strings.HasPrefix(q, "max_over_time(") && strings.Contains(q, `area="nonheap"`):
 			return []map[string]any{sample(orders, "157286400")}
@@ -52,6 +52,9 @@ func TestHeapDemandReadsEveryJVMNaming(t *testing.T) {
 	if !strings.Contains(prom.queries[1], "min_over_time(") || !strings.Contains(prom.queries[1], "[15m:1m]") {
 		t.Errorf("the heap after GC is the peak of 15-minute minimums, got %q", prom.queries[1])
 	}
+	if !strings.Contains(prom.queries[1], "and count_over_time(") || !strings.Contains(prom.queries[1], ">= 10)[14d:5m]") {
+		t.Errorf("a 15-minute window with too few samples, as when a series starts, must not count as after GC: %q", prom.queries[1])
+	}
 }
 
 func TestHeapDemandStopsWithoutJVMSeries(t *testing.T) {
@@ -72,7 +75,7 @@ func TestProviderHeapDemand(t *testing.T) {
 	orders := map[string]string{"pod": "orders-0", "container": "app"}
 	prom := &fakePromQL{answer: func(q string) []map[string]any {
 		switch {
-		case strings.HasPrefix(q, "max_over_time(min_over_time("):
+		case strings.Contains(q, "min_over_time("):
 			return []map[string]any{sample(orders, "100")}
 		case strings.Contains(q, `area="nonheap"`):
 			return []map[string]any{sample(orders, "50")}
@@ -115,7 +118,7 @@ func TestProviderHeapDemand(t *testing.T) {
 }
 
 func TestHeapDemandNamesTheFailingQuery(t *testing.T) {
-	isAfterGC := func(q string) bool { return strings.HasPrefix(q, "max_over_time(min_over_time(") }
+	isAfterGC := func(q string) bool { return strings.Contains(q, "min_over_time(") }
 	isNonHeap := func(q string) bool { return strings.Contains(q, `area="nonheap"`) }
 	tests := []struct {
 		name   string
