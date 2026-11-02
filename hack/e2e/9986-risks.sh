@@ -49,6 +49,14 @@ spec:
   maxReplicas: 1
   metrics: [{type: Resource, resource: {name: cpu, target: {type: Utilization, averageUtilization: 50}}}]
 YAML
+kubectl apply -f - >/dev/null <<'YAML' || fail "applying the RightsizingPolicy"
+apiVersion: finops.costdeck.io/v1
+kind: RightsizingPolicy
+metadata: {name: e2e-no-advice, namespace: smoke-risks}
+spec:
+  selector: {matchLabels: {app: risk-oom}}
+  exclude: true
+YAML
 for w in risk-throttled risk-near; do
   kubectl rollout status "deploy/$w" -n smoke-risks --timeout=120s >/dev/null || fail "$w did not start"
 done
@@ -94,6 +102,9 @@ risk_expect() {
 }
 risk_expect "an OOM-killed container is critical, and more memory costs money" risk-oom oom-killed \
   '.severity == "critical" and .fixMonthlyCost > 0'
+api GET /api/namespaces/smoke-risks/recommendations | jq -e 'all(.workloads[]; .name != "risk-oom")' >/dev/null ||
+  fail "the RightsizingPolicy that excludes risk-oom did not keep it out of the advice"
+ok "left out of right-sizing by its policy, its OOM kill is still a risk"
 risk_expect "a crash loop names its exit code and how to read the log" risk-crash restarts \
   '.severity == "critical" and (.message | test("exit code 3")) and (.fix | test("kubectl logs -n smoke-risks deployment/risk-crash -c main --previous"))'
 risk_expect "an HPA held at its maximum says how many replicas it wants" risk-hpa hpa-at-max \

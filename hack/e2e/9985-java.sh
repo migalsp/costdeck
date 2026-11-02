@@ -36,7 +36,22 @@ java_workload java-big '' '{name: JAVA_TOOL_OPTIONS, value: "-Xmx3g -XX:+UseG1GC
 java_workload orders '' '' 2Gi 2Gi
 java_workload legacy 'costdeck.io/runtime: none' '{name: JAVA_TOOL_OPTIONS, value: "-Xmx3g"}' 512Mi 4Gi
 java_workload annotated 'costdeck.io/runtime: java' '' 1Gi 2Gi
-for w in java-default java-tight java-big orders legacy annotated; do
+kubectl apply -f - >/dev/null <<YAML || fail "applying meshed"
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: meshed, namespace: smoke-java, annotations: {costdeck.io/runtime: java}}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: meshed}}
+  template:
+    metadata: {labels: {app: meshed}}
+    spec:
+      terminationGracePeriodSeconds: 1
+      containers:
+        - {name: app, image: $BUSYBOX_IMAGE, command: [sh, -c, 'sleep 3600'], resources: {requests: {cpu: 10m, memory: 64Mi}, limits: {memory: 256Mi}}}
+        - {name: istio-proxy, image: $BUSYBOX_IMAGE, command: [sh, -c, 'sleep 3600'], resources: {requests: {cpu: 10m, memory: 32Mi}, limits: {memory: 1Gi}}}
+YAML
+for w in java-default java-tight java-big orders legacy annotated meshed; do
   kubectl rollout status "deploy/$w" -n smoke-java --timeout=120s >/dev/null || fail "$w did not start"
 done
 JAVA_BIG_POD=$(java_pod java-big)
@@ -91,6 +106,9 @@ java_expect "a 3Gi heap whose data after GC peaks at 400Mi gets an 800Mi heap" "
 java_expect "an image with no Java hints is found by its OpenTelemetry heap metrics" "$(java_jvm orders)" \
   '.detectedBy == "metrics" and .heapAfterGC == "200Mi"'
 java_expect "the annotation marks a container as Java" "$(java_jvm annotated)" '.detectedBy == "annotation"'
+jq -e '.workloads[] | select(.name == "meshed") | (.containers[] | select(.name == "app") | .jvm.detectedBy == "annotation") and (.containers[] | select(.name == "istio-proxy") | .jvm == null)' "$JAVA_ADVICE" >/dev/null ||
+  fail "the pod-wide annotation reached the sidecar: $(jq -c '.workloads[] | select(.name == "meshed") | [.containers[] | {name, jvm: (.jvm.detectedBy // null)}]' "$JAVA_ADVICE")"
+ok "the annotation marks the main container, not its sidecar"
 [[ "$(java_jvm legacy)" == null ]] || fail "costdeck.io/runtime: none still got JVM advice: $(java_jvm legacy)"
 ok "costdeck.io/runtime: none opts out"
 jq -e '.javaMonthlySavings > 0 and (.basis | test("Java containers"))' "$JAVA_ADVICE" >/dev/null ||
