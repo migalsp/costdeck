@@ -164,11 +164,14 @@ func (s *Server) pressure(ctx context.Context, ns string, workloads []rightsizin
 }
 
 func crashLooping(pod corev1.Pod, cs corev1.ContainerStatus) bool {
+	if pod.DeletionTimestamp != nil {
+		return false
+	}
 	if cs.State.Waiting != nil {
 		return cs.State.Waiting.Reason == "CrashLoopBackOff"
 	}
 	exited := cs.State.Terminated
-	if exited == nil || cs.RestartCount == 0 || pod.DeletionTimestamp != nil || pod.Status.Phase != corev1.PodRunning {
+	if exited == nil || cs.RestartCount == 0 || pod.Status.Phase != corev1.PodRunning {
 		return false
 	}
 	switch pod.Spec.RestartPolicy {

@@ -190,6 +190,8 @@ func TestCrashLoopingLeavesStoppedContainersAlone(t *testing.T) {
 			corev1.ContainerStatus{State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ContainerCreating"}}}, false},
 		{"exited for the first time", pod(corev1.RestartPolicyAlways, corev1.PodRunning), exited(3, 0), false},
 		{"stopped by a pod deletion", deleting, exited(143, 2), false},
+		{"in back-off while its pod is deleted", deleting,
+			corev1.ContainerStatus{RestartCount: 3, State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}}}, false},
 		{"stopped by a node shutdown", pod(corev1.RestartPolicyAlways, corev1.PodFailed), exited(143, 2), false},
 		{"a job that finished", pod(corev1.RestartPolicyOnFailure, corev1.PodRunning), exited(0, 1), false},
 		{"a job that failed again", pod(corev1.RestartPolicyOnFailure, corev1.PodRunning), exited(1, 1), true},
