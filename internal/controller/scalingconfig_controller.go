@@ -239,6 +239,7 @@ func (r *ScalingConfigReconciler) releaseEverything(ctx context.Context, config 
 		hibernate:    config.Spec.Hibernate,
 		originals:    config.Status.OriginalReplicas,
 		scaledByThem: phaseReachedByScaling(config.Status.Phase) || len(config.Status.OriginalReplicas) > 0,
+		dryRun:       config.Status.Phase == scaling.PhaseDryRun,
 	})
 	if err != nil {
 		return err

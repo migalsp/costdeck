@@ -7,6 +7,7 @@ import (
 	. "github.com/onsi/gomega"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -158,6 +159,33 @@ var _ = Describe("Pausing GitOps", func() {
 		Expect(paused("Kustomization", "apps")).To(BeEmpty())
 		Expect(boolAt("Application", "shop", "spec", "syncPolicy", "automated", "selfHeal")).To(BeTrue())
 		Expect(boolAt("Kustomization", "held", "spec", "suspend")).To(BeTrue(), "still the owner's to resume")
+	})
+
+	It("leaves what the namespace's own schedule paused when a dry-run group of it is deleted", func() {
+		apps := read("Kustomization", "apps")
+		Expect(unstructured.SetNestedField(apps.Object, true, "spec", "suspend")).To(Succeed())
+		apps.SetAnnotations(map[string]string{scaling.GitOpsPausedAnnotation: "suspend"})
+		Expect(k8sClient.Update(ctx, apps)).To(Succeed())
+		g := &finopsv1.ScalingGroup{}
+		Expect(k8sClient.Get(ctx, key, g)).To(Succeed())
+		g.Spec.DryRun = true
+		Expect(k8sClient.Update(ctx, g)).To(Succeed())
+
+		r := &ScalingGroupReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), Engine: &scaling.Engine{Client: k8sClient}, Recorder: events.NewFakeRecorder(100)}
+		_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: key})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(k8sClient.Get(ctx, key, g)).To(Succeed())
+		Expect(g.Status.Phase).To(Equal(scaling.PhaseDryRun))
+		Expect(g.Finalizers).To(ContainElement(ReleaseFinalizer))
+
+		Expect(rawClient.Delete(ctx, g)).To(Succeed())
+		_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: key})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(errors.IsNotFound(k8sClient.Get(ctx, key, g))).To(BeTrue())
+		apps = read("Kustomization", "apps")
+		suspended, _, _ := unstructured.NestedBool(apps.Object, "spec", "suspend")
+		Expect(suspended).To(BeTrue(), "the dry run never paused it")
+		Expect(apps.GetAnnotations()[scaling.GitOpsPausedAnnotation]).To(Equal("suspend"))
 	})
 
 	It("only reports the GitOps tools when the schedule does not pause them", func() {

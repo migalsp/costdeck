@@ -706,6 +706,7 @@ func (r *ScalingGroupReconciler) rulesFor(ctx context.Context, group *finopsv1.S
 	return namespaceRules{
 		exclusions: exclusions, sequence: sequence, hibernate: hibernate, originals: originals,
 		scaledByThem: phaseReachedByScaling(group.Status.Phase) || len(originals) > 0,
+		dryRun:       group.Status.Phase == scaling.PhaseDryRun,
 	}
 }
 

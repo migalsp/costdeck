@@ -57,3 +57,34 @@ wait_for "the Kustomization is resumed" suspended_is false
 wait_for "Argo CD self-heal is back on" self_heal_is true
 pause_mark_is kustomization smoke-apps "" || fail "the paused mark is still on the Kustomization"
 ok "the paused marks are gone"
+
+log "Deleting a dry-run group leaves what the namespace's own schedule paused"
+OWN_CONFIG_BODY='{"metadata":{"name":"smoke-gitops-own"},"spec":{"targetNamespace":"smoke-gitops-own","pauseGitOps":true,"schedules":'"$CLOSED_SCHEDULE_JSON"'}}'
+OWN_DRY_BODY='{"metadata":{"name":"smoke-gitops-dry"},"spec":{"category":"e2e","namespaces":["smoke-gitops-own"],"dryRun":true,"schedules":'"$CLOSED_SCHEDULE_JSON"'}}'
+own_field() { kubectl get kustomization smoke-own-apps -n smoke-gitops-own -o jsonpath="$1"; }
+own_suspended_is() { [[ "$(own_field '{.spec.suspend}')" == "$1" ]]; }
+new_namespace smoke-gitops-own
+kubectl apply -f - >/dev/null <<'YAML' || fail "applying the Kustomization"
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: smoke-own-apps, namespace: smoke-gitops-own}
+spec: {suspend: false}
+status: {inventory: {entries: [{id: smoke-gitops-own_own-app_apps_Deployment}]}}
+YAML
+deployment smoke-gitops-own own-app 1
+kubectl label deploy own-app -n smoke-gitops-own kustomize.toolkit.fluxcd.io/name=smoke-own-apps kustomize.toolkit.fluxcd.io/namespace=smoke-gitops-own >/dev/null
+track_config smoke-gitops-own
+expect_code 201 "a closed namespace schedule that pauses GitOps" POST /api/scaling/configs "$OWN_CONFIG_BODY" -b "$JAR"
+wait_for "its Kustomization is suspended" own_suspended_is true
+wait_for "its workload is scaled to zero" replicas_are smoke-gitops-own own-app 0
+track_group smoke-gitops-dry
+expect_code 201 "a dry-run group of the same namespace" POST /api/scaling/groups "$OWN_DRY_BODY" -b "$JAR"
+wait_for "the dry run reports instead of acting" group_field_is smoke-gitops-dry phase DryRun
+OWN_GENERATION=$(own_field '{.metadata.generation}')
+expect_code 204 "deleting the dry run" DELETE /api/scaling/groups/smoke-gitops-dry "" -b "$JAR"
+wait_for "the dry run is gone" missing scalinggroup smoke-gitops-dry -n "$NS"
+own_suspended_is true || fail "deleting the dry run resumed the Kustomization its namespace schedule paused"
+[[ "$(own_field '{.metadata.generation}')" == "$OWN_GENERATION" ]] ||
+  fail "deleting the dry run changed the Kustomization (generation $OWN_GENERATION, now $(own_field '{.metadata.generation}'))"
+[[ "$(own_field '{.metadata.annotations.costdeck\.io/gitops-paused}')" == suspend ]] || fail "the paused mark of the namespace schedule is gone"
+ok "the Kustomization is still paused by the namespace schedule, untouched by the dry run"

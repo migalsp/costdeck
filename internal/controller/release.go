@@ -23,9 +23,13 @@ type namespaceRules struct {
 	hibernate    []finopsv1.HibernateRule
 	originals    map[string]int32
 	scaledByThem bool
+	dryRun       bool
 }
 
 func releaseNamespace(ctx context.Context, engine *scaling.Engine, ns string, rules namespaceRules) error {
+	if rules.dryRun && !rules.scaledByThem {
+		return nil
+	}
 	if rules.scaledByThem {
 		if err := engine.ReleaseServices(ctx, ns, rules.hibernate); err != nil {
 			return fmt.Errorf("start the hibernated services of %s: %w", ns, err)
