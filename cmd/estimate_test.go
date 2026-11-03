@@ -92,3 +92,60 @@ func TestEstimateWithServer(t *testing.T) {
 		t.Errorf("a refused token: %d %s", code, errOut.String())
 	}
 }
+
+func TestEstimateReadsStdinAndPricesVolumesOffline(t *testing.T) {
+	dir := t.TempDir()
+	claim := func(size string) string {
+		return "apiVersion: v1\nkind: PersistentVolumeClaim\nmetadata: {name: data}\n" +
+			"spec: {resources: {requests: {storage: " + size + "}}}\n"
+	}
+	stdinFile, head := filepath.Join(dir, "base.yaml"), filepath.Join(dir, "head.yaml")
+	_ = os.WriteFile(stdinFile, []byte(claim("10Gi")), 0o600)
+	_ = os.WriteFile(head, []byte(claim("30Gi")), 0o600)
+	stdin, err := os.Open(stdinFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = stdin.Close() }()
+	saved := os.Stdin
+	os.Stdin = stdin
+	defer func() { os.Stdin = saved }()
+
+	var out bytes.Buffer
+	args := []string{"--base", "-", "--head", head, "--storage-gib-month", "0.1", "--format", "json"}
+	if code := runEstimate(args, &out, io.Discard); code != 0 {
+		t.Fatalf("code %d", code)
+	}
+	var res struct {
+		Delta float64 `json:"delta"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &res); err != nil || res.Delta != 2 {
+		t.Errorf("20Gi more at 0.1 a GiB-month = %s (%v), want a delta of 2", out.String(), err)
+	}
+}
+
+func TestEstimateFailsOnUnreadableInput(t *testing.T) {
+	base, head := files(t)
+	missing := filepath.Join(t.TempDir(), "missing.yaml")
+	for name, args := range map[string][]string{
+		"a missing base":   {"--base", missing, "--head", head},
+		"a missing head":   {"--base", base, "--head", missing},
+		"an unknown flag":  {"--base", base, "--head", head, "--colour"},
+		"not a server URL": {"--base", base, "--head", head, "--server", "://nowhere"},
+	} {
+		var errOut bytes.Buffer
+		if code := runEstimate(args, io.Discard, &errOut); code != 1 || errOut.Len() == 0 {
+			t.Errorf("%s: exit %d, stderr %q; want 1 and a reason", name, code, errOut.String())
+		}
+	}
+
+	garbled := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("<html>"))
+	}))
+	defer garbled.Close()
+	var errOut bytes.Buffer
+	code := runEstimate([]string{"--base", base, "--head", head, "--server", garbled.URL}, io.Discard, &errOut)
+	if code != 1 || !strings.Contains(errOut.String(), "estimate:") {
+		t.Errorf("a server that answers no JSON: exit %d, %q", code, errOut.String())
+	}
+}

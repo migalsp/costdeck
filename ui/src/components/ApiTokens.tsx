@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useId, useState } from 'react'
 import { Trash2, Copy, Check, Plus } from 'lucide-react'
 import { apiError } from '../lib/api'
 import { toast } from '../lib/toast'
@@ -22,10 +22,12 @@ export default function ApiTokens() {
   const [copied, setCopied] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [revoking, setRevoking] = useState<string | null>(null)
+  const ids = useId()
 
   const load = useCallback(async () => {
     const res = await fetch('/api/tokens')
     if (res.ok) setTokens(await res.json())
+    else setError(`Could not load the tokens: ${await apiError(res)}`)
   }, [])
 
   useEffect(() => {
@@ -68,10 +70,10 @@ export default function ApiTokens() {
 
       {created && (
         <div className="p-4 rounded-xl border border-emerald-200 bg-emerald-50">
-          <p className="text-xs font-bold text-emerald-800 mb-2">Copy this token now — it will not be shown again.</p>
+          <p className="text-xs font-bold text-emerald-800 mb-2">Copy this token now: it will not be shown again.</p>
           <div className="flex gap-2">
             <code className="flex-1 px-3 py-2 bg-white rounded-lg text-xs font-mono break-all border border-emerald-100">{created}</code>
-            <button onClick={() => { navigator.clipboard.writeText(created); setCopied(true) }}
+            <button onClick={() => navigator.clipboard.writeText(created).then(() => setCopied(true), () => toast.error('Could not copy the token; select it and copy it by hand.'))}
               className="px-3 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg text-xs font-bold flex items-center gap-1">
               {copied ? <Check size={14} /> : <Copy size={14} />} {copied ? 'Copied' : 'Copy'}
             </button>
@@ -81,21 +83,21 @@ export default function ApiTokens() {
 
       <div className="grid grid-cols-[1fr_140px_120px_auto] gap-2 items-end">
         <div>
-          <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1 block">Name</label>
-          <input value={name} onChange={e => setName(e.target.value)} placeholder="claude-desktop"
+          <label htmlFor={`${ids}-name`} className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1 block">Name</label>
+          <input id={`${ids}-name`} value={name} onChange={e => setName(e.target.value)} placeholder="claude-desktop"
             className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-mono" />
         </div>
         <div>
-          <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1 block">Role</label>
-          <select value={role} onChange={e => setRole(e.target.value)} className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs">
+          <label htmlFor={`${ids}-role`} className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1 block">Role</label>
+          <select id={`${ids}-role`} value={role} onChange={e => setRole(e.target.value)} className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs">
             <option value="viewer">viewer</option>
             <option value="operator">operator</option>
             <option value="admin">admin</option>
           </select>
         </div>
         <div>
-          <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1 block">Expires (days)</label>
-          <input type="number" min={0} max={3650} value={days} onChange={e => setDays(parseInt(e.target.value) || 0)}
+          <label htmlFor={`${ids}-days`} className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1 block">Expires (days)</label>
+          <input id={`${ids}-days`} type="number" min={0} max={3650} value={days} onChange={e => setDays(parseInt(e.target.value) || 0)}
             className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs" title="0 = never" />
         </div>
         <button onClick={create} disabled={!name.trim()}

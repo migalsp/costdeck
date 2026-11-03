@@ -27,9 +27,11 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
 	"github.com/migalsp/costdeck-operator/internal/metrics"
@@ -214,7 +216,7 @@ func (r *CostDeckConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	// Secrets are deliberately not watched: that would need list/watch on Secrets.
 	// Provider connectivity is re-validated on every periodic reconcile instead.
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&finopsv1.CostDeckConfig{}).
+		For(&finopsv1.CostDeckConfig{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Named("costdeckconfig").
 		Complete(r)
 }

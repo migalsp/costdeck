@@ -9,7 +9,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
@@ -59,7 +58,7 @@ func Get(ctx context.Context, c client.Reader) (*finopsv1.CostDeckConfig, error)
 // Empty returns an unsaved CostDeckConfig singleton with no settings.
 func Empty() *finopsv1.CostDeckConfig {
 	return &finopsv1.CostDeckConfig{
-		ObjectMeta: metav1.ObjectMeta{Name: DefaultConfigName, Namespace: OperatorNamespace()},
+		Name: DefaultConfigName, Namespace: OperatorNamespace(),
 	}
 }
 

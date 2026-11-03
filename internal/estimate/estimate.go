@@ -8,10 +8,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	"slices"
 	"sort"
 	"strings"
+
+	resourcehelper "k8s.io/component-helpers/resource"
 
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
@@ -328,24 +331,17 @@ func replicasOf(r *int32) int32 {
 	return *r
 }
 
-// podRequests sums a pod's container requests, or its largest init container when that is
-// bigger, as the scheduler counts them.
+// podRequests returns a pod's requests as the scheduler counts them, a negative value
+// in a manifest the API would refuse counting as zero.
 func podRequests(spec corev1.PodSpec) (cpu, mem resource.Quantity) {
-	for _, c := range spec.Containers {
-		for _, pair := range []struct{ total, q *resource.Quantity }{{&cpu, c.Resources.Requests.Cpu()}, {&mem, c.Resources.Requests.Memory()}} {
-			if pair.q.Sign() > 0 {
-				pair.total.Add(*pair.q)
-			}
+	valid := spec.DeepCopy()
+	for _, containers := range [][]corev1.Container{valid.InitContainers, valid.Containers} {
+		for i := range containers {
+			maps.DeleteFunc(containers[i].Resources.Requests, func(_ corev1.ResourceName, q resource.Quantity) bool { return q.Sign() < 0 })
 		}
 	}
-	for _, c := range spec.InitContainers {
-		for _, pair := range []struct{ total, q *resource.Quantity }{{&cpu, c.Resources.Requests.Cpu()}, {&mem, c.Resources.Requests.Memory()}} {
-			if pair.q.Cmp(*pair.total) > 0 {
-				*pair.total = pair.q.DeepCopy()
-			}
-		}
-	}
-	return cpu, mem
+	reqs := resourcehelper.PodRequests(&corev1.Pod{Spec: *valid}, resourcehelper.PodResourcesOptions{})
+	return reqs.Cpu().DeepCopy(), reqs.Memory().DeepCopy()
 }
 
 func hasNegativeQuantity(spec corev1.PodSpec) bool {

@@ -5,9 +5,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -30,6 +28,9 @@ type NamespaceDiscoveryReconciler struct {
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 // +kubebuilder:rbac:groups=finops.costdeck.io,namespace=costdeck,resources=namespacefinops,verbs=get;list;watch;create;update;patch;delete
 
+// Reconcile creates, in the operator namespace, a NamespaceFinOps named after a namespace once
+// that namespace runs a pod ("default" always counts), and deletes the NamespaceFinOps of one
+// that is gone or being deleted. A namespace whose pods have all stopped keeps its own.
 func (r *NamespaceDiscoveryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	l := log.FromContext(ctx)
 
@@ -75,10 +76,8 @@ func (r *NamespaceDiscoveryReconciler) Reconcile(ctx context.Context, req ctrl.R
 	// Create it!
 	l.Info("Auto-discovering namespace", "name", ns.Name)
 	newFinOps := &finopsv1.NamespaceFinOps{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      finOpsName,
-			Namespace: operatorNs,
-		},
+		Name:      finOpsName,
+		Namespace: operatorNs,
 		Spec: finopsv1.NamespaceFinOpsSpec{
 			TargetNamespace: ns.Name,
 		},
@@ -112,6 +111,9 @@ func (r *NamespaceDiscoveryReconciler) forget(ctx context.Context, namespace str
 	return nil
 }
 
+// SetupWithManager reconciles a namespace on its own events, on those of its pods, so the
+// first pod brings it in, and on a NamespaceFinOps that targets it apart from status writes,
+// which sweeps up NamespaceFinOps left behind by namespaces that no longer exist.
 func (r *NamespaceDiscoveryReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&corev1.Namespace{}).
@@ -124,7 +126,7 @@ func (r *NamespaceDiscoveryReconciler) SetupWithManager(mgr ctrl.Manager) error 
 				if !ok || nf.Spec.TargetNamespace == "" {
 					return nil
 				}
-				return []reconcile.Request{{NamespacedName: types.NamespacedName{Name: nf.Spec.TargetNamespace}}}
+				return []reconcile.Request{{Name: nf.Spec.TargetNamespace}}
 			}),
 			// Status writes (usage history every minute) change nothing here.
 			builder.WithPredicates(predicate.GenerationChangedPredicate{}),
@@ -133,7 +135,7 @@ func (r *NamespaceDiscoveryReconciler) SetupWithManager(mgr ctrl.Manager) error 
 			&corev1.Pod{},
 			handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
 				return []reconcile.Request{
-					{NamespacedName: types.NamespacedName{Name: obj.GetNamespace()}},
+					{Name: obj.GetNamespace()},
 				}
 			}),
 		).

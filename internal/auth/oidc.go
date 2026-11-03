@@ -278,10 +278,23 @@ func ClaimStrings(claims map[string]any, path string) []string {
 	return nil
 }
 
-// ResolveOIDCRole maps groups and roles to a CostDeck role, the most privileged match
-// winning; without a match AutoProvision (default on) grants DefaultRole (default viewer).
-// A group mapping matches with or without a leading slash, as Keycloak's full group paths
-// carry one.
+// oidcRole maps one role name from the token to a Cost Deck role: through RoleMapping, or
+// directly when it is named costdeck.viewer, costdeck.operator or costdeck.admin. It returns
+// false when neither applies.
+func oidcRole(cfg finopsv1.OIDCConfig, name string) (Role, bool) {
+	if mapped, ok := cfg.RoleMapping[name]; ok {
+		return ParseRole(mapped)
+	}
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(name)), "costdeck.") {
+		return ParseRole(name)
+	}
+	return "", false
+}
+
+// ResolveOIDCRole returns the most privileged role that GroupRoleMapping grants the groups or
+// RoleMapping (or a costdeck.* name) grants the roles. A group matches with or without a
+// leading slash, as Keycloak's full group paths carry one. Without a match it returns
+// DefaultRole, viewer when that is unset or invalid, and false only when AutoProvision is off.
 func ResolveOIDCRole(cfg finopsv1.OIDCConfig, groups, roles []string) (Role, bool) {
 	var role Role
 	for _, g := range groups {
@@ -293,7 +306,7 @@ func ResolveOIDCRole(cfg finopsv1.OIDCConfig, groups, roles []string) (Role, boo
 		}
 	}
 	for _, name := range roles {
-		if r, ok := ParseRole(name); ok {
+		if r, ok := oidcRole(cfg, name); ok {
 			role = Higher(role, r)
 		}
 	}

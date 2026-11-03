@@ -30,9 +30,13 @@ const busyPhases = ['ScalingUp', 'ScalingDown', 'WaitingForDependencies']
 // startStages mirrors the operator: sequence stages first, then every namespace not in any
 // stage as one last stage. Scale-down runs them in reverse.
 function startStages(group: ScalingGroup): string[][] {
-  const stages = (group.spec.sequence || []).map(s => s.split(/\s+/).filter(Boolean)).filter(s => s.length > 0)
+  const conflicting = group.status?.conflictingNamespaces || []
+  const members = groupNamespaces(group).filter(ns => !conflicting.includes(ns))
+  const stages = (group.spec.sequence || [])
+    .map(s => s.split(/\s+/).filter(t => t.startsWith(EXT) || members.includes(t)))
+    .filter(s => s.length > 0)
   const placed = new Set(stages.flat())
-  const rest = groupNamespaces(group).filter(ns => !placed.has(ns))
+  const rest = members.filter(ns => !placed.has(ns))
   return rest.length ? [...stages, rest] : stages
 }
 

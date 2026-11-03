@@ -3,6 +3,7 @@ import { ArrowLeft, Search, Activity, AlertCircle } from 'lucide-react'
 import NamespaceScalingPanel from '../components/NamespaceScalingPanel'
 import InfoTooltip from '../components/InfoTooltip'
 import RecommendationsPanel from '../components/RecommendationsPanel'
+import RisksPanel from '../components/RisksPanel'
 import { apiError, errorMessage, fetchNamespaceCost, getJSON } from '../lib/api'
 import type { CostEstimate, OptimizationStatus } from '../lib/types'
 import { usePolling } from '../lib/usePolling'
@@ -68,6 +69,9 @@ const sortValue = (pod: PodDetail, field: SortField): string | number => {
   }
 }
 
+// NamespaceDetails is one namespace's page: its schedule, performance risks and right-sizing
+// advice above a searchable, sortable table of its pods. Pods, cost and the earlier right-sizing
+// refresh every 10 seconds, and a failed refresh keeps the pods already shown.
 export default function NamespaceDetails({ namespace, onBack }: NamespaceDetailsProps) {
   const [pods, setPods] = useState<PodDetail[]>([])
   const [optimization, setOptimization] = useState<OptimizationStatus | null>(null)
@@ -170,6 +174,8 @@ export default function NamespaceDetails({ namespace, onBack }: NamespaceDetails
       </div>
 
       <NamespaceScalingPanel namespace={namespace} />
+
+      <RisksPanel namespace={namespace} />
 
       <RecommendationsPanel namespace={namespace} />
 

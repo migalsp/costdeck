@@ -131,11 +131,34 @@ func settledRequeue(d scaling.Decision, now time.Time) time.Duration {
 	return min(wait, maxWait)
 }
 
-// applyDecision mirrors a scheduling decision into the status and the ManualOverride
-// condition.
+// recentWakeUps is how many timed wake-ups status.recentWakeUps keeps, newest first.
+const recentWakeUps = 5
+
+// trackWakeUp times scale-ups from zero for prewarm: the clock starts when a ScaledDown
+// target heads up and stops at ScaledUp, keeping the newest recentWakeUps durations. Going
+// back down drops a clock that is running.
+func trackWakeUp(st *finopsv1.ScheduleStatus, oldPhase, newPhase string, now time.Time) {
+	switch {
+	case oldPhase == scaling.PhaseScaledDown && (newPhase == scaling.PhaseScalingUp || newPhase == scaling.PhaseWaitingForDependencies):
+		started := metav1.NewTime(now)
+		st.WakeUpStartedAt = &started
+	case newPhase == scaling.PhaseScaledUp && st.WakeUpStartedAt != nil:
+		took := int32(now.Sub(st.WakeUpStartedAt.Time).Round(time.Second) / time.Second)
+		st.RecentWakeUps = append([]finopsv1.WakeUp{{StartedAt: *st.WakeUpStartedAt, Seconds: max(took, 0)}}, st.RecentWakeUps...)
+		st.RecentWakeUps = st.RecentWakeUps[:min(len(st.RecentWakeUps), recentWakeUps)]
+		st.WakeUpStartedAt = nil
+	case newPhase == scaling.PhaseScalingDown || newPhase == scaling.PhaseScaledDown:
+		st.WakeUpStartedAt = nil
+	}
+}
+
+// applyDecision copies a decision into the schedule status (mode, desired state, prewarm,
+// exception, override expiry and next transition) and explains the mode in the
+// ManualOverride condition, which is True only while a manual override is in force.
 func applyDecision(st *finopsv1.ScheduleStatus, conds *[]metav1.Condition, d scaling.Decision, generation int64, kind string) {
 	st.Mode = d.Mode
 	st.DesiredState = d.State()
+	st.PrewarmMinutes = int32(d.PrewarmLead / time.Minute)
 	st.Exception, st.ExceptionEndsAt = d.Exception, nil
 	if d.ExceptionEndsAt != nil {
 		t := metav1.NewTime(*d.ExceptionEndsAt)
@@ -176,6 +199,9 @@ func applyDecision(st *finopsv1.ScheduleStatus, conds *[]metav1.Condition, d sca
 	case scaling.ModeIdle:
 		cond.Status, cond.Reason = metav1.ConditionFalse, "Idle"
 		cond.Message = fmt.Sprintf("The %s sleeps for being unused (status.idleUntil); a manual start wakes it.", kind)
+	case scaling.ModePrewarm:
+		cond.Status, cond.Reason = metav1.ConditionFalse, "Prewarm"
+		cond.Message = fmt.Sprintf("The %s is started %d minutes ahead of its schedule so it is ready when the schedule starts (spec.prewarm).", kind, int(d.PrewarmLead/time.Minute))
 	case scaling.ModeException:
 		cond.Status, cond.Reason = metav1.ConditionFalse, "Exception"
 		cond.Message = fmt.Sprintf("The %s is kept %s for %q until %s; then the schedule takes over.", kind, strings.ToLower(d.State()), d.Exception, d.ExceptionEndsAt.UTC().Format(time.RFC3339))
@@ -217,6 +243,13 @@ type transitionLog struct {
 	last map[types.UID]string
 }
 
+// forget drops the entry of a deleted object, so the log does not keep growing.
+func (l *transitionLog) forget(uid types.UID) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	delete(l.last, uid)
+}
+
 func settled(phase string) bool {
 	return phase == scaling.PhaseScaledUp || phase == scaling.PhaseScaledDown
 }
@@ -249,6 +282,8 @@ func (l *transitionLog) announce(ctx context.Context, n Notifier, uid types.UID,
 	go n.Notify(context.WithoutCancel(ctx), transitionMessage(kind, name, newPhase, st, requiredBy))
 }
 
+// transitionMessage renders the chat message for a settled transition: what is now up or
+// scaled down and why, then the next change and the hourly saving when they are known.
 func transitionMessage(kind, name, phase string, st finopsv1.ScheduleStatus, requiredBy []string) string {
 	icon, state := "▶️", "is up"
 	if phase == scaling.PhaseScaledDown {
@@ -271,6 +306,8 @@ func transitionMessage(kind, name, phase string, st finopsv1.ScheduleStatus, req
 		why = "(no schedule)"
 	case scaling.ModeIdle:
 		why = "because nobody used it"
+	case scaling.ModePrewarm:
+		why = fmt.Sprintf("%d minutes ahead of its schedule, to be ready on time", st.PrewarmMinutes)
 	case scaling.ModeException:
 		why = "for " + st.Exception
 		if st.ExceptionEndsAt != nil {

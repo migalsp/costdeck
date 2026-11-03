@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -13,6 +14,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	metricsv1beta1 "k8s.io/metrics/pkg/apis/metrics/v1beta1"
+	metricsfake "k8s.io/metrics/pkg/client/clientset/versioned/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/migalsp/costdeck-operator/internal/rightsizing"
@@ -24,7 +27,7 @@ func rightsizingFixture(t *testing.T) *Server {
 	server := buildMockServerWithK8s()
 	ctx := context.Background()
 	mk := func(name string, annotations map[string]string) {
-		d := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "shop", Annotations: annotations}, Spec: appsv1.DeploymentSpec{
+		d := &appsv1.Deployment{Name: name, Namespace: "shop", Annotations: annotations, Spec: appsv1.DeploymentSpec{
 			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": name}},
 			Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": name}}, Spec: corev1.PodSpec{Containers: []corev1.Container{{
 				Name: "main", Image: name, Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{"cpu": resource.MustParse("2"), "memory": resource.MustParse("4Gi")}}}}}},
@@ -35,13 +38,15 @@ func rightsizingFixture(t *testing.T) *Server {
 	}
 	mk("api", nil)
 	mk("managed", map[string]string{"argocd.argoproj.io/tracking-id": "shop:apps/Deployment:shop/managed"})
-	advice := func(name string) rightsizing.WorkloadAdvice {
-		return rightsizing.WorkloadAdvice{Kind: "Deployment", Name: name, Replicas: 1, MonthlySavings: 50, Containers: []rightsizing.ContainerAdvice{{Name: "main",
-			CPU:    rightsizing.ResourceAdvice{Request: "2", Observed: "100m", Recommended: "150m", Action: rightsizing.ActionReduce},
-			Memory: rightsizing.ResourceAdvice{Request: "4Gi", Observed: "300Mi", Recommended: "384Mi", Action: rightsizing.ActionReduce}}}}
+	metricsClient := metricsfake.NewSimpleClientset() //nolint:staticcheck // k8s.io/metrics generates no NewClientset
+	for _, pod := range []string{"api-7d9f8c-bcdfg", "managed-5c6b7d-fghjk"} {
+		pm := &metricsv1beta1.PodMetrics{Name: pod, Namespace: "shop",
+			Containers: []metricsv1beta1.ContainerMetrics{{Name: "main", Usage: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("100m"), corev1.ResourceMemory: resource.MustParse("256Mi")}}}}
+		if err := metricsClient.Tracker().Create(metricsv1beta1.SchemeGroupVersion.WithResource("pods"), pm, "shop"); err != nil {
+			t.Fatal(err)
+		}
 	}
-	server.recommendationCache.put("shop", rightsizing.Report{Namespace: "shop", Currency: "USD", Basis: "A single reading.",
-		Workloads: []rightsizing.WorkloadAdvice{advice("api"), advice("managed")}})
+	server.MetricsClient = metricsClient
 	return server
 }
 
@@ -65,14 +70,17 @@ func TestApplyAndRevertRightsizing(t *testing.T) {
 	if rr := send(t, server, "PUT", "/api/settings", `{"rightsizing":{"apply":true,"guardMinutes":15}}`); rr.Code != http.StatusOK {
 		t.Fatal(rr.Body.String())
 	}
+	var before rightsizing.Report
+	if err := json.Unmarshal(send(t, server, "GET", "/api/namespaces/shop/recommendations", "").Body.Bytes(), &before); err != nil || len(before.Workloads) != 2 {
+		t.Fatalf("recommendations = %+v, %v", before, err)
+	}
+	managedSavings := before.Workloads[slices.IndexFunc(before.Workloads, func(w rightsizing.WorkloadAdvice) bool { return w.Name == "managed" })].MonthlySavings
 	rr := send(t, server, "POST", "/api/namespaces/shop/rightsizing/apply", `{"kind":"Deployment","name":"api"}`)
 	if rr.Code != http.StatusOK || requestsOf(t, server, "api") != "150m/384Mi" {
 		t.Fatalf("apply: %d %s → %s", rr.Code, rr.Body.String(), requestsOf(t, server, "api"))
 	}
-	// Applying drops that workload's advice and keeps the rest: no usage is asked for again
-	// while it rolls out.
-	if r, _ := server.recommendationCache.get("shop"); len(r.Workloads) != 1 || r.Workloads[0].Name != "managed" || r.MonthlySavings != 50 {
-		t.Errorf("advice after applying = %+v", r)
+	if r, _ := server.recommendationCache.get("shop"); len(r.Workloads) != 1 || r.Workloads[0].Name != "managed" || managedSavings == 0 || r.MonthlySavings != managedSavings {
+		t.Errorf("advice after applying = %+v; applying drops that workload's advice and keeps the rest, so no usage is asked for again while it rolls out", r)
 	}
 	if rr := send(t, server, "POST", "/api/namespaces/shop/rightsizing/apply", `{"kind":"Deployment","name":"managed"}`); rr.Code != http.StatusConflict ||
 		!strings.Contains(rr.Body.String(), "pull request") || requestsOf(t, server, "managed") != originalRequests {

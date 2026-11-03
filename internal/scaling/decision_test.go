@@ -97,3 +97,25 @@ func TestNextScheduleChangeAlwaysOpenWindow(t *testing.T) {
 		t.Errorf("a 24/7 window never changes, got %v", next)
 	}
 }
+
+func TestDecisionState(t *testing.T) {
+	if got := (Decision{Active: true}).State(); got != StateUp {
+		t.Errorf("active decision = %s, want %s", got, StateUp)
+	}
+	if got := (Decision{}).State(); got != StateDown {
+		t.Errorf("inactive decision = %s, want %s", got, StateDown)
+	}
+}
+
+func TestDecideLegacyAnnotationValues(t *testing.T) {
+	down := false
+	now := at(t, time.Wednesday, "12:00")
+	d := (&Engine{}).Decide(now, Timetable{Schedules: officeHours}, &down, nil, map[string]string{LegacyOverrideAnnotation: "ScaledUp"})
+	if !d.Active || d.Mode != ModeManualUp || d.NextTransition != nil {
+		t.Errorf("Decide(legacy ScaledUp over a manual down) = %+v, want forced up with no transition", d)
+	}
+	d = (&Engine{}).Decide(now, Timetable{Schedules: officeHours}, nil, nil, map[string]string{LegacyOverrideAnnotation: "Paused"})
+	if !d.Active || d.Mode != ModeSchedule {
+		t.Errorf("Decide(unknown legacy value) = %+v, want the schedule in control", d)
+	}
+}

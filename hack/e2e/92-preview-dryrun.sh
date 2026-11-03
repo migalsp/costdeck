@@ -34,3 +34,14 @@ log "Switching the dry run off lets the schedule act"
 kubectl patch scalinggroup smoke-dry -n "$NS" --type merge -p '{"spec":{"dryRun":false}}' >/dev/null
 wait_for "the namespace is scaled to zero" replicas_are smoke-dry app 0
 wait_for "the DryRun condition is gone" no_dry_condition
+
+log "Deleting a dry run starts nothing it never stopped"
+new_namespace smoke-dry-stopped
+deployment smoke-dry-stopped app 0
+track_group smoke-dry-stopped
+DRY_STOPPED_BODY='{"metadata":{"name":"smoke-dry-stopped"},"spec":{"category":"e2e","namespaces":["smoke-dry-stopped"],"dryRun":true,"schedules":'"$CLOSED_SCHEDULE_JSON"'}}'
+expect_code 201 "a dry run over a workload stopped by hand" POST /api/scaling/groups "$DRY_STOPPED_BODY" -b "$JAR"
+wait_for "phase DryRun" group_field_is smoke-dry-stopped phase DryRun
+expect_code 204 "deleting the dry run" DELETE /api/scaling/groups/smoke-dry-stopped "" -b "$JAR"
+wait_for "the dry run is gone" missing scalinggroup smoke-dry-stopped -n "$NS"
+holds_for 6 "the workload stopped by hand stays at zero" replicas_are smoke-dry-stopped app 0

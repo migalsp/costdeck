@@ -69,17 +69,20 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
-            # The sleep page is served by the API Service; routes asleep point at it.
+            # The sleep page has a Service of its own; routes asleep point at it.
             - name: COSTDECK_SLEEP_PAGE_SERVICE
-              value: {{ include "costdeck-operator.fullname" . }}-api
+              value: {{ include "costdeck-operator.fullname" . }}-sleep
             - name: COSTDECK_SLEEP_PAGE_PORT
-              value: {{ .Values.service.port | quote }}
+              value: "80"
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
           ports:
             - name: api-ui
               containerPort: 8082
+              protocol: TCP
+            - name: sleep
+              containerPort: 8083
               protocol: TCP
             {{- if .Values.metrics.enabled }}
             - name: metrics

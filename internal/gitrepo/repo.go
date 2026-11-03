@@ -276,21 +276,29 @@ func (g *gitlab) Files(ctx context.Context, dir string) ([]string, error) {
 	return out, nil
 }
 
+// Read returns the file from the base branch. Its revision is the ID of the last commit that
+// changed it, which Propose passes on so GitLab refuses the update if the file changed since.
 func (g *gitlab) Read(ctx context.Context, file string) ([]byte, string, error) {
 	var f struct {
-		Content string `json:"content"`
-		BlobID  string `json:"blob_id"`
+		Content      string `json:"content"`
+		LastCommitID string `json:"last_commit_id"`
 	}
 	if _, err := g.call(ctx, http.MethodGet, g.project()+"/repository/files/"+url.PathEscape(file)+"?ref="+url.QueryEscape(g.branch), nil, &f); err != nil {
 		return nil, "", err
 	}
 	raw, err := base64.StdEncoding.DecodeString(f.Content)
-	return raw, f.BlobID, err
+	return raw, f.LastCommitID, err
 }
 
+// Propose commits the file to a new branch started from the base branch in a single commits API
+// call and opens a merge request that removes the branch once merged; it returns the request's URL.
 func (g *gitlab) Propose(ctx context.Context, p Proposal) (string, error) {
+	action := map[string]string{"action": "update", "file_path": p.Path, "content": string(p.Content)}
+	if p.Revision != "" {
+		action["last_commit_id"] = p.Revision
+	}
 	commit := map[string]any{"branch": p.Branch, "start_branch": g.branch, "commit_message": p.Message,
-		"actions": []map[string]string{{"action": "update", "file_path": p.Path, "content": string(p.Content)}}}
+		"actions": []map[string]string{action}}
 	if _, err := g.call(ctx, http.MethodPost, g.project()+"/repository/commits", commit, nil); err != nil {
 		return "", err
 	}

@@ -3,15 +3,16 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	metricsv1beta1 "k8s.io/metrics/pkg/apis/metrics/v1beta1"
 	metricsfake "k8s.io/metrics/pkg/client/clientset/versioned/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -24,7 +25,7 @@ func TestRecommendationsAdviseWithoutChangingWorkloads(t *testing.T) {
 	server := buildMockServerWithK8s()
 	replicas := int32(2)
 	deploy := &appsv1.Deployment{
-		ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "shop"},
+		Name: "api", Namespace: "shop",
 		Spec: appsv1.DeploymentSpec{
 			Replicas: &replicas,
 			Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{
@@ -42,7 +43,7 @@ func TestRecommendationsAdviseWithoutChangingWorkloads(t *testing.T) {
 	// an object passed to NewSimpleClientset under "podmetricses", so add it explicitly.
 	metricsClient := metricsfake.NewSimpleClientset() //nolint:staticcheck // k8s.io/metrics generates no NewClientset
 	podMetrics := &metricsv1beta1.PodMetrics{
-		ObjectMeta: metav1.ObjectMeta{Name: "api-7d9f8c-abcde", Namespace: "shop"},
+		Name: "api-7d9f8c-bcdfg", Namespace: "shop",
 		Containers: []metricsv1beta1.ContainerMetrics{{Name: "api", Usage: corev1.ResourceList{
 			corev1.ResourceCPU: resource.MustParse("50m"), corev1.ResourceMemory: resource.MustParse("100Mi"),
 		}}},
@@ -76,5 +77,56 @@ func TestRecommendationsAdviseWithoutChangingWorkloads(t *testing.T) {
 	}
 	if got := after.Spec.Template.Spec.Containers[0].Resources.Requests.Cpu().String(); got != "1" {
 		t.Errorf("CPU request = %s after asking for advice; recommendations must never change a workload", got)
+	}
+}
+
+func TestPromWindowNamesWholeDaysInDays(t *testing.T) {
+	for d, want := range map[time.Duration]string{
+		14 * 24 * time.Hour: "14d",
+		24 * time.Hour:      "1d",
+		36 * time.Hour:      "36h",
+		6 * time.Hour:       "6h",
+	} {
+		if got := promWindow(d); got != want {
+			t.Errorf("promWindow(%v) = %q, want %q", d, got, want)
+		}
+	}
+}
+
+func TestRecommendationsWithoutUsageAreUnavailable(t *testing.T) {
+	t.Setenv("POD_NAMESPACE", "costdeck")
+	server := buildMockServerWithK8s()
+	if err := server.Client.Create(context.Background(), riskDeployment("api")); err != nil {
+		t.Fatal(err)
+	}
+	rr := httptest.NewRecorder()
+	server.routes().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/namespaces/shop/recommendations", nil))
+	if rr.Code != http.StatusServiceUnavailable || !strings.Contains(errorMessage(t, rr), "no usage data for namespace shop") {
+		t.Errorf("recommendations without any metrics source = %d %s, want 503 naming the missing usage", rr.Code, rr.Body.String())
+	}
+	if _, cached := server.recommendationCache.get("shop"); cached {
+		t.Error("a failed analysis must not be cached as advice")
+	}
+}
+
+func TestNamespacesWithoutWorkloadsAreNeitherQueriedNorCached(t *testing.T) {
+	t.Setenv("POD_NAMESPACE", operatorNamespace)
+	server := buildMockServerWithK8s()
+	for i := range 50 {
+		ns := fmt.Sprintf("made-up-%d", i)
+		for _, path := range []string{"/api/namespaces/" + ns + "/recommendations", "/api/namespaces/" + ns + "/risks"} {
+			if rr := send(t, server, http.MethodGet, path, ""); rr.Code != http.StatusOK {
+				t.Fatalf("GET %s = %d %s", path, rr.Code, rr.Body.String())
+			}
+		}
+	}
+	if n := len(server.recommendationCache.entries) + len(server.pressureCache.entries); n != 0 {
+		t.Errorf("%d cache entries for namespaces without workloads; a viewer looping over names must not grow the caches", n)
+	}
+
+	server.recommendationCache.entries = map[string]cachedReport{"old": {at: time.Now().Add(-time.Hour), ttl: recommendationTTL}}
+	server.recommendationCache.put("fresh", rightsizing.Report{})
+	if _, kept := server.recommendationCache.entries["old"]; kept {
+		t.Error("an expired report stayed in the cache")
 	}
 }

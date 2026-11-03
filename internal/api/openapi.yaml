@@ -229,9 +229,9 @@ paths:
       description: >
         Register https://<host>/api/auth/oidc/callback as the client's redirect URI. Verifies
         state, PKCE, the ID token signature, audience, issuer and nonce, maps the groups claim
-        (spec.auth.oidc.groupsClaim, default groups) through groupRoleMapping and honours
-        roles named viewer, operator or admin in rolesClaim, sets the session cookie and
-        redirects back. Failures redirect with ?sso_error=<code>&sso_detail=<text>.
+        (spec.auth.oidc.groupsClaim, default groups) through groupRoleMapping, maps the roles in
+        rolesClaim through roleMapping and honours roles named costdeck.viewer,
+        costdeck.operator or costdeck.admin, sets the session cookie and redirects back. Failures redirect with ?sso_error=<code>&sso_detail=<text>.
       responses:
         "302":
           description: Redirect back into the dashboard
@@ -630,6 +630,33 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "503":
           description: No usage data is available for the namespace.
+
+  /api/namespaces/{ns}/risks:
+    get:
+      x-role: viewer
+      tags: [Right-sizing]
+      summary: Performance risks
+      description: >-
+        What holds a namespace's workloads back or makes them unstable: CPU throttling, OOM kills,
+        restarts with their reason, evictions, memory close to the limit, HorizontalPodAutoscalers
+        that want more replicas than their maximum, and JVM heaps still full after garbage
+        collection. Current pod and HorizontalPodAutoscaler state is always read; CPU throttling
+        and the last 14 days of OOM kills, restarts and evictions need VictoriaMetrics with
+        cAdvisor and kube-state-metrics series. Each risk says how to fix it and what the fix
+        adds to the monthly cost. Right-sizing advice never reduces a resource under pressure.
+      parameters:
+        - $ref: "#/components/parameters/Namespace"
+      responses:
+        "200":
+          description: Risks, most severe first
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Risks"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          description: The namespace's workloads could not be listed.
 
   /api/namespaces/{ns}/optimization:
     get:
@@ -1516,6 +1543,10 @@ paths:
                         namespaces: { type: array, items: { type: string } }
                         partial: { type: boolean }
                   anomalies: { type: object }
+                  performanceRisks:
+                    type: object
+                    properties:
+                      enabled: { type: boolean }
                   events:
                     type: array
                     items:
@@ -1861,6 +1892,7 @@ paths:
                     - { name: payments, scope: team, value: payments, monthlyLimit: "1200", thresholds: [80, 100], forecast: true }
                   alerts:
                     anomalies: { enabled: true, percent: 30, minimumDaily: "5" }
+                    performanceRisks: { enabled: true }
               calendars:
                 summary: Public holidays that schedules name in spec.calendars
                 value:
@@ -2352,15 +2384,18 @@ components:
         warning: { type: string }
         currency: { type: string, example: USD }
         monthlySavings: { type: number }
+        javaMonthlySavings: { type: number, description: "What lowering oversized JVM heaps would save, a separate change from the request advice" }
         workloads:
           type: array
           items:
             type: object
             properties:
-              kind: { type: string, enum: [Deployment, StatefulSet] }
+              kind: { type: string, enum: [Deployment, StatefulSet, Rollout] }
               name: { type: string }
               replicas: { type: integer }
               monthlySavings: { type: number }
+              policy: { type: string, description: "The RightsizingPolicy that bounds this workload's advice" }
+              applyForbidden: { type: boolean, description: "Its policy forbids applying the advice or proposing it" }
               containers:
                 type: array
                 items:
@@ -2369,6 +2404,37 @@ components:
                     name: { type: string }
                     cpu: { $ref: "#/components/schemas/ResourceAdvice" }
                     memory: { $ref: "#/components/schemas/ResourceAdvice" }
+                    jvm: { $ref: "#/components/schemas/JVMAdvice" }
+    JVMAdvice:
+      type: object
+      description: >
+        How a Java container's JVM is set up and what that means for its memory. Present for
+        containers that run Java: found by the java command, JAVA_TOOL_OPTIONS, JDK_JAVA_OPTIONS,
+        JAVA_OPTS or _JAVA_OPTIONS, a JVM image, JVM metrics in VictoriaMetrics, or the
+        costdeck.io/runtime annotation (java or none) on the workload or its pod template.
+      properties:
+        detectedBy: { type: string, enum: [annotation, command, options, image, metrics] }
+        options: { type: array, items: { type: string }, example: ["-Xmx2g", "-XX:+UseG1GC"] }
+        heap: { type: string, example: 2Gi, description: "The heap the JVM can grow to; absent when it depends on the node" }
+        heapSource: { type: string, example: "set by -Xmx" }
+        heapUsed: { type: string, example: 1800Mi, description: "Peak heap in use, from JVM metrics" }
+        heapAfterGC: { type: string, example: 400Mi, description: "Peak heap left after garbage collection, from JVM metrics" }
+        nonHeap: { type: string, example: 160Mi }
+        recommendedHeap: { type: string, example: 800Mi }
+        recommendedMemory: { type: string, example: 1056Mi, description: "The memory request and limit to pair with the recommended heap" }
+        recommendedOptions: { type: string, example: "-Xmx800m" }
+        monthlySavings: { type: number }
+        findings:
+          type: array
+          items:
+            type: object
+            properties:
+              severity: { type: string, enum: [risk, waste, note] }
+              code:
+                type: string
+                enum: [container-support-off, no-memory-limit, heap-over-limit, no-room-for-native, default-heap,
+                  request-below-heap, heap-tight, heap-oversized, heap-differs, serial-gc, unread-options]
+              message: { type: string }
     User:
       type: object
       properties:
@@ -2406,6 +2472,31 @@ components:
         observed: { type: string, example: 100m }
         recommended: { type: string, example: 120m }
         action: { type: string, enum: [reduce, increase, keep, set, unknown] }
+        held: { type: string, example: "throttled in 30% of CPU periods at busy times", description: "Why a reduction is held back: the resource is under pressure" }
+    Risks:
+      type: object
+      properties:
+        namespace: { type: string }
+        historical: { type: boolean, description: "true when VictoriaMetrics history was read" }
+        window: { type: string, example: 14d }
+        basis: { type: string }
+        warning: { type: string }
+        currency: { type: string, example: USD }
+        risks:
+          type: array
+          items:
+            type: object
+            properties:
+              kind: { type: string, enum: [Deployment, StatefulSet, Rollout] }
+              workload: { type: string }
+              container: { type: string }
+              severity: { type: string, enum: [critical, warning] }
+              code:
+                type: string
+                description: cpu-throttled, oom-killed, restarts, evicted, memory-near-limit, hpa-at-max, or a JVM finding code such as heap-tight
+              message: { type: string }
+              fix: { type: string }
+              fixMonthlyCost: { type: number, description: "What the fix adds to the monthly cost; 0 for limits, which are not billed; absent when unknown" }
     OptimizationStatus:
       type: object
       properties:
@@ -2509,6 +2600,14 @@ components:
                 Point the namespaces' Gateway API HTTPRoutes at Cost Deck's sleep page while the
                 schedule keeps them down, and back once they are up. Needs sleepPage.enabled in the
                 Helm chart.
+            prewarm:
+              type: object
+              description: >-
+                Start the workloads ahead of each scheduled start: by minutes (up to 120), or with
+                auto by the slowest of the last five wake-ups plus a minute, at most 30 minutes.
+              properties:
+                auto: { type: boolean }
+                minutes: { type: integer, minimum: 0, maximum: 120 }
             idleAfter:
               type: string
               example: 1h
@@ -2563,9 +2662,11 @@ components:
           description: >-
             Written by the operator. phase is ScaledUp, ScalingUp, ScalingDown, ScaledDown or
             WaitingForDependencies; mode says what decides the state (Schedule, ManualUp,
-            ManualDown, Exception, AlwaysOn, Dependency, OnDemand, Idle). While mode is
+            ManualDown, Exception, AlwaysOn, Dependency, OnDemand, Idle, Prewarm). While mode is
             Exception, exception names it and exceptionEndsAt says when it ends; while it is
-            Idle, idleUntil says when the schedule takes over again.
+            Idle, idleUntil says when the schedule takes over again. recentWakeUps are the last
+            five scale-ups from zero with how long each took until every target was ready, and
+            prewarmMinutes is how far ahead of each scheduled start spec.prewarm starts them.
 
     ScalingConfig:
       type: object
@@ -2588,7 +2689,15 @@ components:
           type: object
           required: [targetNamespace]
           properties:
-            targetNamespace: { type: string }
+            targetNamespace: { type: string, description: "The namespace the schedule scales. It cannot change after creation." }
+            featureFlags:
+              type: object
+              description: >-
+                Without skipOnTimeout each stage of the workload sequence waits until its workloads
+                are ready. A group that runs this namespace uses its own setting.
+              properties:
+                skipOnTimeout: { type: boolean, description: "Start the next stage when one is not ready in time." }
+                timeoutMinutes: { type: integer, minimum: 1, maximum: 30, default: 5 }
             schedules:
               type: array
               items: { $ref: "#/components/schemas/ScalingSchedule" }
@@ -2620,6 +2729,14 @@ components:
                 Point the namespaces' Gateway API HTTPRoutes at Cost Deck's sleep page while the
                 schedule keeps them down, and back once they are up. Needs sleepPage.enabled in the
                 Helm chart.
+            prewarm:
+              type: object
+              description: >-
+                Start the workloads ahead of each scheduled start: by minutes (up to 120), or with
+                auto by the slowest of the last five wake-ups plus a minute, at most 30 minutes.
+              properties:
+                auto: { type: boolean }
+                minutes: { type: integer, minimum: 0, maximum: 120 }
             idleAfter:
               type: string
               example: 1h

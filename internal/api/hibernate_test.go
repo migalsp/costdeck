@@ -92,7 +92,7 @@ func TestPreviewListsServicesAndLeavesTheirWorkloads(t *testing.T) {
 	t.Setenv("POD_NAMESPACE", "costdeck")
 	server := hibernateServer(t, nil)
 	ctx := context.Background()
-	if err := server.Client.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "shop-dev"}}); err != nil {
+	if err := server.Client.Create(ctx, &corev1.Namespace{Name: "shop-dev"}); err != nil {
 		t.Fatal(err)
 	}
 	seedWorkload(t, server, "shop-dev", "api", 1, "100m", "128Mi")
@@ -109,7 +109,7 @@ func TestPreviewListsServicesAndLeavesTheirWorkloads(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The namespace's own config adds the Pooler kind; the group adds CloudNativePG.
-	if err := server.Client.Create(ctx, &finopsv1.ScalingConfig{ObjectMeta: metav1.ObjectMeta{Name: "shop-dev", Namespace: "costdeck"},
+	if err := server.Client.Create(ctx, &finopsv1.ScalingConfig{Name: "shop-dev", Namespace: "costdeck",
 		Spec: finopsv1.ScalingConfigSpec{TargetNamespace: "shop-dev", Hibernate: []finopsv1.HibernateRule{{APIVersion: "postgresql.cnpg.io/v1", Kind: "Pooler", ReplicasField: "spec.instances"}}}}); err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +130,7 @@ func TestPreviewListsServicesAndLeavesTheirWorkloads(t *testing.T) {
 		}
 	}
 
-	if err := server.Client.Create(ctx, &finopsv1.ScalingGroup{ObjectMeta: metav1.ObjectMeta{Name: "shop", Namespace: "costdeck"},
+	if err := server.Client.Create(ctx, &finopsv1.ScalingGroup{Name: "shop", Namespace: "costdeck",
 		Spec: finopsv1.ScalingGroupSpec{Namespaces: []string{"shop-dev"}, Hibernate: []finopsv1.HibernateRule{{Preset: "cnpg"}}}}); err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +151,7 @@ func TestPreviewExplainsMissingHibernationPermissions(t *testing.T) {
 		}
 		return c.List(ctx, list, opts...)
 	}})
-	if err := server.Client.Create(context.Background(), &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "shop-dev"}}); err != nil {
+	if err := server.Client.Create(context.Background(), &corev1.Namespace{Name: "shop-dev"}); err != nil {
 		t.Fatal(err)
 	}
 	rr := send(t, server, "POST", "/api/scaling/preview", `{"kind":"config","spec":{"targetNamespace":"shop-dev","hibernate":[{"preset":"cnpg"}]}}`)

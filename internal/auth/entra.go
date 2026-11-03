@@ -477,10 +477,12 @@ func (e *Entra) TestEntra(ctx context.Context, cfg finopsv1.EntraConfig, clientS
 	return "Tenant and client credentials are valid.", nil
 }
 
+// redirectWithError sends a failed sign-in back to returnTo ("/" unless it is a safe local path)
+// with sso_error and sso_detail query parameters for the dashboard to show. A SignInError supplies
+// its own code and detail; any other error becomes sign_in_failed.
 func redirectWithError(w http.ResponseWriter, r *http.Request, returnTo string, err error) {
 	code, detail := "sign_in_failed", err.Error()
-	var sie *SignInError
-	if errors.As(err, &sie) {
+	if sie, ok := errors.AsType[*SignInError](err); ok {
 		code, detail = sie.Code, sie.Detail
 	}
 	q := url.Values{"sso_error": {code}, "sso_detail": {detail}}

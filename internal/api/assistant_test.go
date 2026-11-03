@@ -127,7 +127,7 @@ func TestAIChatStreamsToolActivityAndAnswer(t *testing.T) {
 	server := buildMockServer()
 	seedGroup(t, server, "pps1")
 	if err := server.Client.Create(context.Background(), &finopsv1.CostDeckConfig{
-		ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: "costdeck"},
+		Name: "default", Namespace: "costdeck",
 		Spec: finopsv1.CostDeckConfigSpec{Integrations: finopsv1.IntegrationsConfig{
 			AI: &finopsv1.AIIntegrationConfig{Enabled: true, Provider: "local", Model: "llama3", BaseURL: model.URL + "/v1"},
 		}},
@@ -198,7 +198,7 @@ func TestToolSchemasAreStrictJSONSchema(t *testing.T) {
 func TestGetScalingGroupToolShowsIdleSleep(t *testing.T) {
 	server := buildMockServerWithK8s()
 	until := metav1.NewTime(time.Date(2026, 10, 23, 18, 1, 0, 0, time.UTC))
-	g := &finopsv1.ScalingGroup{ObjectMeta: metav1.ObjectMeta{Name: "shop", Namespace: config.OperatorNamespace()},
+	g := &finopsv1.ScalingGroup{Name: "shop", Namespace: config.OperatorNamespace(),
 		Spec: finopsv1.ScalingGroupSpec{Namespaces: []string{"shop-dev"}, SleepPage: true, IdleAfter: &metav1.Duration{Duration: time.Hour}}}
 	g.Status.Mode, g.Status.IdleUntil = "Idle", &until
 	if err := server.Client.Create(context.Background(), g); err != nil {

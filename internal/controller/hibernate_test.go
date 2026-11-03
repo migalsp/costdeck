@@ -30,13 +30,13 @@ var _ = Describe("Hibernate rules", func() {
 
 	namespace := func(name string, labels map[string]string) {
 		GinkgoHelper()
-		Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: name, Labels: labels}}))).To(Succeed())
+		Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, &corev1.Namespace{Name: name, Labels: labels}))).To(Succeed())
 	}
 	deployment := func(ns, name string, replicas int32, owner *metav1.OwnerReference) {
 		GinkgoHelper()
 		sel := map[string]string{"app": name}
 		d := &appsv1.Deployment{
-			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+			Name: name, Namespace: ns,
 			Spec: appsv1.DeploymentSpec{
 				Replicas: new(replicas), Selector: &metav1.LabelSelector{MatchLabels: sel},
 				Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: sel}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "c", Image: "busybox"}}}},
@@ -99,7 +99,7 @@ var _ = Describe("Hibernate rules", func() {
 		// A Deployment CloudNativePG runs for the cluster is the operator's to scale.
 		deployment(ns, "db-pooler", 1, &metav1.OwnerReference{APIVersion: "postgresql.cnpg.io/v1", Kind: "Cluster", Name: "db", UID: read(db).GetUID(), Controller: new(true)})
 		settle(ns)
-		g := &finopsv1.ScalingGroup{ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace},
+		g := &finopsv1.ScalingGroup{Name: key.Name, Namespace: key.Namespace,
 			Spec: finopsv1.ScalingGroupSpec{Category: "Test", Namespaces: []string{ns}, Schedules: closed, Hibernate: []finopsv1.HibernateRule{{Preset: "cnpg"}}}}
 		Expect(k8sClient.Create(ctx, g)).To(Succeed())
 		DeferCleanup(func() {
@@ -151,7 +151,7 @@ var _ = Describe("Hibernate rules", func() {
 		deployment(ns, "api", 1, nil)
 		pg := service(zalando, ns, "pg", map[string]any{"numberOfInstances": int64(2)})
 		settle(ns)
-		cfg := &finopsv1.ScalingConfig{ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace},
+		cfg := &finopsv1.ScalingConfig{Name: key.Name, Namespace: key.Namespace,
 			Spec: finopsv1.ScalingConfigSpec{TargetNamespace: ns, Schedules: closed, DryRun: true, Hibernate: []finopsv1.HibernateRule{{Preset: "zalando-postgres"}}}}
 		Expect(k8sClient.Create(ctx, cfg)).To(Succeed())
 		DeferCleanup(func() {
@@ -202,10 +202,10 @@ var _ = Describe("Hibernate rules", func() {
 		db := service(cnpg, ns, "db", map[string]any{"instances": int64(1)})
 		settle(ns)
 		// Two stages: "second" only starts once "first" is ready.
-		rules := &finopsv1.ScalingConfig{ObjectMeta: metav1.ObjectMeta{Name: "hib-preview-rules", Namespace: "default"},
+		rules := &finopsv1.ScalingConfig{Name: "hib-preview-rules", Namespace: "default",
 			Spec: finopsv1.ScalingConfigSpec{TargetNamespace: ns, Sequence: []string{"first", "second"}}}
 		Expect(k8sClient.Create(ctx, rules)).To(Succeed())
-		g := &finopsv1.ScalingGroup{ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace},
+		g := &finopsv1.ScalingGroup{Name: key.Name, Namespace: key.Namespace,
 			Spec: finopsv1.ScalingGroupSpec{Category: "Test", Schedules: closed, Hibernate: []finopsv1.HibernateRule{{Preset: "cnpg"}},
 				NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"env": "hib-preview"}}}}
 		Expect(k8sClient.Create(ctx, g)).To(Succeed())

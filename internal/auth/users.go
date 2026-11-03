@@ -271,12 +271,10 @@ func (u *Users) write(ctx context.Context, username string, change func(map[stri
 		}
 		if secret == nil {
 			secret = &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: usersSecretName, Namespace: config.OperatorNamespace(),
-					Labels: map[string]string{"app.kubernetes.io/managed-by": "costdeck-operator"},
-				},
-				Type: corev1.SecretTypeOpaque,
-				Data: map[string][]byte{username: data},
+				Name: usersSecretName, Namespace: config.OperatorNamespace(),
+				Labels: map[string]string{"app.kubernetes.io/managed-by": "costdeck-operator"},
+				Type:   corev1.SecretTypeOpaque,
+				Data:   map[string][]byte{username: data},
 			}
 			return u.Client.Create(ctx, secret)
 		}

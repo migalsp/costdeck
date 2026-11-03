@@ -13,7 +13,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -115,10 +114,9 @@ func updateReports(ctx context.Context, c client.Client, namespace string, chang
 			return err
 		}
 		if create {
-			cm = corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{
+			cm = corev1.ConfigMap{
 				Name: ReportsConfigMap, Namespace: namespace,
-				Labels: map[string]string{"app.kubernetes.io/managed-by": "costdeck"},
-			}}
+				Labels: map[string]string{"app.kubernetes.io/managed-by": "costdeck"}}
 		}
 		if cm.Data == nil {
 			cm.Data = map[string]string{}
@@ -312,6 +310,9 @@ func (d *DigestScheduler) Send(ctx context.Context, period, by string) (ReportEn
 	}, md)
 }
 
+// digest builds the digest from the API's overview, asking again every overviewInterval, at most
+// overviewWaits times, while right-sizing advice is still being calculated so its opportunities are
+// included. Without an Overview it uses a fresh snapshot instead. Open risks are added either way.
 func (d *DigestScheduler) digest(ctx context.Context, period string, now time.Time) (Digest, error) {
 	if d.Overview == nil {
 		return BuildDigest(ctx, d.Client, d.Pricing.Rates(ctx), d.Namespace, period, now)
@@ -332,7 +333,7 @@ func (d *DigestScheduler) digest(ctx context.Context, period string, now time.Ti
 	if err != nil {
 		return Digest{}, err
 	}
-	return NewDigest(o, ledger, period, now), nil
+	return WithOpenRisks(ctx, d.Client, d.Namespace, NewDigest(o, ledger, period, now)), nil
 }
 
 // BuildDigest takes a fresh snapshot and builds the digest from it and the ledger.
@@ -345,5 +346,5 @@ func BuildDigest(ctx context.Context, c client.Reader, rates pricing.Rates, name
 	if err != nil {
 		return Digest{}, err
 	}
-	return NewDigest(NewOverview(snap, ledger, nil, 0), ledger, period, now), nil
+	return WithOpenRisks(ctx, c, namespace, NewDigest(NewOverview(snap, ledger, nil, 0), ledger, period, now)), nil
 }

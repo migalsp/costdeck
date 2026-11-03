@@ -30,10 +30,10 @@ var _ = Describe("Dry runs", func() {
 	}
 	workload := func(ns string, replicas int32) {
 		GinkgoHelper()
-		Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}}))).To(Succeed())
+		Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, &corev1.Namespace{Name: ns}))).To(Succeed())
 		labels := map[string]string{"app": "app"}
 		Expect(k8sClient.Create(ctx, &appsv1.Deployment{
-			ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: ns},
+			Name: "app", Namespace: ns,
 			Spec: appsv1.DeploymentSpec{
 				Replicas: new(replicas), Selector: &metav1.LabelSelector{MatchLabels: labels},
 				Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: labels}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "app", Image: "busybox"}}}},
@@ -42,16 +42,16 @@ var _ = Describe("Dry runs", func() {
 	}
 	AfterEach(func() {
 		for _, ns := range []string{"dry-group", "dry-config"} {
-			Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: ns}}))).To(Succeed())
+			Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, &appsv1.Deployment{Name: "app", Namespace: ns}))).To(Succeed())
 		}
-		Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, &finopsv1.ScalingGroup{ObjectMeta: metav1.ObjectMeta{Name: "dry", Namespace: "default"}}))).To(Succeed())
-		Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, &finopsv1.ScalingConfig{ObjectMeta: metav1.ObjectMeta{Name: "dry", Namespace: "default"}}))).To(Succeed())
+		Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, &finopsv1.ScalingGroup{Name: "dry", Namespace: "default"}))).To(Succeed())
+		Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, &finopsv1.ScalingConfig{Name: "dry", Namespace: "default"}))).To(Succeed())
 	})
 
 	It("works out what a group would scale, changes nothing, and acts once switched off", func() {
 		workload("dry-group", 3)
 		key := types.NamespacedName{Name: "dry", Namespace: "default"}
-		Expect(k8sClient.Create(ctx, &finopsv1.ScalingGroup{ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace},
+		Expect(k8sClient.Create(ctx, &finopsv1.ScalingGroup{Name: key.Name, Namespace: key.Namespace,
 			Spec: finopsv1.ScalingGroupSpec{Category: "Test", Namespaces: []string{"dry-group"}, Schedules: closed, DryRun: true}})).To(Succeed())
 		r := &ScalingGroupReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), Engine: &scaling.Engine{Client: k8sClient}, Recorder: events.NewFakeRecorder(100)}
 		reconcileGroup := func() *finopsv1.ScalingGroup {
@@ -81,7 +81,7 @@ var _ = Describe("Dry runs", func() {
 	It("does the same for a single-namespace schedule", func() {
 		workload("dry-config", 2)
 		key := types.NamespacedName{Name: "dry", Namespace: "default"}
-		Expect(k8sClient.Create(ctx, &finopsv1.ScalingConfig{ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace},
+		Expect(k8sClient.Create(ctx, &finopsv1.ScalingConfig{Name: key.Name, Namespace: key.Namespace,
 			Spec: finopsv1.ScalingConfigSpec{TargetNamespace: "dry-config", Schedules: closed, DryRun: true}})).To(Succeed())
 		r := &ScalingConfigReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), Engine: &scaling.Engine{Client: k8sClient}}
 		_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: key})

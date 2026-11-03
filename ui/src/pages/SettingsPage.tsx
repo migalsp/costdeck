@@ -117,6 +117,7 @@ interface OIDCSettingsData {
   defaultRole?: string
   autoProvision: boolean
   groupRoleMapping?: Record<string, string>
+  roleMapping?: Record<string, string>
   skipSslVerify: boolean
   hasClientSecret: boolean
 }
@@ -795,6 +796,7 @@ export default function SettingsPage({ section: requested }: { section?: string 
               hasClientSecret: o.hasClientSecret, redirectUrl: o.redirectUrl || '', scopes: (o.scopes || []).join(' '), groupsClaim: o.groupsClaim || '',
               rolesClaim: o.rolesClaim || '', defaultRole: o.defaultRole || 'viewer', autoProvision: o.autoProvision, skipSslVerify: o.skipSslVerify,
               mapping: Object.entries(o.groupRoleMapping || {}).map(([group, role]) => ({ group, role })),
+              roleMapping: Object.entries(o.roleMapping || {}).map(([name, role]) => ({ name, role })),
             })
           }
           const e = data.auth.entra

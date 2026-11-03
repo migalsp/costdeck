@@ -8,6 +8,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/migalsp/costdeck-operator/internal/finops"
 	"github.com/migalsp/costdeck-operator/internal/pricing"
 )
 
@@ -43,6 +44,8 @@ func (s *Server) costRates(ctx context.Context) pricing.Rates {
 	return s.pricingResolver().Rates(ctx)
 }
 
+// handleCosting serves POST /api/costing: it prices the CPU and memory sent for a cluster or
+// node, or for a namespace the requests of its pods that have not finished, per hour and month.
 func (s *Server) handleCosting(w http.ResponseWriter, r *http.Request) {
 	var req CostRequest
 	if err := decodeJSON(w, r, &req); err != nil {
@@ -67,9 +70,9 @@ func (s *Server) handleCosting(w http.ResponseWriter, r *http.Request) {
 			if p.Status.Phase == corev1.PodSucceeded || p.Status.Phase == corev1.PodFailed {
 				continue
 			}
-			c, m := calculatePodRequests(p)
-			cpu.Add(*c)
-			mem.Add(*m)
+			c, m := finops.PodRequests(&p)
+			cpu.Add(c)
+			mem.Add(m)
 		}
 	default:
 		writeError(w, http.StatusBadRequest, "targetType must be cluster, node or namespace")

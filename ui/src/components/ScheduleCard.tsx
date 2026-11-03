@@ -77,7 +77,7 @@ export default function ScheduleCard(p: ScheduleCardProps) {
           </div>
         </button>
       ) : (
-        <WeekTimeline schedules={p.spec.schedules} onDemand={p.spec.activation === 'OnDemand'} compact />
+        <WeekTimeline schedules={p.spec.schedules} onDemand={p.spec.activation === 'OnDemand'} leadMinutes={p.status?.prewarmMinutes} compact />
       )}
 
       {((p.spec.dependsOn?.length || 0) > 0 || (p.status?.conflictingNamespaces?.length || 0) > 0) && (

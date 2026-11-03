@@ -20,6 +20,7 @@ import (
 	"crypto/tls"
 	"flag"
 	"os"
+	"strconv"
 
 	// Embeds the IANA timezone database into the binary. The runtime image is
 	// gcr.io/distroless/static, which ships no /usr/share/zoneinfo, so without this
@@ -28,6 +29,7 @@ import (
 
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -70,6 +72,9 @@ func init() {
 	// +kubebuilder:scaffold:scheme
 }
 
+// parseFlags binds and parses the command-line flags, the zap logging flags included. It returns
+// the listener and certificate settings keyed by name, whether leader election is on, the probe
+// address, whether metrics are served securely and the logger options.
 func parseFlags() (map[string]string, bool, string, bool, zap.Options) {
 	var metricsAddr, probeAddr string
 	var metricsCertPath, metricsCertName, metricsCertKey string
@@ -88,7 +93,7 @@ func parseFlags() (map[string]string, bool, string, bool, zap.Options) {
 	flag.StringVar(&metricsCertKey, "metrics-cert-key", "tls.key", "Metrics key filename.")
 	flag.BoolVar(&enableHTTP2, "enable-http2", false, "Enable HTTP/2.")
 
-	opts := zap.Options{Development: true}
+	opts := zap.Options{}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
 
@@ -97,10 +102,14 @@ func parseFlags() (map[string]string, bool, string, bool, zap.Options) {
 		"probeAddr":       probeAddr,
 		"webhookCertPath": webhookCertPath, "webhookCertName": webhookCertName, "webhookCertKey": webhookCertKey,
 		"metricsCertPath": metricsCertPath, "metricsCertName": metricsCertName, "metricsCertKey": metricsCertKey,
+		"enableHTTP2": strconv.FormatBool(enableHTTP2),
 	}
 	return flags, enableLeaderElection, probeAddr, secureMetrics, opts
 }
 
+// main runs the operator: one manager with the API server, the Webex poller, the leader-only
+// FinOps, alerting, right-sizing guard and cleanup runnables, and every controller. Called as
+// "manager estimate" it prices a manifest change instead and exits.
 func main() {
 	// "manager estimate" prices a change of manifests for CI and exits.
 	if len(os.Args) > 1 && os.Args[1] == "estimate" {
@@ -158,6 +167,7 @@ func main() {
 		Metrics:       metricsProvider,
 		Pricing:       pricingResolver,
 		Port:          "8082",
+		SleepPort:     "8083",
 	}
 	if err := mgr.Add(apiServer); err != nil {
 		setupLog.Error(err, "Failed to add API server to manager")
@@ -210,6 +220,15 @@ func main() {
 	}
 	if err := mgr.Add(alerter); err != nil {
 		setupLog.Error(err, "Failed to add the budget alerter to manager")
+		os.Exit(1)
+	}
+	riskAlerter := &api.RiskAlerter{
+		Server:    apiServer,
+		Poster:    notify.Poster{Dispatcher: dispatcher, Event: notify.EventAlerts},
+		Namespace: cdconfig.OperatorNamespace(),
+	}
+	if err := mgr.Add(riskAlerter); err != nil {
+		setupLog.Error(err, "Failed to add the performance risk alerter to manager")
 		os.Exit(1)
 	}
 
@@ -313,23 +332,33 @@ func cacheOptions(operatorNs string) cache.Options {
 	}
 }
 
-// clientOptions makes Secrets and ConfigMaps bypass the cache. CostDeck reads a handful of
-// its own Secrets by name; caching them would start an informer that lists and watches
-// every Secret it can see, which is both a needless privilege and a memory cost.
+// clientOptions makes Secrets, ConfigMaps, HorizontalPodAutoscalers and RightsizingPolicies
+// bypass the cache. CostDeck reads a handful of its own Secrets by name; caching them would
+// start an informer that lists and watches every Secret it can see, which is both a needless
+// privilege and a memory cost.
 func clientOptions() client.Options {
 	return client.Options{
 		Cache: &client.CacheOptions{
-			DisableFor: []client.Object{&corev1.Secret{}, &corev1.ConfigMap{}},
+			DisableFor: []client.Object{
+				&corev1.Secret{}, &corev1.ConfigMap{}, &autoscalingv2.HorizontalPodAutoscaler{}, &finopsv1.RightsizingPolicy{},
+			},
 		},
 	}
 }
 
-func setupWebhookServer(flags map[string]string) webhook.Server {
-	opts := webhook.Options{
-		TLSOpts: []func(*tls.Config){func(c *tls.Config) {
-			c.NextProtos = []string{"http/1.1"}
-		}},
+// http1Only returns a TLS option that limits ALPN to HTTP/1.1 unless --enable-http2 is set, keeping
+// the webhook and metrics servers clear of the HTTP/2 Rapid Reset and Stream Cancellation attacks.
+func http1Only(flags map[string]string) []func(*tls.Config) {
+	if flags["enableHTTP2"] == "true" {
+		return nil
 	}
+	return []func(*tls.Config){func(c *tls.Config) { c.NextProtos = []string{"http/1.1"} }}
+}
+
+// setupWebhookServer builds the webhook server with the HTTP/1.1 restriction and, when
+// --webhook-cert-path is set, the certificate and key from that directory.
+func setupWebhookServer(flags map[string]string) webhook.Server {
+	opts := webhook.Options{TLSOpts: http1Only(flags)}
 	if p := flags["webhookCertPath"]; len(p) > 0 {
 		opts.CertDir = p
 		opts.CertName = flags["webhookCertName"]
@@ -338,13 +367,14 @@ func setupWebhookServer(flags map[string]string) webhook.Server {
 	return webhook.NewServer(opts)
 }
 
+// setupMetricsOptions configures the metrics endpoint. Served securely, it requires Kubernetes
+// authentication and authorization on every scrape and uses the certificate from
+// --metrics-cert-path, falling back to a self-signed one when none is there.
 func setupMetricsOptions(flags map[string]string, secure bool) metricsserver.Options {
 	opts := metricsserver.Options{
 		BindAddress:   flags["metricsAddr"],
 		SecureServing: secure,
-		TLSOpts: []func(*tls.Config){func(c *tls.Config) {
-			c.NextProtos = []string{"http/1.1"}
-		}},
+		TLSOpts:       http1Only(flags),
 	}
 	if secure {
 		opts.FilterProvider = filters.WithAuthenticationAndAuthorization

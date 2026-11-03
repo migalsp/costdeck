@@ -14,8 +14,9 @@ describe('isUpAt matches the operator (internal/scaling/testdata/windows.json)',
   for (const c of shared.cases) {
     it(c.name, () => {
       const schedules = c.schedules as ScalingSchedule[]
-      for (const at of c.up) expect(isUpAt(schedules, weekMinute(at)), `${at} should be up`).toBe(true)
-      for (const at of c.down) expect(isUpAt(schedules, weekMinute(at)), `${at} should be down`).toBe(false)
+      const lead = 'leadMinutes' in c ? Number(c.leadMinutes) : 0
+      for (const at of c.up) expect(isUpAt(schedules, weekMinute(at), lead), `${at} should be up`).toBe(true)
+      for (const at of c.down) expect(isUpAt(schedules, weekMinute(at), lead), `${at} should be down`).toBe(false)
     })
   }
 })

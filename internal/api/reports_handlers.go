@@ -91,7 +91,7 @@ func (s *Server) digest(r *http.Request) (finops.Digest, error) {
 	if err != nil {
 		return finops.Digest{}, err
 	}
-	return finops.NewDigest(overview, ledger, r.URL.Query().Get("period"), time.Now()), nil
+	return finops.WithOpenRisks(ctx, s.Client, config.OperatorNamespace(), finops.NewDigest(overview, ledger, r.URL.Query().Get("period"), time.Now())), nil
 }
 
 // handleDigest serves the digest of the last complete week or month (?period=week|month).

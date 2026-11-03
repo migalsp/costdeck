@@ -161,6 +161,13 @@ jobs:
       - name: npm audit (runtime dependencies)
         working-directory: ui
         run: npm audit --omit=dev --audit-level=high
+      - name: OSV-Scanner (every lockfile, as Scorecard scans them)
+        uses: google/osv-scanner-action/osv-scanner-action@b1d267aea5211fa648d9d442fa64b90dbdcbdd36 # v2.7.0
+        with:
+          scan-args: |-
+            --recursive
+            --no-call-analysis=go
+            ./
 
   dependency-review:
     name: Dependency review
@@ -240,7 +247,6 @@ jobs:
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: costdeck-operator:e2e
-          severity: CRITICAL,HIGH
           ignore-unfixed: true
           trivyignores: .trivyignore.yaml
           exit-code: "1"

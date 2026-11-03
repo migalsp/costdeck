@@ -32,6 +32,10 @@ linters:
       rules:
         - name: comment-spacings
         - name: import-shadowing
+    goconst:
+      exclude-types:
+        - call
+        - compositelit
     modernize:
       disable:
         - omitzero

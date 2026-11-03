@@ -20,6 +20,7 @@ import (
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
 	"github.com/migalsp/costdeck-operator/internal/config"
+	"github.com/migalsp/costdeck-operator/internal/finops"
 	"github.com/migalsp/costdeck-operator/internal/scaling"
 )
 
@@ -134,6 +135,8 @@ func (s *Server) getNodeMetricsMap(ctx context.Context) map[string]corev1.Resour
 	return nodeMetricsMap
 }
 
+// getPodRequestsPerNode sums the CPU and memory requests of scheduled, unfinished pods by node
+// name. A node without such pods has no entry, and a failed pod list yields empty maps.
 func (s *Server) getPodRequestsPerNode(ctx context.Context) (map[string]*resource.Quantity, map[string]*resource.Quantity) {
 	nodeReqCPU := make(map[string]*resource.Quantity)
 	nodeReqMem := make(map[string]*resource.Quantity)
@@ -149,42 +152,16 @@ func (s *Server) getPodRequestsPerNode(ctx context.Context) (map[string]*resourc
 			continue
 		}
 
-		reqCPU, reqMem := calculatePodRequests(pod)
+		reqCPU, reqMem := finops.PodRequests(&pod)
 
 		if _, ok := nodeReqCPU[pod.Spec.NodeName]; !ok {
 			nodeReqCPU[pod.Spec.NodeName] = resource.NewQuantity(0, resource.DecimalSI)
 			nodeReqMem[pod.Spec.NodeName] = resource.NewQuantity(0, resource.BinarySI)
 		}
-		nodeReqCPU[pod.Spec.NodeName].Add(*reqCPU)
-		nodeReqMem[pod.Spec.NodeName].Add(*reqMem)
+		nodeReqCPU[pod.Spec.NodeName].Add(reqCPU)
+		nodeReqMem[pod.Spec.NodeName].Add(reqMem)
 	}
 	return nodeReqCPU, nodeReqMem
-}
-
-// calculatePodRequests returns the effective requests of a pod: the sum of its containers,
-// or the largest init container if that is bigger, matching how the scheduler counts.
-func calculatePodRequests(pod corev1.Pod) (*resource.Quantity, *resource.Quantity) {
-	reqCPU := resource.NewQuantity(0, resource.DecimalSI)
-	reqMem := resource.NewQuantity(0, resource.BinarySI)
-
-	for _, container := range pod.Spec.Containers {
-		if q, ok := container.Resources.Requests[corev1.ResourceCPU]; ok {
-			reqCPU.Add(q)
-		}
-		if q, ok := container.Resources.Requests[corev1.ResourceMemory]; ok {
-			reqMem.Add(q)
-		}
-	}
-
-	for _, container := range pod.Spec.InitContainers {
-		if q, ok := container.Resources.Requests[corev1.ResourceCPU]; ok && q.Cmp(*reqCPU) > 0 {
-			reqCPU = &q
-		}
-		if q, ok := container.Resources.Requests[corev1.ResourceMemory]; ok && q.Cmp(*reqMem) > 0 {
-			reqMem = &q
-		}
-	}
-	return reqCPU, reqMem
 }
 
 func (s *Server) gatherNodeInfo(n corev1.Node, nodeMetricsMap map[string]corev1.ResourceList, nodeReqCPU, nodeReqMem map[string]*resource.Quantity) map[string]any {

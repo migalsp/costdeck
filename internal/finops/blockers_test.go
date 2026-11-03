@@ -16,7 +16,7 @@ func TestNodeBlockers(t *testing.T) {
 		return []metav1.OwnerReference{{Kind: kind, Name: "owner", Controller: new(true)}}
 	}
 	pod := func(ns, name string, mutate func(*corev1.Pod)) corev1.Pod {
-		p := corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: name, Labels: map[string]string{"app": name}, OwnerReferences: owned("ReplicaSet")},
+		p := corev1.Pod{Namespace: ns, Name: name, Labels: map[string]string{"app": name}, OwnerReferences: owned("ReplicaSet"),
 			Spec: corev1.PodSpec{NodeName: "node-a"}, Status: corev1.PodStatus{Phase: corev1.PodRunning}}
 		if mutate != nil {
 			mutate(&p)
@@ -32,11 +32,11 @@ func TestNodeBlockers(t *testing.T) {
 		}
 	}
 	pdb := func(ns, name, app string, allowed int32) policyv1.PodDisruptionBudget {
-		return policyv1.PodDisruptionBudget{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: name},
+		return policyv1.PodDisruptionBudget{Namespace: ns, Name: name,
 			Spec:   policyv1.PodDisruptionBudgetSpec{MinAvailable: new(intstr.FromInt32(1)), Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": app}}},
 			Status: policyv1.PodDisruptionBudgetStatus{DisruptionsAllowed: allowed}}
 	}
-	node := corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-a"}}
+	node := corev1.Node{Name: "node-a"}
 
 	cases := []struct {
 		name string
@@ -49,7 +49,7 @@ func TestNodeBlockers(t *testing.T) {
 		{"a PDB that allows no disruption", node, []corev1.Pod{pod("shop", "api", nil)}, []policyv1.PodDisruptionBudget{pdb("shop", "api-pdb", "api", 0), pdb("shop", "other", "web", 0)},
 			[]Blocker{{BlockerPDB, "shop/api", "The PodDisruptionBudget shop/api-pdb allows no disruption now."}}},
 		{"a PDB that allows one", node, []corev1.Pod{pod("shop", "api", nil)}, []policyv1.PodDisruptionBudget{pdb("shop", "api-pdb", "api", 1)}, nil},
-		{"the node opts out", corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-a", Annotations: map[string]string{caScaleDownDisabled: "true", karpenterNoDisrupt: "true"}}}, nil, nil,
+		{"the node opts out", corev1.Node{Name: "node-a", Annotations: map[string]string{caScaleDownDisabled: "true", karpenterNoDisrupt: "true"}}, nil, nil,
 			[]Blocker{{BlockerNode, "", "The node is annotated cluster-autoscaler.kubernetes.io/scale-down-disabled."}, {BlockerNode, "", "The node is annotated karpenter.sh/do-not-disrupt."}}},
 		{"safe-to-evict false", node, []corev1.Pod{pod("shop", "api", annotate(caSafeToEvict, "false"))}, nil,
 			[]Blocker{{BlockerSafeToEvict, "shop/api", `Annotated cluster-autoscaler.kubernetes.io/safe-to-evict: "false".`}}},
@@ -66,11 +66,11 @@ func TestNodeBlockers(t *testing.T) {
 		{"local storage, except in memory or released", node, []corev1.Pod{pod("shop", "api", func(p *corev1.Pod) {
 			annotate(caSafeLocalVolumes, "scratch")(p)
 			p.Spec.Volumes = []corev1.Volume{
-				{Name: "cache", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
-				{Name: "logs", VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: "/var/log"}}},
-				{Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{Medium: corev1.StorageMediumMemory}}},
-				{Name: "scratch", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
-				{Name: "config", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{}}},
+				{Name: "cache", EmptyDir: &corev1.EmptyDirVolumeSource{}},
+				{Name: "logs", HostPath: &corev1.HostPathVolumeSource{Path: "/var/log"}},
+				{Name: "tmp", EmptyDir: &corev1.EmptyDirVolumeSource{Medium: corev1.StorageMediumMemory}},
+				{Name: "scratch", EmptyDir: &corev1.EmptyDirVolumeSource{}},
+				{Name: "config", ConfigMap: &corev1.ConfigMapVolumeSource{}},
 			}
 		})}, nil, []Blocker{{BlockerLocalStorage, "shop/api", "Uses local storage (cache, logs); Cluster Autoscaler keeps such nodes unless cluster-autoscaler.kubernetes.io/safe-to-evict-local-volumes lists the volumes."}}},
 		{"a bare pod and an operator's pod", node, []corev1.Pod{
@@ -86,7 +86,7 @@ func TestNodeBlockers(t *testing.T) {
 		{"safe-to-evict true lifts Cluster Autoscaler's own checks, not PDBs", node, []corev1.Pod{pod("kube-system", "debug", func(p *corev1.Pod) {
 			annotate(caSafeToEvict, "true")(p)
 			p.OwnerReferences = nil
-			p.Spec.Volumes = []corev1.Volume{{Name: "cache", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}}
+			p.Spec.Volumes = []corev1.Volume{{Name: "cache", EmptyDir: &corev1.EmptyDirVolumeSource{}}}
 		})}, []policyv1.PodDisruptionBudget{pdb("kube-system", "all", "debug", 0)},
 			[]Blocker{{BlockerPDB, "kube-system/debug", "The PodDisruptionBudget kube-system/all allows no disruption now."}}},
 		{"pods that go with the node, or are elsewhere, do not count", node, []corev1.Pod{

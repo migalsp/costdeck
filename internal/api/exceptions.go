@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -51,12 +50,48 @@ func scheduleOf(obj client.Object) (schedules []finopsv1.ScalingSchedule, except
 func (s *Server) timetableOf(ctx context.Context, obj client.Object) scaling.Timetable {
 	schedules, own, names := scheduleOf(obj)
 	exceptions, _ := scaling.ResolveExceptions(own, names, s.calendars(ctx), scaling.ExceptionZone(schedules))
-	return scaling.Timetable{Schedules: schedules, Exceptions: exceptions}
+	return scaling.Timetable{Schedules: schedules, Exceptions: exceptions, Lead: prewarmLeadOf(obj)}
 }
 
-// validateSchedule rejects selectors, hibernate rules, exceptions and calendar names that
-// would not apply, so a typo is caught when saving instead of surfacing later in a status
-// condition.
+// prewarmLeadOf returns how early a group or config starts before its schedule says up,
+// from its spec.prewarm and recorded wake-ups; zero for any other object.
+func prewarmLeadOf(obj client.Object) time.Duration {
+	switch o := obj.(type) {
+	case *finopsv1.ScalingGroup:
+		return scaling.PrewarmLead(o.Spec.Prewarm, o.Status.RecentWakeUps)
+	case *finopsv1.ScalingConfig:
+		return scaling.PrewarmLead(o.Spec.Prewarm, o.Status.RecentWakeUps)
+	}
+	return 0
+}
+
+// maxSchedules, maxExceptions and maxCalendars bound one schedule's time windows, dated
+// exceptions and holiday calendars; checkScheduleSize enforces them.
+const (
+	maxSchedules  = 50
+	maxExceptions = 100
+	maxCalendars  = 10
+)
+
+// checkScheduleSize refuses more time windows, exceptions or calendars than the limits above.
+// Previews are open to every viewer, and each next-change calculation walks every window, so
+// an unbounded schedule could keep a replica busy for minutes.
+func checkScheduleSize(schedules []finopsv1.ScalingSchedule, exceptions []finopsv1.ScheduleException, calendars []string) error {
+	switch {
+	case len(schedules) > maxSchedules:
+		return fmt.Errorf("a schedule has at most %d time windows, not %d", maxSchedules, len(schedules))
+	case len(exceptions) > maxExceptions:
+		return fmt.Errorf("a schedule has at most %d exceptions, not %d", maxExceptions, len(exceptions))
+	case len(calendars) > maxCalendars:
+		return fmt.Errorf("a schedule uses at most %d calendars, not %d", maxCalendars, len(calendars))
+	}
+	return nil
+}
+
+// validateSchedule checks a group or config before it is saved: its namespace selector, its
+// hibernate rules, the size limits, and that every exception and calendar name resolves, so a
+// typo is caught when saving instead of surfacing later in a status condition. All exception
+// problems are joined into one error.
 func (s *Server) validateSchedule(ctx context.Context, obj client.Object) error {
 	if g, ok := obj.(*finopsv1.ScalingGroup); ok && g.Spec.NamespaceSelector != nil {
 		// Matching against no namespaces checks the selector itself.
@@ -75,6 +110,9 @@ func (s *Server) validateSchedule(ctx context.Context, obj client.Object) error 
 		return err
 	}
 	schedules, own, names := scheduleOf(obj)
+	if err := checkScheduleSize(schedules, own, names); err != nil {
+		return err
+	}
 	if _, problems := scaling.ResolveExceptions(own, names, s.calendars(ctx), scaling.ExceptionZone(schedules)); len(problems) > 0 {
 		return errors.New(strings.Join(problems, "; "))
 	}
@@ -138,7 +176,7 @@ func (s *Server) changeExceptions(ctx context.Context, target, name string, chan
 	var obj client.Object
 	switch target {
 	case targetGroup:
-		obj = &finopsv1.ScalingGroup{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: config.OperatorNamespace()}}
+		obj = &finopsv1.ScalingGroup{Name: name, Namespace: config.OperatorNamespace()}
 	case targetNamespace:
 		cfg, err := s.configForNamespace(ctx, name)
 		if err != nil {

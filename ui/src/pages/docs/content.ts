@@ -560,6 +560,22 @@ spec:
         ],
       },
       {
+        id: 'prewarm',
+        title: 'Ready when the schedule starts',
+        blocks: [
+          { p: 'Cost Deck times every start from zero, from leaving **Down** until every workload is ready, and keeps the last five on the schedule. A schedule whose wake-ups take two minutes or more shows a performance risk while its prewarm is shorter than the slowest of them, since whoever opens it when the schedule starts waits that long.' },
+          { p: '**Start ahead of the schedule** in the schedule editor starts the workloads before each scheduled start, so they are ready when it comes: 5, 10, 15 or 30 minutes, or **by how long it takes to wake up**, which is the slowest of the last five wake-ups plus a minute, at most 30 minutes. While it runs early the card says **Prewarm**. The lead also counts when an exception that kept the namespace down ends, in "next change", in previews and in cost estimates; the end of a window is left alone.' },
+          {
+            ways: {
+              kubectl: `spec:
+  prewarm:
+    auto: true      # the slowest of the last five wake-ups plus a minute, at most 30
+    minutes: 10     # a fixed lead, up to 120; with auto, used until a wake-up is measured`,
+            },
+          },
+        ],
+      },
+      {
         id: 'preview-cleanup',
         title: 'Delete preview namespaces',
         blocks: [
@@ -753,7 +769,7 @@ curl -H "Authorization: Bearer $TOKEN" "$COSTDECK/api/discovery/azure/vm"`,
             },
           },
           { p: 'The AWS and Azure estimates are the per-core and per-GiB prices that their general-purpose instances work out at (m6i and r6i, Dsv5 and Esv5); the others are the reference rates OpenCost and Kubecost use. Without a cloud price list, network volumes are estimated at $0.08 a GiB-month, like a general-purpose cloud SSD.' },
-          { p: 'Every cost figure says which basis it uses, and Settings → Prices shows the rates in effect. Spot, reservations and savings plans are not applied, so treat the numbers as list prices.' },
+          { p: 'Every cost figure says which basis it uses, and Settings → Prices shows the rates in effect. Spot, reservations and savings plans count only once the cloud bill is reconciled (below); until then, treat the numbers as list prices.' },
           { p: '**GPUs** are priced apart, so a GPU node does not make every other pod look expensive. With cloud list prices a GPU costs its node\'s price less the node\'s CPU and memory, divided by its GPUs; otherwise an estimate for its model (from the `nvidia.com/gpu.product` label): T4 $0.33, L4 $0.61, A10G $0.81, L40S $1.61, A100 $1.81 (80 GB $2.50), H100 $5.13 an hour, AWS us-east-1 prices less CPU and memory. A custom GPU rate under Settings → Prices applies to every GPU. A namespace pays for the GPUs its pods request, MIG devices and time-sliced shares as their fraction of a GPU.' },
           { p: '**AI Costs** shows what applications pay LLM APIs, by team and model, from the last seven days of token counts in VictoriaMetrics: LiteLLM\'s own spend per LiteLLM team, and OpenTelemetry GenAI token metrics (`gen_ai.client.token.usage`, or the newer input and output token counters) charged to the team of their namespace at the model prices under Settings → Prices. Models without a price are listed. For models served with vLLM, the namespace\'s run rate, GPUs included, divided by the tokens it served gives the cost per million tokens. The assistant and MCP answer through `get_ai_costs`.' },
           { p: 'With VictoriaMetrics scraping NVIDIA\'s DCGM exporter in Kubernetes mode, the overview and the namespace table show how busy each namespace\'s GPUs were over the last day, and the advice names idle GPUs, GPUs several workloads could share through MIG or time-slicing, and cheaper models with enough memory. The assistant and MCP answer through `get_gpu_usage`.' },
@@ -826,6 +842,39 @@ spec:
         ],
       },
       {
+        id: 'risks',
+        title: 'Performance risks',
+        blocks: [
+          { p: 'A namespace\'s page lists, most severe first, what holds its workloads back or makes them unstable, with a fix and what the fix adds to the monthly cost (limits are not billed):' },
+          {
+            list: [
+              'CPU throttling: the share of CFS periods throttled, p95 over 5-minute steps; 10% is a warning, 25% critical.',
+              'OOM kills, restarts and crash loops, with their reason and exit code.',
+              'Evictions, with the kubelet\'s message while the evicted pod is still there.',
+              'Memory at 90% of its limit or more.',
+              'HorizontalPodAutoscalers that want more replicas than their maximum, and how many.',
+              'JVM heaps still full after garbage collection, and Java setups that risk an OOM kill.',
+              'Schedules that take two minutes or more to wake up, while their prewarm does not cover it.',
+            ],
+          },
+          { p: 'The current state of pods and autoscalers is always read. CPU throttling and the last 14 days of OOM kills, restarts and evictions need VictoriaMetrics with cAdvisor and kube-state-metrics. Right-sizing never cuts a resource under pressure: a throttled container keeps its CPU request, and one that was OOM-killed, evicted or close to its limit keeps its memory, and the advice says why.' },
+          {
+            ways: {
+              api: `curl -H "Authorization: Bearer $TOKEN" "$COSTDECK/api/namespaces/dev-backend/risks"`,
+            },
+          },
+        ],
+      },
+      {
+        id: 'java',
+        title: 'Java containers',
+        blocks: [
+          { p: 'A container counts as Java when it runs `java`, sets `JAVA_TOOL_OPTIONS`, `JDK_JAVA_OPTIONS`, `JAVA_OPTS` or `_JAVA_OPTIONS`, uses a JVM image, or has JVM heap metrics. Cost Deck reads its JVM flags in the order the JVM applies them and works out the heap the JVM takes under the container limit. The memory advice never goes below that heap plus native memory, and the namespace page says what is wrong with the setup: a heap at the limit, the default 25% heap, no limit, or a request below the heap.' },
+          { p: 'With JVM heap metrics in VictoriaMetrics (Micrometer `jvm_memory_used_bytes`, the Prometheus Java client or JMX exporter, or OpenTelemetry) labelled with `namespace` and `pod`, it also recommends a heap of twice what was left after garbage collection, with the memory, the flag and the saving. Nothing is applied to the JVM.' },
+          { tip: 'Detection guessed wrong? Set the annotation `costdeck.io/runtime` to `java` or `none` on the workload or its pod template. `none` covers every container; `java` only the main one (the container `kubectl.kubernetes.io/default-container` names, or else the first), so sidecars keep their own detection.' },
+        ],
+      },
+      {
         id: 'victoria',
         title: 'Connect VictoriaMetrics',
         blocks: [
@@ -890,6 +939,34 @@ spec:
             ],
           },
           { p: 'Every change, applied, proposed or put back, is listed under the advice with who made it and when.' },
+        ],
+      },
+      {
+        id: 'policies',
+        title: 'Right-sizing policies',
+        blocks: [
+          { p: 'A `RightsizingPolicy` in a namespace says how right-sizing treats the workloads it picks: bounds and headroom for the advice, whether operators may apply it, or no advice at all. A team can keep one next to its manifests.' },
+          {
+            list: [
+              'A workload follows the oldest policy whose selector matches its pod template\'s labels; an empty selector picks every workload of the namespace.',
+              '`min` and `max` bound the recommended request, and `headroomPercent` replaces the default headroom (20% with history, 50% with a single reading). A bound wins over the Java heap floor, which then shows as a risk.',
+              'With `apply: Forbidden` the advice is still shown, but **Apply**, **Pull request** and the assistant\'s tools are refused with the policy\'s name.',
+              '`exclude: true` leaves the workloads out of the advice; their performance risks are still listed.',
+            ],
+          },
+          {
+            ways: {
+              kubectl: `apiVersion: finops.costdeck.io/v1
+kind: RightsizingPolicy
+metadata: {name: payments, namespace: shop}
+spec:
+  selector: {matchLabels: {app: payments}}
+  apply: Forbidden          # Allowed (default) or Forbidden
+  cpu: {min: 250m, headroomPercent: 50}
+  memory: {max: 4Gi}`,
+            },
+          },
+          { p: 'The advice is cached for five minutes, so a new policy shows within that time.' },
         ],
       },
     ],
@@ -1053,6 +1130,7 @@ spec:
             list: [
               '**Budget alerts** fire once per threshold per month. Reaching 100% first never sends the 80% alert afterwards.',
               '**Anomaly alerts** compare each namespace\'s cost for the day before with its average over the seven days before that, and fire when it is the chosen percentage higher and at least the minimum amount more.',
+              '**Performance risk alerts**, switched on under **Performance risk alerts**, look every half hour for critical performance risks in every namespace (OOM kills, crash loops, evictions, CPU throttled a quarter of the time or more, JVM heaps still full after garbage collection) and send each new one at most once a day. The open ones are listed in the cost digest.',
               'Alerts go to the Webex space and to Slack, Teams or email when they take alerts (Settings → Notifications), and are always listed under **Recent alerts**.',
             ],
           },
@@ -1219,7 +1297,7 @@ spec:
             steps: [
               'In Keycloak, create a confidential OpenID Connect client with the standard flow, the redirect URI `https://<your-host>/api/auth/oidc/callback`, and a **Group Membership** mapper that adds `groups` to the ID token.',
               'In Cost Deck open **Settings** → **Single sign-on**, click **Keycloak defaults**, and enter the issuer (`https://<keycloak>/realms/<realm>`), client ID and secret.',
-              'Map groups to roles: with full group paths a mapping works with or without the leading slash (`/costdeck-admins`). Realm roles named viewer, operator or admin count as they are.',
+              'Map groups to roles: with full group paths a mapping works with or without the leading slash (`/costdeck-admins`). A role counts when **Role → role mapping** maps it, or when it is named `costdeck.viewer`, `costdeck.operator` or `costdeck.admin`; plain names such as `admin` grant nothing by themselves.',
               'Click **Test connection**, then use **Sign in with Keycloak** in a private window.',
             ],
           },
@@ -1357,6 +1435,7 @@ claude mcp add --transport http costdeck https://costdeck.example.com/mcp \\
                 ['list_namespaces, get_namespace_status', 'Usage and cost per namespace'],
                 ['get_cost_overview', 'Run rate, efficiency, month to date, savings and the ranked opportunities'],
                 ['get_rightsizing_recommendations', 'What can be reduced in a namespace'],
+                ['get_performance_risks', 'What holds a namespace\'s workloads back or makes them unstable, with a fix and its cost'],
                 ['scale_group, scale_namespace', 'Start now, scale down now, or resume the schedule (operator)'],
                 ['get_cost_allocation', 'A period\'s cost by team, environment, namespace or label, with shared and idle cost'],
                 ['get_clusters', 'Every Cost Deck installation side by side'],

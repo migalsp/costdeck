@@ -7,9 +7,9 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
 )
@@ -18,8 +18,8 @@ import (
 func oidcService(t *testing.T, f *fakeEntra, cfg finopsv1.OIDCConfig) *Service {
 	cfg.Enabled, cfg.IssuerURL, cfg.ClientID, cfg.ClientSecretRef = true, f.issuer(), f.client, "oidc"
 	return newTestService(t,
-		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "oidc", Namespace: "costdeck"}, Data: map[string][]byte{SecretKeyClientSecret: []byte(f.secret)}},
-		&finopsv1.CostDeckConfig{ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: "costdeck"},
+		&corev1.Secret{Name: "oidc", Namespace: "costdeck", Data: map[string][]byte{SecretKeyClientSecret: []byte(f.secret)}},
+		&finopsv1.CostDeckConfig{Name: "default", Namespace: "costdeck",
 			Spec: finopsv1.CostDeckConfigSpec{Auth: finopsv1.AuthConfig{OIDC: &cfg}}})
 }
 
@@ -65,11 +65,39 @@ func TestOIDCSignInWithKeycloakClaims(t *testing.T) {
 		t.Fatalf("session = %+v", id)
 	}
 
-	// A realm role named admin wins over the group's operator.
 	f.claims["realm_access"] = map[string]any{"roles": []string{"admin"}}
 	rr, _ = oidcSignIn(t, svc, f, false)
+	if id := sessionFrom(t, svc, rr); id == nil || id.Role != RoleOperator {
+		t.Errorf("a realm role plainly named admin, which other applications of the realm share, made %+v", id)
+	}
+	f.claims["realm_access"] = map[string]any{"roles": []string{"costdeck.admin"}}
+	rr, _ = oidcSignIn(t, svc, f, false)
 	if id := sessionFrom(t, svc, rr); id == nil || id.Role != RoleAdmin {
-		t.Errorf("realm role admin: %+v", id)
+		t.Errorf("realm role costdeck.admin: %+v", id)
+	}
+}
+
+func TestOIDCRolesCountOnlyWhenMappedOrNamedForCostDeck(t *testing.T) {
+	mapped := finopsv1.OIDCConfig{RoleMapping: map[string]string{"platform-admins": "admin", "readers": "viewer", "typo": "superuser"}}
+	for _, tt := range []struct {
+		name  string
+		cfg   finopsv1.OIDCConfig
+		roles []string
+		want  Role
+	}{
+		{"plain names shared across a realm count for nothing", finopsv1.OIDCConfig{}, []string{"admin", "editor", "owner"}, ""},
+		{"names for Cost Deck count as they are", finopsv1.OIDCConfig{}, []string{"CostDeck.Operator"}, RoleOperator},
+		{"a mapped role counts", mapped, []string{"platform-admins"}, RoleAdmin},
+		{"the most privileged of mapped roles wins", mapped, []string{"readers", "platform-admins"}, RoleAdmin},
+		{"a mapping to no known role counts for nothing", mapped, []string{"typo"}, ""},
+		{"an unmapped plain name still counts for nothing with a mapping", mapped, []string{"admin"}, ""},
+	} {
+		no := false
+		tt.cfg.AutoProvision = &no
+		got, _ := ResolveOIDCRole(tt.cfg, nil, tt.roles)
+		if got != tt.want {
+			t.Errorf("%s: role = %q, want %q", tt.name, got, tt.want)
+		}
 	}
 }
 
@@ -137,5 +165,54 @@ func TestOIDCOnTheLoginPage(t *testing.T) {
 	}
 	if _, err := svc.OIDC.TestOIDC(t.Context(), finopsv1.OIDCConfig{IssuerURL: f.srv.URL + "/nowhere", ClientID: f.client}); err == nil {
 		t.Error("an issuer without discovery passed the test")
+	}
+}
+
+func TestOIDCRejectsIDTokensFromTheWrongIssuerAudienceOrTime(t *testing.T) {
+	f := newFakeEntra(t)
+	for name, claims := range map[string]map[string]any{
+		"another issuer":          {"iss": "https://idp.evil.example/realms/costdeck"},
+		"audience of another app": {"aud": "someone-else"},
+		"expired":                 {"exp": time.Now().Add(-time.Hour).Unix()},
+	} {
+		f.claims = claims
+		svc := oidcService(t, f, finopsv1.OIDCConfig{})
+		rr, _ := oidcSignIn(t, svc, f, false)
+		if !strings.Contains(rr.Header().Get("Location"), "sso_error=invalid_token") || sessionFrom(t, svc, rr) != nil {
+			t.Errorf("%s: callback -> %q, want invalid_token without a session", name, rr.Header().Get("Location"))
+		}
+	}
+}
+
+func TestOIDCCallbackNeedsAFreshTransactionFromThisServer(t *testing.T) {
+	f := newFakeEntra(t)
+	svc := oidcService(t, f, finopsv1.OIDCConfig{})
+	other, err := NewSessions([]byte(strings.Repeat("o", 32)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookieFor := func(s *Sessions, expires time.Time) *http.Cookie {
+		token, err := s.Sign(oidcTxn{State: "st", Nonce: "n", Verifier: "v", ReturnTo: "/budgets", ExpiresAt: expires.Unix()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return &http.Cookie{Name: oidcTxnCookie, Value: token}
+	}
+	for name, cookie := range map[string]*http.Cookie{
+		"no transaction":                       nil,
+		"expired transaction":                  cookieFor(svc.Sessions, time.Now().Add(-time.Second)),
+		"transaction signed by another server": cookieFor(other, time.Now().Add(time.Minute)),
+		"Entra transaction cookie":             {Name: txnCookie, Value: cookieFor(svc.Sessions, time.Now().Add(time.Minute)).Value},
+	} {
+		req := httptest.NewRequest(http.MethodGet, OIDCCallbackPath+"?code=c&state=st", nil)
+		if cookie != nil {
+			req.AddCookie(cookie)
+		}
+		rr := httptest.NewRecorder()
+		svc.OIDC.HandleCallback(rr, req)
+		loc, _ := url.Parse(rr.Header().Get("Location"))
+		if loc.Path != "/" || loc.Query().Get("sso_error") != "sign_in_expired" || sessionFrom(t, svc, rr) != nil {
+			t.Errorf("%s: callback -> %q, want sign_in_expired on / without a session", name, loc)
+		}
 	}
 }

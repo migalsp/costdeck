@@ -17,7 +17,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -127,12 +126,10 @@ func (t *Tokens) Create(ctx context.Context, name string, role Role, ttl time.Du
 		}
 		if secret == nil {
 			secret = &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: tokensSecretName, Namespace: config.OperatorNamespace(),
-					Labels: map[string]string{"app.kubernetes.io/managed-by": "costdeck-operator"},
-				},
-				Type: corev1.SecretTypeOpaque,
-				Data: map[string][]byte{name: data},
+				Name: tokensSecretName, Namespace: config.OperatorNamespace(),
+				Labels: map[string]string{"app.kubernetes.io/managed-by": "costdeck-operator"},
+				Type:   corev1.SecretTypeOpaque,
+				Data:   map[string][]byte{name: data},
 			}
 			return t.Client.Create(ctx, secret)
 		}

@@ -123,7 +123,7 @@ export default function ScheduleDetails(p: Props) {
 
           <section>
             <h3 className="text-sm font-semibold text-slate-800 mb-3">Week</h3>
-            <WeekTimeline schedules={spec.schedules} onDemand={spec.activation === 'OnDemand'} />
+            <WeekTimeline schedules={spec.schedules} onDemand={spec.activation === 'OnDemand'} leadMinutes={status?.prewarmMinutes} />
           </section>
 
           {(spec.exceptions?.some(e => !isPast(e)) || !!spec.calendars?.length) && (

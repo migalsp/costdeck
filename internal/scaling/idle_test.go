@@ -79,8 +79,7 @@ func TestPlanGroupsWithIdleSleep(t *testing.T) {
 	until := metav1.NewTime(now.Add(4*time.Hour + time.Minute))
 	office := []finopsv1.ScalingSchedule{{Days: []int{1, 2, 3, 4, 5}, StartTime: "08:00", EndTime: "18:00", Timezone: "UTC"}}
 	group := func(name string, deps ...string) finopsv1.ScalingGroup {
-		g := finopsv1.ScalingGroup{Spec: finopsv1.ScalingGroupSpec{Schedules: office, DependsOn: deps}}
-		g.Name = name
+		g := finopsv1.ScalingGroup{Name: name, Spec: finopsv1.ScalingGroupSpec{Schedules: office, DependsOn: deps}}
 		g.Status.Phase = PhaseScaledUp
 		return g
 	}

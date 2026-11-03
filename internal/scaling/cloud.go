@@ -98,7 +98,11 @@ func BuildProvider(ctx context.Context, c client.Reader, cfg *finopsv1.CostDeckC
 		if access, secret := string(data["AWS_ACCESS_KEY_ID"]), string(data["AWS_SECRET_ACCESS_KEY"]); access != "" && secret != "" {
 			return NewAWSProviderFromCredentials(ctx, access, secret, region)
 		}
-		return NewAWSProvider(ctx)
+		prov, err := NewAWSProvider(ctx)
+		if err == nil && region != "" {
+			prov.cfg.Region = region
+		}
+		return prov, err
 	case ProviderAzure:
 		if p.Azure == nil {
 			return nil, errors.New("the Azure provider is not configured")

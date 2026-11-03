@@ -16,18 +16,47 @@ export function parseNames(text: string): string[] | undefined {
   return names.length ? names : undefined
 }
 
-// A dotted path outside metadata, such as spec.replicas.
-const FIELD = /^(?!metadata\.)[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)+$/
+// fieldPath is a dotted path outside metadata, such as spec.replicas, as Go checks it.
+function fieldPath(s: string): boolean {
+  const keys = s.split('.')
+  return keys.length > 1 && keys[0] !== 'metadata' && !keys.includes('')
+}
 
-// badGlob catches what Go's path.Match refuses: an unclosed [ or a trailing backslash.
+// badGlob is what Go's path.Match refuses: an unfinished escape, an unclosed or empty
+// character class, or a range missing an end.
 function badGlob(g: string): boolean {
-  let open = false
-  for (let i = 0; i < g.length; i++) {
-    if (g[i] === '\\') { if (i === g.length - 1) return true; i++; continue }
-    if (g[i] === '[') open = true
-    else if (g[i] === ']') open = false
+  let i = 0
+  const classChar = (): boolean => {
+    if (i >= g.length || g[i] === '-' || g[i] === ']') return false
+    if (g[i] === '\\' && ++i >= g.length) return false
+    i++
+    return true
   }
-  return open
+  while (i < g.length) {
+    if (g[i] === '\\') {
+      i += 2
+      if (i > g.length) return true
+      continue
+    }
+    if (g[i] !== '[') {
+      i++
+      continue
+    }
+    i++
+    if (g[i] === '^') i++
+    for (let ranges = 0; ; ranges++) {
+      if (i < g.length && g[i] === ']' && ranges > 0) {
+        i++
+        break
+      }
+      if (!classChar()) return true
+      if (g[i] === '-') {
+        i++
+        if (!classChar()) return true
+      }
+    }
+  }
+  return false
 }
 
 // ruleIssue mirrors scaling.ValidateHibernate, so the editor flags what saving would refuse.
@@ -38,7 +67,7 @@ export function ruleIssue(r: HibernateRule): string | null {
     if (!r.apiVersion || !r.kind || !r.replicasField) return 'set the apiVersion, kind and replicas field'
     const [group, version, extra] = r.apiVersion.split('/')
     if (!group || !version || extra !== undefined) return `apiVersion ${r.apiVersion} must be group/version, such as redis.example.com/v1`
-    if (!FIELD.test(r.replicasField) || (r.readyField && !FIELD.test(r.readyField))) return 'fields are dotted paths such as spec.replicas'
+    if (!fieldPath(r.replicasField) || (r.readyField && !fieldPath(r.readyField))) return 'fields are dotted paths such as spec.replicas'
   }
   const glob = (r.names || []).find(badGlob)
   return glob !== undefined ? `${glob} is not a name or glob` : null

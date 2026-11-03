@@ -360,6 +360,24 @@ spec:
                   Applications lose self-heal, and they are resumed once everything is up again. Only
                   what CostDeck paused itself is resumed. Needs gitops.pause in the Helm chart.
                 type: boolean
+              prewarm:
+                description: |-
+                  Prewarm starts the workloads ahead of each scheduled start, so they are ready when it
+                  comes: by a fixed number of minutes, or by how long recent wake-ups took.
+                properties:
+                  auto:
+                    description: |-
+                      Auto takes the lead from the slowest of the last five wake-ups (status.recentWakeUps)
+                      plus a minute, at most 30 minutes. Minutes applies until there is a wake-up to measure.
+                    type: boolean
+                  minutes:
+                    description: Minutes is the lead when Auto is off, or before the
+                      first measured wake-up.
+                    format: int32
+                    maximum: 120
+                    minimum: 0
+                    type: integer
+                type: object
               schedules:
                 description: Schedules define periodic scaling events for the group
                 items:
@@ -423,6 +441,7 @@ spec:
                       and endDay (continuous weekly window)
                     rule: has(self.startDay) || (has(self.days) && size(self.days)
                       > 0)
+                maxItems: 50
                 type: array
                 x-kubernetes-list-type: atomic
               sequence:
@@ -559,6 +578,16 @@ spec:
                 description: ManagedCount is the current number of successfully managed
                   namespaces in the group
                 type: integer
+              managedNamespaces:
+                description: |-
+                  ManagedNamespaces are the namespaces the group managed at its last reconcile: its
+                  members, less those an older group owns, and those it could not release yet. A
+                  namespace that leaves the list is released, even when the group recorded no replica
+                  counts for it, such as one with only sleeping routes.
+                items:
+                  type: string
+                type: array
+                x-kubernetes-list-type: atomic
               mode:
                 description: |-
                   Mode is what currently decides the desired state:
@@ -610,12 +639,42 @@ spec:
                 description: Phase is the current state of the group (ScaledUp, ScalingDown,
                   ScaledDown)
                 type: string
+              prewarmMinutes:
+                description: |-
+                  PrewarmMinutes is how far ahead of each scheduled start spec.prewarm starts the
+                  workloads now.
+                format: int32
+                type: integer
               readyNamespaces:
                 description: ReadyNamespaces is the list of namespaces that are currently
                   at their target state
                 items:
                   type: string
                 type: array
+              recentWakeUps:
+                description: |-
+                  RecentWakeUps are the last scale-ups from zero, newest first, with how long each
+                  took until every target was ready.
+                items:
+                  description: WakeUp is one scale-up from zero and how long it took.
+                  properties:
+                    seconds:
+                      description: Seconds is how long it took until every target
+                        was ready.
+                      format: int32
+                      minimum: 0
+                      type: integer
+                    startedAt:
+                      description: StartedAt is when the scale-up began.
+                      format: date-time
+                      type: string
+                  required:
+                  - seconds
+                  - startedAt
+                  type: object
+                maxItems: 5
+                type: array
+                x-kubernetes-list-type: atomic
               requiredBy:
                 description: RequiredBy lists the dependent groups that currently
                   keep this group up.
@@ -662,6 +721,54 @@ spec:
                 items:
                   type: string
                 type: array
+              stoppedExternalTargets:
+                description: |-
+                  StoppedExternalTargets are the cloud targets the group stopped and has not seen
+                  running since. The group starts them again when it comes up, when they leave its
+                  sequence and when it is deleted, even once spec.externalTargets no longer lists them;
+                  a deleted group stays until they run.
+                items:
+                  description: ExternalTarget represents a 3rd party resource to scale
+                  properties:
+                    executeAfter:
+                      description: ExecuteAfter specifies which namespace stage this
+                        resource should scale after
+                      type: string
+                    identifier:
+                      description: Identifier is the unique ID or ARN of the resource
+                      type: string
+                    name:
+                      description: Name is a human-readable name for the resource
+                        (e.g. EC2 "Name" tag)
+                      type: string
+                    provider:
+                      description: Provider is the cloud provider (e.g., "aws", "gcp",
+                        "azure")
+                      type: string
+                    region:
+                      description: Region where the resource resides
+                      type: string
+                    status:
+                      description: Status tells you if the DB is available or stopped
+                        (populated at runtime by UI/Discovery API)
+                      type: string
+                    type:
+                      description: Type of the resource (e.g., "aurora", "cloudsql")
+                      type: string
+                  required:
+                  - identifier
+                  - provider
+                  - region
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-type: atomic
+              wakeUpStartedAt:
+                description: |-
+                  WakeUpStartedAt is when the running scale-up from zero began. It is cleared once
+                  every target is ready, or when the targets go down again first.
+                format: date-time
+                type: string
             type: object
         required:
         - spec

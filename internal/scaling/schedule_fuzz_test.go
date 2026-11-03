@@ -95,14 +95,16 @@ func FuzzScheduleWindow(f *testing.F) {
 }
 
 func FuzzTimetableNextChange(f *testing.F) {
-	f.Add(uint8(0b0111110), uint16(8*60), uint16(18*60), uint16(0), uint16(0), false, uint32(0))
-	f.Add(uint8(0b0111110), uint16(8*60), uint16(18*60), uint16(2*minutesPerDay), uint16(minutesPerDay), false, uint32(36*3600))
-	f.Add(uint8(0), uint16(0), uint16(0), uint16(20*minutesPerDay), uint16(3*minutesPerDay), false, uint32(0))
-	f.Add(uint8(0b1111111), uint16(0), uint16(23*60+59), uint16(9*minutesPerDay), uint16(60), false, uint32(7))
-	f.Add(uint8(0b0000001), uint16(22*60), uint16(6*60), uint16(minutesPerDay-30), uint16(90), true, uint32(23*3600+59*60+59))
-	f.Add(uint8(0b0111110), uint16(8*60), uint16(18*60), uint16(0), uint16(16*minutesPerDay), false, uint32(36*3600))
-	f.Fuzz(func(t *testing.T, dayMask uint8, start, end, exceptionStart, exceptionLength uint16, exceptionUp bool, offsetSeconds uint32) {
-		var tt Timetable
+	f.Add(uint8(0b0111110), uint16(8*60), uint16(18*60), uint16(0), uint16(0), false, uint32(0), uint8(0))
+	f.Add(uint8(0b0111110), uint16(8*60), uint16(18*60), uint16(2*minutesPerDay), uint16(minutesPerDay), false, uint32(36*3600), uint8(0))
+	f.Add(uint8(0), uint16(0), uint16(0), uint16(20*minutesPerDay), uint16(3*minutesPerDay), false, uint32(0), uint8(0))
+	f.Add(uint8(0b1111111), uint16(0), uint16(23*60+59), uint16(9*minutesPerDay), uint16(60), false, uint32(7), uint8(0))
+	f.Add(uint8(0b0000001), uint16(22*60), uint16(6*60), uint16(minutesPerDay-30), uint16(90), true, uint32(23*3600+59*60+59), uint8(0))
+	f.Add(uint8(0b0111110), uint16(8*60), uint16(18*60), uint16(0), uint16(16*minutesPerDay), false, uint32(36*3600), uint8(0))
+	f.Add(uint8(0b0111110), uint16(8*60), uint16(18*60), uint16(0), uint16(16*minutesPerDay), false, uint32(36*3600), uint8(10))
+	f.Add(uint8(0b0000001), uint16(0), uint16(5), uint16(minutesPerDay), uint16(30), true, uint32(0), uint8(20))
+	f.Fuzz(func(t *testing.T, dayMask uint8, start, end, exceptionStart, exceptionLength uint16, exceptionUp bool, offsetSeconds uint32, leadMinutes uint8) {
+		tt := Timetable{Lead: time.Duration(leadMinutes%121) * time.Minute}
 		if days := weekdaysIn(dayMask); len(days) > 0 {
 			tt.Schedules = []finopsv1.ScalingSchedule{{
 				Days:      days,
@@ -140,9 +142,12 @@ func nextChangeAmongCandidates(tt Timetable, now time.Time) *time.Time {
 		if weekly.ActiveAt(flip) == weekly.ActiveAt(flip.Add(-time.Minute)) {
 			continue
 		}
-		for at := flip; !at.After(horizon); at = at.Add(week) {
+		for at := flip; !at.After(horizon.Add(tt.Lead)); at = at.Add(week) {
 			candidates = append(candidates, at)
 		}
+	}
+	for _, c := range slices.Clone(candidates) {
+		candidates = append(candidates, c.Add(-tt.Lead))
 	}
 	slices.SortFunc(candidates, func(a, b time.Time) int { return a.Compare(b) })
 	current := tt.ActiveAt(now)

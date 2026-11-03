@@ -25,13 +25,13 @@ func TestAnalyzeRecommendsReductionsAndPricesThem(t *testing.T) {
 	}}
 	demand := map[metrics.ContainerKey]metrics.Usage{
 		// The busiest replica decides: 100m and 200Mi.
-		{Pod: "api-7d9f8c-abcde", Container: "api"}: usage("100m", "200Mi"),
-		{Pod: "api-7d9f8c-fghij", Container: "api"}: usage("40m", "150Mi"),
+		{Pod: "api-7d9f8c-bcdfg", Container: "api"}: usage("100m", "200Mi"),
+		{Pod: "api-7d9f8c-fghjk", Container: "api"}: usage("40m", "150Mi"),
 		// A different workload whose name merely starts with "api".
 		{Pod: "api-gateway-5c6b7-klmno", Container: "api"}: usage("4", "8Gi"),
 	}
 
-	r := Analyze(workloads, demand, rates, DefaultSettings(true))
+	r := Analyze(workloads, demand, nil, rates, DefaultSettings(true))
 	c := r.Workloads[0].Containers[0]
 	if c.CPU.Action != ActionReduce || c.CPU.Observed != "100m" || c.CPU.Recommended != "120m" || c.CPU.Request != "1" {
 		t.Errorf("CPU advice = %+v, want reduce 1 -> 120m (100m p95 + 20%%)", c.CPU)
@@ -55,12 +55,12 @@ func TestAnalyzeActions(t *testing.T) {
 		{Kind: "Deployment", Name: "idle", Replicas: 1, Containers: []Container{{Name: "app", CPURequest: 0.5}}},
 	}
 	demand := map[metrics.ContainerKey]metrics.Usage{
-		{Pod: "busy-6f7d8-aaaaa", Container: "app"}: usage("300m", "400Mi"),
-		{Pod: "fit-6f7d8-bbbbb", Container: "app"}:  usage("100m", "200Mi"),
+		{Pod: "busy-6f7d8-xxxxx", Container: "app"}: usage("300m", "400Mi"),
+		{Pod: "fit-6f7d8-zzzzz", Container: "app"}:  usage("100m", "200Mi"),
 		{Pod: "db-0", Container: "pg"}:              usage("5m", "10Mi"),
 	}
 	byName := map[string]ContainerAdvice{}
-	for _, w := range Analyze(workloads, demand, rates, DefaultSettings(true)).Workloads {
+	for _, w := range Analyze(workloads, demand, nil, rates, DefaultSettings(true)).Workloads {
 		byName[w.Name] = w.Containers[0]
 	}
 
@@ -80,8 +80,8 @@ func TestAnalyzeActions(t *testing.T) {
 
 func TestSnapshotDemandGetsMoreHeadroom(t *testing.T) {
 	workloads := []Workload{{Kind: "Deployment", Name: "api", Replicas: 1, Containers: []Container{{Name: "api", CPURequest: 2}}}}
-	demand := map[metrics.ContainerKey]metrics.Usage{{Pod: "api-1a2b3-ccccc", Container: "api"}: usage("100m", "64Mi")}
-	c := Analyze(workloads, demand, rates, DefaultSettings(false)).Workloads[0].Containers[0]
+	demand := map[metrics.ContainerKey]metrics.Usage{{Pod: "api-5c6b7-ccccc", Container: "api"}: usage("100m", "64Mi")}
+	c := Analyze(workloads, demand, nil, rates, DefaultSettings(false)).Workloads[0].Containers[0]
 	if c.CPU.Recommended != "150m" {
 		t.Errorf("snapshot recommendation = %s, want 150m (100m + 50%%)", c.CPU.Recommended)
 	}
@@ -93,10 +93,42 @@ func TestWorkloadsSortBySavings(t *testing.T) {
 		{Kind: "Deployment", Name: "big", Replicas: 1, Containers: []Container{{Name: "c", CPURequest: 4}}},
 	}
 	demand := map[metrics.ContainerKey]metrics.Usage{
-		{Pod: "small-1a2b3-aaaaa", Container: "c"}: usage("10m", "10Mi"),
-		{Pod: "big-1a2b3-aaaaa", Container: "c"}:   usage("10m", "10Mi"),
+		{Pod: "small-5c6b7-xxxxx", Container: "c"}: usage("10m", "10Mi"),
+		{Pod: "big-5c6b7-xxxxx", Container: "c"}:   usage("10m", "10Mi"),
 	}
-	if got := Analyze(workloads, demand, rates, DefaultSettings(true)).Workloads; got[0].Name != "big" {
+	if got := Analyze(workloads, demand, nil, rates, DefaultSettings(true)).Workloads; got[0].Name != "big" {
 		t.Errorf("first workload = %s, want the one that saves most", got[0].Name)
+	}
+}
+
+func TestOwnsPod(t *testing.T) {
+	for _, tc := range []struct {
+		kind, name, pod string
+		want            bool
+	}{
+		{"Deployment", "api", "api-7d9f8b6c5-x2k4p", true},
+		{"Rollout", "api", "api-6f7c9d8b4-q8w9z", true},
+		{"Deployment", "shop", "shop-postgresql-0", false},
+		{"Deployment", "api", "api-7d9f8b6c5-x2k4", false},
+		{"StatefulSet", "db", "db-0", true},
+		{"StatefulSet", "db", "db-12", true},
+		{"Deployment", "api", "api-gateway-7d9f8b6c5-x2k4p", false},
+		{"Deployment", "api", "api", false},
+		{"Deployment", "api", "web-7d9f8b6c5-x2k4p", false},
+		{"StatefulSet", "db", "db-replica-0", false},
+		{"StatefulSet", "db", "db-7d9f8b6c5-x2k4p", false},
+		{"Deployment", "api.v2", "apiXv2-7d9f8b6c5-x2k4p", false},
+	} {
+		if got := OwnsPod(tc.kind, tc.name, tc.pod); got != tc.want {
+			t.Errorf("OwnsPod(%s, %s, %s) = %v, want %v", tc.kind, tc.name, tc.pod, got, tc.want)
+		}
+	}
+}
+
+func TestOwnsPodIgnoresPodsOfWorkloadsWithALongerName(t *testing.T) {
+	for _, pod := range []string{"api-migrate-x7k2p", "api-worker-x7k2p"} {
+		if OwnsPod("Deployment", "api", pod) {
+			t.Errorf("pod %s of a Job or DaemonSet named api-... counts as Deployment api's", pod)
+		}
 	}
 }

@@ -9,7 +9,6 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/meta/testrestmapper"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -43,7 +42,7 @@ func TestWorkloadsIncludeArgoRollouts(t *testing.T) {
 	ref.SetNamespace("shop")
 	ref.SetName("ref")
 	zero := int32(0)
-	legacy := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "legacy", Namespace: "shop"}, Spec: appsv1.DeploymentSpec{Replicas: &zero}}
+	legacy := &appsv1.Deployment{Name: "legacy", Namespace: "shop", Spec: appsv1.DeploymentSpec{Replicas: &zero}}
 	c := fakeclient.NewClientBuilder().WithScheme(scheme).WithRESTMapper(meta.MultiRESTMapper{testrestmapper.TestOnlyStaticRESTMapper(scheme), crds}).
 		WithObjects(web, ref, legacy).Build()
 	server := &Server{Client: c, K8sClient: fake.NewClientset()}

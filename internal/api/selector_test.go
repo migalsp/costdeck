@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
 )
@@ -21,7 +20,7 @@ func TestSelectNamespacesPreview(t *testing.T) {
 		"pr-1": {"env": "preview", "team": "shop"}, "pr-2": {"env": "preview", "team": "pay"},
 		"pr-3": {"env": "preview", finopsv1.OptOutLabel: "off"}, "costdeck": {"env": "preview"}, "prod": {"env": "prod"},
 	} {
-		if err := server.Client.Create(context.Background(), &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: name, Labels: labels}}); err != nil {
+		if err := server.Client.Create(context.Background(), &corev1.Namespace{Name: name, Labels: labels}); err != nil {
 			t.Fatal(err)
 		}
 	}

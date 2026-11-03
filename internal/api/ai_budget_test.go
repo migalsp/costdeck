@@ -12,7 +12,6 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
@@ -39,7 +38,7 @@ func assistantServer(t *testing.T, budget int64, baseURL string) *Server {
 	t.Helper()
 	t.Setenv("POD_NAMESPACE", "costdeck")
 	server := buildMockServerWithK8s()
-	cfg := &finopsv1.CostDeckConfig{ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: "costdeck"}, Spec: finopsv1.CostDeckConfigSpec{
+	cfg := &finopsv1.CostDeckConfig{Name: "default", Namespace: "costdeck", Spec: finopsv1.CostDeckConfigSpec{
 		Integrations: finopsv1.IntegrationsConfig{AI: &finopsv1.AIIntegrationConfig{Enabled: true, Provider: "local", Model: "fake-model", BaseURL: baseURL + "/v1", MonthlyTokenBudget: budget}},
 		Pricing:      finopsv1.PricingConfig{LLMModels: []finopsv1.LLMModelPrice{{Model: "fake-*", InputPer1M: "10", OutputPer1M: "100"}}},
 	}}

@@ -7,6 +7,7 @@ import (
 	. "github.com/onsi/gomega"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -49,7 +50,7 @@ var _ = Describe("Pausing GitOps", func() {
 		GinkgoHelper()
 		sel := map[string]string{"app": name}
 		Expect(k8sClient.Create(ctx, &appsv1.Deployment{
-			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns, Labels: labels, Annotations: annotations},
+			Name: name, Namespace: ns, Labels: labels, Annotations: annotations,
 			Spec: appsv1.DeploymentSpec{
 				Replicas: new(int32(1)), Selector: &metav1.LabelSelector{MatchLabels: sel},
 				Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: sel}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "c", Image: "busybox"}}}},
@@ -59,7 +60,7 @@ var _ = Describe("Pausing GitOps", func() {
 	var objects []client.Object
 
 	BeforeEach(func() {
-		Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}}))).To(Succeed())
+		Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, &corev1.Namespace{Name: ns}))).To(Succeed())
 		workload("kustomized", map[string]string{"kustomize.toolkit.fluxcd.io/name": "apps", "kustomize.toolkit.fluxcd.io/namespace": "default"}, nil)
 		workload("released", map[string]string{"helm.toolkit.fluxcd.io/name": "web", "helm.toolkit.fluxcd.io/namespace": "default"}, nil)
 		workload("argo", nil, map[string]string{"argocd.argoproj.io/tracking-id": "default_shop:apps/Deployment:gitops-app/argo"})
@@ -71,8 +72,9 @@ var _ = Describe("Pausing GitOps", func() {
 		objects = []client.Object{
 			gitops("Kustomization", "apps", map[string]any{"spec": map[string]any{"suspend": false},
 				"status": map[string]any{"inventory": map[string]any{"entries": []any{map[string]any{"id": ns + "_kustomized_apps_Deployment"}}}}}),
-			gitops("HelmRelease", "web", map[string]any{"spec": map[string]any{}}),
-			gitops("Application", "shop", map[string]any{"spec": map[string]any{"syncPolicy": map[string]any{"automated": map[string]any{"selfHeal": true}}}}),
+			gitops("HelmRelease", "web", map[string]any{"spec": map[string]any{"targetNamespace": ns}}),
+			gitops("Application", "shop", map[string]any{"spec": map[string]any{"syncPolicy": map[string]any{"automated": map[string]any{"selfHeal": true}}},
+				"status": map[string]any{"resources": []any{map[string]any{"group": "apps", "kind": "Deployment", "namespace": ns, "name": "argo"}}}}),
 			preview,
 			gitops("Kustomization", "platform", map[string]any{"spec": map[string]any{},
 				"status": map[string]any{"inventory": map[string]any{"entries": []any{map[string]any{"id": ns + "_shared_apps_Deployment"}, map[string]any{"id": "monitoring_grafana_apps_Deployment"}}}}}),
@@ -81,12 +83,12 @@ var _ = Describe("Pausing GitOps", func() {
 		for _, o := range objects {
 			Expect(k8sClient.Create(ctx, o)).To(Succeed())
 		}
-		Expect(k8sClient.Create(ctx, &finopsv1.ScalingGroup{ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace},
+		Expect(k8sClient.Create(ctx, &finopsv1.ScalingGroup{Name: key.Name, Namespace: key.Namespace,
 			Spec: finopsv1.ScalingGroupSpec{Category: "Test", Namespaces: []string{ns}, Schedules: closed, PauseGitOps: true}})).To(Succeed())
 	})
 
 	AfterEach(func() {
-		Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, &finopsv1.ScalingGroup{ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace}}))).To(Succeed())
+		Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, &finopsv1.ScalingGroup{Name: key.Name, Namespace: key.Namespace}))).To(Succeed())
 		for _, o := range objects {
 			Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, o))).To(Succeed())
 		}
@@ -157,6 +159,33 @@ var _ = Describe("Pausing GitOps", func() {
 		Expect(paused("Kustomization", "apps")).To(BeEmpty())
 		Expect(boolAt("Application", "shop", "spec", "syncPolicy", "automated", "selfHeal")).To(BeTrue())
 		Expect(boolAt("Kustomization", "held", "spec", "suspend")).To(BeTrue(), "still the owner's to resume")
+	})
+
+	It("leaves what the namespace's own schedule paused when a dry-run group of it is deleted", func() {
+		apps := read("Kustomization", "apps")
+		Expect(unstructured.SetNestedField(apps.Object, true, "spec", "suspend")).To(Succeed())
+		apps.SetAnnotations(map[string]string{scaling.GitOpsPausedAnnotation: "suspend"})
+		Expect(k8sClient.Update(ctx, apps)).To(Succeed())
+		g := &finopsv1.ScalingGroup{}
+		Expect(k8sClient.Get(ctx, key, g)).To(Succeed())
+		g.Spec.DryRun = true
+		Expect(k8sClient.Update(ctx, g)).To(Succeed())
+
+		r := &ScalingGroupReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), Engine: &scaling.Engine{Client: k8sClient}, Recorder: events.NewFakeRecorder(100)}
+		_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: key})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(k8sClient.Get(ctx, key, g)).To(Succeed())
+		Expect(g.Status.Phase).To(Equal(scaling.PhaseDryRun))
+		Expect(g.Finalizers).To(ContainElement(ReleaseFinalizer))
+
+		Expect(rawClient.Delete(ctx, g)).To(Succeed())
+		_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: key})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(errors.IsNotFound(k8sClient.Get(ctx, key, g))).To(BeTrue())
+		apps = read("Kustomization", "apps")
+		suspended, _, _ := unstructured.NestedBool(apps.Object, "spec", "suspend")
+		Expect(suspended).To(BeTrue(), "the dry run never paused it")
+		Expect(apps.GetAnnotations()[scaling.GitOpsPausedAnnotation]).To(Equal("suspend"))
 	})
 
 	It("only reports the GitOps tools when the schedule does not pause them", func() {

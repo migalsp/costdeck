@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/anthropics/anthropic-sdk-go/shared"
+
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
 )
@@ -95,11 +97,16 @@ type anthropicSession struct {
 	params anthropic.BetaMessageNewParams
 }
 
+// Step streams one Messages API call, emitting text, a "reset" when a server-side fallback
+// replaces a refused partial answer, and the token usage with cached prompt tokens counted. A
+// refusal or hitting the output limit is an error and runs no tools; a tool call whose streamed
+// arguments are not a JSON object comes back marked Invalid.
 func (s *anthropicSession) Step(ctx context.Context, emit func(Event)) ([]ToolCall, error) {
 	stream := s.client.Beta.Messages.NewStreaming(ctx, s.params)
 	defer func() { _ = stream.Close() }()
 
 	var msg anthropic.BetaMessage
+	toolInput := map[int64]*strings.Builder{}
 	for stream.Next() {
 		event := stream.Current()
 		if err := msg.Accumulate(event); err != nil {
@@ -113,8 +120,16 @@ func (s *anthropicSession) Step(ctx context.Context, emit func(Event)) ([]ToolCa
 				emit(Event{Type: "reset"})
 			}
 		case anthropic.BetaRawContentBlockDeltaEvent:
-			if d, ok := ev.Delta.AsAny().(anthropic.BetaTextDelta); ok && d.Text != "" {
-				emit(Event{Type: "text", Text: d.Text})
+			switch d := ev.Delta.AsAny().(type) {
+			case anthropic.BetaTextDelta:
+				if d.Text != "" {
+					emit(Event{Type: "text", Text: d.Text})
+				}
+			case anthropic.BetaInputJSONDelta:
+				if toolInput[ev.Index] == nil {
+					toolInput[ev.Index] = &strings.Builder{}
+				}
+				toolInput[ev.Index].WriteString(d.PartialJSON)
 			}
 		}
 	}
@@ -139,12 +154,15 @@ func (s *anthropicSession) Step(ctx context.Context, emit func(Event)) ([]ToolCa
 	}
 
 	var calls []ToolCall
-	for _, block := range msg.Content {
+	for i, block := range msg.Content {
 		tu, ok := block.AsAny().(anthropic.BetaToolUseBlock)
 		if !ok {
 			continue
 		}
 		raw := tu.JSON.Input.Raw()
+		if streamed, ok := toolInput[int64(i)]; ok {
+			raw = streamed.String()
+		}
 		call := ToolCall{ID: tu.ID, Name: tu.Name, RawArgs: raw}
 		// Strict parse: with eager input streaming the API no longer validates arguments.
 		if err := json.Unmarshal([]byte(raw), &call.Args); err != nil || call.Args == nil {
@@ -170,6 +188,9 @@ func describeAnthropicError(err error) error {
 	var apiErr *anthropic.Error
 	if !errors.As(err, &apiErr) {
 		return fmt.Errorf("could not reach Anthropic: %w", err)
+	}
+	if apiErr.Type() == shared.ErrorTypeOverloadedError || apiErr.Type() == shared.ErrorTypeAPIError {
+		return fmt.Errorf("the Anthropic API is temporarily unavailable: %s", apiErr.Type())
 	}
 	switch apiErr.StatusCode {
 	case 401, 403:

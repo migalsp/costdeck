@@ -72,6 +72,29 @@ describe('Services to stop', () => {
     expect(onSave).toHaveBeenCalledWith({ targetNamespace: 'shop-dev', exclusions: ['redis'], sequence: undefined, hibernate: [{ preset: 'zalando-postgres' }] })
   })
 
+  it('lets a namespace\'s own schedule move past a stage that is not ready in time, and keeps the choice', async () => {
+    mockFetch(on('GET', '/api/namespaces/shop-dev/workloads', () => json([])))
+    const onSave = vi.fn()
+    const { unmount } = render(<WorkloadRulesDialog namespace="shop-dev" spec={{ targetNamespace: 'shop-dev', sequence: ['db', '*'] }} onClose={() => {}} onSave={onSave} />)
+    const user = userEvent.setup()
+    const minutes = screen.getByRole('spinbutton', { name: 'Minutes a stage may take' }) as HTMLInputElement
+    expect(minutes.disabled).toBe(true)
+    await user.click(screen.getByRole('checkbox', { name: /Start the next stage if one is not ready after/ }))
+    await user.tripleClick(minutes)
+    await user.keyboard('3')
+    await user.click(screen.getByRole('button', { name: 'Save rules' }))
+    expect(onSave).toHaveBeenLastCalledWith(expect.objectContaining({ sequence: ['db', '*'], featureFlags: { skipOnTimeout: true, timeoutMinutes: 3 } }))
+    unmount()
+
+    render(<WorkloadRulesDialog namespace="shop-dev" spec={{ targetNamespace: 'shop-dev', featureFlags: { skipOnTimeout: true, timeoutMinutes: 3 } }} onClose={() => {}} onSave={onSave} />)
+    const checkbox = screen.getByRole('checkbox', { name: /Start the next stage if one is not ready after/ }) as HTMLInputElement
+    expect(checkbox.checked).toBe(true)
+    expect((screen.getByRole('spinbutton', { name: 'Minutes a stage may take' }) as HTMLInputElement).value).toBe('3')
+    await user.click(checkbox)
+    await user.click(screen.getByRole('button', { name: 'Save rules' }))
+    expect(onSave.mock.lastCall![0].featureFlags).toBeUndefined()
+  })
+
   it('saves a group that stops services in every namespace', async () => {
     const fetch = mockFetch(
       on('GET', '/api/settings', () => json({ calendars: [] })),

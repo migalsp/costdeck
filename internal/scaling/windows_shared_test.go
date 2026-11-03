@@ -15,10 +15,11 @@ import (
 // evaluates too: the week grid in the UI must match what the operator does.
 type sharedWindowCases struct {
 	Cases []struct {
-		Name      string                     `json:"name"`
-		Schedules []finopsv1.ScalingSchedule `json:"schedules"`
-		Up        []string                   `json:"up"`
-		Down      []string                   `json:"down"`
+		Name        string                     `json:"name"`
+		LeadMinutes int                        `json:"leadMinutes"`
+		Schedules   []finopsv1.ScalingSchedule `json:"schedules"`
+		Up          []string                   `json:"up"`
+		Down        []string                   `json:"down"`
 	} `json:"cases"`
 }
 
@@ -46,19 +47,19 @@ func TestSharedWindowCases(t *testing.T) {
 	if err := json.Unmarshal(raw, &data); err != nil {
 		t.Fatal(err)
 	}
-	e := &Engine{}
 	for _, c := range data.Cases {
 		t.Run(c.Name, func(t *testing.T) {
 			for i := range c.Schedules {
 				c.Schedules[i].Timezone = "UTC"
 			}
+			tt := Timetable{Schedules: c.Schedules, Lead: time.Duration(c.LeadMinutes) * time.Minute}
 			for _, at := range c.Up {
-				if !e.IsActiveAt(atWeekMinute(t, at), c.Schedules, nil) {
+				if !tt.ActiveAt(atWeekMinute(t, at)) {
 					t.Errorf("%s: want up, got down", at)
 				}
 			}
 			for _, at := range c.Down {
-				if e.IsActiveAt(atWeekMinute(t, at), c.Schedules, nil) {
+				if tt.ActiveAt(atWeekMinute(t, at)) {
 					t.Errorf("%s: want down, got up", at)
 				}
 			}

@@ -45,11 +45,11 @@ var _ = Describe("Idle auto-sleep", func() {
 
 	newNamespace := func(name string) {
 		GinkgoHelper()
-		Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: name}}))).To(Succeed())
+		Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, &corev1.Namespace{Name: name}))).To(Succeed())
 	}
 	newGroup := func(name string, spec finopsv1.ScalingGroupSpec) types.NamespacedName {
 		GinkgoHelper()
-		g := &finopsv1.ScalingGroup{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"}, Spec: spec}
+		g := &finopsv1.ScalingGroup{Name: name, Namespace: "default", Spec: spec}
 		Expect(k8sClient.Create(ctx, g)).To(Succeed())
 		DeferCleanup(func() { Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, g))).To(Succeed()) })
 		return client.ObjectKeyFromObject(g)
@@ -178,7 +178,7 @@ var _ = Describe("Idle auto-sleep", func() {
 
 	It("puts an unused ScalingConfig namespace to sleep", func() {
 		newNamespace("idle-lab")
-		c := &finopsv1.ScalingConfig{ObjectMeta: metav1.ObjectMeta{Name: "idle-lab", Namespace: "default"},
+		c := &finopsv1.ScalingConfig{Name: "idle-lab", Namespace: "default",
 			Spec: finopsv1.ScalingConfigSpec{TargetNamespace: "idle-lab", Schedules: open, IdleAfter: minute}}
 		Expect(k8sClient.Create(ctx, c)).To(Succeed())
 		DeferCleanup(func() { Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, c))).To(Succeed()) })

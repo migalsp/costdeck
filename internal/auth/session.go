@@ -18,7 +18,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/migalsp/costdeck-operator/internal/config"
@@ -149,12 +148,10 @@ func loadOrCreateSecret(ctx context.Context, c client.Client, name string, valid
 		return data, nil
 	}
 	secret = &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: key.Name, Namespace: key.Namespace,
-			Labels: map[string]string{"app.kubernetes.io/managed-by": "costdeck-operator"},
-		},
-		Type: corev1.SecretTypeOpaque,
-		Data: data,
+		Name: key.Name, Namespace: key.Namespace,
+		Labels: map[string]string{"app.kubernetes.io/managed-by": "costdeck-operator"},
+		Type:   corev1.SecretTypeOpaque,
+		Data:   data,
 	}
 	if err := c.Create(ctx, secret); err != nil {
 		if !apierrors.IsAlreadyExists(err) {

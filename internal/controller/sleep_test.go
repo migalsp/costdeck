@@ -6,8 +6,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
@@ -29,14 +29,14 @@ var _ = Describe("Sleep page", func() {
 
 	It("shows the sleep page once the namespace is down, and the application once it is up", func() {
 		GinkgoT().Setenv("POD_NAMESPACE", "default")
-		Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}}))).To(Succeed())
+		Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, &corev1.Namespace{Name: ns}))).To(Succeed())
 		original := []any{map[string]any{"backendRefs": []any{map[string]any{"name": "web", "port": int64(80)}}}}
 		route := &unstructured.Unstructured{Object: map[string]any{"spec": map[string]any{"hostnames": []any{"shop.example.com"}, "rules": original}}}
 		route.SetGroupVersionKind(routeGVK)
 		route.SetNamespace(ns)
 		route.SetName("shop")
 		Expect(k8sClient.Create(ctx, route)).To(Succeed())
-		g := &finopsv1.ScalingGroup{ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace},
+		g := &finopsv1.ScalingGroup{Name: key.Name, Namespace: key.Namespace,
 			Spec: finopsv1.ScalingGroupSpec{Category: "Test", Namespaces: []string{ns}, Schedules: closed, SleepPage: true}}
 		Expect(k8sClient.Create(ctx, g)).To(Succeed())
 		DeferCleanup(func() {
@@ -71,7 +71,8 @@ var _ = Describe("Sleep page", func() {
 		Expect(asleep.GetAnnotations()).To(HaveKey(scaling.SleepingAnnotation))
 		refs, _, _ := unstructured.NestedSlice(asleep.Object, "spec", "rules")
 		backend := refs[0].(map[string]any)["backendRefs"].([]any)[0].(map[string]any)
-		Expect(backend["name"]).To(Equal("costdeck-operator-api"))
+		Expect(backend["name"]).To(Equal("costdeck-operator-sleep"))
+		Expect(backend["port"]).To(BeEquivalentTo(80))
 		Expect(backend["namespace"]).To(Equal("default"))
 		Expect(grantExists()).To(BeTrue())
 		cond := meta.FindStatusCondition(g.Status.Conditions, ConditionSleepPage)
@@ -95,5 +96,115 @@ var _ = Describe("Sleep page", func() {
 		Expect(k8sClient.Update(ctx, g)).To(Succeed())
 		g = reconcileGroup()
 		Expect(meta.FindStatusCondition(g.Status.Conditions, ConditionSleepPage)).To(BeNil())
+	})
+
+	routeOnly := func(namespace string) *unstructured.Unstructured {
+		GinkgoHelper()
+		Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, &corev1.Namespace{Name: namespace}))).To(Succeed())
+		route := &unstructured.Unstructured{Object: map[string]any{"spec": map[string]any{
+			"rules": []any{map[string]any{"backendRefs": []any{map[string]any{"name": "web", "port": int64(80)}}}},
+		}}}
+		route.SetGroupVersionKind(routeGVK)
+		route.SetNamespace(namespace)
+		route.SetName("web")
+		Expect(k8sClient.Create(ctx, route)).To(Succeed())
+		DeferCleanup(func() { Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, route))).To(Succeed()) })
+		return route
+	}
+	sleeping := func(route *unstructured.Unstructured) bool {
+		GinkgoHelper()
+		out := &unstructured.Unstructured{}
+		out.SetGroupVersionKind(routeGVK)
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(route), out)).To(Succeed())
+		_, asleep := out.GetAnnotations()[scaling.SleepingAnnotation]
+		return asleep
+	}
+	asleepGroup := func(name string, namespaces ...string) (*ScalingGroupReconciler, types.NamespacedName) {
+		GinkgoHelper()
+		GinkgoT().Setenv("POD_NAMESPACE", "default")
+		groupKey := types.NamespacedName{Name: name, Namespace: "default"}
+		Expect(k8sClient.Create(ctx, &finopsv1.ScalingGroup{Name: groupKey.Name, Namespace: groupKey.Namespace,
+			Spec: finopsv1.ScalingGroupSpec{Category: "Test", Namespaces: namespaces, Schedules: closed, SleepPage: true}})).To(Succeed())
+		DeferCleanup(func() {
+			Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, &finopsv1.ScalingGroup{Name: groupKey.Name, Namespace: groupKey.Namespace}))).To(Succeed())
+		})
+		r := &ScalingGroupReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), Engine: &scaling.Engine{Client: k8sClient}, Recorder: events.NewFakeRecorder(100)}
+		_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: groupKey})
+		Expect(err).NotTo(HaveOccurred())
+		return r, groupKey
+	}
+	dropNamespace := func(groupKey types.NamespacedName, keep string) {
+		GinkgoHelper()
+		g := &finopsv1.ScalingGroup{}
+		Expect(k8sClient.Get(ctx, groupKey, g)).To(Succeed())
+		g.Spec.Namespaces = []string{keep}
+		Expect(k8sClient.Update(ctx, g)).To(Succeed())
+	}
+
+	It("wakes the routes of a namespace with no workloads that leaves the group while it sleeps", func() {
+		kept, removed := routeOnly("sleep-kept"), routeOnly("sleep-removed")
+		r, groupKey := asleepGroup("sleep-leaving", "sleep-kept", "sleep-removed")
+		Expect(sleeping(kept)).To(BeTrue())
+		Expect(sleeping(removed)).To(BeTrue())
+
+		dropNamespace(groupKey, "sleep-kept")
+		_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: groupKey})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(sleeping(removed)).To(BeFalse(), "it left the group, which recorded no replica counts for it")
+		Expect(sleeping(kept)).To(BeTrue())
+		g := &finopsv1.ScalingGroup{}
+		Expect(k8sClient.Get(ctx, groupKey, g)).To(Succeed())
+		Expect(g.Status.ManagedNamespaces).To(Equal([]string{"sleep-kept"}))
+	})
+
+	handOverTo := func(heirName string, heirSleepPage bool) (*unstructured.Unstructured, *ScalingGroupReconciler, types.NamespacedName) {
+		GinkgoHelper()
+		routeOnly("sleep-stays-" + heirName)
+		moved := routeOnly("sleep-moves-" + heirName)
+		r, groupKey := asleepGroup("sleep-first-"+heirName, "sleep-stays-"+heirName, "sleep-moves-"+heirName)
+		Expect(sleeping(moved)).To(BeTrue())
+		heirKey := types.NamespacedName{Name: "sleep-heir-" + heirName, Namespace: "default"}
+		Expect(k8sClient.Create(ctx, &finopsv1.ScalingGroup{Name: heirKey.Name, Namespace: heirKey.Namespace,
+			Spec: finopsv1.ScalingGroupSpec{Category: "Test", Namespaces: []string{"sleep-moves-" + heirName}, Schedules: closed, SleepPage: heirSleepPage}})).To(Succeed())
+		DeferCleanup(func() {
+			Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, &finopsv1.ScalingGroup{Name: heirKey.Name, Namespace: heirKey.Namespace}))).To(Succeed())
+		})
+		dropNamespace(groupKey, "sleep-stays-"+heirName)
+		_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: groupKey})
+		Expect(err).NotTo(HaveOccurred())
+		return moved, r, heirKey
+	}
+
+	It("wakes the routes of a namespace handed to a group without a sleep page", func() {
+		moved, _, _ := handOverTo("plain", false)
+		Expect(sleeping(moved)).To(BeFalse(), "the new group would never wake routes it did not put to sleep")
+	})
+
+	It("leaves the routes of a namespace handed to a group with a sleep page to that group", func() {
+		moved, r, heirKey := handOverTo("paged", true)
+		Expect(sleeping(moved)).To(BeTrue(), "the new group keeps them asleep while it is down")
+		heir := &finopsv1.ScalingGroup{}
+		Expect(k8sClient.Get(ctx, heirKey, heir)).To(Succeed())
+		heir.Spec.Schedules = open
+		Expect(k8sClient.Update(ctx, heir)).To(Succeed())
+		_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: heirKey})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(sleeping(moved)).To(BeFalse(), "and wakes them once it is up")
+	})
+
+	It("wakes the routes of a namespace with no workloads removed just before the group is deleted", func() {
+		kept, removed := routeOnly("sleep-kept-2"), routeOnly("sleep-removed-2")
+		r, groupKey := asleepGroup("sleep-deleted", "sleep-kept-2", "sleep-removed-2")
+		Expect(sleeping(removed)).To(BeTrue())
+
+		dropNamespace(groupKey, "sleep-kept-2")
+		Expect(rawClient.Delete(ctx, &finopsv1.ScalingGroup{Name: groupKey.Name, Namespace: groupKey.Namespace})).To(Succeed())
+		_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: groupKey})
+		Expect(err).NotTo(HaveOccurred())
+		Eventually(func() error {
+			return k8sClient.Get(ctx, groupKey, &finopsv1.ScalingGroup{})
+		}).Should(Satisfy(errors.IsNotFound))
+		Expect(sleeping(removed)).To(BeFalse())
+		Expect(sleeping(kept)).To(BeFalse())
 	})
 })

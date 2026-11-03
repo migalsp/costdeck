@@ -132,6 +132,9 @@ func checkEvents(events []finopsv1.NotificationEvent) ([]finopsv1.NotificationEv
 	return out, nil
 }
 
+// applyNotificationSettings applies the Slack, Teams and email sections. A new webhook URL or
+// SMTP password is checked and queued for its Secret; an enabled channel must end up with its
+// webhook, or with a server, sender and recipient, and a username is only accepted over TLS.
 func (s *Server) applyNotificationSettings(ctx context.Context, cfg *finopsv1.CostDeckConfig, req *SettingsUpdateRequest) error {
 	if req.Integrations == nil || req.Integrations.Notifications == nil {
 		return nil
@@ -163,9 +166,7 @@ func (s *Server) applyNotificationSettings(ctx context.Context, cfg *finopsv1.Co
 			if err := notify.CheckWebhook(u.WebhookURL); err != nil {
 				return badRequestf("%s: %v", name, err)
 			}
-			if err := s.storeCredentials(ctx, secret, map[string][]byte{notify.SecretKeyWebhookURL: []byte(strings.TrimSpace(u.WebhookURL))}, &c.SecretRef); err != nil {
-				return err
-			}
+			s.storeCredentials(req, secret, map[string][]byte{notify.SecretKeyWebhookURL: []byte(strings.TrimSpace(u.WebhookURL))}, &c.SecretRef)
 		}
 		if c.Enabled && c.SecretRef == "" {
 			return badRequestf("%s needs its webhook URL", name)
@@ -187,9 +188,7 @@ func (s *Server) applyNotificationSettings(ctx context.Context, cfg *finopsv1.Co
 			return err
 		}
 		if u.Password != "" {
-			if err := s.storeCredentials(ctx, smtpSecret, map[string][]byte{notify.SecretKeyPassword: []byte(u.Password)}, &e.SecretRef); err != nil {
-				return err
-			}
+			s.storeCredentials(req, smtpSecret, map[string][]byte{notify.SecretKeyPassword: []byte(u.Password)}, &e.SecretRef)
 		}
 		if e.Enabled {
 			if e.Host == "" || e.From == "" || len(e.To) == 0 {

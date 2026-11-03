@@ -29,13 +29,16 @@ describe('OpenID Connect sign-in', () => {
     await user.click(card.getByRole('button', { name: 'Add a group' }))
     await user.type(card.getByLabelText('Group'), '/costdeck-admins')
     await user.selectOptions(card.getByLabelText('Role'), 'admin')
+    await user.click(card.getByRole('button', { name: 'Add a role' }))
+    await user.type(card.getByLabelText('Role in the claim'), 'platform-operators')
+    await user.selectOptions(card.getByLabelText('Cost Deck role'), 'operator')
     await user.click(screen.getByRole('button', { name: 'Save' }))
     await screen.findByText('Saved')
     const put = fetch.mock.calls.find(([, init]) => init?.method === 'PUT')!
     expect(JSON.parse(put[1]!.body as string).auth.oidc).toEqual({
       enabled: true, displayName: 'Keycloak', issuerUrl: 'https://keycloak.example.com/realms/costdeck', clientId: 'costdeck', redirectUrl: '',
       scopes: ['profile', 'email'], groupsClaim: 'groups', rolesClaim: 'realm_access.roles', defaultRole: 'viewer', autoProvision: true,
-      skipSslVerify: false, groupRoleMapping: { '/costdeck-admins': 'admin' }, clientSecret: 's3cr3t',
+      skipSslVerify: false, groupRoleMapping: { '/costdeck-admins': 'admin' }, roleMapping: { 'platform-operators': 'operator' }, clientSecret: 's3cr3t',
     })
   })
 

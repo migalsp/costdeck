@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
 )
 
 // fakeDCGM answers the GPU queries; exported says whether the scrape renamed the pod's
@@ -87,5 +89,71 @@ func TestGPUUsageUsesTheExportedNamespace(t *testing.T) {
 		if strings.Contains(q, "{namespace") {
 			t.Errorf("the exporter's namespace was queried: %s", q)
 		}
+	}
+}
+
+func TestProviderGPUUsageIsSharedForTwoMinutes(t *testing.T) {
+	srv, queries := fakeDCGM(t, false)
+	ctx := context.Background()
+
+	if got, err := NewProvider(configClient(t, nil), fixedSource{}).GPUUsage(ctx); got != nil || err != nil {
+		t.Errorf("without VictoriaMetrics GPUUsage() = %v, %v; want nothing", got, err)
+	}
+	if got, err := NewProvider(configClient(t, &finopsv1.VictoriaMetricsConfig{Enabled: true}), fixedSource{}).GPUUsage(ctx); got != nil || err == nil {
+		t.Errorf("misconfigured GPUUsage() = %v, %v; want the configuration error", got, err)
+	}
+
+	c := configClient(t, &finopsv1.VictoriaMetricsConfig{Enabled: true, Endpoint: srv.URL})
+	p := NewProvider(c, fixedSource{})
+	p.TTL = 0
+	got, err := p.GPUUsage(ctx)
+	if err != nil || got["vision"].MemoryUsedGiB != 2 {
+		t.Fatalf("GPUUsage() = %v, %v", got, err)
+	}
+	asked := len(*queries)
+	if again, err := p.GPUUsage(ctx); err != nil || len(*queries) != asked || again["vision"] != got["vision"] {
+		t.Errorf("a second call within the cache TTL queried again (%d -> %d) or changed: %v, %v", asked, len(*queries), again, err)
+	}
+
+	setVM(t, c, &finopsv1.VictoriaMetricsConfig{Enabled: true, Endpoint: srv.URL, LabelSelector: `cluster="b"`})
+	if _, err := p.GPUUsage(ctx); err != nil || len(*queries) == asked {
+		t.Errorf("a new label selector must not be served from the cache: %v, %d queries", err, len(*queries))
+	}
+	if last := (*queries)[len(*queries)-1]; !strings.Contains(last, `cluster="b"`) {
+		t.Errorf("query after the change = %q", last)
+	}
+}
+
+func TestProviderGPUUsageDoesNotCacheFailures(t *testing.T) {
+	prom := &fakePromQL{status: http.StatusBadGateway}
+	srv := httptest.NewServer(prom)
+	defer srv.Close()
+	p := NewProvider(configClient(t, &finopsv1.VictoriaMetricsConfig{Enabled: true, Endpoint: srv.URL}), fixedSource{})
+	for range 2 {
+		if got, err := p.GPUUsage(context.Background()); got != nil || err == nil || !strings.Contains(err.Error(), "query GPU labels") {
+			t.Errorf("GPUUsage() = %v, %v; want the failing query named", got, err)
+		}
+	}
+	if len(prom.queries) != 2 {
+		t.Errorf("queries = %d, want a fresh attempt after a failure", len(prom.queries))
+	}
+}
+
+func TestGPUUsageNamesTheFailingQuery(t *testing.T) {
+	for metric, want := range map[string]string{
+		"avg_over_time(DCGM_FI_DEV_GPU_UTIL": "query GPU utilization",
+		"max_over_time(DCGM_FI_DEV_FB_USED":  "query GPU memory",
+	} {
+		t.Run(want, func(t *testing.T) {
+			srv := httptest.NewServer(&fakePromQL{failOn: func(q string) bool { return strings.Contains(q, metric) }})
+			defer srv.Close()
+			c, err := NewVMClient(VMOptions{Endpoint: srv.URL})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, err := c.GPUUsage(context.Background()); got != nil || err == nil || !strings.Contains(err.Error(), want) {
+				t.Errorf("GPUUsage() = %v, %v; want an error naming %q", got, err, want)
+			}
+		})
 	}
 }

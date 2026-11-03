@@ -54,12 +54,12 @@ var _ = Describe("ScalingGroup namespaceSelector", func() {
 			if ns == "sel-prod" {
 				env = "prod"
 			}
-			err := k8sClient.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns, Labels: map[string]string{"env": env}}})
+			err := k8sClient.Create(ctx, &corev1.Namespace{Name: ns, Labels: map[string]string{"env": env}})
 			Expect(client.IgnoreAlreadyExists(err)).To(Succeed())
 			label(ns, map[string]string{"env": env})
 			labels := map[string]string{"app": "app"}
 			Expect(k8sClient.Create(ctx, &appsv1.Deployment{
-				ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: ns},
+				Name: "app", Namespace: ns,
 				Spec: appsv1.DeploymentSpec{
 					Replicas: ptr.To[int32](3),
 					Selector: &metav1.LabelSelector{MatchLabels: labels},
@@ -71,7 +71,7 @@ var _ = Describe("ScalingGroup namespaceSelector", func() {
 			})).To(Succeed())
 		}
 		Expect(k8sClient.Create(ctx, &finopsv1.ScalingGroup{
-			ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace},
+			Name: key.Name, Namespace: key.Namespace,
 			Spec: finopsv1.ScalingGroupSpec{
 				Category: "Previews", Schedules: closed,
 				NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"env": "preview"}},
@@ -80,9 +80,9 @@ var _ = Describe("ScalingGroup namespaceSelector", func() {
 	})
 
 	AfterEach(func() {
-		Expect(k8sClient.Delete(ctx, &finopsv1.ScalingGroup{ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace}})).To(Succeed())
+		Expect(k8sClient.Delete(ctx, &finopsv1.ScalingGroup{Name: key.Name, Namespace: key.Namespace})).To(Succeed())
 		for _, ns := range []string{"sel-pr-1", "sel-pr-2", "sel-prod"} {
-			Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: ns}}))).To(Succeed())
+			Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, &appsv1.Deployment{Name: "app", Namespace: ns}))).To(Succeed())
 		}
 	})
 
@@ -108,7 +108,7 @@ var _ = Describe("ScalingGroup namespaceSelector", func() {
 		}
 
 		By("leaving a released namespace alone afterwards")
-		Expect(k8sClient.Patch(ctx, &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: "sel-pr-2"}},
+		Expect(k8sClient.Patch(ctx, &appsv1.Deployment{Name: "app", Namespace: "sel-pr-2"},
 			client.RawPatch(types.MergePatchType, []byte(`{"spec":{"replicas":1}}`)))).To(Succeed())
 		reconcileGroup()
 		Expect(replicasOf("sel-pr-2")).To(Equal(int32(1)))
@@ -131,19 +131,19 @@ var _ = Describe("ScalingGroup namespaceSelector", func() {
 	It("brings back every start stage of a namespace that leaves", func() {
 		labels := map[string]string{"app": "worker"}
 		Expect(k8sClient.Create(ctx, &appsv1.Deployment{
-			ObjectMeta: metav1.ObjectMeta{Name: "worker", Namespace: "sel-pr-1"},
+			Name: "worker", Namespace: "sel-pr-1",
 			Spec: appsv1.DeploymentSpec{
 				Replicas: ptr.To[int32](2), Selector: &metav1.LabelSelector{MatchLabels: labels},
 				Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: labels}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "worker", Image: "busybox"}}}},
 			},
 		})).To(Succeed())
 		// Two stages: worker starts only once app is ready, which no controller reports here.
-		rules := &finopsv1.ScalingConfig{ObjectMeta: metav1.ObjectMeta{Name: "sel-pr-1-rules", Namespace: "default"},
+		rules := &finopsv1.ScalingConfig{Name: "sel-pr-1-rules", Namespace: "default",
 			Spec: finopsv1.ScalingConfigSpec{TargetNamespace: "sel-pr-1", Sequence: []string{"app", "worker"}}}
 		Expect(k8sClient.Create(ctx, rules)).To(Succeed())
 		DeferCleanup(func() {
 			Expect(k8sClient.Delete(ctx, rules)).To(Succeed())
-			Expect(k8sClient.Delete(ctx, &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "worker", Namespace: "sel-pr-1"}})).To(Succeed())
+			Expect(k8sClient.Delete(ctx, &appsv1.Deployment{Name: "worker", Namespace: "sel-pr-1"})).To(Succeed())
 		})
 		worker := func() int32 {
 			GinkgoHelper()

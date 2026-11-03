@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import { Button, Modal } from './ui'
 import { apiError, errorMessage } from '../lib/api'
 
@@ -14,6 +14,7 @@ export default function ChangePasswordDialog({ required, onDone, onClose, onSign
   onClose: () => void
   onSignOut: () => void
 }) {
+  const ids = useId()
   const [current, setCurrent] = useState('')
   const [next, setNext] = useState('')
   const [confirm, setConfirm] = useState('')
@@ -57,16 +58,16 @@ export default function ChangePasswordDialog({ required, onDone, onClose, onSign
       </>}>
       <form className="space-y-3" onSubmit={e => { e.preventDefault(); if (ready) submit() }}>
         <div>
-          <label className="text-xs font-semibold text-slate-600 mb-1 block">{required ? 'Password you were given' : 'Current password'}</label>
-          <input className={field} type="password" autoComplete="current-password" value={current} onChange={e => setCurrent(e.target.value)} autoFocus />
+          <label htmlFor={`${ids}-current`} className="text-xs font-semibold text-slate-600 mb-1 block">{required ? 'Password you were given' : 'Current password'}</label>
+          <input id={`${ids}-current`} className={field} type="password" autoComplete="current-password" value={current} onChange={e => setCurrent(e.target.value)} autoFocus />
         </div>
         <div>
-          <label className="text-xs font-semibold text-slate-600 mb-1 block">New password</label>
-          <input className={field} type="password" autoComplete="new-password" value={next} onChange={e => setNext(e.target.value)} placeholder={`At least ${MIN_LENGTH} characters`} />
+          <label htmlFor={`${ids}-next`} className="text-xs font-semibold text-slate-600 mb-1 block">New password</label>
+          <input id={`${ids}-next`} className={field} type="password" autoComplete="new-password" value={next} onChange={e => setNext(e.target.value)} placeholder={`At least ${MIN_LENGTH} characters`} />
         </div>
         <div>
-          <label className="text-xs font-semibold text-slate-600 mb-1 block">New password again</label>
-          <input className={field} type="password" autoComplete="new-password" value={confirm} onChange={e => setConfirm(e.target.value)} />
+          <label htmlFor={`${ids}-confirm`} className="text-xs font-semibold text-slate-600 mb-1 block">New password again</label>
+          <input id={`${ids}-confirm`} className={field} type="password" autoComplete="new-password" value={confirm} onChange={e => setConfirm(e.target.value)} />
         </div>
         {(problem || error) && <p className={`text-sm ${error ? 'text-rose-600' : 'text-slate-500'}`}>{error || problem}</p>}
         <button type="submit" hidden />

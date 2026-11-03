@@ -94,7 +94,7 @@ func TestGetSequenceIndex(t *testing.T) {
 
 	for _, tt := range tests {
 		obj := &appsv1.Deployment{
-			ObjectMeta: metav1.ObjectMeta{Name: tt.name},
+			Name: tt.name,
 		}
 		actual := getSequenceIndex(obj, sequence)
 		if actual != tt.expected {
@@ -104,7 +104,7 @@ func TestGetSequenceIndex(t *testing.T) {
 
 	// Test missing string
 	obj2 := &appsv1.Deployment{
-		ObjectMeta: metav1.ObjectMeta{Name: "not-in-list"},
+		Name: "not-in-list",
 	}
 	actual := getSequenceIndex(obj2, []string{"only-one"})
 	if actual != 999 {
@@ -436,8 +436,8 @@ func TestComputePhase(t *testing.T) {
 
 	// Add a Deployment with replicas=0
 	d1 := &appsv1.Deployment{
-		ObjectMeta: metav1.ObjectMeta{Name: "d1", Namespace: "test-ns"},
-		Spec:       appsv1.DeploymentSpec{Replicas: &zero},
+		Name: "d1", Namespace: "test-ns",
+		Spec: appsv1.DeploymentSpec{Replicas: &zero},
 	}
 	must(t, e.Client.Create(ctx, d1))
 
@@ -447,9 +447,9 @@ func TestComputePhase(t *testing.T) {
 
 	// Add a StatefulSet with replicas=1, ready=1
 	s1 := &appsv1.StatefulSet{
-		ObjectMeta: metav1.ObjectMeta{Name: "s1", Namespace: "test-ns"},
-		Spec:       appsv1.StatefulSetSpec{Replicas: &one},
-		Status:     appsv1.StatefulSetStatus{ReadyReplicas: 1},
+		Name: "s1", Namespace: "test-ns",
+		Spec:   appsv1.StatefulSetSpec{Replicas: &one},
+		Status: appsv1.StatefulSetStatus{ReadyReplicas: 1},
 	}
 	must(t, e.Client.Create(ctx, s1))
 
@@ -480,9 +480,9 @@ func TestScaleTarget(t *testing.T) {
 
 	one := int32(1)
 	d1 := &appsv1.Deployment{
-		ObjectMeta: metav1.ObjectMeta{Name: "app1", Namespace: "test-ns"},
-		Spec:       appsv1.DeploymentSpec{Replicas: &one},
-		Status:     appsv1.DeploymentStatus{ReadyReplicas: 1},
+		Name: "app1", Namespace: "test-ns",
+		Spec:   appsv1.DeploymentSpec{Replicas: &one},
+		Status: appsv1.DeploymentStatus{ReadyReplicas: 1},
 	}
 	must(t, e.Client.Create(ctx, d1))
 
@@ -513,9 +513,9 @@ func TestIsGroupReady(t *testing.T) {
 
 	one := int32(1)
 	d1 := &appsv1.Deployment{
-		ObjectMeta: metav1.ObjectMeta{Name: "app1", Namespace: "test-ns"},
-		Spec:       appsv1.DeploymentSpec{Replicas: &one},
-		Status:     appsv1.DeploymentStatus{ReadyReplicas: 0}, // Not ready yet
+		Name: "app1", Namespace: "test-ns",
+		Spec:   appsv1.DeploymentSpec{Replicas: &one},
+		Status: appsv1.DeploymentStatus{ReadyReplicas: 0}, // Not ready yet
 	}
 	must(t, e.Client.Create(ctx, d1))
 
@@ -544,10 +544,10 @@ func TestGetSequenceIndexMatchesWholePatterns(t *testing.T) {
 		"worker-?",
 	}
 	deploy := func(name string) client.Object {
-		return &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: name}}
+		return &appsv1.Deployment{Name: name}
 	}
 	sts := func(name string) client.Object {
-		return &appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Name: name}}
+		return &appsv1.StatefulSet{Name: name}
 	}
 
 	tests := []struct {
@@ -600,8 +600,8 @@ func TestOriginalReplicasSurviveLostStatus(t *testing.T) {
 	e := buildMockEngine()
 	replicas := int32(5)
 	d := &appsv1.Deployment{
-		ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "shop"},
-		Spec:       appsv1.DeploymentSpec{Replicas: &replicas},
+		Name: "api", Namespace: "shop",
+		Spec: appsv1.DeploymentSpec{Replicas: &replicas},
 	}
 	ctx := context.Background()
 	if err := e.Client.Create(ctx, d); err != nil {
@@ -651,12 +651,12 @@ func TestScaleDownIgnoresEvictedPods(t *testing.T) {
 	zero := int32(0)
 	selector := &metav1.LabelSelector{MatchLabels: map[string]string{"app": "api"}}
 	d := &appsv1.Deployment{
-		ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "test-ns"},
-		Spec:       appsv1.DeploymentSpec{Replicas: &zero, Selector: selector},
+		Name: "api", Namespace: "test-ns",
+		Spec: appsv1.DeploymentSpec{Replicas: &zero, Selector: selector},
 	}
 	evicted := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{Name: "api-x", Namespace: "test-ns", Labels: map[string]string{"app": "api"}},
-		Status:     corev1.PodStatus{Phase: corev1.PodFailed, Reason: "Evicted"},
+		Name: "api-x", Namespace: "test-ns", Labels: map[string]string{"app": "api"},
+		Status: corev1.PodStatus{Phase: corev1.PodFailed, Reason: "Evicted"},
 	}
 	for _, obj := range []client.Object{d, evicted} {
 		if err := e.Client.Create(ctx, obj); err != nil {
@@ -717,12 +717,12 @@ func TestKeptDownCountsMissingReplicas(t *testing.T) {
 		}}}},
 	}
 	must(t, e.Client.Create(ctx, &appsv1.Deployment{
-		ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "test-ns"},
-		Spec:       appsv1.DeploymentSpec{Replicas: &zero, Template: corev1.PodTemplateSpec{Spec: podSpec}},
+		Name: "api", Namespace: "test-ns",
+		Spec: appsv1.DeploymentSpec{Replicas: &zero, Template: corev1.PodTemplateSpec{Spec: podSpec}},
 	}))
 	must(t, e.Client.Create(ctx, &appsv1.StatefulSet{
-		ObjectMeta: metav1.ObjectMeta{Name: "db", Namespace: "test-ns"},
-		Spec:       appsv1.StatefulSetSpec{Replicas: &one, Template: corev1.PodTemplateSpec{Spec: podSpec}},
+		Name: "db", Namespace: "test-ns",
+		Spec: appsv1.StatefulSetSpec{Replicas: &one, Template: corev1.PodTemplateSpec{Spec: podSpec}},
 	}))
 
 	cpu, mem, err := e.KeptDown(ctx, "test-ns", map[string]int32{"*v1.Deployment/api": 3, "*v1.StatefulSet/db": 1})
@@ -740,7 +740,7 @@ func TestKeptDownCountsMissingReplicas(t *testing.T) {
 // stage 1 starts first and stops last, workloads in no stage start last and stop first.
 func TestWorkloadStagesStartInOrderAndStopInReverse(t *testing.T) {
 	e := buildMockEngine()
-	deploy := func(name string) client.Object { return &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: name}} }
+	deploy := func(name string) client.Object { return &appsv1.Deployment{Name: name} }
 	resources := []client.Object{deploy("api"), deploy("worker"), deploy("db")}
 	order := func(active bool) []string {
 		priorities, groups := e.groupAndSortPriorities(resources, []string{"db", "api"}, active)
@@ -761,7 +761,7 @@ func TestWorkloadStagesStartInOrderAndStopInReverse(t *testing.T) {
 }
 
 func TestMostSpecificSequencePatternWins(t *testing.T) {
-	deploy := func(name string) client.Object { return &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: name}} }
+	deploy := func(name string) client.Object { return &appsv1.Deployment{Name: name} }
 	for _, c := range []struct {
 		sequence []string
 		name     string
@@ -788,9 +788,9 @@ func TestScaleDownStopsTheOperatorFirst(t *testing.T) {
 	one := int32(1)
 	for _, name := range []string{"my-operator", "postgres", "api"} {
 		must(t, e.Client.Create(ctx, &appsv1.Deployment{
-			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "ops-ns"},
-			Spec:       appsv1.DeploymentSpec{Replicas: &one},
-			Status:     appsv1.DeploymentStatus{Replicas: 1, ReadyReplicas: 1},
+			Name: name, Namespace: "ops-ns",
+			Spec:   appsv1.DeploymentSpec{Replicas: &one},
+			Status: appsv1.DeploymentStatus{Replicas: 1, ReadyReplicas: 1},
 		}))
 	}
 	// Stage 1: everything; stage 2: the operator, which therefore stops first.

@@ -27,21 +27,21 @@ func gpuCluster(t *testing.T, gpuPods map[string]string) client.Client {
 	_ = clientgoscheme.AddToScheme(scheme)
 	_ = finopsv1.AddToScheme(scheme)
 	capacity := corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("4"), corev1.ResourceMemory: resource.MustParse("16Gi")}
-	cpuNode := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "cpu"}, Status: corev1.NodeStatus{Capacity: capacity, Allocatable: capacity}}
+	cpuNode := &corev1.Node{Name: "cpu", Status: corev1.NodeStatus{Capacity: capacity, Allocatable: capacity}}
 	gpuCap := capacity.DeepCopy()
 	gpuCap[pricing.ResourceNvidiaGPU] = resource.MustParse("4")
-	gpuNode := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "gpu", Labels: map[string]string{"nvidia.com/gpu.product": "NVIDIA-A10G"}},
+	gpuNode := &corev1.Node{Name: "gpu", Labels: map[string]string{"nvidia.com/gpu.product": "NVIDIA-A10G"},
 		Status: corev1.NodeStatus{Capacity: gpuCap, Allocatable: gpuCap}}
 	objs := make([]client.Object, 0, 6+len(gpuPods))
 	objs = append(objs, cpuNode, gpuNode)
 	for _, ns := range []string{"ml", "web"} {
-		objs = append(objs, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}},
-			&finopsv1.NamespaceFinOps{ObjectMeta: metav1.ObjectMeta{Name: ns, Namespace: "costdeck"}, Spec: finopsv1.NamespaceFinOpsSpec{TargetNamespace: ns},
+		objs = append(objs, &corev1.Namespace{Name: ns},
+			&finopsv1.NamespaceFinOps{Name: ns, Namespace: "costdeck", Spec: finopsv1.NamespaceFinOpsSpec{TargetNamespace: ns},
 				Status: finopsv1.NamespaceFinOpsStatus{History: []finopsv1.MetricDataPoint{{CPU: finopsv1.ResourceMetrics{Requests: "1", Usage: "1"}, Memory: finopsv1.ResourceMetrics{Requests: "1Gi", Usage: "1Gi"}}}}})
 	}
 	for name, gpus := range gpuPods {
 		// Extended resources may be given as limits only; the request defaults to them.
-		objs = append(objs, &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "ml", Name: name},
+		objs = append(objs, &corev1.Pod{Namespace: "ml", Name: name,
 			Spec: corev1.PodSpec{NodeName: "gpu", Containers: []corev1.Container{{Name: "c", Resources: corev1.ResourceRequirements{
 				Limits: corev1.ResourceList{pricing.ResourceNvidiaGPU: resource.MustParse(gpus)}}}}},
 			Status: corev1.PodStatus{Phase: corev1.PodRunning}})
@@ -145,10 +145,10 @@ func TestGPUNodesInTheNodeView(t *testing.T) {
 			c[pricing.ResourceNvidiaGPU] = q(gpus)
 			labels["nvidia.com/gpu.product"] = "Tesla-T4"
 		}
-		return corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: name, Labels: labels}, Status: corev1.NodeStatus{Capacity: c, Allocatable: c,
+		return corev1.Node{Name: name, Labels: labels, Status: corev1.NodeStatus{Capacity: c, Allocatable: c,
 			Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}}}
 	}
-	pod := corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "ml", Name: "infer", OwnerReferences: []metav1.OwnerReference{{Kind: "ReplicaSet", Name: "x", Controller: new(true)}}},
+	pod := corev1.Pod{Namespace: "ml", Name: "infer", OwnerReferences: []metav1.OwnerReference{{Kind: "ReplicaSet", Name: "x", Controller: new(true)}},
 		Spec: corev1.PodSpec{NodeName: "gpu", Containers: []corev1.Container{{Name: "c", Resources: corev1.ResourceRequirements{
 			Requests: corev1.ResourceList{corev1.ResourceCPU: q("100m"), pricing.ResourceNvidiaGPU: q("1")}, Limits: corev1.ResourceList{pricing.ResourceNvidiaGPU: q("1")}}}}},
 		Status: corev1.PodStatus{Phase: corev1.PodRunning}}

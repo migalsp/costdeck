@@ -3,11 +3,14 @@ package metrics
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sort"
 	"strings"
 	"testing"
+
+	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
 )
 
 func TestLLMUsage(t *testing.T) {
@@ -77,5 +80,99 @@ func TestLLMUsage(t *testing.T) {
 		if !strings.Contains(all, want) {
 			t.Errorf("no query %s in:\n%s", want, all)
 		}
+	}
+}
+
+func TestLLMUsageWithoutACollectorUsesTheScrapeNamespace(t *testing.T) {
+	prom := &fakePromQL{
+		failOn: func(q string) bool { return strings.HasPrefix(q, "count(") },
+		answer: func(q string) []map[string]any {
+			if strings.Contains(q, "gen_ai_client_inference_usage_output_tokens_total") {
+				return []map[string]any{sample(map[string]string{"namespace": "shop", "gen_ai_request_model": "gpt-4o"}, "900")}
+			}
+			return nil
+		},
+	}
+	srv := httptest.NewServer(prom)
+	defer srv.Close()
+	c, err := NewVMClient(VMOptions{Endpoint: srv.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, err := c.LLMUsage(context.Background())
+	if err != nil {
+		t.Fatalf("a failing collector probe must not fail the usage: %v", err)
+	}
+	if len(u.Clients) != 1 || u.Clients[0] != (TokenUsage{Namespace: "shop", Model: "gpt-4o", Output: 900}) || u.Proxy != nil || u.Served != nil {
+		t.Errorf("usage = %+v", u)
+	}
+	all := strings.Join(prom.queries, "\n")
+	for _, want := range []string{
+		`count({__name__=~"gen_ai_client_token_usage_sum|gen_ai_client_inference_usage_input_tokens_total",k8s_namespace_name!=""})`,
+		`sum by (team_alias, team, model) (increase(litellm_spend_metric_total{}[7d]))`,
+		`sum by (namespace, gen_ai_request_model, gen_ai_token_type) (increase(gen_ai_client_token_usage_sum{}[7d]))`,
+		`sum by (namespace, gen_ai_request_model) (increase(gen_ai_client_inference_usage_output_tokens_total{}[7d]))`,
+		`sum by (namespace, model_name) (increase(vllm:prompt_tokens_total{}[7d]))`,
+	} {
+		if !strings.Contains(all, want) {
+			t.Errorf("no query %s in:\n%s", want, all)
+		}
+	}
+}
+
+func TestLLMUsageNamesTheFailingQuery(t *testing.T) {
+	for metric, want := range map[string]string{
+		"litellm_output_tokens_metric_total":               "query litellm_output_tokens_metric_total: ",
+		"gen_ai_client_token_usage_sum":                    "query gen_ai_client_token_usage: ",
+		"gen_ai_client_inference_usage_input_tokens_total": "query gen_ai_client_inference_usage_input_tokens_total: ",
+		"vllm:generation_tokens_total":                     "query vllm:generation_tokens_total: ",
+	} {
+		t.Run(metric, func(t *testing.T) {
+			srv := httptest.NewServer(&fakePromQL{failOn: func(q string) bool { return strings.Contains(q, "increase("+metric+"{") }})
+			defer srv.Close()
+			c, err := NewVMClient(VMOptions{Endpoint: srv.URL})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := c.LLMUsage(context.Background()); err == nil || !strings.HasPrefix(err.Error(), want) {
+				t.Errorf("LLMUsage() = %v, want an error starting with %q", err, want)
+			}
+		})
+	}
+}
+
+func TestProviderLLMUsage(t *testing.T) {
+	ctx := context.Background()
+	if _, err := NewProvider(configClient(t, nil), fixedSource{}).LLMUsage(ctx); !errors.Is(err, ErrNoHistory) {
+		t.Errorf("without VictoriaMetrics LLMUsage() error = %v, want ErrNoHistory", err)
+	}
+	if _, err := NewProvider(configClient(t, &finopsv1.VictoriaMetricsConfig{Enabled: true}), fixedSource{}).LLMUsage(ctx); err == nil || errors.Is(err, ErrNoHistory) {
+		t.Errorf("misconfigured LLMUsage() error = %v, want the configuration error", err)
+	}
+
+	failing := true
+	prom := &fakePromQL{
+		failOn: func(q string) bool { return failing && strings.Contains(q, "litellm_spend_metric_total") },
+		answer: func(q string) []map[string]any {
+			if strings.Contains(q, "vllm:prompt_tokens_total") {
+				return []map[string]any{sample(map[string]string{"namespace": "llm", "model_name": "llama"}, "10")}
+			}
+			return nil
+		},
+	}
+	srv := httptest.NewServer(prom)
+	defer srv.Close()
+	p := NewProvider(configClient(t, &finopsv1.VictoriaMetricsConfig{Enabled: true, Endpoint: srv.URL}), fixedSource{})
+	if u, err := p.LLMUsage(ctx); err == nil || !strings.Contains(err.Error(), "query litellm_spend_metric_total") || u.Served != nil {
+		t.Fatalf("LLMUsage() = %+v, %v; want the failing query and no data", u, err)
+	}
+	failing = false
+	u, err := p.LLMUsage(ctx)
+	if err != nil || len(u.Served) != 1 || u.Served[0].Input != 10 {
+		t.Fatalf("after the failure LLMUsage() = %+v, %v; a failure must not be cached", u, err)
+	}
+	asked := len(prom.queries)
+	if again, err := p.LLMUsage(ctx); err != nil || len(prom.queries) != asked || len(again.Served) != 1 {
+		t.Errorf("a second call within the cache TTL queried again (%d -> %d): %+v, %v", asked, len(prom.queries), again, err)
 	}
 }

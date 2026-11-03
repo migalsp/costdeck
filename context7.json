@@ -1,0 +1,14 @@
+{
+  "$schema": "https://context7.com/schema/context7.json",
+  "projectTitle": "Cost Deck",
+  "description": "Open-source Kubernetes FinOps operator: cost per namespace, team, GPU and LLM token, schedules that scale idle environments to zero, budgets, chargeback and right-sizing with a rollback guard.",
+  "folders": ["docs"],
+  "excludeFolders": ["docs/assets"],
+  "rules": [
+    "Install with Helm: helm upgrade --install costdeck-operator oci://ghcr.io/migalsp/costdeck/charts/costdeck-operator --namespace costdeck --create-namespace",
+    "Settings live in the CostDeckConfig named default in the operator namespace; credentials go to Secrets referenced by *SecretRef fields, never into the custom resource.",
+    "A namespace without a schedule is always on; a ScalingGroup takes several namespaces and cloud resources, a ScalingConfig one namespace.",
+    "Right-sizing only advises until an admin allows applying it; applied changes are watched and put back if pods fail.",
+    "The MCP server is at https://<host>/mcp with an API token; a viewer token gives read-only tools."
+  ]
+}

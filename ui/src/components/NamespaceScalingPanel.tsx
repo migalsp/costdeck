@@ -57,7 +57,6 @@ export default function NamespaceScalingPanel({ namespace }: { namespace: string
   const override = async (active: boolean | null, until?: OverrideUntil) => {
     if (!controller) return
     setBusy(true)
-    setError(null)
     try {
       const base = controller.type === 'group' ? '/api/scaling/groups' : '/api/scaling/configs'
       const res = await fetch(`${base}/${controller.name}/manual`, {
@@ -69,7 +68,7 @@ export default function NamespaceScalingPanel({ namespace }: { namespace: string
       toast.success(describeOverride(controller.type === 'group' ? `group ${controller.name}` : namespace, active, until))
       load()
     } catch (err) {
-      setError(errorMessage(err))
+      toast.error(errorMessage(err))
     } finally {
       setBusy(false)
     }
@@ -89,7 +88,7 @@ export default function NamespaceScalingPanel({ namespace }: { namespace: string
       setRulesFor(await res.json())
       load()
     } catch (err) {
-      setError(errorMessage(err))
+      toast.error(`Could not open the workload rules: ${errorMessage(err)}`)
     }
   }
 
@@ -143,7 +142,7 @@ export default function NamespaceScalingPanel({ namespace }: { namespace: string
         </div>
         {controller && (
           <div className="w-64 hidden md:block">
-            <WeekTimeline schedules={controller.spec.schedules} onDemand={controller.spec.activation === 'OnDemand'} compact />
+            <WeekTimeline schedules={controller.spec.schedules} onDemand={controller.spec.activation === 'OnDemand'} leadMinutes={controller.status?.prewarmMinutes} compact />
           </div>
         )}
       </div>

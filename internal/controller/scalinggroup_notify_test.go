@@ -34,11 +34,11 @@ var _ = Describe("ScalingGroup notifications", func() {
 	}
 
 	BeforeEach(func() {
-		err := k8sClient.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: app.Namespace}})
+		err := k8sClient.Create(ctx, &corev1.Namespace{Name: app.Namespace})
 		Expect(client.IgnoreAlreadyExists(err)).To(Succeed())
 		labels := map[string]string{"app": "app"}
 		Expect(k8sClient.Create(ctx, &appsv1.Deployment{
-			ObjectMeta: metav1.ObjectMeta{Name: app.Name, Namespace: app.Namespace},
+			Name: app.Name, Namespace: app.Namespace,
 			Spec: appsv1.DeploymentSpec{
 				Replicas: ptr.To[int32](1),
 				Selector: &metav1.LabelSelector{MatchLabels: labels},
@@ -49,14 +49,14 @@ var _ = Describe("ScalingGroup notifications", func() {
 			},
 		})).To(Succeed())
 		Expect(k8sClient.Create(ctx, &finopsv1.ScalingGroup{
-			ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace},
-			Spec:       finopsv1.ScalingGroupSpec{Category: "Test", Namespaces: []string{app.Namespace}},
+			Name: key.Name, Namespace: key.Namespace,
+			Spec: finopsv1.ScalingGroupSpec{Category: "Test", Namespaces: []string{app.Namespace}},
 		})).To(Succeed())
 	})
 
 	AfterEach(func() {
-		Expect(k8sClient.Delete(ctx, &finopsv1.ScalingGroup{ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace}})).To(Succeed())
-		Expect(k8sClient.Delete(ctx, &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: app.Name, Namespace: app.Namespace}})).To(Succeed())
+		Expect(k8sClient.Delete(ctx, &finopsv1.ScalingGroup{Name: key.Name, Namespace: key.Namespace})).To(Succeed())
+		Expect(k8sClient.Delete(ctx, &appsv1.Deployment{Name: app.Name, Namespace: app.Namespace})).To(Succeed())
 	})
 
 	It("does not announce a group that is up again after a pod restarted, only real changes", func() {

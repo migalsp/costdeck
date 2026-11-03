@@ -68,6 +68,16 @@ spec:
                         minimum: 5
                         type: integer
                     type: object
+                  performanceRisks:
+                    description: |-
+                      PerformanceRisks alerts the channels that take alerts about new critical performance
+                      risks, such as OOM kills, crash loops, evictions and CPU throttling, at most once a
+                      day per risk, and lists the open ones in the digest.
+                    properties:
+                      enabled:
+                        description: Enabled turns performance risk alerts on.
+                        type: boolean
+                    type: object
                 type: object
               allocation:
                 description: |-
@@ -191,7 +201,8 @@ spec:
                         default: true
                         description: |-
                           AutoProvision lets anyone the provider signs in use CostDeck with DefaultRole. When
-                          false, only users matched by GroupRoleMapping or RolesClaim may sign in.
+                          false, only users matched by GroupRoleMapping, RoleMapping or a costdeck. role may
+                          sign in.
                         type: boolean
                       clientId:
                         description: ClientID of the client registered for CostDeck.
@@ -249,11 +260,19 @@ spec:
                           https://<host>/api/auth/oidc/callback. Derived from the request host when empty.
                         maxLength: 512
                         type: string
+                      roleMapping:
+                        additionalProperties:
+                          type: string
+                        description: |-
+                          RoleMapping maps roles (as RolesClaim lists them) to a role. The most privileged match
+                          wins.
+                        type: object
                       rolesClaim:
                         description: |-
-                          RolesClaim is a claim listing roles named viewer, operator or admin, which are honoured
-                          as they are, e.g. realm_access.roles (Keycloak realm roles) or
-                          resource_access.costdeck.roles (client roles).
+                          RolesClaim is a claim listing roles, e.g. realm_access.roles (Keycloak realm roles) or
+                          resource_access.costdeck.roles (client roles). A role counts when RoleMapping maps it,
+                          or when it is named costdeck.viewer, costdeck.operator or costdeck.admin: plain names
+                          such as admin are often shared by every application of a realm.
                         maxLength: 128
                         type: string
                       scopes:

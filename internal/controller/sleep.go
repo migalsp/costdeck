@@ -19,15 +19,15 @@ import (
 // ConditionSleepPage says whether a schedule's routes show the sleep page.
 const ConditionSleepPage = "SleepPage"
 
-// SleepBackend is the Service serving the sleep page: the chart passes its name and port.
+// SleepBackend is the Service serving only the sleep page: the chart passes its name and port.
 func SleepBackend() scaling.SleepBackend {
 	name := os.Getenv("COSTDECK_SLEEP_PAGE_SERVICE")
 	if name == "" {
-		name = "costdeck-operator-api"
+		name = "costdeck-operator-sleep"
 	}
 	port, err := strconv.ParseInt(os.Getenv("COSTDECK_SLEEP_PAGE_PORT"), 10, 64)
 	if err != nil || port <= 0 {
-		port = 8082
+		port = 80
 	}
 	return scaling.SleepBackend{Name: name, Namespace: config.OperatorNamespace(), Port: port}
 }

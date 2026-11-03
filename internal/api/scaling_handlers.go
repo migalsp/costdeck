@@ -216,6 +216,8 @@ func writeOverrideResult(w http.ResponseWriter, err error, obj metav1.Object) {
 	}
 }
 
+// handleScalingGroupEvents serves GET /api/scaling/groups/{name}/events: the Kubernetes Events
+// about that group in the operator namespace, in the order the cache lists them.
 func (s *Server) handleScalingGroupEvents(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	var events corev1.EventList
@@ -227,7 +229,7 @@ func (s *Server) handleScalingGroupEvents(w http.ResponseWriter, r *http.Request
 
 	filtered := []corev1.Event{}
 	for _, e := range events.Items {
-		if e.InvolvedObject.Kind == "ScalingGroup" && e.InvolvedObject.Name == name {
+		if e.InvolvedObject.Kind == kindScalingGroup && e.InvolvedObject.Name == name {
 			filtered = append(filtered, e)
 		}
 	}

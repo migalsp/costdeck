@@ -56,6 +56,7 @@ type ScalingGroupSpec struct {
 	ActiveUntil *metav1.Time `json:"activeUntil,omitempty"`
 
 	// Schedules define periodic scaling events for the group
+	// +kubebuilder:validation:MaxItems=50
 	// +optional
 	// +listType=atomic
 	Schedules []ScalingSchedule `json:"schedules,omitempty"`
@@ -144,6 +145,11 @@ type ScalingGroupSpec struct {
 	// unused.
 	// +optional
 	IdleAfter *metav1.Duration `json:"idleAfter,omitempty"`
+
+	// Prewarm starts the workloads ahead of each scheduled start, so they are ready when it
+	// comes: by a fixed number of minutes, or by how long recent wake-ups took.
+	// +optional
+	Prewarm *Prewarm `json:"prewarm,omitempty"`
 }
 
 // Activation modes for ScalingGroupSpec.Activation.
@@ -247,6 +253,14 @@ type ScalingGroupStatus struct {
 	// +optional
 	RequiredBy []string `json:"requiredBy,omitempty"`
 
+	// ManagedNamespaces are the namespaces the group managed at its last reconcile: its
+	// members, less those an older group owns, and those it could not release yet. A
+	// namespace that leaves the list is released, even when the group recorded no replica
+	// counts for it, such as one with only sleeping routes.
+	// +optional
+	// +listType=atomic
+	ManagedNamespaces []string `json:"managedNamespaces,omitempty"`
+
 	// SelectedNamespaces are the namespaces spec.namespaceSelector matched at the last
 	// reconcile.
 	// +optional
@@ -257,6 +271,14 @@ type ScalingGroupStatus struct {
 	// ScalingGroup already manages them. A namespace is never scaled by two groups.
 	// +optional
 	ConflictingNamespaces []string `json:"conflictingNamespaces,omitempty"`
+
+	// StoppedExternalTargets are the cloud targets the group stopped and has not seen
+	// running since. The group starts them again when it comes up, when they leave its
+	// sequence and when it is deleted, even once spec.externalTargets no longer lists them;
+	// a deleted group stays until they run.
+	// +optional
+	// +listType=atomic
+	StoppedExternalTargets []ExternalTarget `json:"stoppedExternalTargets,omitempty"`
 
 	ScheduleStatus `json:",inline"`
 

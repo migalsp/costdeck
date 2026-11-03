@@ -252,8 +252,8 @@ func TestPlanGroupsAppliesCalendars(t *testing.T) {
 	cal := []finopsv1.HolidayCalendar{{Name: "us", Days: []finopsv1.CalendarDay{{Date: "2026-11-26", Name: "Thanksgiving"}}}}
 	group := func(name, activation string, calendars ...string) finopsv1.ScalingGroup {
 		return finopsv1.ScalingGroup{
-			ObjectMeta: metav1.ObjectMeta{Name: name},
-			Spec:       finopsv1.ScalingGroupSpec{Schedules: alwaysOn, Calendars: calendars, Activation: activation},
+			Name: name,
+			Spec: finopsv1.ScalingGroupSpec{Schedules: alwaysOn, Calendars: calendars, Activation: activation},
 		}
 	}
 	now := time.Date(2026, 11, 26, 12, 0, 0, 0, time.UTC)

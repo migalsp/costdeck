@@ -17,9 +17,24 @@ import (
 // match every namespace, and the group would scale the whole cluster to zero.
 var errEmptySelector = errors.New("namespaceSelector has no labels to match; an empty selector would select every namespace")
 
-// SelectNamespaces returns, sorted, the namespaces a group's namespaceSelector matches.
-// It never selects the operator's own namespace, Kubernetes' kube-* namespaces, one being
-// deleted, or one labelled costdeck.io/schedule=off.
+// ProtectedNamespace says why a namespace selector may never take ns: it runs Cost Deck, it is
+// one of Kubernetes' kube-* namespaces, or it is labelled costdeck.io/schedule=off. It returns
+// an empty string for any other namespace.
+func ProtectedNamespace(ns *corev1.Namespace, operatorNamespace string) string {
+	switch {
+	case ns.Name == operatorNamespace:
+		return "it runs Cost Deck itself"
+	case strings.HasPrefix(ns.Name, "kube-"):
+		return "it belongs to Kubernetes"
+	case ns.Labels[finopsv1.OptOutLabel] == "off":
+		return "it is labelled " + finopsv1.OptOutLabel + "=off"
+	}
+	return ""
+}
+
+// SelectNamespaces lists, sorted, the namespaces a selector matches, leaving out protected
+// ones (ProtectedNamespace) and those being deleted. A nil selector selects nothing; an empty
+// one is refused, since it would match every namespace, and so is an invalid one.
 func SelectNamespaces(selector *metav1.LabelSelector, namespaces []corev1.Namespace, operatorNamespace string) ([]string, error) {
 	if selector == nil {
 		return nil, nil
@@ -33,12 +48,7 @@ func SelectNamespaces(selector *metav1.LabelSelector, namespaces []corev1.Namesp
 	}
 	var out []string
 	for _, ns := range namespaces {
-		switch {
-		case ns.Name == operatorNamespace,
-			strings.HasPrefix(ns.Name, "kube-"),
-			ns.DeletionTimestamp != nil,
-			ns.Labels[finopsv1.OptOutLabel] == "off",
-			!sel.Matches(labels.Set(ns.Labels)):
+		if ProtectedNamespace(&ns, operatorNamespace) != "" || ns.DeletionTimestamp != nil || !sel.Matches(labels.Set(ns.Labels)) {
 			continue
 		}
 		out = append(out, ns.Name)

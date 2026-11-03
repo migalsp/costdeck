@@ -34,11 +34,11 @@ var _ = Describe("ScalingGroup stages", func() {
 
 	BeforeEach(func() {
 		for _, ns := range namespaces {
-			err := k8sClient.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}})
+			err := k8sClient.Create(ctx, &corev1.Namespace{Name: ns})
 			Expect(client.IgnoreAlreadyExists(err)).To(Succeed())
 			labels := map[string]string{"app": "app"}
 			Expect(k8sClient.Create(ctx, &appsv1.Deployment{
-				ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: ns},
+				Name: "app", Namespace: ns,
 				Spec: appsv1.DeploymentSpec{
 					Replicas: ptr.To[int32](0),
 					Selector: &metav1.LabelSelector{MatchLabels: labels},
@@ -50,7 +50,7 @@ var _ = Describe("ScalingGroup stages", func() {
 			})).To(Succeed())
 		}
 		Expect(k8sClient.Create(ctx, &finopsv1.ScalingGroup{
-			ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace},
+			Name: key.Name, Namespace: key.Namespace,
 			Spec: finopsv1.ScalingGroupSpec{
 				Namespaces: namespaces,
 				Sequence:   []string{"stage-a", "stage-b"},
@@ -59,9 +59,9 @@ var _ = Describe("ScalingGroup stages", func() {
 	})
 
 	AfterEach(func() {
-		Expect(k8sClient.Delete(ctx, &finopsv1.ScalingGroup{ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace}})).To(Succeed())
+		Expect(k8sClient.Delete(ctx, &finopsv1.ScalingGroup{Name: key.Name, Namespace: key.Namespace})).To(Succeed())
 		for _, ns := range namespaces {
-			err := k8sClient.Delete(ctx, &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: ns}})
+			err := k8sClient.Delete(ctx, &appsv1.Deployment{Name: "app", Namespace: ns})
 			Expect(client.IgnoreNotFound(err)).To(Succeed())
 		}
 	})
@@ -113,8 +113,8 @@ var _ = Describe("ScalingGroup stages", func() {
 	})
 
 	It("keeps no stage state once the group is settled", func() {
-		Expect(k8sClient.Delete(ctx, &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: "stage-a"}})).To(Succeed())
-		Expect(k8sClient.Delete(ctx, &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: "stage-b"}})).To(Succeed())
+		Expect(k8sClient.Delete(ctx, &appsv1.Deployment{Name: "app", Namespace: "stage-a"})).To(Succeed())
+		Expect(k8sClient.Delete(ctx, &appsv1.Deployment{Name: "app", Namespace: "stage-b"})).To(Succeed())
 		r := &ScalingGroupReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), Engine: &scaling.Engine{Client: k8sClient}, Recorder: events.NewFakeRecorder(100)}
 
 		_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: key})

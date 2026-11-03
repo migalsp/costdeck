@@ -141,9 +141,9 @@ func TestOwnerExclusionLeavesOperatorWorkloadsAlone(t *testing.T) {
 	controller := func(kind string, isController bool) []metav1.OwnerReference {
 		return []metav1.OwnerReference{{APIVersion: "x/v1", Kind: kind, Name: "db", UID: "1", Controller: new(isController)}}
 	}
-	spilo := &appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Name: "db", Namespace: "test-ns", OwnerReferences: controller("postgresql", true)}}
-	adopted := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "helper", Namespace: "test-ns", OwnerReferences: controller("postgresql", false)}}
-	app := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: "test-ns"}}
+	spilo := &appsv1.StatefulSet{Name: "db", Namespace: "test-ns", OwnerReferences: controller("postgresql", true)}
+	adopted := &appsv1.Deployment{Name: "helper", Namespace: "test-ns", OwnerReferences: controller("postgresql", false)}
+	app := &appsv1.Deployment{Name: "app", Namespace: "test-ns"}
 	e := hibernateEngine(t, nil, nil, spilo, adopted, app)
 	objs, err := e.listScalableResources(context.Background(), "test-ns", ExclusionsWith(nil, []finopsv1.HibernateRule{{Preset: "zalando-postgres"}}))
 	if err != nil {
@@ -211,7 +211,7 @@ func TestHibernateCNPG(t *testing.T) {
 
 func TestHibernateZalandoRestoresTheCount(t *testing.T) {
 	pg := service(zalandoGVK, "pg", map[string]any{"spec": map[string]any{"numberOfInstances": int64(2)}})
-	sts := &appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Name: "pg", Namespace: "test-ns"}, Status: appsv1.StatefulSetStatus{Replicas: 2, ReadyReplicas: 2}}
+	sts := &appsv1.StatefulSet{Name: "pg", Namespace: "test-ns", Status: appsv1.StatefulSetStatus{Replicas: 2, ReadyReplicas: 2}}
 	e := hibernateEngine(t, []schema.GroupVersionKind{zalandoGVK}, nil, pg, sts)
 	rule := finopsv1.HibernateRule{Preset: "zalando-postgres"}
 	instances := func() int64 { n, _ := intField(reread(t, e, pg), "spec.numberOfInstances"); return n }
@@ -258,7 +258,7 @@ func TestHibernateStrimziUsesTheServedVersionAndPods(t *testing.T) {
 		if ready {
 			status = corev1.ConditionTrue
 		}
-		return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "test-ns", Labels: map[string]string{"strimzi.io/cluster": "bridge", "strimzi.io/kind": "KafkaBridge"}},
+		return &corev1.Pod{Name: name, Namespace: "test-ns", Labels: map[string]string{"strimzi.io/cluster": "bridge", "strimzi.io/kind": "KafkaBridge"},
 			Status: corev1.PodStatus{Phase: corev1.PodRunning, Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: status}}}}
 	}
 	// Only v1beta2 is served, as before Strimzi 0.49.
@@ -349,7 +349,7 @@ func TestHibernateSkipsMissingOperatorsButNotMissingPermissions(t *testing.T) {
 
 func TestScaleWithServicesOrder(t *testing.T) {
 	ctx := context.Background()
-	app := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: "test-ns"}, Spec: appsv1.DeploymentSpec{Replicas: new(int32(2))},
+	app := &appsv1.Deployment{Name: "app", Namespace: "test-ns", Spec: appsv1.DeploymentSpec{Replicas: new(int32(2))},
 		Status: appsv1.DeploymentStatus{Replicas: 2, ReadyReplicas: 2}}
 	db := service(cnpgGVK, "db", map[string]any{"spec": map[string]any{"instances": int64(1)},
 		"status": map[string]any{"readyInstances": int64(1), "conditions": conditions("Ready", "True")}})

@@ -12,7 +12,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -368,6 +367,7 @@ func (a *Alerter) Check(ctx context.Context) error {
 		return err
 	}
 	if len(cfg.Spec.Budgets) == 0 && !cfg.Spec.Alerts.Anomalies.Enabled {
+		telemetry.KeepBudgets(nil)
 		return nil
 	}
 	rates := a.Pricing.Rates(ctx)
@@ -468,9 +468,8 @@ func (a *Alerter) fire(ctx context.Context, pending []pendingAlert, now time.Tim
 		rawEvents, _ := json.Marshal(events)
 		rawState, _ := json.Marshal(state)
 		if create {
-			cur = corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{
-				Name: AlertsConfigMap, Namespace: a.Namespace, Labels: map[string]string{"app.kubernetes.io/managed-by": "costdeck"},
-			}}
+			cur = corev1.ConfigMap{
+				Name: AlertsConfigMap, Namespace: a.Namespace, Labels: map[string]string{"app.kubernetes.io/managed-by": "costdeck"}}
 		}
 		if cur.Data == nil {
 			cur.Data = map[string]string{}

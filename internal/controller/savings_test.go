@@ -26,11 +26,11 @@ var _ = Describe("Savings reporting", func() {
 	key := types.NamespacedName{Name: "savings-config", Namespace: "default"}
 
 	BeforeEach(func() {
-		Expect(k8sClient.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}})).To(Or(Succeed(), MatchError(ContainSubstring("already exists"))))
+		Expect(k8sClient.Create(ctx, &corev1.Namespace{Name: ns})).To(Or(Succeed(), MatchError(ContainSubstring("already exists"))))
 		two := int32(2)
 		labels := map[string]string{"app": "api"}
 		Expect(k8sClient.Create(ctx, &appsv1.Deployment{
-			ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: ns},
+			Name: "api", Namespace: ns,
 			Spec: appsv1.DeploymentSpec{
 				Replicas: &two,
 				Selector: &metav1.LabelSelector{MatchLabels: labels},
@@ -47,8 +47,8 @@ var _ = Describe("Savings reporting", func() {
 		})).To(Succeed())
 		down := false
 		Expect(k8sClient.Create(ctx, &finopsv1.ScalingConfig{
-			ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace},
-			Spec:       finopsv1.ScalingConfigSpec{TargetNamespace: ns, Active: &down},
+			Name: key.Name, Namespace: key.Namespace,
+			Spec: finopsv1.ScalingConfigSpec{TargetNamespace: ns, Active: &down},
 		})).To(Succeed())
 	})
 

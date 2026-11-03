@@ -9,7 +9,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	finopsv1 "github.com/migalsp/costdeck-operator/api/v1"
 )
@@ -33,7 +32,7 @@ func TestHeuristicGPUHour(t *testing.T) {
 			t.Errorf("HeuristicGPUHour(%q) = %v, want %v", model, got, want)
 		}
 	}
-	n := corev1.Node{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{labelGPUProduct: "NVIDIA-A10G-SHARED"}}}
+	n := corev1.Node{Labels: map[string]string{labelGPUProduct: "NVIDIA-A10G-SHARED"}}
 	if GPUModel(n) != "NVIDIA-A10G" {
 		t.Errorf("the time-slicing suffix stays: %q", GPUModel(n))
 	}
@@ -42,7 +41,7 @@ func TestHeuristicGPUHour(t *testing.T) {
 func TestGPUCounts(t *testing.T) {
 	q := resource.MustParse
 	node := func(labels map[string]string, capacity corev1.ResourceList) corev1.Node {
-		return corev1.Node{ObjectMeta: metav1.ObjectMeta{Labels: labels}, Status: corev1.NodeStatus{Capacity: capacity}}
+		return corev1.Node{Labels: labels, Status: corev1.NodeStatus{Capacity: capacity}}
 	}
 	plain := node(nil, corev1.ResourceList{ResourceNvidiaGPU: q("4")})
 	sliced := node(map[string]string{labelGPUReplicas: "4"}, corev1.ResourceList{ResourceNvidiaGPU: q("8")})
