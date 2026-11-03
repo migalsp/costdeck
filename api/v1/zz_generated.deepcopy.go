@@ -1720,6 +1720,11 @@ func (in *ScalingGroupStatus) DeepCopyInto(out *ScalingGroupStatus) {
 		*out = make([]string, len(*in))
 		copy(*out, *in)
 	}
+	if in.ManagedNamespaces != nil {
+		in, out := &in.ManagedNamespaces, &out.ManagedNamespaces
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
 	if in.SelectedNamespaces != nil {
 		in, out := &in.SelectedNamespaces, &out.SelectedNamespaces
 		*out = make([]string, len(*in))

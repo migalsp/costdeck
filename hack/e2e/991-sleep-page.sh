@@ -83,3 +83,29 @@ wait_for "the route leads to the application again" backend_is web
 wait_for "the ReferenceGrant is gone" no_grant
 [[ -z "$(kubectl get httproute shop -n smoke-sleep -o jsonpath="{.metadata.annotations['costdeck\.io/sleeping']}")" ]] || fail "the sleeping mark stays on the route"
 ok "the route is as it was"
+
+log "A namespace with only a route that leaves a sleeping group gets its route back"
+SLEEP_PAIR_BODY='{"metadata":{"name":"smoke-sleep-pair"},"spec":{"category":"e2e","namespaces":["smoke-sleep-mate","smoke-sleep-routes"],"sleepPage":true,"schedules":'"$CLOSED_SCHEDULE_JSON"'}}'
+SLEEP_PAIR_LEFT='{"metadata":{"name":"smoke-sleep-pair"},"spec":{"category":"e2e","namespaces":["smoke-sleep-mate"],"sleepPage":true,"schedules":'"$CLOSED_SCHEDULE_JSON"'}}'
+route_backend_in() { kubectl get httproute web -n "$1" -o jsonpath='{.spec.rules[0].backendRefs[0].name}'; }
+route_backend_is() { [[ "$(route_backend_in "$1")" == "$2" ]]; }
+for ns in smoke-sleep-mate smoke-sleep-routes; do
+  new_namespace "$ns"
+  kubectl apply -f - >/dev/null <<YAML || fail "applying the HTTPRoute in $ns"
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata: {name: web, namespace: $ns}
+spec:
+  parentRefs: [{name: smoke-gateway, namespace: default}]
+  hostnames: [$ns.example.com]
+  rules:
+    - backendRefs: [{name: web, port: 80}]
+YAML
+done
+track_group smoke-sleep-pair
+expect_code 201 "a closed schedule with a sleep page for two namespaces without workloads" POST /api/scaling/groups "$SLEEP_PAIR_BODY" -b "$JAR"
+wait_for "the route of smoke-sleep-routes points at the sleep page" route_backend_is smoke-sleep-routes "$RELEASE-sleep"
+wait_for "the route of smoke-sleep-mate points at the sleep page" route_backend_is smoke-sleep-mate "$RELEASE-sleep"
+expect_code 200 "smoke-sleep-routes taken out of the group while it sleeps" PUT /api/scaling/groups/smoke-sleep-pair "$SLEEP_PAIR_LEFT" -b "$JAR"
+wait_for "the route of the namespace that left leads to its application again" route_backend_is smoke-sleep-routes web
+holds_for 6 "the namespace still in the group keeps sleeping" route_backend_is smoke-sleep-mate "$RELEASE-sleep"

@@ -6,6 +6,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -95,5 +96,80 @@ var _ = Describe("Sleep page", func() {
 		Expect(k8sClient.Update(ctx, g)).To(Succeed())
 		g = reconcileGroup()
 		Expect(meta.FindStatusCondition(g.Status.Conditions, ConditionSleepPage)).To(BeNil())
+	})
+
+	routeOnly := func(namespace string) *unstructured.Unstructured {
+		GinkgoHelper()
+		Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, &corev1.Namespace{Name: namespace}))).To(Succeed())
+		route := &unstructured.Unstructured{Object: map[string]any{"spec": map[string]any{
+			"rules": []any{map[string]any{"backendRefs": []any{map[string]any{"name": "web", "port": int64(80)}}}},
+		}}}
+		route.SetGroupVersionKind(routeGVK)
+		route.SetNamespace(namespace)
+		route.SetName("web")
+		Expect(k8sClient.Create(ctx, route)).To(Succeed())
+		DeferCleanup(func() { Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, route))).To(Succeed()) })
+		return route
+	}
+	sleeping := func(route *unstructured.Unstructured) bool {
+		GinkgoHelper()
+		out := &unstructured.Unstructured{}
+		out.SetGroupVersionKind(routeGVK)
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(route), out)).To(Succeed())
+		_, asleep := out.GetAnnotations()[scaling.SleepingAnnotation]
+		return asleep
+	}
+	asleepGroup := func(name string, namespaces ...string) (*ScalingGroupReconciler, types.NamespacedName) {
+		GinkgoHelper()
+		GinkgoT().Setenv("POD_NAMESPACE", "default")
+		groupKey := types.NamespacedName{Name: name, Namespace: "default"}
+		Expect(k8sClient.Create(ctx, &finopsv1.ScalingGroup{Name: groupKey.Name, Namespace: groupKey.Namespace,
+			Spec: finopsv1.ScalingGroupSpec{Category: "Test", Namespaces: namespaces, Schedules: closed, SleepPage: true}})).To(Succeed())
+		DeferCleanup(func() {
+			Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, &finopsv1.ScalingGroup{Name: groupKey.Name, Namespace: groupKey.Namespace}))).To(Succeed())
+		})
+		r := &ScalingGroupReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), Engine: &scaling.Engine{Client: k8sClient}, Recorder: events.NewFakeRecorder(100)}
+		_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: groupKey})
+		Expect(err).NotTo(HaveOccurred())
+		return r, groupKey
+	}
+	dropNamespace := func(groupKey types.NamespacedName, keep string) {
+		GinkgoHelper()
+		g := &finopsv1.ScalingGroup{}
+		Expect(k8sClient.Get(ctx, groupKey, g)).To(Succeed())
+		g.Spec.Namespaces = []string{keep}
+		Expect(k8sClient.Update(ctx, g)).To(Succeed())
+	}
+
+	It("wakes the routes of a namespace with no workloads that leaves the group while it sleeps", func() {
+		kept, removed := routeOnly("sleep-kept"), routeOnly("sleep-removed")
+		r, groupKey := asleepGroup("sleep-leaving", "sleep-kept", "sleep-removed")
+		Expect(sleeping(kept)).To(BeTrue())
+		Expect(sleeping(removed)).To(BeTrue())
+
+		dropNamespace(groupKey, "sleep-kept")
+		_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: groupKey})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(sleeping(removed)).To(BeFalse(), "it left the group, which recorded no replica counts for it")
+		Expect(sleeping(kept)).To(BeTrue())
+		g := &finopsv1.ScalingGroup{}
+		Expect(k8sClient.Get(ctx, groupKey, g)).To(Succeed())
+		Expect(g.Status.ManagedNamespaces).To(Equal([]string{"sleep-kept"}))
+	})
+
+	It("wakes the routes of a namespace with no workloads removed just before the group is deleted", func() {
+		kept, removed := routeOnly("sleep-kept-2"), routeOnly("sleep-removed-2")
+		r, groupKey := asleepGroup("sleep-deleted", "sleep-kept-2", "sleep-removed-2")
+		Expect(sleeping(removed)).To(BeTrue())
+
+		dropNamespace(groupKey, "sleep-kept-2")
+		Expect(rawClient.Delete(ctx, &finopsv1.ScalingGroup{Name: groupKey.Name, Namespace: groupKey.Namespace})).To(Succeed())
+		_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: groupKey})
+		Expect(err).NotTo(HaveOccurred())
+		Eventually(func() error {
+			return k8sClient.Get(ctx, groupKey, &finopsv1.ScalingGroup{})
+		}).Should(Satisfy(errors.IsNotFound))
+		Expect(sleeping(removed)).To(BeFalse())
+		Expect(sleeping(kept)).To(BeFalse())
 	})
 })

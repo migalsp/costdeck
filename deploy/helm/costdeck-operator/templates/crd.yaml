@@ -2989,6 +2989,16 @@ spec:
                 description: ManagedCount is the current number of successfully managed
                   namespaces in the group
                 type: integer
+              managedNamespaces:
+                description: |-
+                  ManagedNamespaces are the namespaces the group managed at its last reconcile: its
+                  members, less those an older group owns, and those it could not release yet. A
+                  namespace that leaves the list is released, even when the group recorded no replica
+                  counts for it, such as one with only sleeping routes.
+                items:
+                  type: string
+                type: array
+                x-kubernetes-list-type: atomic
               mode:
                 description: |-
                   Mode is what currently decides the desired state:

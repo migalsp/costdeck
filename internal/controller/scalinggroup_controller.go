@@ -105,7 +105,8 @@ func (r *ScalingGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	r.release(ctx, group, departed, plan)
+	unreleased := r.release(ctx, group, departed, plan)
+	group.Status.ManagedNamespaces = managedNamespaces(group, plan, unreleased)
 	r.releaseExternalTargets(ctx, group)
 	decision := plan.Decision
 	targetActive := decision.Active
@@ -733,14 +734,16 @@ func (r *ScalingGroupReconciler) selectNamespaces(ctx context.Context, group *fi
 
 // release brings back what the group scaled down in namespaces that left it, unless
 // another group now owns them, and forgets their replica counts.
-func (r *ScalingGroupReconciler) release(ctx context.Context, group *finopsv1.ScalingGroup, departed []string, plan scaling.GroupPlan) {
+func (r *ScalingGroupReconciler) release(ctx context.Context, group *finopsv1.ScalingGroup, departed []string, plan scaling.GroupPlan) []string {
 	released := false
+	var unreleased []string
 	for _, ns := range departed {
 		if owner, ok := plan.NamespaceOwners[ns]; ok && owner != group.Name {
 			continue
 		}
 		if err := releaseNamespace(ctx, r.Engine, ns, r.rulesFor(ctx, group, ns)); err != nil {
 			logf.FromContext(ctx).Error(err, "Could not restore a namespace that left the group", "namespace", ns)
+			unreleased = append(unreleased, ns)
 			continue
 		}
 		released = true
@@ -757,6 +760,21 @@ func (r *ScalingGroupReconciler) release(ctx context.Context, group *finopsv1.Sc
 			logf.FromContext(ctx).Error(err, "Could not update the sleep page grant after a namespace left the group")
 		}
 	}
+	return unreleased
+}
+
+// managedNamespaces lists, sorted, the namespaces the group manages now: its members less
+// those an older group owns, plus the departed ones it could not release yet, so the next
+// reconcile tries them again.
+func managedNamespaces(group *finopsv1.ScalingGroup, plan scaling.GroupPlan, unreleased []string) []string {
+	var out []string
+	for _, ns := range append(group.Members(), unreleased...) {
+		if !slices.Contains(plan.ConflictingNamespaces, ns) && !slices.Contains(out, ns) {
+			out = append(out, ns)
+		}
+	}
+	slices.Sort(out)
+	return out
 }
 
 // rulesFor collects what releasing a namespace needs: the group's workload rules there, the
@@ -784,15 +802,20 @@ func sequencedExternalTargets(group *finopsv1.ScalingGroup) []finopsv1.ExternalT
 	return out
 }
 
-// removedNamespaces returns, sorted, the namespaces the group still holds replica counts for
-// that are neither members nor in already: ones taken out of the group that still need
-// restoring.
+// removedNamespaces returns, sorted, the namespaces the group managed at its last reconcile
+// or still holds replica counts for that are neither members nor in already: ones taken out
+// of the group that still need restoring, including those with only sleeping routes.
 func removedNamespaces(group *finopsv1.ScalingGroup, already []string) []string {
 	members := group.Members()
-	var out []string
+	candidates := slices.Clone(group.Status.ManagedNamespaces)
 	for k := range group.Status.OriginalReplicas {
-		ns, _, found := strings.Cut(k, "/")
-		if !found || slices.Contains(members, ns) || slices.Contains(already, ns) || slices.Contains(out, ns) {
+		if ns, _, found := strings.Cut(k, "/"); found {
+			candidates = append(candidates, ns)
+		}
+	}
+	var out []string
+	for _, ns := range candidates {
+		if slices.Contains(members, ns) || slices.Contains(already, ns) || slices.Contains(out, ns) {
 			continue
 		}
 		out = append(out, ns)

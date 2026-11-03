@@ -253,6 +253,14 @@ type ScalingGroupStatus struct {
 	// +optional
 	RequiredBy []string `json:"requiredBy,omitempty"`
 
+	// ManagedNamespaces are the namespaces the group managed at its last reconcile: its
+	// members, less those an older group owns, and those it could not release yet. A
+	// namespace that leaves the list is released, even when the group recorded no replica
+	// counts for it, such as one with only sleeping routes.
+	// +optional
+	// +listType=atomic
+	ManagedNamespaces []string `json:"managedNamespaces,omitempty"`
+
 	// SelectedNamespaces are the namespaces spec.namespaceSelector matched at the last
 	// reconcile.
 	// +optional

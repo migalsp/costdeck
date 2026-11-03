@@ -205,6 +205,7 @@ export interface ScalingGroup {
     skippedNamespaces?: string[]
     requiredBy?: string[]
     conflictingNamespaces?: string[]
+    managedNamespaces?: string[]
     stoppedExternalTargets?: ExternalTarget[]
     // Namespaces spec.namespaceSelector matched at the last reconcile.
     selectedNamespaces?: string[]
