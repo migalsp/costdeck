@@ -15,18 +15,18 @@ Free and open source · Read-only until you allow changes · Kubernetes 1.26+
 - **Read-only by default:** changes are opt-in, with rollback
 - **Signed and audited:** cosign-signed images and chart, OpenSSF Scorecard
 
-## Where Kubernetes money leaks in 2026
+## Where Kubernetes money leaks
 
-Cloud waste rose for the first time in five years, to 29% of spend (Flexera State of the Cloud 2026). Waste reduction is the top priority of FinOps teams today, and AI is the next one (State of FinOps 2026).
+Most clusters pay for capacity nobody uses, and the bill does not say whose it is.
 
-- **Requests far above use.** CPU use averages 8% and memory 20% of what Kubernetes clusters reserve, and both fell in a year. Source: CAST AI, 2026 State of Kubernetes Optimization.
-- **Environments that never sleep.** Dev and staging run 168 hours a week for about 50 hours of work. Source: Arithmetic of a working week.
-- **GPUs bought for the peak.** GPUs in Kubernetes average 5% use, and 79% of companies say theirs are busy half the time or less. Source: CAST AI, 2026; VentureBeat, October 2026.
-- **An AI bill nobody owns.** 98% of FinOps teams now manage AI spend, yet only 26% of large companies see what their AI costs in real time. Source: State of FinOps 2026; KPMG AI Pulse, Q2 2026.
-- **Budgets that miss.** 46.9% of enterprises report AI spend over budget. Source: Futurum, September 2026.
-- **Spikes found too late.** For one company in three, finding why a cost spiked takes a week or more. Source: Harness, State of AI in FinOps 2026.
-- **No price per team.** Shared platforms and idle capacity are not split, so nobody owns their part; FinOps teams list shared cost and container allocation among the tools they want most. Source: State of FinOps 2026.
-- **Cost found after the deploy.** Pricing a change before it ships is the second most wanted FinOps capability. Source: State of FinOps 2026.
+- **Requests far above use.** Pods reserve CPU and memory for a peak that rarely comes, and every reserved core is paid for in full.
+- **Environments that never sleep.** Dev and staging run 168 hours a week for about 50 hours of work.
+- **GPUs bought for the peak.** GPUs wait idle most of the day, and an idle GPU costs as much as a busy one.
+- **An AI bill nobody owns.** LLM tokens and GPU hours arrive on one invoice, with no team or model attached.
+- **Budgets that miss.** Overspend shows up on the monthly bill, when it is too late to stop it.
+- **Spikes found too late.** When a cost jumps, finding the namespace or the deploy behind it takes days.
+- **No price per team.** Shared platforms and idle capacity are not split, so nobody owns their part of the bill.
+- **Cost found after the deploy.** A change's price appears on next month's bill instead of in the pull request that made it.
 
 Cost Deck gives every namespace and every token a price and an owner, and switches idle capacity off by itself.
 
@@ -128,15 +128,15 @@ LLM API spend by team and model, next to the cluster it runs in.
 
 [Cost allocation](https://github.com/migalsp/costdeck/blob/main/docs/installation.md#cost-allocation-showback-and-chargeback)
 
-## Built for FinOps in 2026
+## Built for how FinOps works now
 
-What changed this year, and how Cost Deck answers it.
+What FinOps teams ask for, and how Cost Deck answers it.
 
-- **FinOps for AI:** monitoring tokens, LLM requests and GPU use is the capability FinOps teams want most (State of FinOps 2026). Cost Deck shows LLM API and GPU spend by team and model today; AI spend in team totals and budgets is next on the roadmap.
-- **Beyond dashboards:** "Dashboards are table stakes of yesterday," say practitioners, who ask for automated remediation they can trust (State of FinOps 2026). Cost Deck acts: schedules, and right-sizing applied with a rollback guard or sent as a pull request.
-- **Shift left:** pre-deployment costing is the second most wanted capability. Pull requests show what a manifest change will cost a month, and can fail above a limit.
-- **Kubernetes goes elastic:** Kubernetes 1.36 resizes pod-level resources in place (beta), and 1.37 lets an HPA scale one workload to zero on external metrics (beta). Cost Deck puts whole environments to sleep: in order, with their dependencies, databases and cloud resources, on a schedule.
-- **Agents join FinOps:** MCP servers and agents arrived across FinOps tools in 2026. Cost Deck's MCP server answers cost questions for Claude, Cursor and other clients, and offers changes only to operators, after confirmation.
+- **FinOps for AI:** tokens, LLM requests and GPU hours are a growing part of every cloud bill. Cost Deck shows LLM API and GPU spend by team and model today; AI spend in team totals and budgets is next on the roadmap.
+- **Beyond dashboards:** a dashboard shows the waste, and someone still has to remove it. Cost Deck acts: schedules, and right-sizing applied with a rollback guard or sent as a pull request.
+- **Shift left:** a change is cheapest to fix before it ships. Pull requests show what a manifest change will cost a month, and can fail above a limit.
+- **Kubernetes goes elastic:** Kubernetes resizes pods in place and scales single workloads to zero. Cost Deck puts whole environments to sleep: in order, with their dependencies, databases and cloud resources, on a schedule.
+- **Agents join FinOps:** engineers ask an assistant before they open a dashboard. Cost Deck's MCP server answers cost questions for Claude, Cursor and other clients, and offers changes only to operators, after confirmation.
 - **One pane for all spend:** nodes, volumes, load balancers, GPUs and LLM APIs in one place, reconciled with the bill; a FOCUS 1.4 export is on the roadmap.
 
 ## Safe by design
@@ -148,25 +148,13 @@ What changed this year, and how Cost Deck answers it.
 - **Least privilege:** Secrets read only in its own namespace; risky permissions come as separate opt-in roles.
 - **Supply chain:** cosign-signed multi-arch images and Helm chart, SLSA provenance, CodeQL, OpenSSF Scorecard, an end-to-end suite on every pull request.
 
-## How it compares
-
-Honest notes, checked against each tool's documentation in November 2026.
-
-- **OpenCost and Kubecost** measure and allocate cost; OpenCost is the CNCF project for it. Cost Deck allocates too, and acts: schedules, guarded right-sizing and performance risks. If allocation is all you need, OpenCost is the more mature choice.
-- **kube-green and kube-downscaler** scale workloads down on a schedule. Cost Deck adds dependencies and start order, cloud databases and VMs, holidays, a sleep page, and what each schedule saved.
-- **HPA scale to zero (Kubernetes 1.37) and KEDA** scale one workload on demand. Cost Deck schedules whole environments and the resources behind them.
-- **Karpenter and Cluster Autoscaler** remove empty nodes, and work with Cost Deck: it empties the nodes, they remove them, Cost Deck shows what kept the rest.
-- **Goldilocks and the VPA recommender** suggest requests. Cost Deck adds the money, Java heap sizing, performance risks, and applying with a guard or a pull request.
-- **Commercial platforms (CAST AI, Spot Ocean, ScaleOps)** automate nodes and pods as a service. Cost Deck runs in your cluster, is free, and changes nothing until you allow it.
-- **Not the right tool** for node autoscaling, managing reserved instances and savings plans, or costs outside Kubernetes and the resources its schedules stop.
-
 ## Roadmap
 
 From seeing the cost to controlling it, in the order users ask for. A plan, not a promise.
 
-- **Now (Q4 2026 to Q1 2027):** right-sizing in place without restarts; node pools to zero with their environments; right-sizing that respects autoscalers; ready for Kubernetes 1.37; AI spend in team totals and budgets; approvals in Slack and Teams; team-scoped access.
-- **Next (H1 2027):** right-sizing on autopilot; unblocking node scale-down; GPU sharing advice; network cost; FOCUS export; AI budgets that hold; extension points for other clouds and external costs.
-- **Later (H2 2027):** guardrails before deploy; a FinOps agent that proposes changes for approval; spot for non-production; commitment coverage; carbon next to cost; Backstage and GitLab CI.
+- **Now:** right-sizing in place without restarts; node pools to zero with their environments; right-sizing that respects autoscalers; ready for Kubernetes 1.37; AI spend in team totals and budgets; approvals in Slack and Teams; team-scoped access.
+- **Next:** right-sizing on autopilot; unblocking node scale-down; GPU sharing advice; network cost; FOCUS export; AI budgets that hold; extension points for other clouds and external costs.
+- **Later:** guardrails before deploy; a FinOps agent that proposes changes for approval; spot for non-production; commitment coverage; carbon next to cost; Backstage and GitLab CI.
 
 [Full roadmap](https://github.com/migalsp/costdeck/blob/main/docs/roadmap.md)
 
@@ -242,10 +230,6 @@ No. There is no Cost Deck service outside your cluster. It calls only what you c
 
 Yes. Its MCP server at `/mcp` works with Claude Code, Claude Desktop, Cursor and other MCP clients, with an API token; a viewer token gives read-only tools.
 
-### Is it an open-source Kubecost alternative?
-
-It covers cost allocation like OpenCost and Kubecost, and adds schedules to zero, right-sizing with a guard, budgets and performance risks in one operator. If allocation is all you need, OpenCost is the more mature choice.
-
 ### What does it cost?
 
 Nothing. It is Apache 2.0 with no paid tier; you pay only for the small pod it runs in (100m CPU and 128 MiB requested).
@@ -254,10 +238,8 @@ Nothing. It is Apache 2.0 with no paid tier; you pay only for the small pod it r
 
 Install with Helm, sign in, and see cost per namespace and team in the first hour.
 
-[Install with Helm](#install-in-one-command) · [View on GitHub](https://github.com/migalsp/costdeck)
+[Install with Helm](#install-in-one-command) · [Star on GitHub](https://github.com/migalsp/costdeck)
 
 ---
 
 Cost Deck · [Apache 2.0](https://github.com/migalsp/costdeck/blob/main/LICENSE) · [GitHub](https://github.com/migalsp/costdeck) · [Installation guide](https://github.com/migalsp/costdeck/blob/main/docs/installation.md) · [Roadmap](https://github.com/migalsp/costdeck/blob/main/docs/roadmap.md) · [Changelog](https://github.com/migalsp/costdeck/blob/main/CHANGELOG.md) · [Security policy](https://github.com/migalsp/costdeck/blob/main/SECURITY.md) · [Releases](https://github.com/migalsp/costdeck/releases)
-
-No cookies. No tracking. Screenshots from a demo cluster. Last updated: 2026-11-03.
