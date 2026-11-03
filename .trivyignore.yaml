@@ -5,3 +5,6 @@ vulnerabilities:
   - id: CVE-2026-97045
     statement: GO-2026-6866. The manager does not import golang.org/x/net/html (govulncheck), so the code is not in the image. Update to golang.org/x/net v0.62.0 once that release is two weeks old.
     expired_at: 2026-11-11
+  - id: GO-2026-5932
+    statement: The manager does not import golang.org/x/crypto/openpgp (govulncheck), so the code is not in the image. The fix is an untagged commit after v0.58.0, the latest release; update to the first golang.org/x/crypto release with it once that release is two weeks old.
+    expired_at: 2026-12-03
