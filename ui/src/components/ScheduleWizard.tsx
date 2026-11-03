@@ -145,7 +145,7 @@ export default function ScheduleWizard(props: Props) {
         pauseGitOps: pauseGitOps || undefined,
         sleepPage: sleepPage || undefined,
         idleAfter: idleAfter || undefined,
-        prewarm: prewarmSpec(prewarm),
+        prewarm: prewarmSpec(prewarm, existing?.spec.prewarm),
         hibernate: hibernate.length ? hibernate : undefined,
       }
     } else {
@@ -157,7 +157,7 @@ export default function ScheduleWizard(props: Props) {
         pauseGitOps: pauseGitOps || undefined,
         sleepPage: sleepPage || undefined,
         idleAfter: idleAfter || undefined,
-        prewarm: prewarmSpec(prewarm),
+        prewarm: prewarmSpec(prewarm, existing?.spec.prewarm),
       }
     }
     // A new schedule is meant to take effect, so it ends a manual override.

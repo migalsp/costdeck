@@ -292,10 +292,16 @@ export const IDLE_CHOICES = ['30m', '1h', '2h', '4h', '8h']
 
 export const PREWARM_MINUTES = [5, 10, 15, 30]
 
+// prewarmChoice is the editor's choice for spec.prewarm: 'auto', the minutes as a string, or ''
+// for none. Auto wins over the minutes it falls back to.
 export const prewarmChoice = (p?: Prewarm): string => p?.auto ? 'auto' : p?.minutes ? String(p.minutes) : ''
 
-export const prewarmSpec = (choice: string): Prewarm | undefined =>
-  choice === 'auto' ? { auto: true } : choice ? { minutes: Number(choice) } : undefined
+// prewarmSpec turns the editor's choice back into spec.prewarm, undefined for none. 'auto' keeps
+// the minutes the current spec falls back to until a wake-up is measured, which only the API
+// sets, so saving the editor never drops them.
+export const prewarmSpec = (choice: string, current?: Prewarm): Prewarm | undefined =>
+  choice === 'auto' ? (current?.minutes ? { auto: true, minutes: current.minutes } : { auto: true })
+    : choice ? { minutes: Number(choice) } : undefined
 
 // shortDuration writes a Go duration as the API returns it ("1h0m0s") the way the editor
 // offers it ("1h"), so that a saved value selects its choice. Anything else is kept.

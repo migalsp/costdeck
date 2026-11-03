@@ -42,6 +42,20 @@ describe('Start ahead of the schedule', () => {
     expect(posted(fetch, '/api/scaling/configs/lab', 'PUT').spec.prewarm).toBeUndefined()
   })
 
+  it('keeps the fallback minutes set through the API when an automatic prewarm is saved', async () => {
+    const fetch = mockFetch(
+      on('GET', '/api/settings', () => json({ calendars: [] })),
+      on('PUT', '/api/scaling/configs/lab', (_, init) => json(JSON.parse(init!.body as string))),
+    )
+    const config = { metadata: { name: 'lab' }, spec: { targetNamespace: 'lab', prewarm: { auto: true, minutes: 10 } } } as unknown as ScalingConfig
+    const onSaved = vi.fn()
+    render(<ScheduleWizard kind="config" existing={config} namespaces={['lab']} groups={[]} onClose={() => {}} onSaved={onSaved} />)
+    expect((screen.getByRole('combobox', { name: 'Start ahead of the schedule' }) as HTMLSelectElement).value).toBe('auto')
+    await userEvent.setup().click(screen.getByRole('button', { name: /Save/ }))
+    await waitFor(() => expect(onSaved).toHaveBeenCalled())
+    expect(posted(fetch, '/api/scaling/configs/lab', 'PUT').spec.prewarm).toEqual({ auto: true, minutes: 10 })
+  })
+
   it('says a namespace is up early, and the week shows the lead', () => {
     expect(statusLine({ phase: 'ScaledUp', status: { mode: 'Prewarm', desiredState: 'Up', prewarmMinutes: 9 } })).toMatchObject({ tone: 'up', title: 'Up early', detail: 'started 9 min ahead of its schedule to be ready on time' })
     const officeHours = [{ days: [1, 2, 3, 4, 5], startTime: '08:00', endTime: '18:00', timezone: 'UTC' }]
