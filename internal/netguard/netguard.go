@@ -40,6 +40,7 @@ func ForbiddenHost(host string) bool {
 	return ip != nil && Forbidden(ip)
 }
 
+// refuseMetadata returns ErrForbiddenAddress, naming the address, for a metadata or link-local IP.
 func refuseMetadata(ip net.IP) error {
 	if Forbidden(ip) {
 		return fmt.Errorf("%w: %s", ErrForbiddenAddress, ip)
@@ -47,6 +48,8 @@ func refuseMetadata(ip net.IP) error {
 	return nil
 }
 
+// refuseMetadataAndLoopback refuses metadata and link-local addresses like refuseMetadata, and
+// loopback addresses with ErrLoopbackAddress.
 func refuseMetadataAndLoopback(ip net.IP) error {
 	if err := refuseMetadata(ip); err != nil {
 		return err
@@ -57,6 +60,9 @@ func refuseMetadataAndLoopback(ip net.IP) error {
 	return nil
 }
 
+// controlRefusing returns a dialer Control hook that checks the address actually dialled, after
+// name resolution, so a name resolving to a refused address cannot slip through. A host that is not
+// an IP address is refused.
 func controlRefusing(refuse func(net.IP) error) func(string, string, syscall.RawConn) error {
 	return func(_, address string, _ syscall.RawConn) error {
 		host, _, err := net.SplitHostPort(address)
@@ -71,6 +77,8 @@ func controlRefusing(refuse func(net.IP) error) func(string, string, syscall.Raw
 	}
 }
 
+// dialerRefusing returns a dialer with the given connect timeout and 30-second keep-alives that
+// checks every address it connects to with refuse.
 func dialerRefusing(timeout time.Duration, refuse func(net.IP) error) *net.Dialer {
 	return &net.Dialer{Timeout: timeout, KeepAlive: 30 * time.Second, Control: controlRefusing(refuse)}
 }
@@ -87,10 +95,14 @@ func Transport() *http.Transport {
 	return transportRefusing(refuseMetadata)
 }
 
+// ExternalTransport returns a transport like Transport that also refuses loopback addresses, for
+// endpoints of cloud services such as a hosted AI provider, which never run on the operator's host.
 func ExternalTransport() *http.Transport {
 	return transportRefusing(refuseMetadataAndLoopback)
 }
 
+// transportRefusing clones http.DefaultTransport, proxy settings from the environment included, and
+// checks both every address it dials and, for proxied requests, the target host.
 func transportRefusing(refuse func(net.IP) error) *http.Transport {
 	t := http.DefaultTransport.(*http.Transport).Clone()
 	t.DialContext = dialerRefusing(30*time.Second, refuse).DialContext
@@ -98,6 +110,8 @@ func transportRefusing(refuse func(net.IP) error) *http.Transport {
 	return t
 }
 
+// guardProxy wraps a proxy function so that a request sent through a proxy is checked by its target
+// host, which the dialer never sees: it only connects to the proxy. Direct requests pass unchanged.
 func guardProxy(proxy func(*http.Request) (*url.URL, error), refuse func(net.IP) error) func(*http.Request) (*url.URL, error) {
 	return func(r *http.Request) (*url.URL, error) {
 		u, err := proxy(r)
@@ -110,6 +124,8 @@ func guardProxy(proxy func(*http.Request) (*url.URL, error), refuse func(net.IP)
 
 var lookupIPAddr = net.DefaultResolver.LookupIPAddr
 
+// checkProxiedHost refuses a proxied request whose host is, or resolves to, a refused address. A
+// name that does not resolve here is let through, since only the proxy may be able to resolve it.
 func checkProxiedHost(ctx context.Context, host string, refuse func(net.IP) error) error {
 	if ip := net.ParseIP(host); ip != nil {
 		return refuse(ip)

@@ -123,6 +123,8 @@ type remoteEntry struct {
 	err error
 }
 
+// handleClusters serves GET /api/clusters: this installation and the remote ones, with totals
+// per currency.
 func (s *Server) handleClusters(w http.ResponseWriter, r *http.Request) {
 	resp, err := s.clusters(r.Context())
 	if err != nil {
@@ -132,6 +134,9 @@ func (s *Server) handleClusters(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// clusters lists this installation first, then every spec.clusters entry, read in parallel
+// through the one-minute cache. An installation that cannot be read keeps its row with the
+// error instead of failing the response, and is left out of the totals.
 func (s *Server) clusters(ctx context.Context) (clustersResponse, error) {
 	cfg, err := config.Get(ctx, s.Client)
 	if err != nil {
@@ -298,6 +303,9 @@ func checkCluster(name, raw string) error {
 	return nil
 }
 
+// applyClusterSettings replaces spec.clusters when the update carries the section. A cluster
+// sent without a token keeps its stored one, a new cluster must bring one, and the tokens of
+// removed clusters are dropped from the Secret that is written with the rest of the save.
 func (s *Server) applyClusterSettings(ctx context.Context, cfg *finopsv1.CostDeckConfig, req *SettingsUpdateRequest) error {
 	if req.Clusters == nil {
 		return nil

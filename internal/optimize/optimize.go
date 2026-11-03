@@ -227,6 +227,9 @@ func Record(ctx context.Context, c client.Client, ns string, rec finopsv1.Worklo
 	return retry.OnError(retry.DefaultBackoff, changedMeanwhile, func() error { return recordOnce(ctx, c, ns, rec) })
 }
 
+// recordOnce is one attempt of Record: it creates the NamespaceOptimization when missing, replaces
+// the workload's entry and sets Active while any change is applied or kept. Conflicts and
+// AlreadyExists from a concurrent writer go back to Record, which retries.
 func recordOnce(ctx context.Context, c client.Client, ns string, rec finopsv1.WorkloadOptimization) error {
 	opt := &finopsv1.NamespaceOptimization{}
 	key := client.ObjectKey{Namespace: config.OperatorNamespace(), Name: ns}

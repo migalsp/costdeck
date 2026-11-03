@@ -131,10 +131,12 @@ func settledRequeue(d scaling.Decision, now time.Time) time.Duration {
 	return min(wait, maxWait)
 }
 
-// applyDecision mirrors a scheduling decision into the status and the ManualOverride
-// condition.
+// recentWakeUps is how many timed wake-ups status.recentWakeUps keeps, newest first.
 const recentWakeUps = 5
 
+// trackWakeUp times scale-ups from zero for prewarm: the clock starts when a ScaledDown
+// target heads up and stops at ScaledUp, keeping the newest recentWakeUps durations. Going
+// back down drops a clock that is running.
 func trackWakeUp(st *finopsv1.ScheduleStatus, oldPhase, newPhase string, now time.Time) {
 	switch {
 	case oldPhase == scaling.PhaseScaledDown && (newPhase == scaling.PhaseScalingUp || newPhase == scaling.PhaseWaitingForDependencies):
@@ -150,6 +152,9 @@ func trackWakeUp(st *finopsv1.ScheduleStatus, oldPhase, newPhase string, now tim
 	}
 }
 
+// applyDecision copies a decision into the schedule status (mode, desired state, prewarm,
+// exception, override expiry and next transition) and explains the mode in the
+// ManualOverride condition, which is True only while a manual override is in force.
 func applyDecision(st *finopsv1.ScheduleStatus, conds *[]metav1.Condition, d scaling.Decision, generation int64, kind string) {
 	st.Mode = d.Mode
 	st.DesiredState = d.State()
@@ -238,6 +243,7 @@ type transitionLog struct {
 	last map[types.UID]string
 }
 
+// forget drops the entry of a deleted object, so the log does not keep growing.
 func (l *transitionLog) forget(uid types.UID) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -276,6 +282,8 @@ func (l *transitionLog) announce(ctx context.Context, n Notifier, uid types.UID,
 	go n.Notify(context.WithoutCancel(ctx), transitionMessage(kind, name, newPhase, st, requiredBy))
 }
 
+// transitionMessage renders the chat message for a settled transition: what is now up or
+// scaled down and why, then the next change and the hourly saving when they are known.
 func transitionMessage(kind, name, phase string, st finopsv1.ScheduleStatus, requiredBy []string) string {
 	icon, state := "▶️", "is up"
 	if phase == scaling.PhaseScaledDown {

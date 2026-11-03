@@ -69,6 +69,9 @@ func (s *Server) handleApplyRightsizing(w http.ResponseWriter, r *http.Request) 
 	writeRightsizing(w, rec, err)
 }
 
+// applyRightsizing patches a workload's requests to its advice and records the change, for the
+// dashboard and the assistant alike. It refuses while applying is off in settings, in a protected
+// namespace or under a forbidding policy; on success only that workload's cached advice is dropped.
 func (s *Server) applyRightsizing(ctx context.Context, ns string, ref workloadRef, by string) (finopsv1.WorkloadOptimization, error) {
 	cfg, err := config.Get(ctx, s.Client)
 	if err != nil {
@@ -91,12 +94,17 @@ func (s *Server) applyRightsizing(ctx context.Context, ns string, ref workloadRe
 	return rec, err
 }
 
+// errProtectedNamespace refuses a change to workloads in a namespace Cost Deck never touches.
 type errProtectedNamespace struct{ namespace, reason string }
 
+// Error implements error, naming the namespace and why it is protected.
 func (e errProtectedNamespace) Error() string {
 	return fmt.Sprintf("workloads in %s are not changed through Cost Deck: %s", e.namespace, e.reason)
 }
 
+// changeableNamespace returns errProtectedNamespace for the operator's own namespace, kube-*
+// namespaces and those labelled costdeck.io/schedule=off. A namespace that does not exist is
+// judged by its name alone.
 func (s *Server) changeableNamespace(ctx context.Context, name string) error {
 	ns := &corev1.Namespace{}
 	if err := s.Client.Get(ctx, client.ObjectKey{Name: name}, ns); err != nil && !apierrors.IsNotFound(err) {
@@ -109,8 +117,11 @@ func (s *Server) changeableNamespace(ctx context.Context, name string) error {
 	return nil
 }
 
+// errPolicyForbids refuses to apply or propose advice that a RightsizingPolicy forbids, or any
+// advice while the namespace's policies cannot be read (policy is then policiesUnreadable).
 type errPolicyForbids struct{ policy, workload string }
 
+// Error implements error, saying that the policies could not be read rather than naming one.
 func (e errPolicyForbids) Error() string {
 	if e.policy == policiesUnreadable {
 		return fmt.Sprintf("the right-sizing policies of this namespace could not be read, so advice for %s cannot be applied or proposed until they can", e.workload)
@@ -252,6 +263,9 @@ func firstOf(v ...string) string {
 	return ""
 }
 
+// writeRightsizing answers with the change on record or maps the error to a status: 403 for what
+// settings, policies or protection refuse, 409 for GitOps-managed workloads, 400 for advice that
+// cannot be applied, 503 while usage or policies are unreadable, and 404 for unknown workloads.
 func writeRightsizing(w http.ResponseWriter, rec finopsv1.WorkloadOptimization, err error) {
 	var forbids errPolicyForbids
 	switch {
@@ -391,6 +405,9 @@ func (u *GitUpdateRequest) config(secretRef string) (*finopsv1.GitRepositoryConf
 	return g, nil
 }
 
+// applyRightsizingSettings applies the right-sizing section: the apply switch, a guard window of 5
+// to 1440 minutes and the GitOps repository. removeGit drops the repository; a repository needs
+// an access token, either given now or already stored.
 func (s *Server) applyRightsizingSettings(ctx context.Context, cfg *finopsv1.CostDeckConfig, req *SettingsUpdateRequest) error {
 	u := req.Rightsizing
 	if u == nil {

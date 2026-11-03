@@ -33,6 +33,9 @@ const (
 	maxAutoPrewarm = 30 * time.Minute
 )
 
+// PrewarmLead is how far ahead of each scheduled start spec.prewarm starts the target:
+// Minutes, or with Auto the slowest recent wake-up rounded up to a minute plus a minute, at
+// most 30 minutes. Auto uses Minutes until a wake-up was measured; nil means no lead.
 func PrewarmLead(p *finopsv1.Prewarm, recent []finopsv1.WakeUp) time.Duration {
 	if p == nil {
 		return 0
@@ -96,6 +99,9 @@ func (e *Engine) Decide(now time.Time, tt Timetable, active *bool, activeUntil *
 	return d
 }
 
+// decide resolves the desired state by precedence: the legacy annotation, spec.active until
+// activeUntil, prewarm, an exception, the schedules (AlwaysOn when none is usable). A bounded
+// override next changes at its expiry, or later if the timetable then agrees with it.
 func (e *Engine) decide(now time.Time, tt Timetable, active *bool, activeUntil *metav1.Time, annotations map[string]string) Decision {
 	if legacy, ok := legacyOverride(annotations); ok {
 		return Decision{Active: legacy, Mode: manualMode(legacy)}

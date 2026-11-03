@@ -108,6 +108,10 @@ func (e *Engine) groupAndSortPriorities(resources []client.Object, sequence []st
 	return priorities, priorityGroups
 }
 
+// scalePriorityGroup scales one workload stage of a namespace and reports whether the next
+// may start: once this one is at the target state, or anyway when timeoutPassed. On the way
+// up it always revisits every workload, so restored ones lose the original-replicas
+// annotation, and forgets the stage's recorded counts once it is up.
 func (e *Engine) scalePriorityGroup(ctx context.Context, ns string, objs []client.Object, p int, active bool, originalReplicas map[string]int32, timeoutPassed bool) (bool, error) {
 	l := log.FromContext(ctx).WithValues("namespace", ns, "targetActive", active)
 

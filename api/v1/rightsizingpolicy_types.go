@@ -76,6 +76,7 @@ type RightsizingPolicyList struct {
 	Items           []RightsizingPolicy `json:"items"`
 }
 
+// init registers RightsizingPolicy and its list type with the package's SchemeBuilder.
 func init() {
 	SchemeBuilder.Register(&RightsizingPolicy{}, &RightsizingPolicyList{})
 }

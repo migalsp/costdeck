@@ -21,6 +21,8 @@ const (
 	digestRisks         = 10
 )
 
+// OpenRisk is a critical performance risk found by the last check. Since is when it was first
+// seen and is kept across checks for as long as the risk stays open.
 type OpenRisk struct {
 	Namespace string    `json:"namespace"`
 	Kind      string    `json:"kind"`
@@ -32,10 +34,14 @@ type OpenRisk struct {
 	Since     time.Time `json:"since"`
 }
 
+// Key identifies a risk across checks by namespace, workload kind and name, container and risk
+// code; it keys both maps of RiskState.
 func (r OpenRisk) Key() string {
 	return strings.Join([]string{r.Namespace, r.Kind, r.Workload, r.Container, r.Code}, "/")
 }
 
+// Subject names where the risk is for alert and digest lines: "namespace / workload", followed by
+// " / container" when the risk is about one container.
 func (r OpenRisk) Subject() string {
 	subject := r.Namespace + " / " + r.Workload
 	if r.Container != "" {
@@ -44,12 +50,16 @@ func (r OpenRisk) Subject() string {
 	return subject
 }
 
+// RiskState is what the costdeck-risk-alerts ConfigMap holds: the risks open at CheckedAt, keyed by
+// OpenRisk.Key, and when each key was last announced, which spaces out repeat alerts.
 type RiskState struct {
 	Open      map[string]OpenRisk  `json:"open"`
 	Fired     map[string]time.Time `json:"fired"`
 	CheckedAt time.Time            `json:"checkedAt"`
 }
 
+// Sorted returns the open risks ordered by namespace, workload, container and code, so alerts and
+// digests list them in a stable order.
 func (st RiskState) Sorted() []OpenRisk {
 	out := make([]OpenRisk, 0, len(st.Open))
 	for _, r := range st.Open {
@@ -61,6 +71,8 @@ func (st RiskState) Sorted() []OpenRisk {
 	return out
 }
 
+// LoadRiskState reads the state from the costdeck-risk-alerts ConfigMap in namespace. A missing
+// ConfigMap gives an empty state, unreadable JSON is ignored, and the maps are never nil.
 func LoadRiskState(ctx context.Context, c client.Reader, namespace string) (RiskState, error) {
 	st := RiskState{Open: map[string]OpenRisk{}, Fired: map[string]time.Time{}}
 	var cm corev1.ConfigMap
@@ -80,6 +92,8 @@ func LoadRiskState(ctx context.Context, c client.Reader, namespace string) (Risk
 	return st, nil
 }
 
+// SaveRiskState writes the state into the costdeck-risk-alerts ConfigMap, creating it when it is
+// missing and retrying on update conflicts.
 func SaveRiskState(ctx context.Context, c client.Client, namespace string, st RiskState) error {
 	raw, err := json.Marshal(st)
 	if err != nil {
@@ -107,6 +121,9 @@ func SaveRiskState(ctx context.Context, c client.Client, namespace string, st Ri
 	})
 }
 
+// AppendAlertEvents puts fresh events in front of the alert history in the costdeck-alerts
+// ConfigMap, shared with budget and anomaly alerts, and keeps the newest maxAlertEvents. It creates
+// the ConfigMap when missing and retries on conflicts; an empty list writes nothing.
 func AppendAlertEvents(ctx context.Context, c client.Client, namespace string, fresh []AlertEvent) error {
 	if len(fresh) == 0 {
 		return nil
@@ -138,6 +155,8 @@ func AppendAlertEvents(ctx context.Context, c client.Client, namespace string, f
 	})
 }
 
+// WithOpenRisks adds the open critical risks from the saved state to a digest. When the state
+// cannot be read the digest is returned without them rather than failing.
 func WithOpenRisks(ctx context.Context, c client.Reader, namespace string, d Digest) Digest {
 	st, err := LoadRiskState(ctx, c, namespace)
 	if err != nil {

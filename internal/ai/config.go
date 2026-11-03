@@ -117,6 +117,9 @@ func (s *Settings) Validate() error {
 	return nil
 }
 
+// validateEndpoint checks the provider name and, when a base URL is set, that it is an http(s) URL
+// that is not link-local or a metadata address and, for cloud providers, not loopback either. It
+// does not need a model, so models can be listed before one is chosen.
 func (s *Settings) validateEndpoint() error {
 	switch s.Provider {
 	case ProviderAnthropic, ProviderOpenAI, ProviderGemini, ProviderLocal:
@@ -142,6 +145,9 @@ func (s *Settings) validateEndpoint() error {
 // allowInternalHosts lets tests point cloud providers at an httptest server.
 var allowInternalHosts = false
 
+// isInternalHost reports whether host is localhost, a .localhost name or a loopback, link-local
+// or unspecified IP literal. Names are not resolved here; the netguard dialer checks the addresses
+// they resolve to.
 func isInternalHost(host string) bool {
 	name := strings.ToLower(strings.TrimSuffix(host, "."))
 	if name == "localhost" || strings.HasSuffix(name, ".localhost") {
@@ -189,6 +195,8 @@ func NewModelLister(s *Settings) (Provider, error) {
 	return newProvider(s), nil
 }
 
+// newProvider builds the client for settings that were already checked. The local provider and
+// OpenAI share the OpenAI-compatible client.
 func newProvider(s *Settings) Provider {
 	switch s.Provider {
 	case ProviderAnthropic:

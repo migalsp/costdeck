@@ -5,12 +5,16 @@ import { formatMoney } from '../lib/format'
 import type { Risk, Risks } from '../lib/types'
 import { usePolling } from '../lib/usePolling'
 
+// fixCost shows what a risk's fix adds to the monthly bill: nothing when the fix has no price,
+// and "no extra cost" below a cent.
 const fixCost = (r: Risk, currency: string) => {
   if (r.fixMonthlyCost === undefined) return null
   if (r.fixMonthlyCost < 0.01) return <span className="text-emerald-700">no extra cost</span>
   return <span className="text-slate-600">+{formatMoney(r.fixMonthlyCost, currency)}/mo</span>
 }
 
+// RisksPanel lists a namespace's performance risks in the server's order (critical first) with
+// each fix and its cost, every five minutes. It stays hidden until loaded and when the read fails.
 export default function RisksPanel({ namespace }: { namespace: string }) {
   const [report, setReport] = useState<Risks | null>(null)
   const [failed, setFailed] = useState(false)

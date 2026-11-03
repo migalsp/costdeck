@@ -285,6 +285,9 @@ func (s *Server) serveWorkloads(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result)
 }
 
+// serveWorkloadAction serves PUT /api/namespaces/{ns}/workloads/{name}: it sets the replicas of
+// one Deployment, StatefulSet or Rollout by hand. A protected namespace (the operator's own,
+// kube-* or one labelled costdeck.io/schedule=off) answers 403.
 func (s *Server) serveWorkloadAction(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	key := client.ObjectKey{Name: r.PathValue("name"), Namespace: r.PathValue("ns")}

@@ -276,6 +276,8 @@ func (g *gitlab) Files(ctx context.Context, dir string) ([]string, error) {
 	return out, nil
 }
 
+// Read returns the file from the base branch. Its revision is the ID of the last commit that
+// changed it, which Propose passes on so GitLab refuses the update if the file changed since.
 func (g *gitlab) Read(ctx context.Context, file string) ([]byte, string, error) {
 	var f struct {
 		Content      string `json:"content"`
@@ -288,6 +290,8 @@ func (g *gitlab) Read(ctx context.Context, file string) ([]byte, string, error) 
 	return raw, f.LastCommitID, err
 }
 
+// Propose commits the file to a new branch started from the base branch in a single commits API
+// call and opens a merge request that removes the branch once merged; it returns the request's URL.
 func (g *gitlab) Propose(ctx context.Context, p Proposal) (string, error) {
 	action := map[string]string{"action": "update", "file_path": p.Path, "content": string(p.Content)}
 	if p.Revision != "" {

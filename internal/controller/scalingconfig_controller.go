@@ -71,6 +71,10 @@ type ScalingConfigReconciler struct {
 // +kubebuilder:rbac:groups=apps,resources=deployments;statefulsets,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=argoproj.io,resources=rollouts,verbs=get;list;watch;patch
 
+// Reconcile drives a namespace's ScalingConfig: it stands aside while a ScalingGroup owns the
+// namespace, and otherwise decides the desired state, pauses GitOps before scaling, scales the
+// workloads and hibernated services, shows or removes the sleep page and records the status.
+// A dry run only reports what would change.
 func (r *ScalingConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	l := logf.FromContext(ctx)
 
@@ -185,6 +189,9 @@ func (r *ScalingConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	return ctrl.Result{RequeueAfter: settledRequeue(decision, time.Now())}, nil
 }
 
+// handleDeletion finalizes a config being deleted and otherwise adds the release finalizer.
+// It reports whether the reconcile ends there: always for a deleted config, and when adding
+// the finalizer failed.
 func (r *ScalingConfigReconciler) handleDeletion(ctx context.Context, config *finopsv1.ScalingConfig) (bool, ctrl.Result, error) {
 	if !config.DeletionTimestamp.IsZero() {
 		result, err := r.finalize(ctx, config)
@@ -198,6 +205,8 @@ func (r *ScalingConfigReconciler) handleDeletion(ctx context.Context, config *fi
 	return false, ctrl.Result{}, nil
 }
 
+// finalize restores what the config scaled down before letting it go, retrying every
+// releaseRetry; after releaseGiveUpAfter it drops the finalizer anyway with a warning event.
 func (r *ScalingConfigReconciler) finalize(ctx context.Context, config *finopsv1.ScalingConfig) (ctrl.Result, error) {
 	if !controllerutil.ContainsFinalizer(config, ReleaseFinalizer) {
 		return ctrl.Result{}, nil
@@ -218,12 +227,15 @@ func (r *ScalingConfigReconciler) finalize(ctx context.Context, config *finopsv1
 	return ctrl.Result{}, nil
 }
 
+// warn records a Warning event about the release on the config, when a recorder is set.
 func (r *ScalingConfigReconciler) warn(config *finopsv1.ScalingConfig, reason, format string, args ...any) {
 	if r.Recorder != nil {
 		r.Recorder.Eventf(config, nil, corev1.EventTypeWarning, reason, "Release", format, args...)
 	}
 }
 
+// releaseEverything restores the namespace and updates the sleep page grant, unless a
+// ScalingGroup owns the namespace now or did at the last reconcile: then it is the group's.
 func (r *ScalingConfigReconciler) releaseEverything(ctx context.Context, config *finopsv1.ScalingConfig) error {
 	if config.Status.Phase == PhaseOverriddenByGroup {
 		return nil
@@ -247,6 +259,8 @@ func (r *ScalingConfigReconciler) releaseEverything(ctx context.Context, config 
 	return syncSleepGrantAfterRelease(ctx, r.Engine)
 }
 
+// isManagedByGroup reports whether a ScalingGroup owns the namespace, by the rules of
+// scaling.NamespaceOwners, and which one. A group in a dry run owns nothing.
 func (r *ScalingConfigReconciler) isManagedByGroup(ctx context.Context, ns string) (bool, string, error) {
 	groups := &finopsv1.ScalingGroupList{}
 	if err := r.List(ctx, groups); err != nil {
@@ -274,6 +288,9 @@ func (r *ScalingConfigReconciler) markAsOverridden(ctx context.Context, config *
 	return ctrl.Result{RequeueAfter: 5 * time.Minute}, nil
 }
 
+// updateStatusPhase sets status.phase to what the namespace shows now, restarting
+// status.lastAction when it changes, and reports whether skipOnTimeout's window ran out while
+// it is still scaling, which lets the workload stages stop waiting for each other.
 func (r *ScalingConfigReconciler) updateStatusPhase(ctx context.Context, config *finopsv1.ScalingConfig, targetActive bool, exclusions []string) bool {
 	l := logf.FromContext(ctx)
 	currentPhase := config.Status.Phase
@@ -314,6 +331,8 @@ func (r *ScalingConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
+// selectionChanged passes group updates that change status.selectedNamespaces, which the
+// generation predicate misses because a selector's matches live in the status.
 func selectionChanged() predicate.Funcs {
 	return predicate.Funcs{UpdateFunc: func(e event.UpdateEvent) bool {
 		before, okBefore := e.ObjectOld.(*finopsv1.ScalingGroup)
@@ -322,6 +341,8 @@ func selectionChanged() predicate.Funcs {
 	}}
 }
 
+// configsBesideGroup maps a ScalingGroup event to every config in its namespace, not only
+// those of its members: a namespace that has just left the group is no longer listed in it.
 func (r *ScalingConfigReconciler) configsBesideGroup(ctx context.Context, obj client.Object) []reconcile.Request {
 	var configs finopsv1.ScalingConfigList
 	if err := r.List(ctx, &configs, client.InNamespace(obj.GetNamespace())); err != nil {

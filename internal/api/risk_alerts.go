@@ -22,6 +22,8 @@ const (
 	riskAlertLines    = 10
 )
 
+// RiskAlerter announces new critical performance risks and keeps the open ones in the
+// costdeck-risk-alerts ConfigMap, which the digest lists. It runs on the leader.
 type RiskAlerter struct {
 	Server    *Server
 	Poster    finops.Poster
@@ -29,8 +31,11 @@ type RiskAlerter struct {
 	Now       func() time.Time
 }
 
+// NeedLeaderElection implements manager.LeaderElectionRunnable.
 func (a *RiskAlerter) NeedLeaderElection() bool { return true }
 
+// Start implements manager.Runnable: it checks at once and then every half hour, logging a
+// failed check instead of stopping.
 func (a *RiskAlerter) Start(ctx context.Context) error {
 	ticker := time.NewTicker(riskAlertInterval)
 	defer ticker.Stop()
@@ -46,6 +51,9 @@ func (a *RiskAlerter) Start(ctx context.Context) error {
 	}
 }
 
+// Check assesses every namespace but the operator's, kube-* and terminating ones, and posts the
+// critical risks not announced in the last day. A failed post leaves them unannounced for the next
+// check; with no channel subscribed they are only recorded. Turned off, it forgets the open risks.
 func (a *RiskAlerter) Check(ctx context.Context) error {
 	now := time.Now()
 	if a.Now != nil {
@@ -128,6 +136,8 @@ func (a *RiskAlerter) Check(ctx context.Context) error {
 	return sendErr
 }
 
+// riskAlertMarkdown lists the new risks with their fixes, at most riskAlertLines of them, and
+// points to the namespace pages for the rest.
 func riskAlertMarkdown(fresh []finops.OpenRisk) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "**Performance risks: %d new**\n", len(fresh))

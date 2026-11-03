@@ -132,6 +132,9 @@ func checkEvents(events []finopsv1.NotificationEvent) ([]finopsv1.NotificationEv
 	return out, nil
 }
 
+// applyNotificationSettings applies the Slack, Teams and email sections. A new webhook URL or
+// SMTP password is checked and queued for its Secret; an enabled channel must end up with its
+// webhook, or with a server, sender and recipient, and a username is only accepted over TLS.
 func (s *Server) applyNotificationSettings(ctx context.Context, cfg *finopsv1.CostDeckConfig, req *SettingsUpdateRequest) error {
 	if req.Integrations == nil || req.Integrations.Notifications == nil {
 		return nil

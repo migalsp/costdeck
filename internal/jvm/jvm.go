@@ -78,6 +78,9 @@ var javaImageWords = []string{
 
 var variableReference = regexp.MustCompile(`\$\(([A-Za-z_][A-Za-z0-9_]*)\)|\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)`)
 
+// Options holds the JVM flags that decide heap sizing and the garbage collector, as Parse reads
+// them; zero means a flag is not set. Flags lists the tokens that set them, and UnreadFrom names
+// option variables whose value comes from elsewhere and so was not read.
 type Options struct {
 	MaxHeap              int64
 	InitialHeap          int64
@@ -91,41 +94,58 @@ type Options struct {
 	UnreadFrom           []string
 }
 
+// Runtime describes a container found to run a JVM: how it was found (a DetectedBy constant)
+// and the options it starts with.
 type Runtime struct {
 	DetectedBy string
 	Options    Options
 }
 
+// Heap is the maximum heap a JVM uses and where that size comes from, in words shown to users.
+// Known is false when the JVM sizes the heap from the memory of the node, which the pod does not
+// reveal.
 type Heap struct {
 	Max    float64
 	Source string
 	Known  bool
 }
 
+// Resources holds a container's memory request and limit in bytes and its CPU limit in cores;
+// zero means not set.
 type Resources struct {
 	MemoryRequest float64
 	MemoryLimit   float64
 	CPULimit      float64
 }
 
+// Usage is the JVM memory measured for a container, in bytes: the peak heap in use, the peak of
+// the heap left after garbage collection (the live data) and the peak non-heap memory. Zero means
+// not measured.
 type Usage struct {
 	HeapUsed    float64
 	HeapAfterGC float64
 	NonHeap     float64
 }
 
+// Plan is a proposed heap and container memory size in bytes, with the JVM option that sets
+// that heap.
 type Plan struct {
 	Heap    float64
 	Memory  float64
 	Options string
 }
 
+// Finding is one result of Audit: a Severity (risk, waste or note), a stable Code and a message
+// that explains the problem and its fix.
 type Finding struct {
 	Severity string `json:"severity"`
 	Code     string `json:"code"`
 	Message  string `json:"message"`
 }
 
+// Inspect reports whether a container runs a JVM, and if so how that was found and which options
+// it starts with. annotation is the value of costdeck.io/runtime: "none" rules Java out and "java"
+// asserts it; otherwise the command, the option variables and the image are tried in that order.
 func Inspect(c corev1.Container, annotation string) (Runtime, bool) {
 	if annotation == RuntimeNone {
 		return Runtime{}, false
@@ -148,6 +168,10 @@ func Inspect(c corev1.Container, annotation string) (Runtime, bool) {
 	return Runtime{DetectedBy: by, Options: options}, true
 }
 
+// OptionTokens returns a container's JVM option tokens in the order the JVM reads them, so a
+// later token overrides an earlier one: JAVA_TOOL_OPTIONS, JDK_JAVA_OPTIONS, the command and
+// arguments with variables expanded, and _JAVA_OPTIONS last. JAVA_OPTS is read by start scripts,
+// not by java, so it counts only when no java command is visible or the command expands it.
 func OptionTokens(c corev1.Container) []string {
 	env := literalEnv(c.Env)
 	var tokens []string
@@ -163,6 +187,9 @@ func OptionTokens(c corev1.Container) []string {
 	return append(tokens, strings.Fields(env[overrideOptions])...)
 }
 
+// Parse reads the flags that size the heap and pick the collector from JVM option tokens. As in
+// the JVM the last value of a setting wins and malformed values are ignored; Flags keeps each
+// winning token once, at the position where its setting first appeared.
 func Parse(tokens []string) Options {
 	var o Options
 	written := map[string]string{}
@@ -239,6 +266,10 @@ var collectorFlags = map[string]string{
 	"-XX:+UseShenandoahGC": "Shenandoah",
 }
 
+// HeapFor works out the maximum heap the JVM picks under memoryLimit, following HotSpot
+// ergonomics: -Xmx wins, -XX:MaxRAM replaces the limit, a small amount of memory gets
+// MinRAMPercentage, and otherwise MaxRAMPercentage applies but never below the built-in heap
+// size. Without a limit to size from (none set, or container support off) the heap is unknown.
 func (o Options) HeapFor(memoryLimit float64) Heap {
 	if o.MaxHeap > 0 {
 		return Heap{Max: float64(o.MaxHeap), Source: "set by -Xmx", Known: true}
@@ -267,10 +298,15 @@ func (o Options) HeapFor(memoryLimit float64) Heap {
 	return Heap{Max: max(physical*maxShare/100, builtInMaxHeapSize), Source: fmt.Sprintf("the JVM default, %g%% of %s", maxShare, basis), Known: true}
 }
 
+// defaultHeap reports whether no flag sizes the heap, so the JVM keeps its default share of the
+// memory.
 func (o Options) defaultHeap() bool {
 	return o.MaxHeap == 0 && o.MaxRAMPercentage == 0 && o.MaxRAM == 0
 }
 
+// NativeMemory estimates the memory a JVM needs beside its heap (metaspace, thread stacks, code
+// cache, buffers): the observed non-heap memory plus 20% and 64Mi for thread stacks and buffers,
+// or without a measurement a quarter of the heap and at least 128Mi.
 func NativeMemory(heap, observedNonHeap float64) float64 {
 	if observedNonHeap > 0 {
 		return observedNonHeap*observedNonHeapHeadroom + threadsAndBuffers
@@ -278,6 +314,10 @@ func NativeMemory(heap, observedNonHeap float64) float64 {
 	return max(heap*nativeShareOfHeap, minimumNativeMemory)
 }
 
+// PlanFor proposes a heap of twice the heap left after garbage collection, at least 128Mi, and
+// the container memory that heap needs with native memory, both rounded up to a mebibyte. The
+// option is -Xmx when the container already sets one, otherwise the MaxRAMPercentage that gives
+// that heap under the new limit. It reports false without a heap-after-GC measurement.
 func PlanFor(o Options, u Usage) (Plan, bool) {
 	if u.HeapAfterGC <= 0 {
 		return Plan{}, false
@@ -291,6 +331,10 @@ func PlanFor(o Options, u Usage) (Plan, bool) {
 	return Plan{Heap: heap, Memory: memory, Options: options}, true
 }
 
+// Audit checks a JVM's options and heap against the container's resources and measured usage
+// and returns its findings, risks first, then waste, then notes. Of the limit problems (container
+// support off, no limit, heap over the limit, no room for native memory) only the first that
+// applies is reported.
 func Audit(o Options, heap Heap, r Resources, u Usage) []Finding {
 	var findings []Finding
 	add := func(severity, code, format string, args ...any) {
@@ -352,6 +396,9 @@ func Audit(o Options, heap Heap, r Resources, u Usage) []Finding {
 
 var severityRank = map[string]int{SeverityRisk: 0, SeverityWaste: 1, SeverityNote: 2}
 
+// serialCollector reports whether the JVM would choose the Serial collector because it does not
+// see a server-class machine: fewer than two processors (-XX:ActiveProcessorCount, else the CPU
+// limit rounded up) or a memory limit under 1792Mi. With neither known it reports false.
 func serialCollector(o Options, r Resources) bool {
 	processors := o.ActiveProcessorCount
 	if processors == 0 && r.CPULimit > 0 {
@@ -360,6 +407,9 @@ func serialCollector(o Options, r Resources) bool {
 	return (processors > 0 && processors < serverClassProcessors) || (r.MemoryLimit > 0 && r.MemoryLimit < serverClassMemory)
 }
 
+// JavaImage reports whether an image looks like a Java runtime: a word of its repository path
+// names a JDK distribution or "java", or its tag says jre or jdk. Words are split at - _ and ., so
+// "javascript" does not match, and a registry host such as java.example.com is skipped.
 func JavaImage(image string) bool {
 	repository, tag := image, ""
 	if i := strings.Index(repository, "@"); i >= 0 {
@@ -380,10 +430,13 @@ func JavaImage(image string) bool {
 	return slices.ContainsFunc(words(tag), func(w string) bool { return w == "jre" || w == "jdk" })
 }
 
+// words splits an image path segment or tag, lowercased, into the words JavaImage matches.
 func words(s string) []string {
 	return strings.FieldsFunc(strings.ToLower(s), func(r rune) bool { return r == '-' || r == '_' || r == '.' })
 }
 
+// runsJava reports whether any word of the command or arguments is the java binary, given by path
+// or inside a shell command such as "sh -c 'exec java -jar app.jar'".
 func runsJava(command, args []string) bool {
 	for _, part := range slices.Concat(command, args) {
 		for field := range strings.FieldsSeq(part) {
@@ -395,10 +448,14 @@ func runsJava(command, args []string) bool {
 	return false
 }
 
+// setsOptionVariable reports whether the container sets a JVM option variable at all, from a
+// literal value or through valueFrom.
 func setsOptionVariable(env []corev1.EnvVar) bool {
 	return slices.ContainsFunc(env, func(e corev1.EnvVar) bool { return slices.Contains(optionVariables, e.Name) })
 }
 
+// unreadOptionVariables names the JVM option variables set through valueFrom (a ConfigMap,
+// Secret or field), whose values Cost Deck does not read.
 func unreadOptionVariables(env []corev1.EnvVar) []string {
 	var names []string
 	for _, e := range env {
@@ -409,6 +466,8 @@ func unreadOptionVariables(env []corev1.EnvVar) []string {
 	return names
 }
 
+// literalEnv returns a container's literal environment variables, each with references to the
+// variables defined before it expanded; variables set through valueFrom are left out.
 func literalEnv(env []corev1.EnvVar) map[string]string {
 	values := map[string]string{}
 	for _, e := range env {
@@ -419,6 +478,8 @@ func literalEnv(env []corev1.EnvVar) map[string]string {
 	return values
 }
 
+// expand replaces $(VAR), as Kubernetes expands it, and $VAR or ${VAR}, as a shell does, with
+// values from env; references to unknown variables stay as they are.
 func expand(s string, env map[string]string) string {
 	return variableReference.ReplaceAllStringFunc(s, func(reference string) string {
 		match := variableReference.FindStringSubmatch(reference)
@@ -429,6 +490,9 @@ func expand(s string, env map[string]string) string {
 	})
 }
 
+// parseSize reads a JVM size the way the JVM does: a positive whole number of bytes with an
+// optional k, m, g or t suffix in either case, in binary units. Fractions, signs and values that
+// overflow int64 are rejected.
 func parseSize(s string) (int64, bool) {
 	if s == "" {
 		return 0, false
@@ -458,13 +522,17 @@ func parseSize(s string) (int64, bool) {
 	return n * multiplier, true
 }
 
+// parsePercentage reads a RAM percentage, accepting only values above 0 and up to 100.
 func parsePercentage(s string) (float64, bool) {
 	v, err := strconv.ParseFloat(s, 64)
 	return v, err == nil && v > 0 && v <= 100
 }
 
+// roundMebibytes rounds a size in bytes up to a whole mebibyte.
 func roundMebibytes(bytes float64) float64 { return math.Ceil(bytes/mebibyte) * mebibyte }
 
+// jvmSize formats a size for -Xmx: whole gibibytes as "2g", anything else in mebibytes rounded
+// up, such as "800m".
 func jvmSize(bytes float64) string {
 	mebibytes := int64(math.Ceil(bytes / mebibyte))
 	if mebibytes%1024 == 0 {
@@ -473,6 +541,8 @@ func jvmSize(bytes float64) string {
 	return strconv.FormatInt(mebibytes, 10) + "m"
 }
 
+// quantity formats bytes as a Kubernetes binary quantity for messages, rounded to a whole
+// mebibyte from 1Mi up.
 func quantity(bytes float64) string {
 	if bytes >= mebibyte {
 		bytes = math.Round(bytes/mebibyte) * mebibyte

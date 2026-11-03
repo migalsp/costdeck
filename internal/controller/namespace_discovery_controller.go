@@ -28,6 +28,9 @@ type NamespaceDiscoveryReconciler struct {
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 // +kubebuilder:rbac:groups=finops.costdeck.io,namespace=costdeck,resources=namespacefinops,verbs=get;list;watch;create;update;patch;delete
 
+// Reconcile creates, in the operator namespace, a NamespaceFinOps named after a namespace once
+// that namespace runs a pod ("default" always counts), and deletes the NamespaceFinOps of one
+// that is gone or being deleted. A namespace whose pods have all stopped keeps its own.
 func (r *NamespaceDiscoveryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	l := log.FromContext(ctx)
 
@@ -108,6 +111,9 @@ func (r *NamespaceDiscoveryReconciler) forget(ctx context.Context, namespace str
 	return nil
 }
 
+// SetupWithManager reconciles a namespace on its own events, on those of its pods, so the
+// first pod brings it in, and on a NamespaceFinOps that targets it apart from status writes,
+// which sweeps up NamespaceFinOps left behind by namespaces that no longer exist.
 func (r *NamespaceDiscoveryReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&corev1.Namespace{}).

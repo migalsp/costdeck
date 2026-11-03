@@ -31,6 +31,8 @@ type suggestionResponse struct {
 	Source string `json:"source"`
 }
 
+// handleScheduleSuggestion serves a namespace's suggested schedule in the timezone query
+// parameter, UTC when it is missing; an unknown timezone answers 400.
 func (s *Server) handleScheduleSuggestion(w http.ResponseWriter, r *http.Request) {
 	tz := r.URL.Query().Get("timezone")
 	if tz == "" {

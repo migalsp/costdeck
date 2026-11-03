@@ -37,6 +37,9 @@ interface HealthSample {
   replicas?: { name: string; ready: boolean; node: string; restarts: number }[]
 }
 
+// OperatorHealth shows the operator itself: its replicas and leader, CPU and memory against its
+// requests and limits, and the last 100 log lines, every 5 seconds. Only operators read the logs,
+// and the status tile counts the error lines among them.
 export default function OperatorHealth() {
   const [health, setHealth] = useState<HealthSample | null>(null)
   const [history, setHistory] = useState<(HealthSample & { time: string })[]>([])

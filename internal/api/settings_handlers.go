@@ -400,6 +400,9 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.buildSettingsResponse(ctx, cfg))
 }
 
+// buildSettingsResponse turns the config into what the settings page shows. Secrets appear only
+// as has flags: for cloud providers, VictoriaMetrics, Entra and OIDC the referenced Secret must
+// also exist, for the others a reference is enough. Unset calendars and budgets are empty lists.
 func (s *Server) buildSettingsResponse(ctx context.Context, cfg *finopsv1.CostDeckConfig) SettingsResponse {
 	resp := SettingsResponse{}
 
@@ -563,6 +566,9 @@ func (s *Server) buildSettingsResponse(ctx context.Context, cfg *finopsv1.CostDe
 
 // ─── PUT /api/settings ──────────────────────────────────────────────────────
 
+// handleUpdateSettings applies every section of a settings update to a fresh copy of the config
+// and saves it, retrying on conflicts. Credentials Secrets are written only once all sections
+// are valid; a validation failure answers 400 and changes nothing.
 func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -613,6 +619,8 @@ type badRequest struct{ error }
 
 func badRequestf(format string, args ...any) error { return badRequest{fmt.Errorf(format, args...)} }
 
+// applyAWSSettings applies the AWS section; empty fields keep the stored values. Credentials are
+// replaced only when both keys are given, and the Secret carries the region with them.
 func (s *Server) applyAWSSettings(ctx context.Context, cfg *finopsv1.CostDeckConfig, req *SettingsUpdateRequest) error {
 	if req.Providers == nil || req.Providers.AWS == nil {
 		return nil
@@ -648,6 +656,8 @@ func (s *Server) applyAWSSettings(ctx context.Context, cfg *finopsv1.CostDeckCon
 	return nil
 }
 
+// applyAzureSettings applies the Azure section and checks that the subscription ID is a GUID.
+// Credentials are replaced only when client ID and secret are both given, and need a tenant ID.
 func (s *Server) applyAzureSettings(ctx context.Context, cfg *finopsv1.CostDeckConfig, req *SettingsUpdateRequest) error {
 	if req.Providers == nil || req.Providers.Azure == nil {
 		return nil
@@ -689,6 +699,8 @@ func (s *Server) applyAzureSettings(ctx context.Context, cfg *finopsv1.CostDeckC
 	return nil
 }
 
+// applyGCPSettings applies the Google Cloud section; a service account key, when given, is
+// validated and stored as credentials.json.
 func (s *Server) applyGCPSettings(ctx context.Context, cfg *finopsv1.CostDeckConfig, req *SettingsUpdateRequest) error {
 	if req.Providers == nil || req.Providers.GCP == nil {
 		return nil
@@ -722,6 +734,8 @@ func (s *Server) applyGCPSettings(ctx context.Context, cfg *finopsv1.CostDeckCon
 	return nil
 }
 
+// applyAISettings applies the AI section. Unlike the other fields, the base URL is always taken
+// from the request, so leaving it out clears it. The monthly token budget cannot be negative.
 func (s *Server) applyAISettings(ctx context.Context, cfg *finopsv1.CostDeckConfig, req *SettingsUpdateRequest) error {
 	if req.Integrations == nil || req.Integrations.AI == nil {
 		return nil
@@ -757,6 +771,9 @@ func (s *Server) applyAISettings(ctx context.Context, cfg *finopsv1.CostDeckConf
 	return nil
 }
 
+// applyWebexSettings applies the Webex section; transition notifications need a space ID. The bot
+// token and webhook secret are merged into the existing Secret, so setting one keeps the other,
+// and an empty webhook secret removes it.
 func (s *Server) applyWebexSettings(ctx context.Context, cfg *finopsv1.CostDeckConfig, req *SettingsUpdateRequest) error {
 	if req.Integrations == nil || req.Integrations.Messenger == nil || req.Integrations.Messenger.Webex == nil {
 		return nil
@@ -803,6 +820,8 @@ func (s *Server) applyWebexSettings(ctx context.Context, cfg *finopsv1.CostDeckC
 	return nil
 }
 
+// applyVictoriaMetricsSettings applies the VictoriaMetrics section. The endpoint must normalize
+// but is stored as typed, and any credentials given replace the whole stored Secret.
 func (s *Server) applyVictoriaMetricsSettings(ctx context.Context, cfg *finopsv1.CostDeckConfig, req *SettingsUpdateRequest) error {
 	if req.Integrations == nil || req.Integrations.VictoriaMetrics == nil {
 		return nil
@@ -940,6 +959,8 @@ func applyReportSettings(_ context.Context, cfg *finopsv1.CostDeckConfig, req *S
 	return nil
 }
 
+// AlertsUpdateRequest changes the anomaly and performance risk alerts; a field left out stays
+// as it is.
 type AlertsUpdateRequest struct {
 	Anomalies        *finopsv1.AnomalyAlerts         `json:"anomalies,omitempty"`
 	PerformanceRisks *finopsv1.PerformanceRiskAlerts `json:"performanceRisks,omitempty"`
@@ -947,6 +968,9 @@ type AlertsUpdateRequest struct {
 
 var budgetName = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
 
+// applyBudgetSettings applies the anomaly and performance risk alerts and the budgets. A budgets
+// list replaces the stored one as a whole, after every budget's name, scope, limit and thresholds
+// are checked.
 func applyBudgetSettings(_ context.Context, cfg *finopsv1.CostDeckConfig, req *SettingsUpdateRequest) error {
 	if req.Alerts != nil && req.Alerts.Anomalies != nil {
 		a := *req.Alerts.Anomalies
@@ -1072,6 +1096,8 @@ func applyFeatureSettings(_ context.Context, cfg *finopsv1.CostDeckConfig, req *
 	return nil
 }
 
+// applyAuthSettings applies the sign-in section: the local login switch, OIDC and Microsoft Entra
+// ID. Role names are checked, and enabling Entra needs a tenant ID and a client ID.
 func (s *Server) applyAuthSettings(ctx context.Context, cfg *finopsv1.CostDeckConfig, req *SettingsUpdateRequest) error {
 	if req.Auth == nil {
 		return nil
@@ -1236,18 +1262,22 @@ func (s *Server) applyOIDCSettings(cfg *finopsv1.CostDeckConfig, req *SettingsUp
 	return nil
 }
 
-// storeCredentials points the config field at a credentials Secret and queues the Secret,
-// which is written once every section of the save is valid.
+// pendingSecret is a credentials Secret a settings save writes only once every section of the
+// save is valid.
 type pendingSecret struct {
 	name string
 	data map[string][]byte
 }
 
+// storeCredentials sets ref to the Secret's name and queues data for writeSecrets. The queued
+// data replaces the Secret's keys entirely, so callers that keep other keys merge them first.
 func (s *Server) storeCredentials(req *SettingsUpdateRequest, name string, data map[string][]byte, ref *string) {
 	req.secrets = append(req.secrets, pendingSecret{name: name, data: data})
 	*ref = name
 }
 
+// writeSecrets creates or replaces the queued Secrets in the operator namespace, stopping at the
+// first failure.
 func (s *Server) writeSecrets(ctx context.Context, secrets []pendingSecret) error {
 	for _, sec := range secrets {
 		if err := s.upsertSecret(ctx, config.OperatorNamespace(), sec.name, sec.data); err != nil {
@@ -1619,6 +1649,8 @@ func (s *Server) secretExists(ctx context.Context, name, namespace string) bool 
 	return err == nil
 }
 
+// upsertSecret creates the Secret with Cost Deck's labels, or replaces the data of an existing
+// one; keys missing from data are dropped and existing labels are left as they are.
 func (s *Server) upsertSecret(ctx context.Context, namespace, name string, data map[string][]byte) error {
 	secret := &corev1.Secret{}
 	err := s.Client.Get(ctx, client.ObjectKey{Name: name, Namespace: namespace}, secret)

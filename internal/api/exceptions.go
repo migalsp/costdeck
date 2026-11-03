@@ -53,6 +53,8 @@ func (s *Server) timetableOf(ctx context.Context, obj client.Object) scaling.Tim
 	return scaling.Timetable{Schedules: schedules, Exceptions: exceptions, Lead: prewarmLeadOf(obj)}
 }
 
+// prewarmLeadOf returns how early a group or config starts before its schedule says up,
+// from its spec.prewarm and recorded wake-ups; zero for any other object.
 func prewarmLeadOf(obj client.Object) time.Duration {
 	switch o := obj.(type) {
 	case *finopsv1.ScalingGroup:
@@ -63,15 +65,17 @@ func prewarmLeadOf(obj client.Object) time.Duration {
 	return 0
 }
 
-// validateSchedule rejects selectors, hibernate rules, exceptions and calendar names that
-// would not apply, so a typo is caught when saving instead of surfacing later in a status
-// condition.
+// maxSchedules, maxExceptions and maxCalendars bound one schedule's time windows, dated
+// exceptions and holiday calendars; checkScheduleSize enforces them.
 const (
 	maxSchedules  = 50
 	maxExceptions = 100
 	maxCalendars  = 10
 )
 
+// checkScheduleSize refuses more time windows, exceptions or calendars than the limits above.
+// Previews are open to every viewer, and each next-change calculation walks every window, so
+// an unbounded schedule could keep a replica busy for minutes.
 func checkScheduleSize(schedules []finopsv1.ScalingSchedule, exceptions []finopsv1.ScheduleException, calendars []string) error {
 	switch {
 	case len(schedules) > maxSchedules:
@@ -84,6 +88,10 @@ func checkScheduleSize(schedules []finopsv1.ScalingSchedule, exceptions []finops
 	return nil
 }
 
+// validateSchedule checks a group or config before it is saved: its namespace selector, its
+// hibernate rules, the size limits, and that every exception and calendar name resolves, so a
+// typo is caught when saving instead of surfacing later in a status condition. All exception
+// problems are joined into one error.
 func (s *Server) validateSchedule(ctx context.Context, obj client.Object) error {
 	if g, ok := obj.(*finopsv1.ScalingGroup); ok && g.Spec.NamespaceSelector != nil {
 		// Matching against no namespaces checks the selector itself.

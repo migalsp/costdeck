@@ -135,6 +135,8 @@ func (s *Server) getNodeMetricsMap(ctx context.Context) map[string]corev1.Resour
 	return nodeMetricsMap
 }
 
+// getPodRequestsPerNode sums the CPU and memory requests of scheduled, unfinished pods by node
+// name. A node without such pods has no entry, and a failed pod list yields empty maps.
 func (s *Server) getPodRequestsPerNode(ctx context.Context) (map[string]*resource.Quantity, map[string]*resource.Quantity) {
 	nodeReqCPU := make(map[string]*resource.Quantity)
 	nodeReqMem := make(map[string]*resource.Quantity)

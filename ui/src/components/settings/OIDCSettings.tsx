@@ -8,6 +8,9 @@ import { CardIcon, SettingsCard, TestButton, checkClass, hintClass, inputClass, 
 const input = `${inputClass} font-mono`
 const label = labelClass
 
+// OIDCSettings edits single sign-on through a generic OpenID Connect provider, with group and
+// role mappings to Cost Deck roles. Test tries the values in the form before they are saved;
+// the section's Save stores them.
 export default function OIDCSettings({ value, onChange }: { value: OIDCForm; onChange: (f: OIDCForm) => void }) {
   const [test, setTest] = useState<{ ok: boolean; text: string } | null>(null)
   const [testing, setTesting] = useState(false)

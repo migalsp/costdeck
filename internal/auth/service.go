@@ -334,6 +334,8 @@ func (s *Service) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	writeAuthJSON(w, http.StatusOK, map[string]any{"status": "ok", "user": id})
 }
 
+// rejectLogin answers a failed local sign-in with status and msg, logs the user and client
+// address, and spends one of the account's attempts, so only failures count towards its limit.
 func (s *Service) rejectLogin(w http.ResponseWriter, r *http.Request, user string, status int, msg string) {
 	s.limiter(accountKey(user)).Allow()
 	logf.FromContext(r.Context()).Info("Rejected a local sign-in", "user", user, "ip", clientIP(r), "reason", msg)
@@ -461,6 +463,8 @@ func (s *Service) limiter(ip string) *rate.Limiter {
 	return l
 }
 
+// accountKey is the limiter key for a username, ignoring case and surrounding spaces, prefixed so
+// it never collides with a client address key.
 func accountKey(username string) string {
 	return "account:" + strings.ToLower(strings.TrimSpace(username))
 }

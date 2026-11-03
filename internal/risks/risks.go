@@ -33,6 +33,10 @@ const (
 
 const slowWakeUp = 2 * time.Minute
 
+// Wake describes the recent wake-ups of a ScalingGroup or ScalingConfig for AssessWakeUp: the
+// slowest of status.recentWakeUps and how many there are, the prewarm lead in effect and the one
+// spec.prewarm.auto would use, how often its schedule starts a month and what its workloads cost
+// an hour while up.
 type Wake struct {
 	Kind           string
 	Name           string
@@ -60,6 +64,9 @@ const (
 
 var criticalJVMFindings = []string{jvm.CodeHeapTight, jvm.CodeHeapOverLimit}
 
+// Pressure is what a container has been through: the share of CPU periods it was throttled in,
+// OOM kills counted per pod, restarts, the reason and exit code of its last termination and
+// whether it is crash-looping now.
 type Pressure struct {
 	ThrottledShare float64
 	OOMKills       int
@@ -69,6 +76,9 @@ type Pressure struct {
 	CrashLooping   bool
 }
 
+// Container is one container to assess: its requests and limits in cores and bytes, its peak
+// memory, its Pressure and, for a JVM, the findings of jvm.Audit and the memory right-sizing
+// recommends for it.
 type Container struct {
 	Name                 string
 	CPURequest           float64
@@ -81,6 +91,9 @@ type Container struct {
 	JVMRecommendedMemory float64
 }
 
+// HPA is the HorizontalPodAutoscaler of a workload: its maxReplicas, the replicas its resource
+// metrics ask for (zero when they cannot tell), and Limited when its ScalingLimited condition says
+// TooManyReplicas.
 type HPA struct {
 	Name    string
 	Max     int32
@@ -88,6 +101,8 @@ type HPA struct {
 	Limited bool
 }
 
+// Workload is one workload to assess, with its containers, how many of its pods were evicted and
+// the kubelet's message about an eviction, and its HPA, if it has one.
 type Workload struct {
 	Kind            string
 	Name            string
@@ -98,6 +113,9 @@ type Workload struct {
 	HPA             *HPA
 }
 
+// Risk is one performance risk as the dashboard and the risk alerts show it. FixMonthlyCost is
+// what the fix adds to the monthly bill: zero when it only raises limits, which are not billed,
+// and nil when the cost is unknown.
 type Risk struct {
 	Kind           string   `json:"kind"`
 	Workload       string   `json:"workload"`
@@ -109,6 +127,9 @@ type Risk struct {
 	FixMonthlyCost *float64 `json:"fixMonthlyCost,omitempty"`
 }
 
+// Report is the performance risk report of one namespace. Historical and Window say whether
+// VictoriaMetrics history over that window went into it, Basis tells the reader what it rests on,
+// and Warning carries the first data source that could not be read.
 type Report struct {
 	Namespace  string `json:"namespace"`
 	Historical bool   `json:"historical"`
@@ -119,12 +140,18 @@ type Report struct {
 	Risks      []Risk `json:"risks"`
 }
 
+// Context carries what Assess needs besides the workload: the namespace for the kubectl hint, the
+// history window named in messages (empty when only the current state is known) and the rates
+// fix costs are priced at.
 type Context struct {
 	Namespace string
 	Window    string
 	Rates     pricing.Rates
 }
 
+// Assess returns the performance risks of one workload: CPU throttling under a limit, OOM kills
+// or else memory near the limit, crash loops and restarts that an OOM kill does not explain, JVM
+// heap risks, evictions and an HPA capped at its maximum. Fix costs are monthly at ctx.Rates.
 func Assess(w Workload, ctx Context) []Risk {
 	var out []Risk
 	add := func(container, severity, code, message, fix string, cost *float64) {
@@ -206,6 +233,9 @@ func Assess(w Workload, ctx Context) []Risk {
 	return out
 }
 
+// AssessWakeUp warns when the slowest recent wake-up took two minutes or more and the prewarm
+// lead does not cover it. The fix costs the extra lead time the workloads run early each month;
+// it returns nil when there is nothing to warn about or the schedule never starts.
 func AssessWakeUp(w Wake) []Risk {
 	if w.Count == 0 || w.Slowest < slowWakeUp || w.Lead >= w.Slowest || w.StartsPerMonth <= 0 {
 		return nil
@@ -223,6 +253,7 @@ func AssessWakeUp(w Wake) []Risk {
 	}}
 }
 
+// wakeUps words a count of wake-ups for a message: "wake-up" for one, "3 wake-ups" otherwise.
 func wakeUps(n int) string {
 	if n == 1 {
 		return "wake-up"
@@ -230,6 +261,7 @@ func wakeUps(n int) string {
 	return fmt.Sprintf("%d wake-ups", n)
 }
 
+// minutes formats a duration as seconds under a minute and as whole minutes, rounded up, above.
 func minutes(d time.Duration) string {
 	if d < time.Minute {
 		return fmt.Sprintf("%ds", int(d.Seconds()))
@@ -237,6 +269,8 @@ func minutes(d time.Duration) string {
 	return fmt.Sprintf("%dm", int(math.Ceil(d.Minutes())))
 }
 
+// Sort orders risks critical first, then by workload, container and code, so the report keeps
+// the same order between requests.
 func Sort(risks []Risk) {
 	rank := map[string]int{SeverityCritical: 0, SeverityWarning: 1}
 	slices.SortStableFunc(risks, func(a, b Risk) int {
@@ -244,6 +278,9 @@ func Sort(risks []Risk) {
 	})
 }
 
+// HoldReductions returns why right-sizing must not cut a container's CPU or memory request, as
+// phrases that complete a sentence; an empty reason allows the cut. CPU is held while throttled in
+// 10% of periods or more, memory after an OOM kill, an eviction or a peak at 90% of the limit.
 func HoldReductions(p Pressure, evictions int, peakMemory, memoryLimit float64) (cpuReason, memoryReason string) {
 	if p.ThrottledShare >= throttledWarning {
 		cpuReason = fmt.Sprintf("throttled in %d%% of CPU periods at busy times", percent(p.ThrottledShare))
@@ -259,6 +296,7 @@ func HoldReductions(p Pressure, evictions int, peakMemory, memoryLimit float64) 
 	return cpuReason, memoryReason
 }
 
+// restartMessage describes a crash loop or repeated restarts and how the last run ended.
 func restartMessage(p Pressure, during string) string {
 	if p.CrashLooping {
 		return fmt.Sprintf("Crash-looping: it keeps failing on start and Kubernetes waits longer before each retry. The last run ended with %s.", ending(p))
@@ -266,6 +304,8 @@ func restartMessage(p Pressure, during string) string {
 	return fmt.Sprintf("Restarted %d times%s; the last run ended with %s.", p.Restarts, during, ending(p))
 }
 
+// ending names how the last run ended: its termination reason, with the exit code when it is not
+// zero, or "an unknown reason" when none was recorded.
 func ending(p Pressure) string {
 	reason := cmp.Or(p.LastReason, "an unknown reason")
 	if p.LastExitCode != 0 {
@@ -274,6 +314,8 @@ func ending(p Pressure) string {
 	return reason
 }
 
+// evictionMessage explains why pods get evicted and appends the kubelet's own message when there
+// is one.
 func evictionMessage(w Workload, during string) string {
 	message := fmt.Sprintf("%d pod%s evicted%s: under node pressure the kubelet evicts first the pods that use more than they request.",
 		w.Evictions, plural(w.Evictions), during)
@@ -283,6 +325,8 @@ func evictionMessage(w Workload, during string) string {
 	return message
 }
 
+// evictionFix proposes an ephemeral-storage request when the eviction was for local disk, and
+// otherwise memory requests raised to peak plus headroom for the containers below that.
 func evictionFix(w Workload) string {
 	if strings.Contains(w.EvictionMessage, "ephemeral-storage") {
 		return "Set an ephemeral-storage request that covers what the pod writes to its local disk."
@@ -299,6 +343,8 @@ func evictionFix(w Workload) string {
 	return "Raise the memory request of " + strings.Join(parts, ", ") + ", what it uses at peak plus headroom."
 }
 
+// evictionCost prices evictionFix's memory request increases per month across all replicas, and
+// is nil for an ephemeral-storage eviction, whose cost is unknown.
 func evictionCost(w Workload, rates pricing.Rates) *float64 {
 	if strings.Contains(w.EvictionMessage, "ephemeral-storage") {
 		return nil
@@ -312,19 +358,25 @@ func evictionCost(w Workload, rates pricing.Rates) *float64 {
 	return &total
 }
 
+// evictionRequest is the memory request that covers a container's peak memory with 20% headroom,
+// rounded up to a mebibyte.
 func evictionRequest(c Container) float64 {
 	return roundMemory(c.PeakMemory * evictionHeadroom)
 }
 
+// memoryCost prices raising a memory request to target, per month for every replica; a target at
+// or below the request costs zero. It never returns nil.
 func memoryCost(request, target, replicas float64, rates pricing.Rates) *float64 {
 	cost := max(target-request, 0) / gibibyte * rates.MemoryGBHour * replicas * pricing.HoursPerMonth
 	return &cost
 }
 
+// money formats an amount with two decimals and its currency, USD when none is set.
 func money(amount float64, currency string) string {
 	return fmt.Sprintf("%.2f %s", amount, cmp.Or(currency, "USD"))
 }
 
+// podMonthly prices the CPU and memory requests of one pod for a month.
 func podMonthly(containers []Container, rates pricing.Rates) float64 {
 	hourly := 0.0
 	for _, c := range containers {
@@ -333,6 +385,8 @@ func podMonthly(containers []Container, rates pricing.Rates) float64 {
 	return hourly * pricing.HoursPerMonth
 }
 
+// oomLimitPhrase returns " at its <limit> limit" for an OOM message, or nothing when the
+// container has no memory limit.
 func oomLimitPhrase(limit float64) string {
 	if limit <= 0 {
 		return ""
@@ -340,6 +394,8 @@ func oomLimitPhrase(limit float64) string {
 	return " at its " + memory(limit) + " limit"
 }
 
+// times returns " N times" for more than one event and nothing for one, so a single event reads
+// plainly.
 func times(n int) string {
 	if n <= 1 {
 		return ""
@@ -347,6 +403,7 @@ func times(n int) string {
 	return fmt.Sprintf(" %d times", n)
 }
 
+// plural returns what follows "pod" in "N pods were evicted": " was" for one, "s were" otherwise.
 func plural(n int) string {
 	if n == 1 {
 		return " was"
@@ -354,15 +411,19 @@ func plural(n int) string {
 	return "s were"
 }
 
+// zero returns a zero cost, for fixes that only raise limits, which are not billed.
 func zero() *float64 {
 	v := 0.0
 	return &v
 }
 
+// percent turns a share into whole percent, rounded to the nearest.
 func percent(share float64) int { return int(math.Round(share * 100)) }
 
+// roundMemory rounds a size in bytes up to a whole mebibyte.
 func roundMemory(bytes float64) float64 { return math.Ceil(bytes/mebibyte) * mebibyte }
 
+// memory formats bytes as a Kubernetes binary quantity, rounded to a whole mebibyte from 1Mi up.
 func memory(bytes float64) string {
 	if bytes >= mebibyte {
 		bytes = math.Round(bytes/mebibyte) * mebibyte
@@ -370,6 +431,7 @@ func memory(bytes float64) string {
 	return resource.NewQuantity(int64(bytes), resource.BinarySI).String()
 }
 
+// cpu formats cores as a Kubernetes CPU quantity rounded to a millicore, such as "500m" or "2".
 func cpu(cores float64) string {
 	return resource.NewMilliQuantity(int64(math.Round(cores*1000)), resource.DecimalSI).String()
 }

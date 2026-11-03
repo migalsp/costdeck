@@ -70,6 +70,10 @@ type ScalingGroupReconciler struct {
 // +kubebuilder:rbac:groups="",namespace=costdeck,resources=events,verbs=create;patch;get;list;watch
 // +kubebuilder:rbac:groups=events.k8s.io,namespace=costdeck,resources=events,verbs=create;patch
 
+// Reconcile drives a group to the state its plan decides: it refreshes the selector's matches,
+// restores namespaces and cloud targets that left the group, then scales the stages in order,
+// starting each once the one before is there or has timed out, and records progress in the
+// status. A dry run, or a group waiting for its dependencies, only reports.
 func (r *ScalingGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	l := logf.FromContext(ctx)
 
@@ -258,6 +262,8 @@ func stageTimeoutMinutes(group *finopsv1.ScalingGroup) int {
 	return timeoutMinutes(group.Spec.FeatureFlags)
 }
 
+// timeoutMinutes returns how long skipOnTimeout lets a stage take: the flags' timeoutMinutes,
+// or five when it is not set.
 func timeoutMinutes(flags *finopsv1.ScalingGroupFeatureFlags) int {
 	if flags != nil && flags.TimeoutMinutes > 0 {
 		return flags.TimeoutMinutes
@@ -345,6 +351,10 @@ func setDependencyConditions(group *finopsv1.ScalingGroup, plan scaling.GroupPla
 	})
 }
 
+// getScalingStages splits the group into stages: one per spec.sequence entry with the members
+// and ext: targets it names, then one with the members it leaves out, reversed when scaling
+// down. Namespaces in skip are left out, and cloud targets take part only when the sequence
+// names them.
 func (r *ScalingGroupReconciler) getScalingStages(group *finopsv1.ScalingGroup, targetActive bool, skip []string) [][]string {
 	var managedNamespaces []string
 	for _, ns := range group.Members() {
@@ -404,6 +414,8 @@ func (r *ScalingGroupReconciler) reconcileTarget(ctx context.Context, group *fin
 	return r.reconcileK8sTarget(ctx, group, ns, targetActive, timeoutPassed)
 }
 
+// reconcileExternalTarget scales the spec.externalTargets entry an "ext:<id>" stage entry
+// names; an identifier without an entry is an error.
 func (r *ScalingGroupReconciler) reconcileExternalTarget(ctx context.Context, group *finopsv1.ScalingGroup, ns string, targetActive bool) (bool, error) {
 	extId := strings.TrimPrefix(ns, "ext:")
 	var extTarget *finopsv1.ExternalTarget
@@ -420,6 +432,9 @@ func (r *ScalingGroupReconciler) reconcileExternalTarget(ctx context.Context, gr
 	return r.scaleExternalTarget(ctx, group, *extTarget, targetActive)
 }
 
+// scaleExternalTarget starts or stops a cloud target and reports whether it is there yet. A
+// stopped target is recorded in status.stoppedExternalTargets and stays recorded until it runs
+// again, so a start that does not take is retried.
 func (r *ScalingGroupReconciler) scaleExternalTarget(ctx context.Context, group *finopsv1.ScalingGroup, target finopsv1.ExternalTarget, active bool) (bool, error) {
 	provider, err := r.Engine.Provider(ctx, target.Provider)
 	if err != nil {
@@ -441,12 +456,17 @@ func (r *ScalingGroupReconciler) scaleExternalTarget(ctx context.Context, group 
 	return ready, err
 }
 
+// sameExternalTarget matches entries naming the same target: provider, type, identifier and
+// region all equal, so a target moved to another region counts as a different one.
 func sameExternalTarget(target finopsv1.ExternalTarget) func(finopsv1.ExternalTarget) bool {
 	return func(other finopsv1.ExternalTarget) bool {
 		return other.Provider == target.Provider && other.Type == target.Type && other.Identifier == target.Identifier && other.Region == target.Region
 	}
 }
 
+// releaseExternalTargets starts again the recorded cloud targets the sequence no longer
+// names, because they left the sequence or the spec. A target that fails to start or is not
+// running yet stays recorded and is tried again on the next reconcile.
 func (r *ScalingGroupReconciler) releaseExternalTargets(ctx context.Context, group *finopsv1.ScalingGroup) {
 	sequenced := sequencedExternalTargets(group)
 	for _, target := range slices.Clone(group.Status.StoppedExternalTargets) {
@@ -597,6 +617,9 @@ func (r *ScalingGroupReconciler) idleCheck(ctx context.Context, group *finopsv1.
 	}
 }
 
+// updateStatusAndPhase derives the phase from whether every stage is there, records the
+// counts, wake-up timing and Ready condition, writes the status when it changed and announces
+// a settled transition. It requeues in five seconds while the group is converging.
 func (r *ScalingGroupReconciler) updateStatusAndPhase(ctx context.Context, group *finopsv1.ScalingGroup, before *finopsv1.ScalingGroupStatus, allReady bool, managedCount, namespacesReady, namespacesTotal int, readyNamespaces []string, decision scaling.Decision, detail string) (ctrl.Result, error) {
 	targetActive := decision.Active
 	group.Status.ManagedCount = managedCount
@@ -736,6 +759,8 @@ func (r *ScalingGroupReconciler) release(ctx context.Context, group *finopsv1.Sc
 	}
 }
 
+// rulesFor collects what releasing a namespace needs: the group's workload rules there, the
+// replica counts it recorded and whether it scaled it (a phase reached by scaling or a count).
 func (r *ScalingGroupReconciler) rulesFor(ctx context.Context, group *finopsv1.ScalingGroup, ns string) namespaceRules {
 	exclusions, sequence, hibernate := r.workloadRules(ctx, group, ns)
 	originals := namespaceOriginals(group, ns)
@@ -746,6 +771,8 @@ func (r *ScalingGroupReconciler) rulesFor(ctx context.Context, group *finopsv1.S
 	}
 }
 
+// sequencedExternalTargets returns the spec.externalTargets entries a spec.sequence stage
+// names as "ext:<id>", the only ones the stages scale.
 func sequencedExternalTargets(group *finopsv1.ScalingGroup) []finopsv1.ExternalTarget {
 	var out []finopsv1.ExternalTarget
 	for _, target := range group.Spec.ExternalTargets {
@@ -757,6 +784,9 @@ func sequencedExternalTargets(group *finopsv1.ScalingGroup) []finopsv1.ExternalT
 	return out
 }
 
+// removedNamespaces returns, sorted, the namespaces the group still holds replica counts for
+// that are neither members nor in already: ones taken out of the group that still need
+// restoring.
 func removedNamespaces(group *finopsv1.ScalingGroup, already []string) []string {
 	members := group.Members()
 	var out []string
@@ -771,6 +801,9 @@ func removedNamespaces(group *finopsv1.ScalingGroup, already []string) []string 
 	return out
 }
 
+// handleDeletion finalizes a group being deleted and otherwise adds the release finalizer.
+// It reports whether the reconcile ends there: always for a deleted group, and when adding
+// the finalizer failed.
 func (r *ScalingGroupReconciler) handleDeletion(ctx context.Context, group *finopsv1.ScalingGroup) (bool, ctrl.Result, error) {
 	if !group.DeletionTimestamp.IsZero() {
 		result, err := r.finalize(ctx, group)
@@ -784,6 +817,8 @@ func (r *ScalingGroupReconciler) handleDeletion(ctx context.Context, group *fino
 	return false, ctrl.Result{}, nil
 }
 
+// finalize restores what the group scaled down before letting it go, retrying every
+// releaseRetry; after releaseGiveUpAfter it drops the finalizer anyway with a warning event.
 func (r *ScalingGroupReconciler) finalize(ctx context.Context, group *finopsv1.ScalingGroup) (ctrl.Result, error) {
 	if !controllerutil.ContainsFinalizer(group, ReleaseFinalizer) {
 		return ctrl.Result{}, nil
@@ -806,6 +841,9 @@ func (r *ScalingGroupReconciler) finalize(ctx context.Context, group *finopsv1.S
 	return ctrl.Result{}, nil
 }
 
+// releaseEverything restores the namespaces the group owns, members and those it still holds
+// replica counts for, starts every cloud target it stopped, counting one not running yet as a
+// failure, and updates the sleep page grant. It returns every failure together.
 func (r *ScalingGroupReconciler) releaseEverything(ctx context.Context, group *finopsv1.ScalingGroup) error {
 	plan, err := r.planFor(ctx, group)
 	if err != nil {

@@ -228,6 +228,9 @@ func (d Digest) Markdown() string {
 	return b.String() + d.risksMarkdown()
 }
 
+// risksMarkdown lists the open critical performance risks, at most digestRisks of them followed by
+// a count of the rest, and is empty when there are none. Markdown appends it even when the cost
+// history does not cover the period.
 func (d Digest) risksMarkdown() string {
 	if len(d.CriticalRisks) == 0 {
 		return ""

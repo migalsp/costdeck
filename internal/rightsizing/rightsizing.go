@@ -66,6 +66,9 @@ type Workload struct {
 	Policy     *Policy
 }
 
+// Policy is the RightsizingPolicy that picks a workload, as the analysis applies it: Exclude leaves
+// the workload out of the report, ApplyForbidden is passed on to its advice, and the bounds limit
+// and pad each resource.
 type Policy struct {
 	Name           string
 	ApplyForbidden bool
@@ -74,12 +77,15 @@ type Policy struct {
 	Memory         Bounds
 }
 
+// Bounds limits the advice for one resource, in cores or bytes; a zero Min or Max is unset.
+// Headroom, when set, is a multiplier (1.2 for 20%) that replaces the default headroom.
 type Bounds struct {
 	Min      float64
 	Max      float64
 	Headroom *float64
 }
 
+// clamp keeps v within the bounds that are set.
 func (b Bounds) clamp(v float64) float64 {
 	if b.Min > 0 {
 		v = max(v, b.Min)
@@ -140,6 +146,9 @@ type ContainerAdvice struct {
 	JVM    *JVMAdvice     `json:"jvm,omitempty"`
 }
 
+// JVMAdvice is the Java side of a container's advice: how the JVM was found, its options and the
+// heap they give, the measured heap peaks and the audit findings. The recommended heap, memory and
+// options are a separate change that applying the request advice never makes.
 type JVMAdvice struct {
 	DetectedBy         string        `json:"detectedBy"`
 	Options            []string      `json:"options,omitempty"`
@@ -258,6 +267,8 @@ func advise(request, observed, recommended float64, seen bool, threshold float64
 	return a
 }
 
+// holdReduction turns a reduction into a keep while the container is under pressure, recording why
+// in Held; any other action stands.
 func holdReduction(a *ResourceAdvice, reason string) {
 	if reason == "" || a.Action != ActionReduce {
 		return
@@ -265,6 +276,8 @@ func holdReduction(a *ResourceAdvice, reason string) {
 	a.Action, a.Recommended, a.Held = ActionKeep, "", reason
 }
 
+// OwnsPod reports whether a pod name is one the workload creates, by the naming pattern that
+// matches demand to workloads, so pods that no longer exist still count.
 func OwnsPod(kind, name, pod string) bool { return podPattern(kind, name).MatchString(pod) }
 
 type demandPair struct{ cpu, mem float64 }
@@ -287,6 +300,9 @@ func peakDemand(w Workload, demand map[metrics.ContainerKey]metrics.Usage) map[s
 	return out
 }
 
+// peakHeapDemand returns, per container name, the highest heap, heap-after-GC and non-heap readings
+// across the workload's pods, matched by name like peakDemand. Series without a container label
+// collect under the empty name.
 func peakHeapDemand(w Workload, heapDemand map[metrics.ContainerKey]metrics.HeapUsage) map[string]jvm.Usage {
 	pattern := podPattern(w.Kind, w.Name)
 	out := map[string]jvm.Usage{}
@@ -303,6 +319,9 @@ func peakHeapDemand(w Workload, heapDemand map[metrics.ContainerKey]metrics.Heap
 	return out
 }
 
+// javaRuntime reports whether a container gets JVM advice, with its runtime and measured heap. A
+// container found to run Java gets it without heap metrics too; one only heap metrics reveal is
+// marked DetectedByMetrics. Unlabelled heap series go to the container ownsUnlabelledSeries picks.
 func javaRuntime(w Workload, c Container, heapPeaks map[string]jvm.Usage) (jvm.Runtime, jvm.Usage, bool) {
 	heapUse, measured := heapPeaks[c.Name]
 	if unlabelled, ok := heapPeaks[""]; ok && !measured && ownsUnlabelledSeries(w, c) {
@@ -317,6 +336,9 @@ func javaRuntime(w Workload, c Container, heapPeaks map[string]jvm.Usage) (jvm.R
 	return jvm.Runtime{}, jvm.Usage{}, false
 }
 
+// ownsUnlabelledSeries reports whether heap series without a container label belong to c: to the
+// workload's only Java container or, when none was found to run Java, to its only container.
+// Anything else is ambiguous and no container gets them.
 func ownsUnlabelledSeries(w Workload, c Container) bool {
 	javaContainers := 0
 	for _, other := range w.Containers {
@@ -330,6 +352,10 @@ func ownsUnlabelledSeries(w Workload, c Container) bool {
 	return c.Java != nil && javaContainers == 1
 }
 
+// adviseJVM audits a Java container and returns its advice and the floor for its memory advice:
+// a known heap plus the native memory beside it, zero when the heap is unknown. A heap plan is
+// proposed only for an oversized, tight or unknown heap; savings count only for an oversized heap
+// whose plan needs less memory than the request.
 func adviseJVM(java jvm.Runtime, c Container, heapUse jvm.Usage, rates pricing.Rates, replicas int32) (*JVMAdvice, float64) {
 	resources := jvm.Resources{MemoryRequest: c.MemoryRequest, MemoryLimit: c.MemoryLimit, CPULimit: c.CPULimit}
 	heap := java.Options.HeapFor(c.MemoryLimit)

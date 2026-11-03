@@ -28,6 +28,8 @@ func handleOpenAPIJSON(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(spec)
 }
 
+// handleSwaggerUI serves a Swagger UI page for the embedded spec. Its scripts come from unpkg
+// with integrity hashes, and the page's own policy admits the inline init script only by hash.
 func handleSwaggerUI(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Content-Security-Policy", swaggerPolicy)

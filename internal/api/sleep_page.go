@@ -123,12 +123,16 @@ func (s *Server) serveSleepPage(w http.ResponseWriter, r *http.Request) {
 
 const sleepingRefresh = 10 * time.Second
 
+// sleepingNamespaces caches which namespaces have routes on the sleep page, so requests to the
+// sleep listener, which anyone reaching a sleeping route can send, do not each list routes.
 type sleepingNamespaces struct {
 	mu    sync.Mutex
 	names []string
 	at    time.Time
 }
 
+// get returns the cached names while they are younger than sleepingRefresh, else loads them
+// again. A failed load keeps the last names and is retried on the next call.
 func (c *sleepingNamespaces) get(ctx context.Context, load func(context.Context) ([]string, error), now time.Time) []string {
 	c.mu.Lock()
 	defer c.mu.Unlock()

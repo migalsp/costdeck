@@ -38,6 +38,8 @@ const alertLooks: Partial<Record<AlertEvent['kind'], typeof budgetAlertLook>> = 
   anomaly: { label: 'Spending anomaly', tile: 'bg-amber-50 text-amber-600', icon: <TrendingUp size={16} /> },
   risk: { label: 'Performance risk', tile: 'bg-rose-50 text-rose-600', icon: <Activity size={16} /> },
 }
+// alertLook picks the label, tile colours and icon of an alert in the feed; budget and forecast
+// alerts share the budget look.
 const alertLook = (kind: AlertEvent['kind']) => alertLooks[kind] ?? budgetAlertLook
 
 // Mark is a hoverable marker on a budget bar with a tooltip naming it.
@@ -299,6 +301,8 @@ function AnomalyCard({ settings, onSaved }: { settings: AnomalySettings; onSaved
   )
 }
 
+// RiskAlertCard explains the performance risk alerts and lets an admin turn them on or off. The
+// checkbox saves the setting at once; there is no separate Save.
 function RiskAlertCard({ settings, onSaved }: { settings: RiskAlertSettings; onSaved: () => void }) {
   const { can } = useAuth()
   const [busy, setBusy] = useState(false)
@@ -333,6 +337,9 @@ function RiskAlertCard({ settings, onSaved }: { settings: RiskAlertSettings; onS
   )
 }
 
+// BudgetsPage shows each budget's spending and forecast for the month, the last alerts and the
+// anomaly and risk alert settings, refreshed every minute. Admins add and edit budgets here; a save
+// sends the whole budget list.
 export default function BudgetsPage() {
   const { can } = useAuth()
   const [data, setData] = useState<BudgetsResponse | null>(null)

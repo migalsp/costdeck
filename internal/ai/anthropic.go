@@ -97,6 +97,10 @@ type anthropicSession struct {
 	params anthropic.BetaMessageNewParams
 }
 
+// Step streams one Messages API call, emitting text, a "reset" when a server-side fallback
+// replaces a refused partial answer, and the token usage with cached prompt tokens counted. A
+// refusal or hitting the output limit is an error and runs no tools; a tool call whose streamed
+// arguments are not a JSON object comes back marked Invalid.
 func (s *anthropicSession) Step(ctx context.Context, emit func(Event)) ([]ToolCall, error) {
 	stream := s.client.Beta.Messages.NewStreaming(ctx, s.params)
 	defer func() { _ = stream.Close() }()

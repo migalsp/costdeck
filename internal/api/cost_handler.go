@@ -44,6 +44,8 @@ func (s *Server) costRates(ctx context.Context) pricing.Rates {
 	return s.pricingResolver().Rates(ctx)
 }
 
+// handleCosting serves POST /api/costing: it prices the CPU and memory sent for a cluster or
+// node, or for a namespace the requests of its pods that have not finished, per hour and month.
 func (s *Server) handleCosting(w http.ResponseWriter, r *http.Request) {
 	var req CostRequest
 	if err := decodeJSON(w, r, &req); err != nil {

@@ -7,18 +7,26 @@ import (
 	"time"
 )
 
+// ContainerPressure is the pressure one container showed over the window: the p95 share of its CPU
+// periods that were throttled, its restarts, and whether it was OOM-killed, which also needs a
+// restart in the window so an old OOM kill still reported as the last termination does not count.
 type ContainerPressure struct {
 	ThrottledShare float64
 	OOMKilled      bool
 	Restarts       float64
 }
 
+// PressureHistory is the pressure on a namespace's containers over Window, keyed by pod and
+// container, and the pods evicted in that time.
 type PressureHistory struct {
 	Containers  map[ContainerKey]ContainerPressure
 	EvictedPods map[string]bool
 	Window      time.Duration
 }
 
+// PressureHistory returns the pressure history of a namespace over the lookback window, capped at
+// maxDemandWindow. It needs VictoriaMetrics: without it the result is nil, with an error only when
+// VictoriaMetrics is enabled but unusable.
 func (p *Provider) PressureHistory(ctx context.Context, namespace string) (*PressureHistory, error) {
 	vm, lookback, err := p.resolve(ctx)
 	if vm == nil {
@@ -27,6 +35,9 @@ func (p *Provider) PressureHistory(ctx context.Context, namespace string) (*Pres
 	return vm.PressureHistory(ctx, namespace, min(lookback, maxDemandWindow))
 }
 
+// PressureHistory queries CPU throttling, OOM kills and restarts from cAdvisor and
+// kube-state-metrics, and evictions from kube_pod_status_reason, over the window. Any failed query
+// fails the whole history.
 func (c *VMClient) PressureHistory(ctx context.Context, namespace string, window time.Duration) (*PressureHistory, error) {
 	rng := promDuration(window)
 	throttled, err := c.containerVector(ctx, fmt.Sprintf(
@@ -68,6 +79,9 @@ func (c *VMClient) PressureHistory(ctx context.Context, namespace string, window
 	return h, nil
 }
 
+// selectorWith renders a selector for metric in namespace with extra matchers. containerLevel
+// leaves out the pod-level cgroup and the pause container as selector does; pod-level series such
+// as kube_pod_status_reason have no container label and need it off.
 func (c *VMClient) selectorWith(metric, namespace string, containerLevel bool, extra ...string) string {
 	matchers := []string{fmt.Sprintf("namespace=%q", namespace)}
 	if containerLevel {

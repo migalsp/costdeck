@@ -11,10 +11,16 @@ import { usePolling } from '../lib/usePolling'
 
 const actionable: AdviceAction[] = ['reduce', 'increase', 'set']
 
+// hasRequestAdvice is true when a CPU or memory request should change. The first such container
+// of a workload carries the workload's saving and its Apply and Pull request buttons.
 const hasRequestAdvice = (c: ContainerAdvice) => actionable.includes(c.cpu.action) || actionable.includes(c.memory.action)
 
+// jvmNeedsAttention is true for a Java container with a risk or saving finding; notes alone
+// do not earn it a row.
 const jvmNeedsAttention = (c: ContainerAdvice) => !!c.jvm && c.jvm.findings.some(f => f.severity !== 'note')
 
+// needsAttention picks the containers the table lists: request advice, JVM findings worth acting
+// on, or a reduction held back because the container is under pressure.
 const needsAttention = (c: ContainerAdvice) => hasRequestAdvice(c) || jvmNeedsAttention(c) || !!c.cpu.held || !!c.memory.held
 
 // The values to paste: recommended where there is advice, the current request otherwise.
@@ -26,6 +32,8 @@ const yamlFor = (w: WorkloadAdvice, c: ContainerAdvice) => {
   return lines.join('\n')
 }
 
+// Change shows one resource's advice: the current request crossed out before the recommended
+// one, or why it stays as it is (no data, it fits, or held back with the reason).
 function Change({ advice }: { advice: ResourceAdvice }) {
   if (advice.action === 'unknown') return <span className="text-slate-300">no data</span>
   if (advice.action === 'keep' && advice.held) {
@@ -43,6 +51,8 @@ function Change({ advice }: { advice: ResourceAdvice }) {
   )
 }
 
+// CopyButton copies text to the clipboard and shows a tick for a moment; its tooltip shows what
+// it copies. Without the Clipboard API (a page served over plain HTTP) it does nothing.
 function CopyButton({ text, label = 'Copy as YAML' }: { text: string; label?: string }) {
   const [copied, setCopied] = useState(false)
   return (
@@ -68,6 +78,8 @@ const findingTone: Record<JVMFinding['severity'], { icon: ReactNode; label: stri
   note: { icon: <Info size={12} className="text-slate-400 shrink-0 mt-0.5" />, label: 'Note' },
 }
 
+// JvmDetails explains a Java container's heap: where its size comes from, what the JVM metrics
+// show, the findings, and the recommended heap options with the memory and saving they bring.
 function JvmDetails({ jvm, currency }: { jvm: JVMAdvice; currency: string }) {
   return (
     <div className="rounded-lg border border-orange-100 bg-orange-50/50 px-3 py-2 text-xs text-slate-600 space-y-1.5" aria-label="JVM advice">

@@ -30,17 +30,23 @@ const (
 	kindScalingConfig = "ScalingConfig"
 )
 
+// containerRef names one container of a workload.
 type containerRef struct {
 	workloadRef
 	container string
 }
 
+// workloadPressure is what is seen of a workload as a whole: its evicted pods by name, the
+// message of the last eviction and its HorizontalPodAutoscaler, if any.
 type workloadPressure struct {
 	evictedPods     map[string]bool
 	evictionMessage string
 	hpa             *risks.HPA
 }
 
+// observations is the pressure seen in one namespace, per container and per workload.
+// historical says whether VictoriaMetrics history over window is merged in, and warnings name
+// what could not be read.
 type observations struct {
 	containers map[containerRef]risks.Pressure
 	workloads  map[workloadRef]*workloadPressure
@@ -49,6 +55,7 @@ type observations struct {
 	warnings   []string
 }
 
+// workload returns the entry of ref, adding an empty one first, so callers fill it in place.
 func (o observations) workload(ref workloadRef) *workloadPressure {
 	if wp, ok := o.workloads[ref]; ok {
 		return wp
@@ -58,16 +65,20 @@ func (o observations) workload(ref workloadRef) *workloadPressure {
 	return wp
 }
 
+// pressureCache keeps each namespace's observations for recommendationTTL, so the risks page,
+// the risk alerts and right-sizing advice share one read of pods, HPAs and history.
 type pressureCache struct {
 	mu      sync.Mutex
 	entries map[string]cachedObservations
 }
 
+// cachedObservations is a namespace's observations with the time they were gathered.
 type cachedObservations struct {
 	obs observations
 	at  time.Time
 }
 
+// get returns the observations of ns and whether they are still fresh enough to use.
 func (c *pressureCache) get(ns string) (observations, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -75,6 +86,8 @@ func (c *pressureCache) get(ns string) (observations, bool) {
 	return e.obs, ok && time.Since(e.at) < recommendationTTL
 }
 
+// put stores the observations of ns and drops every expired entry, so namespaces nobody asks
+// about any more do not stay in memory.
 func (c *pressureCache) put(ns string, obs observations) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -89,6 +102,9 @@ func (c *pressureCache) put(ns string, obs observations) {
 	c.entries[ns] = cachedObservations{obs: obs, at: time.Now()}
 }
 
+// pressure gathers restarts, OOM kills, crash loops, evictions and capped HPAs of the workloads in
+// ns, plus throttling and past events from VictoriaMetrics when connected. A pod goes to the
+// workload with the longest name that owns it; a source that cannot be read becomes a warning.
 func (s *Server) pressure(ctx context.Context, ns string, workloads []rightsizing.Workload) observations {
 	if obs, ok := s.pressureCache.get(ns); ok {
 		return obs
@@ -163,6 +179,8 @@ func (s *Server) pressure(ctx context.Context, ns string, workloads []rightsizin
 	return obs
 }
 
+// crashLooping reports a container in CrashLoopBackOff, or one that exited after a restart and
+// will be restarted again under the pod's restart policy. A pod being deleted never counts.
 func crashLooping(pod corev1.Pod, cs corev1.ContainerStatus) bool {
 	if pod.DeletionTimestamp != nil {
 		return false
@@ -184,6 +202,8 @@ func crashLooping(pod corev1.Pod, cs corev1.ContainerStatus) bool {
 	return true
 }
 
+// wantedReplicas works out the replicas an HPA would ask for without its maximum, as the HPA
+// does from resource utilization targets; it is 0 when no such target reports a value.
 func wantedReplicas(h autoscalingv2.HorizontalPodAutoscaler) int32 {
 	targets := map[corev1.ResourceName]int32{}
 	for _, m := range h.Spec.Metrics {
@@ -206,6 +226,9 @@ func wantedReplicas(h autoscalingv2.HorizontalPodAutoscaler) int32 {
 	return wanted
 }
 
+// mergeHistory adds VictoriaMetrics history to the current observations, keeping the higher
+// throttling share and restart count. History only says whether a pod was OOM-killed, so OOM
+// kills count the distinct pods; series of pods no workload owns are skipped.
 func mergeHistory(obs observations, history *metrics.PressureHistory, owner func(string) (workloadRef, bool)) {
 	oomPods := map[containerRef]map[string]bool{}
 	for key, h := range history.Containers {
@@ -233,6 +256,8 @@ func mergeHistory(obs observations, history *metrics.PressureHistory, owner func
 	}
 }
 
+// peakMemory returns the highest memory demand, in bytes, of the named container across the
+// workload's pods, or 0 without data.
 func peakMemory(w rightsizing.Workload, container string, demand map[metrics.ContainerKey]metrics.Usage) float64 {
 	peak := 0.0
 	for key, u := range demand {
@@ -243,6 +268,8 @@ func peakMemory(w rightsizing.Workload, container string, demand map[metrics.Con
 	return peak
 }
 
+// holdUnderPressure marks, in place, the containers whose CPU is throttled or whose memory was
+// OOM-killed, evicted or is near its limit, so right-sizing advice does not cut that resource.
 func holdUnderPressure(workloads []rightsizing.Workload, obs observations, demand map[metrics.ContainerKey]metrics.Usage) {
 	for i := range workloads {
 		w := &workloads[i]
@@ -258,6 +285,8 @@ func holdUnderPressure(workloads []rightsizing.Workload, obs observations, deman
 	}
 }
 
+// handleRisks serves GET /api/namespaces/{ns}/risks; a namespace whose workloads cannot be read
+// answers 503.
 func (s *Server) handleRisks(w http.ResponseWriter, r *http.Request) {
 	report, err := s.risks(r.Context(), r.PathValue("ns"))
 	if err != nil {
@@ -267,6 +296,9 @@ func (s *Server) handleRisks(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, report)
 }
 
+// risks assesses the performance risks of a namespace's workloads, critical first, including a
+// schedule that wakes them slower than its prewarm covers. Missing right-sizing advice only drops
+// memory peaks and JVM findings, and only the first warning is reported.
 func (s *Server) risks(ctx context.Context, ns string) (risks.Report, error) {
 	workloads, err := s.workloadRequests(ctx, ns)
 	if err != nil {
@@ -327,6 +359,8 @@ func (s *Server) risks(ctx context.Context, ns string) (risks.Report, error) {
 	return report, nil
 }
 
+// scheduleOwner returns the schedule that scales ns, with its kind, status and prewarm: the group
+// that owns it, else the ScalingConfig that targets it. It returns a nil object when there is none.
 func (s *Server) scheduleOwner(ctx context.Context, ns string) (client.Object, string, *finopsv1.ScheduleStatus, *finopsv1.Prewarm) {
 	var groups finopsv1.ScalingGroupList
 	if err := s.Client.List(ctx, &groups, client.InNamespace(config.OperatorNamespace())); err == nil {
@@ -350,6 +384,9 @@ func (s *Server) scheduleOwner(ctx context.Context, ns string) (client.Object, s
 	return nil, "", nil, nil
 }
 
+// wakeUpRisks reports when the slowest recorded wake-up of the namespace's schedule outlasts its
+// prewarm lead. The fix is priced over the next week's starts without the lead, scaled to a
+// month, and the workloads' requests with at least one replica each.
 func (s *Server) wakeUpRisks(ctx context.Context, ns string, workloads []rightsizing.Workload, rates pricing.Rates, now time.Time) []risks.Risk {
 	owner, kind, status, prewarm := s.scheduleOwner(ctx, ns)
 	if owner == nil || len(status.RecentWakeUps) == 0 {
@@ -381,6 +418,8 @@ func (s *Server) wakeUpRisks(ctx context.Context, ns string, workloads []rightsi
 	})
 }
 
+// quantityBytes parses a Kubernetes quantity such as "512Mi", returning 0 for an empty or
+// invalid one.
 func quantityBytes(s string) float64 {
 	if s == "" {
 		return 0

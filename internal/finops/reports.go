@@ -310,6 +310,9 @@ func (d *DigestScheduler) Send(ctx context.Context, period, by string) (ReportEn
 	}, md)
 }
 
+// digest builds the digest from the API's overview, asking again every overviewInterval, at most
+// overviewWaits times, while right-sizing advice is still being calculated so its opportunities are
+// included. Without an Overview it uses a fresh snapshot instead. Open risks are added either way.
 func (d *DigestScheduler) digest(ctx context.Context, period string, now time.Time) (Digest, error) {
 	if d.Overview == nil {
 		return BuildDigest(ctx, d.Client, d.Pricing.Rates(ctx), d.Namespace, period, now)

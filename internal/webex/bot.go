@@ -69,7 +69,7 @@ type command struct {
 }
 
 // ProcessMessage handles one message. Every message that is addressed to this bot gets a
-// reply — an unknown command answers with the help text — and every failure to reply is
+// reply (an unknown command answers with the help text), and every failure to reply is
 // returned instead of being dropped.
 func (b *Bot) ProcessMessage(ctx context.Context, msg *Message) error {
 	log := logf.FromContext(ctx).WithName("webex-bot")
@@ -266,11 +266,11 @@ func (b *Bot) helpText() string {
 	}
 	var sb strings.Builder
 	sb.WriteString("**CostDeck commands**\n\n")
-	fmt.Fprintf(&sb, "- `%slist` — all groups and namespace configs with their state\n", p)
-	fmt.Fprintf(&sb, "- `%sstatus group <name>` / `%sstatus config <name>` — details\n", p, p)
+	fmt.Fprintf(&sb, "- `%slist`: all groups and namespace configs with their state\n", p)
+	fmt.Fprintf(&sb, "- `%sstatus group <name>` / `%sstatus config <name>`: details\n", p, p)
 	fmt.Fprintf(&sb, "- `%sscale group <name> up|down [for 4h | until next | forever]`\n", p)
 	fmt.Fprintf(&sb, "- `%sscale config <namespace> up|down [...]`\n", p)
-	fmt.Fprintf(&sb, "- `%sresume group|config <name>` — drop the override, follow the schedule again\n", p)
+	fmt.Fprintf(&sb, "- `%sresume group|config <name>`: drop the override, follow the schedule again\n", p)
 	sb.WriteString("\nWithout a duration, a scale command holds until the next scheduled change.")
 	if b.ClusterName != "" {
 		sb.WriteString(" In a space shared by several clusters, start with the cluster name to target one.")
@@ -342,7 +342,7 @@ func (b *Bot) status(ctx context.Context, cmd command) (string, error) {
 			return "", err
 		}
 		var sb strings.Builder
-		fmt.Fprintf(&sb, "**Group `%s`** — %s%s\n", g.Name, describeState(g.Status.Phase, g.Status.ScheduleStatus), describeNext(g.Status.ScheduleStatus))
+		fmt.Fprintf(&sb, "**Group `%s`**: %s%s\n", g.Name, describeState(g.Status.Phase, g.Status.ScheduleStatus), describeNext(g.Status.ScheduleStatus))
 		fmt.Fprintf(&sb, "Namespaces: %d/%d ready\n", g.Status.NamespacesReady, g.Status.NamespacesTotal)
 		if len(g.Spec.DependsOn) > 0 {
 			fmt.Fprintf(&sb, "Depends on: %s\n", strings.Join(g.Spec.DependsOn, ", "))
@@ -359,7 +359,7 @@ func (b *Bot) status(ctx context.Context, cmd command) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("**Config `%s`** (%s) — %s%s", c.Name, c.Spec.TargetNamespace,
+		return fmt.Sprintf("**Config `%s`** (%s): %s%s", c.Name, c.Spec.TargetNamespace,
 			describeState(c.Status.Phase, c.Status.ScheduleStatus), describeNext(c.Status.ScheduleStatus)), nil
 	case targetNamespaces:
 		return b.overview(ctx)
@@ -412,6 +412,9 @@ func (b *Bot) findConfig(ctx context.Context, cmd command) (*finopsv1.ScalingCon
 	return nil, fmt.Errorf("no namespace config `%s`", cmd.target)
 }
 
+// scale sets spec.active and spec.activeUntil on the named group or namespace config and follows
+// the change in the command's thread. Without a duration it holds until the next scheduled change,
+// or until resumed when the schedule never changes; the deadline is worked out again on each retry.
 func (b *Bot) scale(ctx context.Context, msg *Message, cmd command) (string, error) {
 	var active bool
 	switch cmd.action {
@@ -480,7 +483,7 @@ func (b *Bot) scale(ctx context.Context, msg *Message, cmd command) (string, err
 	if active {
 		direction = "up"
 	}
-	return fmt.Sprintf("🚀 Scaling %s `%s` %s — %s.", cmd.targetType, name, direction, describeHold(until, timetable())), nil
+	return fmt.Sprintf("🚀 Scaling %s `%s` %s, %s.", cmd.targetType, name, direction, describeHold(until, timetable())), nil
 }
 
 // resolveUntil turns the parsed duration into spec.activeUntil.
@@ -591,7 +594,7 @@ func (b *Bot) monitor(msg *Message, kind string, obj client.Object, active bool)
 			select {
 			case <-ctx.Done():
 				if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-					send(fmt.Sprintf("⏳ %s `%s` has not reached %s after %s — check `status %s %s`.", capitalize(kind), key.Name, want, timeout, kind, key.Name))
+					send(fmt.Sprintf("⏳ %s `%s` has not reached %s after %s; check `status %s %s`.", capitalize(kind), key.Name, want, timeout, kind, key.Name))
 				}
 				return
 			case <-ticker.C:

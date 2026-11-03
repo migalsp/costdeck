@@ -177,6 +177,9 @@ func (e *Engine) ResumeGitOps(ctx context.Context, ns string, exclusions []strin
 	return nil
 }
 
+// gitOpsOwnersWithWorkloads finds the GitOps owner of each workload a schedule scales in a
+// namespace and returns the owners once each, sorted as String renders them, with the
+// workloads each one manages.
 func (e *Engine) gitOpsOwnersWithWorkloads(ctx context.Context, ns string, exclusions []string) ([]GitOpsOwner, map[GitOpsOwner][]client.Object, error) {
 	objs, err := e.listScalableResources(ctx, ns, exclusions)
 	if err != nil {
@@ -236,6 +239,10 @@ func (e *Engine) gitOpsObject(ctx context.Context, o GitOpsOwner, workloads []cl
 	return nil, fmt.Errorf("%d Applications are named %s and none lists these workloads", len(named), o.Name)
 }
 
+// outsideTheSchedule says why pausing a GitOps object could reach beyond the schedule, or ""
+// when it cannot: a Kustomization or Application must list the workloads in its status and
+// touch only allowed namespaces, and a HelmRelease must install into the workloads' namespace,
+// which must be allowed.
 func outsideTheSchedule(obj *unstructured.Unstructured, o GitOpsOwner, workloads []client.Object, allowed []string) string {
 	switch o.Kind {
 	case kustomizationGVK.Kind:
@@ -269,10 +276,14 @@ func outsideTheSchedule(obj *unstructured.Unstructured, o GitOpsOwner, workloads
 	return ""
 }
 
+// namespaceObjectIn reports whether a cluster-scoped resource is the Namespace object of an
+// allowed namespace, the one cluster-scoped thing a pausable GitOps object may manage.
 func namespaceObjectIn(kind, name string, allowed []string) bool {
 	return kind == "Namespace" && slices.Contains(allowed, name)
 }
 
+// workloadRef returns the API group and kind GitOps tools record for a workload:
+// argoproj.io for an Argo Rollout, apps otherwise.
 func workloadRef(w client.Object) (group, kind string) {
 	kind = workloadKind(w)
 	if kind == kindRollout {
@@ -281,6 +292,8 @@ func workloadRef(w client.Object) (group, kind string) {
 	return "apps", kind
 }
 
+// notInInventory lists, as "Kind name", the workloads missing from a Flux Kustomization's
+// status.inventory, whose entry ids are <namespace>_<name>_<group>_<kind>.
 func notInInventory(obj *unstructured.Unstructured, workloads []client.Object) []string {
 	entries, _, _ := unstructured.NestedSlice(obj.Object, "status", "inventory", "entries")
 	ids := map[string]bool{}
@@ -300,6 +313,9 @@ func notInInventory(obj *unstructured.Unstructured, workloads []client.Object) [
 	return missing
 }
 
+// notListedByApplication lists, as "Kind name", the workloads missing from an Argo CD
+// Application's status.resources; gitOpsObject also uses it to pick among Applications that
+// share a name.
 func notListedByApplication(obj *unstructured.Unstructured, workloads []client.Object) []string {
 	resources, _, _ := unstructured.NestedSlice(obj.Object, "status", "resources")
 	listed := map[string]bool{}
@@ -321,6 +337,9 @@ func notListedByApplication(obj *unstructured.Unstructured, workloads []client.O
 	return missing
 }
 
+// applicationOutside lists, sorted, what an Argo CD Application manages besides allowed: its
+// destination namespace and the namespaces in status.resources, plus "cluster-scoped
+// resources" for any cluster-scoped one other than an allowed Namespace.
 func applicationOutside(obj *unstructured.Unstructured, allowed []string) []string {
 	var out []string
 	add := func(what string) {

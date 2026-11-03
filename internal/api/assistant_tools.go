@@ -389,16 +389,23 @@ func (s *Server) executeMutatingTool(ctx context.Context, name string, args map[
 	return "", errUnknownAction{name}
 }
 
+// errUnknownAction reports a name that is not a mutating tool in the registry; the API answers
+// it with 404.
 type errUnknownAction struct{ name string }
 
+// Error implements error with the quoted action name.
 func (e errUnknownAction) Error() string { return fmt.Sprintf("unknown action %q", e.name) }
 
 var errNeedsOperator = errors.New("this action needs the operator role")
 
+// errInvalidArgs wraps arguments that fail the tool's parameter schema, so the API answers 400
+// instead of treating the failure as a Kubernetes error.
 type errInvalidArgs struct{ error }
 
+// errNoScalingConfig reports a namespace that no ScalingConfig targets; the API answers 404.
 type errNoScalingConfig struct{ namespace string }
 
+// Error implements error and points the user to the Workload Scaling page to create one.
 func (e errNoScalingConfig) Error() string {
 	return fmt.Sprintf("namespace %s has no ScalingConfig; create one on the Workload Scaling page first", e.namespace)
 }
@@ -462,6 +469,8 @@ func overrideFields(obj client.Object) (**bool, **metav1.Time) {
 	panic(fmt.Sprintf("unexpected override target %T", obj))
 }
 
+// configForNamespace finds the ScalingConfig in the operator namespace that targets ns or is
+// named after it. It returns errNoScalingConfig when there is none.
 func (s *Server) configForNamespace(ctx context.Context, ns string) (*finopsv1.ScalingConfig, error) {
 	var list finopsv1.ScalingConfigList
 	if err := s.Client.List(ctx, &list, client.InNamespace(config.OperatorNamespace())); err != nil {
@@ -480,6 +489,8 @@ func toJSON(v any) (string, error) {
 	return string(b), err
 }
 
+// toolClusterOverview totals the allocatable capacity of every node and the requests of pods
+// that have not finished, and prices both with the current rates, as JSON for the assistant.
 func (s *Server) toolClusterOverview(ctx context.Context) (string, error) {
 	var nodes corev1.NodeList
 	if err := s.Client.List(ctx, &nodes); err != nil {

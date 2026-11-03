@@ -322,6 +322,9 @@ func (p *AWSProvider) scaleEC2(ctx context.Context, target finopsv1.ExternalTarg
 	return nil
 }
 
+// isEC2Ready reports whether the instance is running, or stopped when active is false, in
+// the target's region, else the provider's. Pending and stopping count as not yet, and an
+// instance EC2 does not know is an error.
 func (p *AWSProvider) isEC2Ready(ctx context.Context, target finopsv1.ExternalTarget, active bool) (bool, error) {
 	clientCfg := p.cfg
 	if target.Region != "" {
@@ -347,6 +350,8 @@ func (p *AWSProvider) isEC2Ready(ctx context.Context, target finopsv1.ExternalTa
 	return state == ec2types.InstanceStateNameStopped, nil
 }
 
+// discoverEC2 lists the running and stopped instances that carry every given tag, in the
+// provider's region only, named after their Name tag.
 func (p *AWSProvider) discoverEC2(ctx context.Context, tags map[string]string) ([]finopsv1.ExternalTarget, error) {
 	ec2Client := ec2.NewFromConfig(p.cfg)
 	var targets []finopsv1.ExternalTarget
@@ -406,6 +411,7 @@ func (p *AWSProvider) getEC2Name(tags []ec2types.Tag) string {
 	return ""
 }
 
+// instanceState returns the instance's state name, or "" when EC2 reports none.
 func instanceState(i ec2types.Instance) ec2types.InstanceStateName {
 	if i.State == nil {
 		return ""

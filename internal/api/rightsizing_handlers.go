@@ -55,6 +55,8 @@ func (c *recommendationCache) get(ns string) (rightsizing.Report, bool) {
 	return e.report, ok && time.Since(e.at) < e.ttl
 }
 
+// put caches a namespace's advice and sweeps out expired entries. Advice with any container still
+// lacking usage is kept only for partialTTL, so it fills in soon after new pods report.
 func (c *recommendationCache) put(ns string, r rightsizing.Report) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -204,6 +206,9 @@ func (s *Server) workloadRequests(ctx context.Context, ns string) ([]rightsizing
 	return out, nil
 }
 
+// policyFor returns the first policy whose selector matches the pod labels, nil when none does.
+// Callers sort policies oldest first, so the oldest match wins; a policy without a selector
+// matches every workload, and one with an invalid selector matches none.
 func policyFor(policies []finopsv1.RightsizingPolicy, podLabels map[string]string) *finopsv1.RightsizingPolicy {
 	for i := range policies {
 		sel := policies[i].Spec.Selector
@@ -218,6 +223,8 @@ func policyFor(policies []finopsv1.RightsizingPolicy, podLabels map[string]strin
 	return nil
 }
 
+// toPolicy converts a RightsizingPolicy into the bounds the analysis applies; a headroom
+// percentage becomes a multiplier, so 20 means 1.2.
 func toPolicy(p finopsv1.RightsizingPolicy) *rightsizing.Policy {
 	bounds := func(r finopsv1.ResourcePolicy) rightsizing.Bounds {
 		var b rightsizing.Bounds
@@ -241,6 +248,9 @@ func toPolicy(p finopsv1.RightsizingPolicy) *rightsizing.Policy {
 
 const defaultContainerAnnotation = "kubectl.kubernetes.io/default-container"
 
+// toWorkload reads the requests and limits of a pod template's containers and which of them run
+// Java. A nil replica count means one. The runtime annotation "java" marks only the main container,
+// so sidecars are not taken for JVMs, while "none" turns detection off for every container.
 func toWorkload(kind, name string, replicas *int32, template corev1.PodTemplateSpec, runtimeOverride string) rightsizing.Workload {
 	w := rightsizing.Workload{Kind: kind, Name: name, Replicas: 1}
 	if replicas != nil {
@@ -267,6 +277,8 @@ func toWorkload(kind, name string, replicas *int32, template corev1.PodTemplateS
 	return w
 }
 
+// mainContainerName returns the container named by kubectl's default-container annotation when it
+// exists, otherwise the first container, or "" for a template without containers.
 func mainContainerName(template corev1.PodTemplateSpec) string {
 	named := template.Annotations[defaultContainerAnnotation]
 	if slices.ContainsFunc(template.Spec.Containers, func(c corev1.Container) bool { return c.Name == named }) {
@@ -278,6 +290,7 @@ func mainContainerName(template corev1.PodTemplateSpec) string {
 	return template.Spec.Containers[0].Name
 }
 
+// hasJavaAdvice reports whether any container in the report has JVM advice.
 func hasJavaAdvice(r rightsizing.Report) bool {
 	return slices.ContainsFunc(r.Workloads, func(w rightsizing.WorkloadAdvice) bool {
 		return slices.ContainsFunc(w.Containers, func(c rightsizing.ContainerAdvice) bool { return c.JVM != nil })

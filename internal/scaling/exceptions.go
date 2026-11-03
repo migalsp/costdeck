@@ -169,6 +169,8 @@ func (tt Timetable) ActiveAt(t time.Time) bool {
 	return tt.activeWithoutLead(t) || (tt.Lead > 0 && tt.activeWithoutLead(t.Add(tt.Lead)))
 }
 
+// activeWithoutLead says whether the target should be up at t, ignoring prewarm: the
+// exception in force decides, else the schedules.
 func (tt Timetable) activeWithoutLead(t time.Time) bool {
 	if ex := tt.exceptionAt(t); ex != nil {
 		return ex.Active
@@ -176,10 +178,14 @@ func (tt Timetable) activeWithoutLead(t time.Time) bool {
 	return (&Engine{}).IsActiveAt(t, tt.Schedules, nil)
 }
 
+// prewarming reports whether t falls in the lead before a start: down at t on its own, but
+// up Lead later.
 func (tt Timetable) prewarming(t time.Time) bool {
 	return tt.Lead > 0 && !tt.activeWithoutLead(t) && tt.activeWithoutLead(t.Add(tt.Lead))
 }
 
+// exceptionsDecide reports whether exceptions alone decide ActiveAt at t: one covers t and,
+// with a lead, t+Lead too. NextChange then skips scanning the schedules minute by minute.
 func (tt Timetable) exceptionsDecide(t time.Time) bool {
 	return tt.exceptionAt(t) != nil && (tt.Lead <= 0 || tt.exceptionAt(t.Add(tt.Lead)) != nil)
 }

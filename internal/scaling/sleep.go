@@ -124,6 +124,8 @@ func (e *Engine) SleepRoutes(ctx context.Context, ns string, page SleepBackend) 
 	return asleep, nil
 }
 
+// pointsAt reports whether every rule of a route has the sleep page's current Service as its
+// only backend, matching name, namespace and port (decoded as int64 or float64).
 func pointsAt(rules []any, page SleepBackend) bool {
 	for _, raw := range rules {
 		rule, _ := raw.(map[string]any)

@@ -105,6 +105,9 @@ func (s *Server) handlePreviewSchedule(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// previewSchedule works out the timetable, the namespaces and what stops in each, and the saving
+// of a schedule at now. A draft group is planned among the saved ones as the controller would,
+// so a namespace another group owns is reported with its owner and left out of the saving.
 func (s *Server) previewSchedule(ctx context.Context, req previewRequest, now time.Time) (*previewResponse, error) {
 	resp := &previewResponse{Namespaces: []namespacePreview{}, CloudTargets: req.Spec.ExternalTargets, Problems: []string{}, Warnings: []string{}}
 	if resp.CloudTargets == nil {
@@ -263,6 +266,8 @@ func hibernateError(err error) string {
 	return err.Error()
 }
 
+// recentWakeUps returns the wake-ups recorded on the saved group or config being edited, so the
+// preview's prewarm lead matches the controller's. A new or unreadable schedule has none.
 func (s *Server) recentWakeUps(ctx context.Context, kind, name string) []finopsv1.WakeUp {
 	if name == "" {
 		return nil

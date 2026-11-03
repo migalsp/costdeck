@@ -285,6 +285,9 @@ func (r *Reaper) Run(ctx context.Context) error {
 	return nil
 }
 
+// deletionBudget returns how many namespaces may still be deleted this hour: maxDeletionsAnHour
+// less the deletions the log ConfigMap records for the last hour, so the limit survives restarts
+// and leader changes.
 func deletionBudget(ctx context.Context, c client.Reader, now time.Time) (int, error) {
 	done, err := Deleted(ctx, c)
 	if err != nil {
@@ -299,6 +302,9 @@ func deletionBudget(ctx context.Context, c client.Reader, now time.Time) (int, e
 	return budget, nil
 }
 
+// warn posts the expiry warning and stamps WarnedAnnotation with the expiry it warned about, so an
+// extension warns again. A postponed warning, for a namespace that expired unwarned, also writes
+// the new expiry to ExpiresAnnotation, which gives the namespace the full warning lead.
 func (r *Reaper) warn(ctx context.Context, e Entry, postponed bool) error {
 	why := "preview cleanup deletes it " + describe(e)
 	if postponed {
@@ -324,6 +330,8 @@ func (r *Reaper) warn(ctx context.Context, e Entry, postponed bool) error {
 	return r.Client.Patch(ctx, ns, client.RawPatch(types.MergePatchType, patch))
 }
 
+// delete removes the namespace in the background, treating one already gone or recreated under the
+// same name as done, then records and announces the deletion; failing to do either is only logged.
 func (r *Reaper) delete(ctx context.Context, e Entry, now time.Time) error {
 	ns := &corev1.Namespace{Name: e.Namespace}
 	// The UID precondition keeps a namespace recreated under the same name safe.
