@@ -13,7 +13,7 @@
 
 ## Docs
 
-- [Landing page as Markdown](https://migalsp.github.io/costdeck/index.md): what it is, who it is for, how it compares, FAQ
+- [Landing page as Markdown](https://migalsp.github.io/costdeck/index.md): what it is, who it is for, FAQ
 - [README](https://raw.githubusercontent.com/migalsp/costdeck/main/README.md): features and screenshots
 - [Installation and configuration](https://raw.githubusercontent.com/migalsp/costdeck/main/docs/installation.md): Helm, install.yaml, sign-in, SSO, cloud accounts, schedules, right-sizing, MCP, chart values
 - [OpenAPI specification](https://raw.githubusercontent.com/migalsp/costdeck/main/internal/api/openapi.yaml): REST API

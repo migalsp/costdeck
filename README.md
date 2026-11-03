@@ -37,14 +37,14 @@ sign-in steps.
 
 ## Why
 
-| The problem in 2026 | What Cost Deck does |
+| The problem | What Cost Deck does |
 |---|---|
-| 29% of cloud spend is wasted, the first rise in five years ([Flexera, 2026](https://www.flexera.com/about-us/press-center/flexera-finds-cloud-value-is-rising-while-ai-waste-grows)) | Cost per namespace, team and environment, split into used, idle and unrequested, and reconciled with the AWS, Azure or Google Cloud bill |
-| Kubernetes CPU use averages 8% and memory 20% of what clusters reserve ([CAST AI, 2026](https://cast.ai/blog/2026-state-of-kubernetes-resource-optimization-cpu-at-8-memory-at-20-and-getting-worse/)) | Right-sizing advice with the saving per workload, Java heaps included, applied with a guard that rolls back or sent as a pull request |
-| Teams pad requests because cutting them risks throttling and OOM kills (CAST AI, 2026) | Performance risks for every namespace, and advice that never cuts a resource under pressure |
+| Clusters pay for capacity nobody uses, and the bill does not say whose it is | Cost per namespace, team and environment, split into used, idle and unrequested, and reconciled with the AWS, Azure or Google Cloud bill |
+| Pods reserve far more CPU and memory than they use | Right-sizing advice with the saving per workload, Java heaps included, applied with a guard that rolls back or sent as a pull request |
+| Teams pad requests because cutting them risks throttling and OOM kills | Performance risks for every namespace, and advice that never cuts a resource under pressure |
 | Dev and staging run 168 hours a week for about 50 hours of work | Schedules that scale environments, and the cloud databases behind them, to zero and wake them before the day starts |
-| 98% of FinOps teams manage AI spend ([State of FinOps 2026](https://data.finops.org/)), yet only 26% of large companies see it in real time ([KPMG, 2026](https://kpmg.com/us/en/media/news/q2-ai-pulse-2026.html)) | LLM API spend by team and model, the cost per million tokens of models you serve, GPU cost and idle GPUs |
-| For one company in three, finding why a cost spiked takes a week or more ([Harness, 2026](https://www.harness.io/state-of-ai-in-finops-2026)) | Budgets with forecasts, daily anomaly alerts and digests in Slack, Teams, email or Webex |
+| LLM tokens and GPU hours arrive on one invoice, with no team or model attached | LLM API spend by team and model, the cost per million tokens of models you serve, GPU cost and idle GPUs |
+| When a cost jumps, finding the namespace or the deploy behind it takes days | Budgets with forecasts, daily anomaly alerts and digests in Slack, Teams, email or Webex |
 
 ![Cost overview: the node bill split into used, idle and unrequested capacity, the month to date, savings and the daily cost by namespace](docs/assets/screenshots/overview.png)
 
@@ -130,21 +130,6 @@ sign-in steps.
 - **Access**: viewer, operator and admin roles, single sign-on with Entra ID, Keycloak or
   any OpenID Connect provider, API tokens, and Secrets read only in its own namespace.
 - **GitOps**: Argo CD and Flux are detected, and can be paused while an environment sleeps.
-
-## How it compares
-
-- **OpenCost and Kubecost** measure and allocate cost; OpenCost is the CNCF project for it.
-  Cost Deck allocates too, and also acts: schedules, guarded right-sizing and performance
-  risks. If allocation is all you need, OpenCost is the more mature choice.
-- **kube-green and kube-downscaler** scale workloads down on a schedule. Cost Deck adds
-  dependencies and start order, cloud databases and VMs, holidays, a sleep page, and what
-  each schedule saved.
-- **Karpenter and Cluster Autoscaler** remove empty nodes, and they work with Cost Deck: it
-  empties nodes, they remove them, and Cost Deck shows what kept the rest.
-- **Goldilocks and the VPA recommender** suggest requests. Cost Deck adds the money, Java
-  heap sizing, performance risks, and applying with a guard or a pull request.
-- **Not the right tool** for node autoscaling, managing reserved instances and savings
-  plans, or costs outside Kubernetes and the resources its schedules stop.
 
 ## Quick start
 

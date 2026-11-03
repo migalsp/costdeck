@@ -658,28 +658,6 @@ code {
   color: var(--text);
 }
 
-.leak .source {
-  margin-top: auto;
-  padding-top: 1.25rem;
-  color: var(--text-3);
-  font-size: 0.8125rem;
-  line-height: 1.45;
-}
-
-.source-label {
-  display: inline-block;
-  margin-right: 0.4rem;
-  padding: 0.1rem 0.4rem;
-  border: 1px solid var(--border);
-  border-radius: 0.3rem;
-  background: var(--bg-tint);
-  font-family: var(--font-mono);
-  font-size: 0.6875rem;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
 .closing-line {
   max-width: 46rem;
   margin: clamp(2rem, 5vw, 3rem) 0 0;
@@ -1029,44 +1007,6 @@ code {
   color: var(--text);
 }
 
-.comparison {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--surface);
-}
-
-.comparison li {
-  display: grid;
-  grid-template-columns: minmax(0, 17rem) minmax(0, 1fr);
-  gap: 0.375rem 2rem;
-  padding: 1.25rem 1.5rem;
-  border-top: 1px solid var(--border);
-}
-
-.comparison li:first-child {
-  border-top: 0;
-}
-
-.comparison strong {
-  color: var(--text);
-  line-height: 1.5;
-}
-
-.comparison .comparison-limits {
-  background: var(--surface-2);
-}
-
-@media (max-width: 759.98px) {
-  .comparison li {
-    grid-template-columns: minmax(0, 1fr);
-    padding: 1.125rem 1.25rem;
-  }
-}
-
 .phases {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 19rem), 1fr));
@@ -1105,13 +1045,6 @@ code {
 
 .phase-now h3 {
   color: var(--accent);
-}
-
-.phase-period {
-  margin: 0.25rem 0 0;
-  color: var(--text-3);
-  font-family: var(--font-mono);
-  font-size: 0.8125rem;
 }
 
 .phase ul {
@@ -1358,10 +1291,6 @@ code {
   color: var(--text-2);
 }
 
-.final-cta {
-  padding-top: 0;
-}
-
 .cta-panel {
   position: relative;
   isolation: isolate;
@@ -1414,7 +1343,7 @@ code {
 
 @media (min-width: 960px) {
   .footer-inner {
-    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-columns: auto minmax(0, 1fr);
     align-items: center;
     gap: 2.5rem;
   }
@@ -1447,16 +1376,6 @@ code {
 .footer-links a:hover {
   color: var(--text);
   text-decoration: underline;
-}
-
-.footer-notes {
-  display: grid;
-  gap: 0.125rem;
-  font-size: 0.875rem;
-}
-
-.footer-notes p {
-  margin: 0;
 }
 
 @media (prefers-reduced-motion: no-preference) {

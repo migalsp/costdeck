@@ -95,7 +95,6 @@
         <li><a href="#problem">Problem</a></li>
         <li><a href="#features">Features</a></li>
         <li><a href="#who">Who it is for</a></li>
-        <li><a href="#compare">Compare</a></li>
         <li><a href="#roadmap">Roadmap</a></li>
         <li><a href="#install">Install</a></li>
         <li class="nav-github">
@@ -168,49 +167,41 @@
   <section id="problem" class="section" aria-labelledby="problem-title">
     <div class="container">
       <header class="section-head">
-        <h2 id="problem-title">Where Kubernetes money leaks in 2026</h2>
-        <p class="section-intro">Cloud waste rose for the first time in five years, to 29% of spend (Flexera State of the Cloud 2026). Waste reduction is the top priority of FinOps teams today, and AI is the next one (State of FinOps 2026).</p>
+        <h2 id="problem-title">Where Kubernetes money leaks</h2>
+        <p class="section-intro">Most clusters pay for capacity nobody uses, and the bill does not say whose it is.</p>
       </header>
       <ul class="leaks">
         <li class="card leak">
           <h3>Requests far above use</h3>
-          <p>CPU use averages <strong>8%</strong> and memory <strong>20%</strong> of what Kubernetes clusters reserve, and both fell in a year.</p>
-          <p class="source"><span class="source-label">Source</span> CAST AI, 2026 State of Kubernetes Optimization</p>
+          <p>Pods reserve CPU and memory for a peak that rarely comes, and every reserved core is paid for <strong>in full</strong>.</p>
         </li>
         <li class="card leak">
           <h3>Environments that never sleep</h3>
           <p>Dev and staging run <strong>168 hours</strong> a week for about <strong>50 hours</strong> of work.</p>
-          <p class="source"><span class="source-label">Source</span> Arithmetic of a working week</p>
         </li>
         <li class="card leak">
           <h3>GPUs bought for the peak</h3>
-          <p>GPUs in Kubernetes average <strong>5%</strong> use, and <strong>79%</strong> of companies say theirs are busy half the time or less.</p>
-          <p class="source"><span class="source-label">Source</span> CAST AI, 2026; VentureBeat, October 2026</p>
+          <p>GPUs wait idle most of the day, and an idle GPU costs <strong>as much as a busy one</strong>.</p>
         </li>
         <li class="card leak">
           <h3>An AI bill nobody owns</h3>
-          <p><strong>98%</strong> of FinOps teams now manage AI spend, yet only <strong>26%</strong> of large companies see what their AI costs in real time.</p>
-          <p class="source"><span class="source-label">Source</span> State of FinOps 2026; KPMG AI Pulse, Q2 2026</p>
+          <p>LLM tokens and GPU hours arrive on <strong>one invoice</strong>, with no team or model attached.</p>
         </li>
         <li class="card leak">
           <h3>Budgets that miss</h3>
-          <p><strong>46.9%</strong> of enterprises report AI spend over budget.</p>
-          <p class="source"><span class="source-label">Source</span> Futurum, September 2026</p>
+          <p>Overspend shows up on the monthly bill, when it is <strong>too late</strong> to stop it.</p>
         </li>
         <li class="card leak">
           <h3>Spikes found too late</h3>
-          <p>For <strong>one company in three</strong>, finding why a cost spiked takes a week or more.</p>
-          <p class="source"><span class="source-label">Source</span> Harness, State of AI in FinOps 2026</p>
+          <p>When a cost jumps, finding the namespace or the deploy behind it takes <strong>days</strong>.</p>
         </li>
         <li class="card leak">
           <h3>No price per team</h3>
-          <p>Shared platforms and idle capacity are not split, so nobody owns their part; FinOps teams list shared cost and container allocation among the tools they want most.</p>
-          <p class="source"><span class="source-label">Source</span> State of FinOps 2026</p>
+          <p>Shared platforms and idle capacity are not split, so <strong>nobody owns</strong> their part of the bill.</p>
         </li>
         <li class="card leak">
           <h3>Cost found after the deploy</h3>
-          <p>Pricing a change before it ships is the <strong>second most wanted</strong> FinOps capability.</p>
-          <p class="source"><span class="source-label">Source</span> State of FinOps 2026</p>
+          <p>A change's price appears on <strong>next month's bill</strong> instead of in the pull request that made it.</p>
         </li>
       </ul>
       <p class="closing-line">Cost Deck gives every namespace and every token a price and an owner, and switches idle capacity off by itself.</p>
@@ -459,29 +450,29 @@
   <section id="trends" class="section section-tinted" aria-labelledby="trends-title">
     <div class="container">
       <header class="section-head">
-        <h2 id="trends-title">Built for FinOps in 2026</h2>
-        <p class="section-intro">What changed this year, and how Cost Deck answers it.</p>
+        <h2 id="trends-title">Built for how FinOps works now</h2>
+        <p class="section-intro">What FinOps teams ask for, and how Cost Deck answers it.</p>
       </header>
       <ul class="trends">
         <li class="card trend">
           <h3>FinOps for AI</h3>
-          <p>Monitoring tokens, LLM requests and GPU use is the capability FinOps teams want most (State of FinOps 2026). Cost Deck shows LLM API and GPU spend by team and model today; AI spend in team totals and budgets is next on the roadmap.</p>
+          <p>Tokens, LLM requests and GPU hours are a growing part of every cloud bill. Cost Deck shows LLM API and GPU spend by team and model today; AI spend in team totals and budgets is next on the roadmap.</p>
         </li>
         <li class="card trend">
           <h3>Beyond dashboards</h3>
-          <p>“Dashboards are table stakes of yesterday,” say practitioners, who ask for automated remediation they can trust (State of FinOps 2026). Cost Deck acts: schedules, and right-sizing applied with a rollback guard or sent as a pull request.</p>
+          <p>A dashboard shows the waste, and someone still has to remove it. Cost Deck acts: schedules, and right-sizing applied with a rollback guard or sent as a pull request.</p>
         </li>
         <li class="card trend">
           <h3>Shift left</h3>
-          <p>Pre-deployment costing is the second most wanted capability. Pull requests show what a manifest change will cost a month, and can fail above a limit.</p>
+          <p>A change is cheapest to fix before it ships. Pull requests show what a manifest change will cost a month, and can fail above a limit.</p>
         </li>
         <li class="card trend">
           <h3>Kubernetes goes elastic</h3>
-          <p>Kubernetes 1.36 resizes pod-level resources in place (beta), and 1.37 lets an HPA scale one workload to zero on external metrics (beta). Cost Deck puts whole environments to sleep: in order, with their dependencies, databases and cloud resources, on a schedule.</p>
+          <p>Kubernetes resizes pods in place and scales single workloads to zero. Cost Deck puts whole environments to sleep: in order, with their dependencies, databases and cloud resources, on a schedule.</p>
         </li>
         <li class="card trend">
           <h3>Agents join FinOps</h3>
-          <p>MCP servers and agents arrived across FinOps tools in 2026. Cost Deck's MCP server answers cost questions for Claude, Cursor and other clients, and offers changes only to operators, after confirmation.</p>
+          <p>Engineers ask an assistant before they open a dashboard. Cost Deck's MCP server answers cost questions for Claude, Cursor and other clients, and offers changes only to operators, after confirmation.</p>
         </li>
         <li class="card trend">
           <h3>One pane for all spend</h3>
@@ -507,25 +498,7 @@
     </div>
   </section>
 
-  <section id="compare" class="section section-tinted" aria-labelledby="compare-title">
-    <div class="container">
-      <header class="section-head">
-        <h2 id="compare-title">How it compares</h2>
-        <p class="section-intro">Honest notes, checked against each tool's documentation in November 2026.</p>
-      </header>
-      <ul class="comparison">
-        <li><strong>OpenCost and Kubecost</strong> <span>measure and allocate cost; OpenCost is the CNCF project for it. Cost Deck allocates too, and acts: schedules, guarded right-sizing and performance risks. If allocation is all you need, OpenCost is the more mature choice.</span></li>
-        <li><strong>kube-green and kube-downscaler</strong> <span>scale workloads down on a schedule. Cost Deck adds dependencies and start order, cloud databases and VMs, holidays, a sleep page, and what each schedule saved.</span></li>
-        <li><strong>HPA scale to zero (Kubernetes 1.37) and KEDA</strong> <span>scale one workload on demand. Cost Deck schedules whole environments and the resources behind them.</span></li>
-        <li><strong>Karpenter and Cluster Autoscaler</strong> <span>remove empty nodes, and work with Cost Deck: it empties the nodes, they remove them, Cost Deck shows what kept the rest.</span></li>
-        <li><strong>Goldilocks and the VPA recommender</strong> <span>suggest requests. Cost Deck adds the money, Java heap sizing, performance risks, and applying with a guard or a pull request.</span></li>
-        <li><strong>Commercial platforms (CAST AI, Spot Ocean, ScaleOps)</strong> <span>automate nodes and pods as a service. Cost Deck runs in your cluster, is free, and changes nothing until you allow it.</span></li>
-        <li class="comparison-limits"><strong>Not the right tool</strong> <span>for node autoscaling, managing reserved instances and savings plans, or costs outside Kubernetes and the resources its schedules stop.</span></li>
-      </ul>
-    </div>
-  </section>
-
-  <section id="roadmap" class="section" aria-labelledby="roadmap-title">
+  <section id="roadmap" class="section section-tinted" aria-labelledby="roadmap-title">
     <div class="container">
       <header class="section-head">
         <h2 id="roadmap-title">Roadmap</h2>
@@ -534,7 +507,6 @@
       <ol class="phases">
         <li class="card phase phase-now">
           <h3>Now</h3>
-          <p class="phase-period">Q4 2026 to Q1 2027</p>
           <ul>
             <li>Right-sizing in place without restarts</li>
             <li>Node pools to zero with their environments</li>
@@ -547,7 +519,6 @@
         </li>
         <li class="card phase">
           <h3>Next</h3>
-          <p class="phase-period">H1 2027</p>
           <ul>
             <li>Right-sizing on autopilot</li>
             <li>Unblocking node scale-down</li>
@@ -560,7 +531,6 @@
         </li>
         <li class="card phase">
           <h3>Later</h3>
-          <p class="phase-period">H2 2027</p>
           <ul>
             <li>Guardrails before deploy</li>
             <li>A FinOps agent that proposes changes for approval</li>
@@ -575,7 +545,7 @@
     </div>
   </section>
 
-  <section id="install" class="section section-tinted" aria-labelledby="install-title">
+  <section id="install" class="section" aria-labelledby="install-title">
     <div class="container">
       <header class="section-head">
         <h2 id="install-title">Install in one command</h2>
@@ -629,7 +599,7 @@ kubectl port-forward -n costdeck svc/costdeck-operator-api 8082:8082</code></pre
     </div>
   </section>
 
-  <section id="faq" class="section" aria-labelledby="faq-title">
+  <section id="faq" class="section section-tinted" aria-labelledby="faq-title">
     <div class="container faq-layout">
       <header class="section-head">
         <h2 id="faq-title">Frequently asked questions</h2>
@@ -676,10 +646,6 @@ kubectl port-forward -n costdeck svc/costdeck-operator-api 8082:8082</code></pre
           <p>Yes. Its MCP server at <code>/mcp</code> works with Claude Code, Claude Desktop, Cursor and other MCP clients, with an API token; a viewer token gives read-only tools.</p>
         </details>
         <details>
-          <summary>Is it an open-source Kubecost alternative?</summary>
-          <p>It covers cost allocation like OpenCost and Kubecost, and adds schedules to zero, right-sizing with a guard, budgets and performance risks in one operator. If allocation is all you need, OpenCost is the more mature choice.</p>
-        </details>
-        <details>
           <summary>What does it cost?</summary>
           <p>Nothing. It is Apache 2.0 with no paid tier; you pay only for the small pod it runs in (100m CPU and 128 MiB requested).</p>
         </details>
@@ -723,11 +689,6 @@ kubectl port-forward -n costdeck svc/costdeck-operator-api 8082:8082</code></pre
         <li><a href="https://github.com/migalsp/costdeck/releases">Releases</a></li>
       </ul>
     </nav>
-    <div class="footer-notes">
-      <p>No cookies. No tracking.</p>
-      <p>Screenshots from a demo cluster.</p>
-      <p>Last updated: <time datetime="2026-11-03">2026-11-03</time></p>
-    </div>
   </div>
 </footer>
 </body>
