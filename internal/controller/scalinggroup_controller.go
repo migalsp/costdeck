@@ -30,6 +30,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -739,6 +740,18 @@ func (r *ScalingGroupReconciler) release(ctx context.Context, group *finopsv1.Sc
 	var unreleased []string
 	for _, ns := range departed {
 		if owner, ok := plan.Owners[ns]; ok && owner != group.Name {
+			if !wasManaged(group, ns) {
+				continue
+			}
+			if err := r.handOver(ctx, group, ns, owner); err != nil {
+				logf.FromContext(ctx).Error(err, "Could not hand a namespace over to its new group", "namespace", ns, "group", owner)
+				unreleased = append(unreleased, ns)
+				continue
+			}
+			released = true
+			forgetOriginals(group, ns)
+			r.Recorder.Eventf(group, nil, corev1.EventTypeNormal, "NamespaceHandedOver", "Release",
+				"Namespace %s now belongs to group %s, which decides about its workloads", ns, owner)
 			continue
 		}
 		if err := releaseNamespace(ctx, r.Engine, ns, r.rulesFor(ctx, group, ns)); err != nil {
@@ -747,11 +760,7 @@ func (r *ScalingGroupReconciler) release(ctx context.Context, group *finopsv1.Sc
 			continue
 		}
 		released = true
-		for k := range group.Status.OriginalReplicas {
-			if strings.HasPrefix(k, ns+"/") {
-				delete(group.Status.OriginalReplicas, k)
-			}
-		}
+		forgetOriginals(group, ns)
 		r.Recorder.Eventf(group, nil, corev1.EventTypeNormal, "NamespaceReleased", "Release",
 			"Namespace %s left the group; restored what the group had scaled down", ns)
 	}
@@ -761,6 +770,41 @@ func (r *ScalingGroupReconciler) release(ctx context.Context, group *finopsv1.Sc
 		}
 	}
 	return unreleased
+}
+
+// wasManaged reports whether the group managed ns before it left: it was among the
+// namespaces the group managed at its last reconcile, or the group recorded replica counts
+// there. A namespace the group only saw through its selector while another group owned it
+// was never the group's.
+func wasManaged(group *finopsv1.ScalingGroup, ns string) bool {
+	return slices.Contains(group.Status.ManagedNamespaces, ns) || len(namespaceOriginals(group, ns)) > 0
+}
+
+// forgetOriginals drops the replica counts the group recorded for the workloads of ns.
+func forgetOriginals(group *finopsv1.ScalingGroup, ns string) {
+	for k := range group.Status.OriginalReplicas {
+		if strings.HasPrefix(k, ns+"/") {
+			delete(group.Status.OriginalReplicas, k)
+		}
+	}
+}
+
+// handOver leaves a namespace the group managed to the group that owns it now. Its workloads
+// are the new owner's to decide. Routes the group put on the sleep page are woken unless the
+// new owner has a sleep page of its own, which wakes them when it comes up and keeps them
+// asleep while it is down.
+func (r *ScalingGroupReconciler) handOver(ctx context.Context, group *finopsv1.ScalingGroup, ns, owner string) error {
+	successor := &finopsv1.ScalingGroup{}
+	if err := r.Get(ctx, types.NamespacedName{Namespace: group.Namespace, Name: owner}, successor); err != nil {
+		return fmt.Errorf("read group %s: %w", owner, err)
+	}
+	if successor.Spec.SleepPage {
+		return nil
+	}
+	if _, err := r.Engine.WakeRoutes(ctx, ns); err != nil && !errors.IsForbidden(err) {
+		return fmt.Errorf("wake the HTTPRoutes of %s: %w", ns, err)
+	}
+	return nil
 }
 
 // managedNamespaces lists, sorted, the namespaces the group manages now: its members less
@@ -867,8 +911,23 @@ func (r *ScalingGroupReconciler) finalize(ctx context.Context, group *finopsv1.S
 // releaseEverything restores the namespaces the group owns, members and those it still holds
 // replica counts for, starts every cloud target it stopped, counting one not running yet as a
 // failure, and updates the sleep page grant. It returns every failure together.
+// successors maps every namespace another group claims to the group that will own it once
+// this one is gone, so deletion hands those namespaces over instead of restoring them.
+func (r *ScalingGroupReconciler) successors(ctx context.Context, group *finopsv1.ScalingGroup) (map[string]string, error) {
+	var groups finopsv1.ScalingGroupList
+	if err := r.List(ctx, &groups, client.InNamespace(group.Namespace)); err != nil {
+		return nil, err
+	}
+	others := slices.DeleteFunc(groups.Items, func(g finopsv1.ScalingGroup) bool { return g.Name == group.Name })
+	return scaling.NamespaceOwners(others), nil
+}
+
 func (r *ScalingGroupReconciler) releaseEverything(ctx context.Context, group *finopsv1.ScalingGroup) error {
 	plan, err := r.planFor(ctx, group)
+	if err != nil {
+		return err
+	}
+	successors, err := r.successors(ctx, group)
 	if err != nil {
 		return err
 	}
@@ -876,7 +935,13 @@ func (r *ScalingGroupReconciler) releaseEverything(ctx context.Context, group *f
 	namespaces := group.Members()
 	namespaces = append(namespaces, removedNamespaces(group, namespaces)...)
 	for _, ns := range namespaces {
-		if owner, ok := plan.Owners[ns]; ok && owner != group.Name {
+		if slices.Contains(plan.ConflictingNamespaces, ns) {
+			continue
+		}
+		if successor, ok := successors[ns]; ok {
+			if err := r.handOver(ctx, group, ns, successor); err != nil {
+				errs = append(errs, err)
+			}
 			continue
 		}
 		if err := releaseNamespace(ctx, r.Engine, ns, r.rulesFor(ctx, group, ns)); err != nil {

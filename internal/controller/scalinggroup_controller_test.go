@@ -794,6 +794,25 @@ var _ = Describe("Two ScalingGroups claiming the same namespace", func() {
 		Expect(replicasIn("conflict-shared")).To(BeZero())
 	})
 
+	It("hands the shared namespace to the newer group when the older one is deleted, instead of restoring it", func() {
+		g := &finopsv1.ScalingGroup{}
+		Expect(k8sClient.Get(ctx, older, g)).To(Succeed())
+		g.Spec.Active = new(false)
+		Expect(k8sClient.Update(ctx, g)).To(Succeed())
+		_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: older})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(replicasIn("conflict-shared")).To(BeZero())
+		reconcileNewer()
+
+		Expect(rawClient.Delete(ctx, &finopsv1.ScalingGroup{Name: older.Name, Namespace: older.Namespace})).To(Succeed())
+		_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: older})
+		Expect(err).NotTo(HaveOccurred())
+		Eventually(func() error {
+			return k8sClient.Get(ctx, older, &finopsv1.ScalingGroup{})
+		}).Should(Satisfy(errors.IsNotFound))
+		Expect(replicasIn("conflict-shared")).To(BeZero(), "the newer group, down too, owns it now")
+	})
+
 	It("leaves the shared namespace to the older group, says so, and takes it over once that group is gone", func() {
 		g := reconcileNewer()
 		Expect(replicasIn("conflict-own")).To(BeZero())

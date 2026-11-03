@@ -157,6 +157,41 @@ var _ = Describe("Sleep page", func() {
 		Expect(g.Status.ManagedNamespaces).To(Equal([]string{"sleep-kept"}))
 	})
 
+	handOverTo := func(heirName string, heirSleepPage bool) (*unstructured.Unstructured, *ScalingGroupReconciler, types.NamespacedName) {
+		GinkgoHelper()
+		routeOnly("sleep-stays-" + heirName)
+		moved := routeOnly("sleep-moves-" + heirName)
+		r, groupKey := asleepGroup("sleep-first-"+heirName, "sleep-stays-"+heirName, "sleep-moves-"+heirName)
+		Expect(sleeping(moved)).To(BeTrue())
+		heirKey := types.NamespacedName{Name: "sleep-heir-" + heirName, Namespace: "default"}
+		Expect(k8sClient.Create(ctx, &finopsv1.ScalingGroup{Name: heirKey.Name, Namespace: heirKey.Namespace,
+			Spec: finopsv1.ScalingGroupSpec{Category: "Test", Namespaces: []string{"sleep-moves-" + heirName}, Schedules: closed, SleepPage: heirSleepPage}})).To(Succeed())
+		DeferCleanup(func() {
+			Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, &finopsv1.ScalingGroup{Name: heirKey.Name, Namespace: heirKey.Namespace}))).To(Succeed())
+		})
+		dropNamespace(groupKey, "sleep-stays-"+heirName)
+		_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: groupKey})
+		Expect(err).NotTo(HaveOccurred())
+		return moved, r, heirKey
+	}
+
+	It("wakes the routes of a namespace handed to a group without a sleep page", func() {
+		moved, _, _ := handOverTo("plain", false)
+		Expect(sleeping(moved)).To(BeFalse(), "the new group would never wake routes it did not put to sleep")
+	})
+
+	It("leaves the routes of a namespace handed to a group with a sleep page to that group", func() {
+		moved, r, heirKey := handOverTo("paged", true)
+		Expect(sleeping(moved)).To(BeTrue(), "the new group keeps them asleep while it is down")
+		heir := &finopsv1.ScalingGroup{}
+		Expect(k8sClient.Get(ctx, heirKey, heir)).To(Succeed())
+		heir.Spec.Schedules = open
+		Expect(k8sClient.Update(ctx, heir)).To(Succeed())
+		_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: heirKey})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(sleeping(moved)).To(BeFalse(), "and wakes them once it is up")
+	})
+
 	It("wakes the routes of a namespace with no workloads removed just before the group is deleted", func() {
 		kept, removed := routeOnly("sleep-kept-2"), routeOnly("sleep-removed-2")
 		r, groupKey := asleepGroup("sleep-deleted", "sleep-kept-2", "sleep-removed-2")

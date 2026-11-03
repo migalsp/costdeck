@@ -109,3 +109,13 @@ wait_for "the route of smoke-sleep-mate points at the sleep page" route_backend_
 expect_code 200 "smoke-sleep-routes taken out of the group while it sleeps" PUT /api/scaling/groups/smoke-sleep-pair "$SLEEP_PAIR_LEFT" -b "$JAR"
 wait_for "the route of the namespace that left leads to its application again" route_backend_is smoke-sleep-routes web
 holds_for 6 "the namespace still in the group keeps sleeping" route_backend_is smoke-sleep-mate "$RELEASE-sleep"
+
+log "A namespace handed to a schedule without a sleep page gets its route back"
+SLEEP_HEIR_BODY='{"metadata":{"name":"smoke-sleep-heir"},"spec":{"category":"e2e","namespaces":["smoke-sleep-mate"],"schedules":'"$CLOSED_SCHEDULE_JSON"'}}'
+SLEEP_PAIR_SWAPPED='{"metadata":{"name":"smoke-sleep-pair"},"spec":{"category":"e2e","namespaces":["smoke-sleep-routes"],"sleepPage":true,"schedules":'"$CLOSED_SCHEDULE_JSON"'}}'
+track_group smoke-sleep-heir
+expect_code 201 "a newer schedule without a sleep page that also lists smoke-sleep-mate" POST /api/scaling/groups "$SLEEP_HEIR_BODY" -b "$JAR"
+wait_for "it reports the namespace the older schedule owns" group_field_is smoke-sleep-heir 'conflictingNamespaces[0]' smoke-sleep-mate
+expect_code 200 "smoke-sleep-mate handed over by the older schedule" PUT /api/scaling/groups/smoke-sleep-pair "$SLEEP_PAIR_SWAPPED" -b "$JAR"
+wait_for "the handed-over route leads to its application again" route_backend_is smoke-sleep-mate web
+wait_for "the namespace that joined the older schedule sleeps" route_backend_is smoke-sleep-routes "$RELEASE-sleep"

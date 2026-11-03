@@ -62,7 +62,12 @@ log "A namespace that moves to another group is left to its new owner"
 MOVE_OLD_BODY='{"metadata":{"name":"smoke-move-1"},"spec":{"category":"e2e","namespaces":["smoke-move-a","smoke-move-x"],"schedules":'"$CLOSED_SCHEDULE_JSON"'}}'
 MOVE_OLD_LEFT='{"metadata":{"name":"smoke-move-1"},"spec":{"category":"e2e","namespaces":["smoke-move-a"],"schedules":'"$CLOSED_SCHEDULE_JSON"'}}'
 MOVE_NEW_BODY='{"metadata":{"name":"smoke-move-2"},"spec":{"category":"e2e","namespaces":["smoke-move-x"],"schedules":'"$CLOSED_SCHEDULE_JSON"'}}'
-released_by_first() { kubectl get events -n "$NS" --field-selector involvedObject.name=smoke-move-1,reason=NamespaceReleased -o jsonpath='{.items[*].message}' | grep -q "smoke-move-x"; }
+released_by_first() {
+  local events
+  events=$(kubectl get events -n "$NS" --field-selector "involvedObject.uid=$MOVE_FIRST_UID,reason=NamespaceReleased" -o jsonpath='{.items[*].message}') ||
+    fail "reading the events of smoke-move-1"
+  [[ "$events" == *smoke-move-x* ]]
+}
 for ns in smoke-move-a smoke-move-x; do
   new_namespace "$ns"
   deployment "$ns" app 1
@@ -71,6 +76,7 @@ kubectl rollout status deploy/app -n smoke-move-x --timeout=120s >/dev/null
 track_group smoke-move-1 smoke-move-2
 expect_code 201 "an older schedule for two namespaces" POST /api/scaling/groups "$MOVE_OLD_BODY" -b "$JAR"
 wait_for "smoke-move-x is scaled to zero by the older schedule" replicas_are smoke-move-x app 0
+MOVE_FIRST_UID=$(kubectl get scalinggroup smoke-move-1 -n "$NS" -o jsonpath='{.metadata.uid}')
 expect_code 201 "a newer schedule that also lists smoke-move-x" POST /api/scaling/groups "$MOVE_NEW_BODY" -b "$JAR"
 wait_for "the newer schedule reports the namespace the older one owns" group_field_is smoke-move-2 'conflictingNamespaces[0]' smoke-move-x
 expect_code 200 "smoke-move-x taken out of the older schedule" PUT /api/scaling/groups/smoke-move-1 "$MOVE_OLD_LEFT" -b "$JAR"
@@ -78,3 +84,22 @@ wait_for "the newer schedule owns smoke-move-x now" group_field_is smoke-move-2 
 holds_for 10 "smoke-move-x stays down under its new schedule" replicas_are smoke-move-x app 0
 released_by_first && fail "the older schedule restored smoke-move-x although the newer one owns it now"
 ok "the older schedule left smoke-move-x to its new owner"
+
+log "Deleting the older of two schedules for a namespace leaves it to the newer one"
+MOVE_THIRD_BODY='{"metadata":{"name":"smoke-move-3"},"spec":{"category":"e2e","namespaces":["smoke-move-y"],"schedules":'"$CLOSED_SCHEDULE_JSON"'}}'
+MOVE_FOURTH_BODY='{"metadata":{"name":"smoke-move-4"},"spec":{"category":"e2e","namespaces":["smoke-move-y"],"schedules":'"$CLOSED_SCHEDULE_JSON"'}}'
+new_namespace smoke-move-y
+deployment smoke-move-y app 1
+kubectl rollout status deploy/app -n smoke-move-y --timeout=120s >/dev/null
+track_group smoke-move-3 smoke-move-4
+expect_code 201 "an older schedule for smoke-move-y" POST /api/scaling/groups "$MOVE_THIRD_BODY" -b "$JAR"
+wait_for "smoke-move-y is scaled to zero" replicas_are smoke-move-y app 0
+expect_code 201 "a newer schedule for the same namespace" POST /api/scaling/groups "$MOVE_FOURTH_BODY" -b "$JAR"
+wait_for "the newer schedule reports the namespace the older one owns" group_field_is smoke-move-4 'conflictingNamespaces[0]' smoke-move-y
+MOVE_GENERATION=$(kubectl get deploy app -n smoke-move-y -o jsonpath='{.metadata.generation}')
+expect_code 204 "deleting the older schedule" DELETE /api/scaling/groups/smoke-move-3 "" -b "$JAR"
+wait_for "the older schedule is gone" missing scalinggroup smoke-move-3 -n "$NS"
+holds_for 6 "smoke-move-y stays down under the newer schedule" replicas_are smoke-move-y app 0
+[[ "$(kubectl get deploy app -n smoke-move-y -o jsonpath='{.metadata.generation}')" == "$MOVE_GENERATION" ]] ||
+  fail "deleting the older schedule scaled smoke-move-y although the newer one takes it over"
+ok "the newer schedule took smoke-move-y over without it starting in between"
