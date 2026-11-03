@@ -119,3 +119,27 @@ wait_for "it reports the namespace the older schedule owns" group_field_is smoke
 expect_code 200 "smoke-sleep-mate handed over by the older schedule" PUT /api/scaling/groups/smoke-sleep-pair "$SLEEP_PAIR_SWAPPED" -b "$JAR"
 wait_for "the handed-over route leads to its application again" route_backend_is smoke-sleep-mate web
 wait_for "the namespace that joined the older schedule sleeps" route_backend_is smoke-sleep-routes "$RELEASE-sleep"
+
+log "A namespace handed to a schedule that is up and has its own sleep page wakes at once"
+SLEEP_ALWAYS_OPEN='[{"days":[0,1,2,3,4,5,6],"startTime":"00:00","endTime":"23:59","timezone":"UTC"}]'
+SLEEP_PAIR_GROWN='{"metadata":{"name":"smoke-sleep-pair"},"spec":{"category":"e2e","namespaces":["smoke-sleep-routes","smoke-sleep-woken"],"sleepPage":true,"schedules":'"$CLOSED_SCHEDULE_JSON"'}}'
+SLEEP_AWAKE_BODY='{"metadata":{"name":"smoke-sleep-awake"},"spec":{"category":"e2e","namespaces":["smoke-sleep-woken"],"sleepPage":true,"schedules":'"$SLEEP_ALWAYS_OPEN"'}}'
+new_namespace smoke-sleep-woken
+kubectl apply -f - >/dev/null <<YAML || fail "applying the HTTPRoute in smoke-sleep-woken"
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata: {name: web, namespace: smoke-sleep-woken}
+spec:
+  parentRefs: [{name: smoke-gateway, namespace: default}]
+  hostnames: [smoke-sleep-woken.example.com]
+  rules:
+    - backendRefs: [{name: web, port: 80}]
+YAML
+expect_code 200 "smoke-sleep-woken added to the older schedule while it sleeps" PUT /api/scaling/groups/smoke-sleep-pair "$SLEEP_PAIR_GROWN" -b "$JAR"
+wait_for "the route of smoke-sleep-woken points at the sleep page" route_backend_is smoke-sleep-woken "$RELEASE-sleep"
+track_group smoke-sleep-awake
+expect_code 201 "a newer schedule that is up, with a sleep page, that also lists smoke-sleep-woken" POST /api/scaling/groups "$SLEEP_AWAKE_BODY" -b "$JAR"
+wait_for "it reports the namespace the older schedule owns" group_field_is smoke-sleep-awake 'conflictingNamespaces[0]' smoke-sleep-woken
+wait_for "it is up" group_field_is smoke-sleep-awake phase ScaledUp
+expect_code 200 "smoke-sleep-woken handed over by the older schedule" PUT /api/scaling/groups/smoke-sleep-pair "$SLEEP_PAIR_SWAPPED" -b "$JAR"
+TIMEOUT=15 wait_for "the new owner wakes the route without waiting for its next periodic check" route_backend_is smoke-sleep-woken web

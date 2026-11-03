@@ -37,9 +37,12 @@ import (
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/events"
+	"k8s.io/client-go/util/workqueue"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/event"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -533,6 +536,44 @@ func TestRelatedGroupsAreDependenciesDependentsAndNamespaceSharers(t *testing.T)
 	}
 	if reqs := r.relatedGroups(context.Background(), &finopsv1.ScalingConfig{Name: "x", Namespace: "costdeck"}); reqs != nil {
 		t.Errorf("a non-group object mapped to %v", reqs)
+	}
+}
+
+func TestTheGroupTakingANamespaceIsEnqueuedWhenTheOldOneLetsGo(t *testing.T) {
+	heir := &finopsv1.ScalingGroup{Name: "heir", Namespace: "costdeck", Spec: finopsv1.ScalingGroupSpec{Namespaces: []string{"moved"}, SleepPage: true}}
+	before := &finopsv1.ScalingGroup{Name: "first", Namespace: "costdeck", Spec: finopsv1.ScalingGroupSpec{Namespaces: []string{"kept", "moved"}}}
+	after := before.DeepCopy()
+	after.Spec.Namespaces = []string{"kept"}
+	r := &ScalingGroupReconciler{Client: fake.NewClientBuilder().WithScheme(groupScheme()).WithObjects(after, heir).Build()}
+	heirRequest := reconcile.Request{NamespacedName: client.ObjectKeyFromObject(heir)}
+	if slices.Contains(r.relatedGroups(context.Background(), after), heirRequest) {
+		t.Fatal("the group no longer lists the namespace, so only its old version relates it to the heir")
+	}
+
+	mapped := handler.EnqueueRequestsFromMapFunc(r.relatedGroups)
+	enqueued := func(send func(workqueue.TypedRateLimitingInterface[reconcile.Request])) []reconcile.Request {
+		q := workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[reconcile.Request]())
+		defer q.ShutDown()
+		send(q)
+		var got []reconcile.Request
+		for q.Len() > 0 {
+			req, _ := q.Get()
+			got = append(got, req)
+			q.Done(req)
+		}
+		return got
+	}
+	removed := enqueued(func(q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
+		mapped.Update(context.Background(), event.UpdateEvent{ObjectOld: before, ObjectNew: after}, q)
+	})
+	if !slices.Contains(removed, heirRequest) {
+		t.Errorf("removing the namespace enqueued %v, want the heir that now wakes its routes", removed)
+	}
+	deleted := enqueued(func(q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
+		mapped.Delete(context.Background(), event.DeleteEvent{Object: before}, q)
+	})
+	if !slices.Contains(deleted, heirRequest) {
+		t.Errorf("deleting the group enqueued %v, want the heir", deleted)
 	}
 }
 

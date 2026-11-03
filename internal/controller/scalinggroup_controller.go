@@ -994,7 +994,9 @@ func (r *ScalingGroupReconciler) groupsWithCalendars(ctx context.Context, obj cl
 }
 
 // relatedGroups maps a ScalingGroup event to the groups whose plan it can change: its
-// dependencies, its dependents, and groups sharing one of its namespaces.
+// dependencies, its dependents, and groups sharing one of its namespaces. An update maps
+// the old object as well as the new one, so a group that lets a namespace go enqueues the
+// group taking it, which wakes the namespace's routes once it is up.
 func (r *ScalingGroupReconciler) relatedGroups(ctx context.Context, obj client.Object) []reconcile.Request {
 	changed, ok := obj.(*finopsv1.ScalingGroup)
 	if !ok {
