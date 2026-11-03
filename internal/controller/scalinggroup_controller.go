@@ -442,7 +442,9 @@ func (r *ScalingGroupReconciler) scaleExternalTarget(ctx context.Context, group 
 }
 
 func sameExternalTarget(target finopsv1.ExternalTarget) func(finopsv1.ExternalTarget) bool {
-	return func(other finopsv1.ExternalTarget) bool { return other.Identifier == target.Identifier }
+	return func(other finopsv1.ExternalTarget) bool {
+		return other.Provider == target.Provider && other.Type == target.Type && other.Identifier == target.Identifier && other.Region == target.Region
+	}
 }
 
 func (r *ScalingGroupReconciler) releaseExternalTargets(ctx context.Context, group *finopsv1.ScalingGroup) {

@@ -449,6 +449,20 @@ var _ = Describe("ScalingGroup external targets", func() {
 		Expect(cloud.scaledTo(true)).To(Equal([]string{"db1"}))
 	})
 
+	It("starts the cloud target it stopped in one region once the target moves to another", func() {
+		createStoppedGroup([]string{"ext:db1", appNamespace}, db1)
+		_, g := reconcileGroup()
+		moved := db1
+		moved.Region = "us-east-1"
+		g.Spec.ExternalTargets = []finopsv1.ExternalTarget{moved}
+		Expect(k8sClient.Update(ctx, g)).To(Succeed())
+
+		cloud.setReady(true, true)
+		_, g = reconcileGroup()
+		Expect(cloud.scaledTo(true)).To(Equal([]string{"db1"}), "the database in eu-west-1 left the group")
+		Expect(g.Status.StoppedExternalTargets).To(Equal([]finopsv1.ExternalTarget{moved}))
+	})
+
 	It("starts no cloud target added just before the group is deleted", func() {
 		createStoppedGroup([]string{appNamespace})
 		_, g := reconcileGroup()
