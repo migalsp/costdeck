@@ -1,0 +1,732 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cost Deck: open-source Kubernetes FinOps operator</title>
+<meta name="description" content="Cost Deck is an open-source Kubernetes FinOps operator. See what every namespace, team, GPU and LLM token costs, scale idle environments to zero, and right-size safely. Apache 2.0, one Helm chart.">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0b1120" media="(prefers-color-scheme: dark)">
+<link rel="canonical" href="https://migalsp.github.io/costdeck/">
+<link rel="alternate" type="text/markdown" href="https://migalsp.github.io/costdeck/index.md" title="Cost Deck as Markdown">
+<link rel="describedby" type="text/plain" href="https://migalsp.github.io/costdeck/llms.txt">
+<link rel="sitemap" type="application/xml" href="https://migalsp.github.io/costdeck/sitemap.xml">
+<link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
+<link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Cost Deck">
+<meta property="og:locale" content="en_US">
+<meta property="og:url" content="https://migalsp.github.io/costdeck/">
+<meta property="og:title" content="Cost Deck: Kubernetes FinOps that switches off the waste">
+<meta property="og:description" content="Cost per namespace, team and model, schedules that put idle environments and their databases to sleep, and right-sizing with a rollback guard. Open source, runs in your cluster.">
+<meta property="og:image" content="https://migalsp.github.io/costdeck/og.png">
+<meta property="og:image:type" content="image/png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Cost Deck wordmark, the tagline Kubernetes FinOps that switches off the waste, and the Cost Deck cost overview dashboard">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Cost Deck: Kubernetes FinOps that switches off the waste">
+<meta name="twitter:description" content="Cost per namespace, team and model, schedules that put idle environments and their databases to sleep, and right-sizing with a rollback guard. Open source, runs in your cluster.">
+<meta name="twitter:image" content="https://migalsp.github.io/costdeck/og.png">
+<meta name="twitter:image:alt" content="Cost Deck wordmark, the tagline Kubernetes FinOps that switches off the waste, and the Cost Deck cost overview dashboard">
+<link rel="stylesheet" href="styles.css">
+<script src="app.js"></script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "SoftwareApplication",
+      "@id": "https://migalsp.github.io/costdeck/#app",
+      "name": "Cost Deck",
+      "alternateName": "costdeck",
+      "description": "Cost Deck is an open-source Kubernetes FinOps operator. See what every namespace, team, GPU and LLM token costs, scale idle environments to zero, and right-size safely. Apache 2.0, one Helm chart.",
+      "url": "https://migalsp.github.io/costdeck/",
+      "image": "https://migalsp.github.io/costdeck/og.png",
+      "screenshot": "https://migalsp.github.io/costdeck/assets/overview-1440.webp",
+      "applicationCategory": "DeveloperApplication",
+      "applicationSubCategory": "Kubernetes FinOps operator",
+      "operatingSystem": "Kubernetes 1.26 or newer",
+      "softwareRequirements": "Kubernetes 1.26 or newer, Helm 3.8 or newer, metrics-server",
+      "license": "https://www.apache.org/licenses/LICENSE-2.0",
+      "isAccessibleForFree": true,
+      "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+      "installUrl": "https://github.com/migalsp/costdeck/blob/main/docs/installation.md",
+      "downloadUrl": "https://github.com/migalsp/costdeck/releases",
+      "releaseNotes": "https://github.com/migalsp/costdeck/blob/main/CHANGELOG.md",
+      "featureList": [
+        "Cost per namespace, team and environment, split into what pods use, what they reserve and leave idle, and what nobody requests",
+        "LLM API spend by team and model, GPU cost and idle GPUs",
+        "Schedules that scale non-production to zero outside working hours and bring it back on time",
+        "Cloud databases and VMs on the same schedules: AWS Aurora and EC2, Azure VMs and flexible servers, Google Cloud SQL and Compute Engine",
+        "Right-sizing advice applied with a guard that rolls back, or sent as a pull request",
+        "Budgets, showback and chargeback that add up to the bill",
+        "MCP server, REST API with OpenAPI and Prometheus metrics"
+      ],
+      "author": { "@type": "Person", "name": "Pavel Mihal", "url": "https://github.com/migalsp" },
+      "sameAs": ["https://github.com/migalsp/costdeck"]
+    },
+    {
+      "@type": "SoftwareSourceCode",
+      "@id": "https://migalsp.github.io/costdeck/#source",
+      "name": "Cost Deck",
+      "codeRepository": "https://github.com/migalsp/costdeck",
+      "programmingLanguage": ["Go", "TypeScript"],
+      "license": "https://www.apache.org/licenses/LICENSE-2.0",
+      "author": { "@type": "Person", "name": "Pavel Mihal", "url": "https://github.com/migalsp" },
+      "targetProduct": { "@id": "https://migalsp.github.io/costdeck/#app" }
+    }
+  ]
+}
+</script>
+</head>
+<body id="top">
+<a class="skip-link" href="#main">Skip to content</a>
+
+<header class="site-header">
+  <div class="container header-inner">
+    <a class="brand" href="#top">
+      <img src="assets/cost-deck-icon-64.png" width="28" height="28" alt="">
+      <span class="brand-name">Cost Deck</span>
+    </a>
+    <nav class="site-nav" aria-label="Sections">
+      <ul>
+        <li><a href="#problem">Problem</a></li>
+        <li><a href="#features">Features</a></li>
+        <li><a href="#who">Who it is for</a></li>
+        <li><a href="#compare">Compare</a></li>
+        <li><a href="#roadmap">Roadmap</a></li>
+        <li><a href="#install">Install</a></li>
+        <li class="nav-github">
+          <a href="https://github.com/migalsp/costdeck">
+            <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+            GitHub
+          </a>
+        </li>
+      </ul>
+    </nav>
+    <button class="theme-toggle" type="button" hidden aria-label="Switch to dark theme">
+      <svg class="icon icon-moon" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg>
+      <svg class="icon icon-sun" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></g></svg>
+    </button>
+  </div>
+</header>
+
+<main id="main" tabindex="-1">
+
+  <section class="hero" aria-labelledby="hero-title">
+    <div class="container hero-text">
+      <p class="eyebrow"><span class="eyebrow-dot" aria-hidden="true"></span>Open source · Apache 2.0 · Runs in your cluster</p>
+      <h1 id="hero-title">See what Kubernetes costs. <span class="accent-text">Stop paying for what nobody uses.</span></h1>
+      <p class="lead">Cost Deck is an open-source Kubernetes FinOps operator. It prices every namespace, team, GPU and LLM token, scales idle environments and the cloud databases behind them to zero, and right-sizes what is oversized without hurting performance. One Helm chart, no external service.</p>
+      <div class="cta-row">
+        <a class="button button-primary" href="#install">Install with Helm</a>
+        <a class="button button-secondary" href="#features">See it in action</a>
+      </div>
+      <ul class="microcopy">
+        <li>Free and open source</li>
+        <li>Read-only until you allow changes</li>
+        <li>Kubernetes 1.26+</li>
+      </ul>
+    </div>
+    <div class="container hero-media">
+      <div class="frame frame-hero">
+        <div class="frame-bar" aria-hidden="true"><span></span><span></span><span></span></div>
+        <picture>
+          <source data-dark-source media="(prefers-color-scheme: dark)" type="image/webp" srcset="assets/overview-dark-1440.webp 1440w, assets/overview-dark-720.webp 720w" sizes="(min-width: 1264px) 1198px, calc(100vw - 2.5rem)">
+          <img src="assets/overview-1440.webp" srcset="assets/overview-1440.webp 1440w, assets/overview-720.webp 720w" sizes="(min-width: 1264px) 1198px, calc(100vw - 2.5rem)" width="1440" height="900" fetchpriority="high" alt="Cost Deck cost overview: the node bill split into used, idle and unrequested capacity, the month to date, savings by schedules and the daily cost by namespace">
+        </picture>
+      </div>
+    </div>
+  </section>
+
+  <section class="facts-band" aria-label="Key facts">
+    <div class="container">
+      <ul class="facts">
+        <li>
+          <svg class="fact-icon" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round"><path d="M12 2.5 3.5 7v10l8.5 4.5 8.5-4.5V7Z"/><path d="M3.5 7 12 11.5 20.5 7M12 11.5v10"/></g></svg>
+          <p><strong>One Helm chart</strong> a single operator, dashboard, API and MCP server</p>
+        </li>
+        <li>
+          <svg class="fact-icon" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10.5" width="16" height="10" rx="2"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/></g></svg>
+          <p><strong>Nothing leaves your cluster</strong> no vendor account, no agent on the nodes</p>
+        </li>
+        <li>
+          <svg class="fact-icon" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 12S6 5 12 5s9.5 7 9.5 7-3.5 7-9.5 7-9.5-7-9.5-7Z"/><circle cx="12" cy="12" r="3"/></g></svg>
+          <p><strong>Read-only by default</strong> changes are opt-in, with rollback</p>
+        </li>
+        <li>
+          <svg class="fact-icon" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.5 4 5.5v6c0 5 3.4 8.6 8 10 4.6-1.4 8-5 8-10v-6Z"/><path d="m8.5 12 2.5 2.5 4.5-5"/></g></svg>
+          <p><strong>Signed and audited</strong> cosign-signed images and chart, OpenSSF Scorecard</p>
+        </li>
+      </ul>
+    </div>
+  </section>
+
+  <section id="problem" class="section" aria-labelledby="problem-title">
+    <div class="container">
+      <header class="section-head">
+        <h2 id="problem-title">Where Kubernetes money leaks in 2026</h2>
+        <p class="section-intro">Cloud waste rose for the first time in five years, to 29% of spend (Flexera State of the Cloud 2026). Waste reduction is the top priority of FinOps teams today, and AI is the next one (State of FinOps 2026).</p>
+      </header>
+      <ul class="leaks">
+        <li class="card leak">
+          <h3>Requests far above use</h3>
+          <p>CPU use averages <strong>8%</strong> and memory <strong>20%</strong> of what Kubernetes clusters reserve, and both fell in a year.</p>
+          <p class="source"><span class="source-label">Source</span> CAST AI, 2026 State of Kubernetes Optimization</p>
+        </li>
+        <li class="card leak">
+          <h3>Environments that never sleep</h3>
+          <p>Dev and staging run <strong>168 hours</strong> a week for about <strong>50 hours</strong> of work.</p>
+          <p class="source"><span class="source-label">Source</span> Arithmetic of a working week</p>
+        </li>
+        <li class="card leak">
+          <h3>GPUs bought for the peak</h3>
+          <p>GPUs in Kubernetes average <strong>5%</strong> use, and <strong>79%</strong> of companies say theirs are busy half the time or less.</p>
+          <p class="source"><span class="source-label">Source</span> CAST AI, 2026; VentureBeat, October 2026</p>
+        </li>
+        <li class="card leak">
+          <h3>An AI bill nobody owns</h3>
+          <p><strong>98%</strong> of FinOps teams now manage AI spend, yet only <strong>26%</strong> of large companies see what their AI costs in real time.</p>
+          <p class="source"><span class="source-label">Source</span> State of FinOps 2026; KPMG AI Pulse, Q2 2026</p>
+        </li>
+        <li class="card leak">
+          <h3>Budgets that miss</h3>
+          <p><strong>46.9%</strong> of enterprises report AI spend over budget.</p>
+          <p class="source"><span class="source-label">Source</span> Futurum, September 2026</p>
+        </li>
+        <li class="card leak">
+          <h3>Spikes found too late</h3>
+          <p>For <strong>one company in three</strong>, finding why a cost spiked takes a week or more.</p>
+          <p class="source"><span class="source-label">Source</span> Harness, State of AI in FinOps 2026</p>
+        </li>
+        <li class="card leak">
+          <h3>No price per team</h3>
+          <p>Shared platforms and idle capacity are not split, so nobody owns their part; FinOps teams list shared cost and container allocation among the tools they want most.</p>
+          <p class="source"><span class="source-label">Source</span> State of FinOps 2026</p>
+        </li>
+        <li class="card leak">
+          <h3>Cost found after the deploy</h3>
+          <p>Pricing a change before it ships is the <strong>second most wanted</strong> FinOps capability.</p>
+          <p class="source"><span class="source-label">Source</span> State of FinOps 2026</p>
+        </li>
+      </ul>
+      <p class="closing-line">Cost Deck gives every namespace and every token a price and an owner, and switches idle capacity off by itself.</p>
+    </div>
+  </section>
+
+  <section id="features" class="section section-tinted" aria-labelledby="features-title">
+    <div class="container">
+      <header class="section-head">
+        <h2 id="features-title">One operator closes the loop</h2>
+        <p class="section-intro">See the cost, cut the waste, keep performance safe, and report to the people who pay.</p>
+      </header>
+
+      <div class="features">
+        <article class="feature">
+          <div class="feature-text">
+            <p class="feature-number" aria-hidden="true">01</p>
+            <h3>See what everything costs</h3>
+            <p>Cost per namespace, team and environment, split into what pods use, what they reserve and leave idle, and what nobody requests.</p>
+            <ul class="checks">
+              <li>Month to date with a forecast, and savings ranked by size</li>
+              <li>Volumes, load balancers and GPUs charged to their namespace</li>
+              <li>List prices, your own rates, or reconciled with the AWS, Azure or Google Cloud bill</li>
+              <li>Several clusters side by side</li>
+            </ul>
+          </div>
+          <div class="feature-media">
+            <div class="frame">
+              <div class="frame-bar" aria-hidden="true"><span></span><span></span><span></span></div>
+              <img src="assets/insights-1440.webp" srcset="assets/insights-1440.webp 1440w, assets/insights-720.webp 720w" sizes="(min-width: 1264px) 680px, (min-width: 960px) 56vw, calc(100vw - 2.5rem)" width="1440" height="900" loading="lazy" decoding="async" alt="Namespace Insights: every namespace with its cost, usage, trend and what could be saved">
+            </div>
+          </div>
+        </article>
+
+        <article class="feature">
+          <div class="feature-text">
+            <p class="feature-number" aria-hidden="true">02</p>
+            <h3>Switch off what nobody uses</h3>
+            <p>Schedules scale non-production to zero outside working hours and bring it back on time, whole environments at once.</p>
+            <ul class="checks">
+              <li>Shared platforms start first, apps wait, cloud databases and VMs stop last: AWS Aurora and EC2, Azure VMs and flexible servers, Google Cloud SQL and Compute Engine</li>
+              <li>Holiday calendars, dated exceptions, overrides that end on their own, prewarm before the day starts</li>
+              <li>Sleep when unused, and a sleep page with a wake button instead of a gateway error</li>
+              <li>Proof the saving reached the bill: which nodes the autoscaler removed, and what kept the rest</li>
+            </ul>
+          </div>
+          <div class="feature-media has-inset">
+            <div class="frame">
+              <div class="frame-bar" aria-hidden="true"><span></span><span></span><span></span></div>
+              <img src="assets/scaling-1440.webp" srcset="assets/scaling-1440.webp 1440w, assets/scaling-720.webp 720w" sizes="(min-width: 1264px) 680px, (min-width: 960px) 56vw, calc(100vw - 2.5rem)" width="1440" height="900" loading="lazy" decoding="async" alt="Scaling Schedules: working hours, platforms on demand, holidays and exceptions, with each schedule's state and saving">
+            </div>
+            <div class="frame frame-inset">
+              <div class="frame-bar" aria-hidden="true"><span></span><span></span><span></span></div>
+              <img src="assets/sleep-page-1000.webp" srcset="assets/sleep-page-1000.webp 1000w, assets/sleep-page-720.webp 720w" sizes="(min-width: 960px) 320px, calc(100vw - 2.5rem)" width="1000" height="614" loading="lazy" decoding="async" alt="Sleep page: what people see on a scaled-down environment, with a button to wake it in Cost Deck">
+            </div>
+          </div>
+        </article>
+
+        <article class="feature">
+          <div class="feature-text">
+            <p class="feature-number" aria-hidden="true">03</p>
+            <h3>Right-size without risking performance</h3>
+            <p>Advice from two weeks of real use, applied with a guard that rolls back, or sent as a pull request.</p>
+            <ul class="checks">
+              <li>Performance risks first: CPU throttling, OOM kills, crash loops, autoscalers at their maximum</li>
+              <li>Advice never cuts a resource under pressure</li>
+              <li>Java heaps sized from the JVM's own flags and heap metrics</li>
+              <li>Per-team policies bound the advice or forbid applying it</li>
+            </ul>
+          </div>
+          <div class="feature-media">
+            <div class="frame">
+              <div class="frame-bar" aria-hidden="true"><span></span><span></span><span></span></div>
+              <img src="assets/rightsizing-1440.webp" srcset="assets/rightsizing-1440.webp 1440w, assets/rightsizing-720.webp 720w" sizes="(min-width: 1264px) 680px, (min-width: 960px) 56vw, calc(100vw - 2.5rem)" width="1440" height="900" loading="lazy" decoding="async" alt="Right-sizing: performance risks, what each workload could request and the Java heap it needs, applied with a guard or as a pull request">
+            </div>
+          </div>
+        </article>
+
+        <article class="feature">
+          <div class="feature-text">
+            <p class="feature-number" aria-hidden="true">04</p>
+            <h3>Budgets, chargeback and reports</h3>
+            <p>Owners and limits for every team, in the numbers finance uses.</p>
+            <ul class="checks">
+              <li>Budgets per team, environment or namespace, with forecasts and anomaly alerts</li>
+              <li>Showback and chargeback with shared and idle cost, adding up to the bill, as CSV</li>
+              <li>Weekly digests and AI-written reports for leadership, engineers and teams</li>
+              <li>Cost estimates on pull requests, before anything ships</li>
+            </ul>
+          </div>
+          <div class="feature-media has-inset">
+            <div class="frame">
+              <div class="frame-bar" aria-hidden="true"><span></span><span></span><span></span></div>
+              <img src="assets/budgets-1440.webp" srcset="assets/budgets-1440.webp 1440w, assets/budgets-720.webp 720w" sizes="(min-width: 1264px) 680px, (min-width: 960px) 56vw, calc(100vw - 2.5rem)" width="1440" height="900" loading="lazy" decoding="async" alt="Budgets and alerts: monthly limits, forecasts and alerts sent to Slack and Teams">
+            </div>
+            <div class="frame frame-inset">
+              <div class="frame-bar" aria-hidden="true"><span></span><span></span><span></span></div>
+              <img src="assets/allocation-720.webp" srcset="assets/allocation-1440.webp 1440w, assets/allocation-720.webp 720w" sizes="(min-width: 960px) 320px, calc(100vw - 2.5rem)" width="1440" height="900" loading="lazy" decoding="async" alt="Cost allocation: a period's cost by team with shared and idle cost, as CSV">
+            </div>
+          </div>
+        </article>
+
+        <article class="feature">
+          <div class="feature-text">
+            <p class="feature-number" aria-hidden="true">05</p>
+            <h3>AI and GPU spend</h3>
+            <p>LLM API spend by team and model, next to the cluster it runs in.</p>
+            <ul class="checks">
+              <li>LiteLLM spend or OpenTelemetry GenAI tokens at your model prices</li>
+              <li>What a self-hosted vLLM model costs per million tokens, GPUs included</li>
+              <li>Idle GPUs, GPUs that could be shared through MIG, cheaper models with enough memory</li>
+            </ul>
+          </div>
+          <div class="feature-media">
+            <div class="frame">
+              <div class="frame-bar" aria-hidden="true"><span></span><span></span><span></span></div>
+              <img src="assets/ai-costs-1440.webp" srcset="assets/ai-costs-1440.webp 1440w, assets/ai-costs-720.webp 720w" sizes="(min-width: 1264px) 680px, (min-width: 960px) 56vw, calc(100vw - 2.5rem)" width="1440" height="900" loading="lazy" decoding="async" alt="AI Costs: what each team pays LLM APIs, by model, and what self-hosted models cost per million tokens">
+            </div>
+          </div>
+        </article>
+
+        <article class="feature feature-integrations">
+          <div class="feature-text">
+            <p class="feature-number" aria-hidden="true">06</p>
+            <h3>Works with your tools and your agents</h3>
+          </div>
+          <dl class="integrations">
+            <div class="integration-row">
+              <dt>AI</dt>
+              <dd>
+                <ul class="chips">
+                  <li>MCP server for Claude Code, Claude Desktop, Cursor and other MCP clients</li>
+                  <li>An assistant in the dashboard that asks before it acts</li>
+                </ul>
+              </dd>
+            </div>
+            <div class="integration-row">
+              <dt>Chat</dt>
+              <dd>
+                <ul class="chips">
+                  <li>Slack</li>
+                  <li>Microsoft Teams</li>
+                  <li>Email</li>
+                  <li>Webex bot</li>
+                </ul>
+              </dd>
+            </div>
+            <div class="integration-row">
+              <dt>GitOps</dt>
+              <dd>
+                <ul class="chips">
+                  <li>Argo CD</li>
+                  <li>Flux</li>
+                </ul>
+                <p class="chip-note">Paused only while an environment sleeps</p>
+              </dd>
+            </div>
+            <div class="integration-row">
+              <dt>Workloads</dt>
+              <dd>
+                <ul class="chips">
+                  <li>Deployments</li>
+                  <li>StatefulSets</li>
+                  <li>Argo Rollouts</li>
+                  <li>CronJobs</li>
+                  <li>KEDA</li>
+                  <li>CloudNativePG</li>
+                  <li>Zalando Postgres</li>
+                  <li>Strimzi</li>
+                </ul>
+              </dd>
+            </div>
+            <div class="integration-row">
+              <dt>Metrics</dt>
+              <dd>
+                <ul class="chips">
+                  <li>metrics-server</li>
+                  <li>VictoriaMetrics or any Prometheus-compatible API</li>
+                  <li>DCGM</li>
+                </ul>
+              </dd>
+            </div>
+            <div class="integration-row">
+              <dt>Sign-in</dt>
+              <dd>
+                <ul class="chips">
+                  <li>Entra ID</li>
+                  <li>Keycloak</li>
+                  <li>Any OpenID Connect provider</li>
+                </ul>
+                <p class="chip-note">Viewer, operator and admin roles</p>
+              </dd>
+            </div>
+            <div class="integration-row">
+              <dt>API</dt>
+              <dd>
+                <ul class="chips">
+                  <li>REST with OpenAPI</li>
+                  <li>Prometheus metrics</li>
+                </ul>
+              </dd>
+            </div>
+          </dl>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section id="who" class="section" aria-labelledby="who-title">
+    <div class="container">
+      <header class="section-head">
+        <h2 id="who-title">Who it is for</h2>
+      </header>
+      <div class="audiences">
+        <article class="card audience">
+          <h3>Platform and DevOps engineers</h3>
+          <ul class="checks">
+            <li>Put every non-production environment, and the databases behind it, to sleep on a schedule that respects dependencies, holidays and GitOps</li>
+            <li>Dry run and preview before anything stops; overrides that end on their own</li>
+            <li>Scoped RBAC, signed images, CRDs and an API you can automate</li>
+          </ul>
+          <a class="more-link" href="https://github.com/migalsp/costdeck/blob/main/docs/installation.md#scaling-what-happens-to-workloads">Schedules in the installation guide</a>
+        </article>
+        <article class="card audience">
+          <h3>Engineering managers and heads of platform</h3>
+          <ul class="checks">
+            <li>Cost per team and environment, and what each schedule saved</li>
+            <li>Budgets that warn before the month runs over</li>
+            <li>Nothing changes in the cluster without an admin's approval</li>
+          </ul>
+          <a class="more-link" href="https://github.com/migalsp/costdeck/blob/main/README.md#budgets-and-reports">Budgets and reports</a>
+        </article>
+        <article class="card audience">
+          <h3>FinOps and finance</h3>
+          <ul class="checks">
+            <li>Showback and chargeback that add up to the cloud bill, with shared and idle cost split by your policy</li>
+            <li>Anomaly alerts, forecasts and CSV exports</li>
+            <li>AI and GPU spend by team, priced and owned</li>
+          </ul>
+          <a class="more-link" href="https://github.com/migalsp/costdeck/blob/main/docs/installation.md#cost-allocation-showback-and-chargeback">Cost allocation</a>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section id="trends" class="section section-tinted" aria-labelledby="trends-title">
+    <div class="container">
+      <header class="section-head">
+        <h2 id="trends-title">Built for FinOps in 2026</h2>
+        <p class="section-intro">What changed this year, and how Cost Deck answers it.</p>
+      </header>
+      <ul class="trends">
+        <li class="card trend">
+          <h3>FinOps for AI</h3>
+          <p>Monitoring tokens, LLM requests and GPU use is the capability FinOps teams want most (State of FinOps 2026). Cost Deck shows LLM API and GPU spend by team and model today; AI spend in team totals and budgets is next on the roadmap.</p>
+        </li>
+        <li class="card trend">
+          <h3>Beyond dashboards</h3>
+          <p>“Dashboards are table stakes of yesterday,” say practitioners, who ask for automated remediation they can trust (State of FinOps 2026). Cost Deck acts: schedules, and right-sizing applied with a rollback guard or sent as a pull request.</p>
+        </li>
+        <li class="card trend">
+          <h3>Shift left</h3>
+          <p>Pre-deployment costing is the second most wanted capability. Pull requests show what a manifest change will cost a month, and can fail above a limit.</p>
+        </li>
+        <li class="card trend">
+          <h3>Kubernetes goes elastic</h3>
+          <p>Kubernetes 1.36 resizes pod-level resources in place (beta), and 1.37 lets an HPA scale one workload to zero on external metrics (beta). Cost Deck puts whole environments to sleep: in order, with their dependencies, databases and cloud resources, on a schedule.</p>
+        </li>
+        <li class="card trend">
+          <h3>Agents join FinOps</h3>
+          <p>MCP servers and agents arrived across FinOps tools in 2026. Cost Deck's MCP server answers cost questions for Claude, Cursor and other clients, and offers changes only to operators, after confirmation.</p>
+        </li>
+        <li class="card trend">
+          <h3>One pane for all spend</h3>
+          <p>Nodes, volumes, load balancers, GPUs and LLM APIs in one place, reconciled with the bill; a FOCUS 1.4 export is on the roadmap.</p>
+        </li>
+      </ul>
+    </div>
+  </section>
+
+  <section id="safe" class="section" aria-labelledby="safe-title">
+    <div class="container safe-layout">
+      <header class="section-head">
+        <h2 id="safe-title">Safe by design</h2>
+      </header>
+      <ul class="safety">
+        <li><strong>No schedule means always on:</strong> nothing scales down unless a schedule says so.</li>
+        <li><strong>What it changes:</strong> replica counts (the original is kept on the workload), CronJob suspension, KEDA pausing; sleep-page routes and GitOps pausing only if you enable them. It never touches nodes.</li>
+        <li><strong>What needs an admin:</strong> applying right-sizing, deleting preview namespaces.</li>
+        <li><strong>Deleting a schedule restores what it stopped</strong>, cloud databases included.</li>
+        <li><strong>Least privilege:</strong> Secrets read only in its own namespace; risky permissions come as separate opt-in roles.</li>
+        <li><strong>Supply chain:</strong> cosign-signed multi-arch images and Helm chart, SLSA provenance, CodeQL, OpenSSF Scorecard, an end-to-end suite on every pull request.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section id="compare" class="section section-tinted" aria-labelledby="compare-title">
+    <div class="container">
+      <header class="section-head">
+        <h2 id="compare-title">How it compares</h2>
+        <p class="section-intro">Honest notes, checked against each tool's documentation in November 2026.</p>
+      </header>
+      <ul class="comparison">
+        <li><strong>OpenCost and Kubecost</strong> <span>measure and allocate cost; OpenCost is the CNCF project for it. Cost Deck allocates too, and acts: schedules, guarded right-sizing and performance risks. If allocation is all you need, OpenCost is the more mature choice.</span></li>
+        <li><strong>kube-green and kube-downscaler</strong> <span>scale workloads down on a schedule. Cost Deck adds dependencies and start order, cloud databases and VMs, holidays, a sleep page, and what each schedule saved.</span></li>
+        <li><strong>HPA scale to zero (Kubernetes 1.37) and KEDA</strong> <span>scale one workload on demand. Cost Deck schedules whole environments and the resources behind them.</span></li>
+        <li><strong>Karpenter and Cluster Autoscaler</strong> <span>remove empty nodes, and work with Cost Deck: it empties the nodes, they remove them, Cost Deck shows what kept the rest.</span></li>
+        <li><strong>Goldilocks and the VPA recommender</strong> <span>suggest requests. Cost Deck adds the money, Java heap sizing, performance risks, and applying with a guard or a pull request.</span></li>
+        <li><strong>Commercial platforms (CAST AI, Spot Ocean, ScaleOps)</strong> <span>automate nodes and pods as a service. Cost Deck runs in your cluster, is free, and changes nothing until you allow it.</span></li>
+        <li class="comparison-limits"><strong>Not the right tool</strong> <span>for node autoscaling, managing reserved instances and savings plans, or costs outside Kubernetes and the resources its schedules stop.</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <section id="roadmap" class="section" aria-labelledby="roadmap-title">
+    <div class="container">
+      <header class="section-head">
+        <h2 id="roadmap-title">Roadmap</h2>
+        <p class="section-intro">From seeing the cost to controlling it, in the order users ask for. A plan, not a promise.</p>
+      </header>
+      <ol class="phases">
+        <li class="card phase phase-now">
+          <h3>Now</h3>
+          <p class="phase-period">Q4 2026 to Q1 2027</p>
+          <ul>
+            <li>Right-sizing in place without restarts</li>
+            <li>Node pools to zero with their environments</li>
+            <li>Right-sizing that respects autoscalers</li>
+            <li>Ready for Kubernetes 1.37</li>
+            <li>AI spend in team totals and budgets</li>
+            <li>Approvals in Slack and Teams</li>
+            <li>Team-scoped access</li>
+          </ul>
+        </li>
+        <li class="card phase">
+          <h3>Next</h3>
+          <p class="phase-period">H1 2027</p>
+          <ul>
+            <li>Right-sizing on autopilot</li>
+            <li>Unblocking node scale-down</li>
+            <li>GPU sharing advice</li>
+            <li>Network cost</li>
+            <li>FOCUS export</li>
+            <li>AI budgets that hold</li>
+            <li>Extension points for other clouds and external costs</li>
+          </ul>
+        </li>
+        <li class="card phase">
+          <h3>Later</h3>
+          <p class="phase-period">H2 2027</p>
+          <ul>
+            <li>Guardrails before deploy</li>
+            <li>A FinOps agent that proposes changes for approval</li>
+            <li>Spot for non-production</li>
+            <li>Commitment coverage</li>
+            <li>Carbon next to cost</li>
+            <li>Backstage and GitLab CI</li>
+          </ul>
+        </li>
+      </ol>
+      <p class="section-link"><a class="more-link" href="https://github.com/migalsp/costdeck/blob/main/docs/roadmap.md">Full roadmap</a></p>
+    </div>
+  </section>
+
+  <section id="install" class="section section-tinted" aria-labelledby="install-title">
+    <div class="container">
+      <header class="section-head">
+        <h2 id="install-title">Install in one command</h2>
+      </header>
+      <div class="install-layout">
+        <div class="install-commands">
+          <div class="code-block">
+            <div class="code-bar">
+              <span class="code-lang">shell</span>
+              <button class="copy-button" type="button" data-copy-target="cmd-install" hidden>Copy</button>
+            </div>
+<pre tabindex="0"><code id="cmd-install">helm upgrade --install costdeck-operator \
+  oci://ghcr.io/migalsp/costdeck/charts/costdeck-operator \
+  --namespace costdeck --create-namespace</code></pre>
+          </div>
+          <p class="install-then">Then:</p>
+          <div class="code-block">
+            <div class="code-bar">
+              <span class="code-lang">shell</span>
+              <button class="copy-button" type="button" data-copy-target="cmd-signin" hidden>Copy</button>
+            </div>
+<pre tabindex="0"><code id="cmd-signin">kubectl get secret costdeck-operator-admin-credentials -n costdeck \
+  -o jsonpath='{.data.password}' | base64 -d; echo
+kubectl port-forward -n costdeck svc/costdeck-operator-api 8082:8082</code></pre>
+          </div>
+          <p class="install-open">Open <code>http://localhost:8082</code> and sign in as <code>costdeck</code>.</p>
+          <p class="sr-only" id="copy-status" aria-live="polite"></p>
+        </div>
+        <div class="install-side">
+          <div class="card requirements">
+            <h3>Requirements</h3>
+            <p>Kubernetes 1.26 or newer, Helm 3.8 or newer, metrics-server. VictoriaMetrics or any Prometheus-compatible API adds history, throttling and better advice.</p>
+          </div>
+          <div class="card steps-card">
+            <h3>Steps</h3>
+            <ol class="steps">
+              <li>Install.</li>
+              <li>See cost per namespace, team and model in the first hour.</li>
+              <li>Put dev and staging on working hours.</li>
+              <li>Set budgets with alerts in Slack or Teams.</li>
+              <li>Right-size: advice first, then apply with the guard.</li>
+            </ol>
+          </div>
+          <ul class="link-row">
+            <li><a class="more-link" href="https://github.com/migalsp/costdeck/blob/main/docs/installation.md">Installation guide</a></li>
+            <li><a class="more-link" href="https://github.com/migalsp/costdeck/releases">Releases</a></li>
+            <li><a class="more-link" href="https://github.com/migalsp/costdeck/blob/main/docs/installation.md#helm-recommended">Verify the signature</a></li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="faq" class="section" aria-labelledby="faq-title">
+    <div class="container faq-layout">
+      <header class="section-head">
+        <h2 id="faq-title">Frequently asked questions</h2>
+      </header>
+      <div class="faq">
+        <details>
+          <summary>What is Cost Deck?</summary>
+          <p>An open-source (Apache 2.0) Kubernetes FinOps operator. It shows what every namespace, team, GPU and LLM token costs, scales idle environments to zero, and right-sizes workloads with a rollback guard. It runs in your cluster, installed with one Helm chart.</p>
+        </details>
+        <details>
+          <summary>How do I see Kubernetes cost per namespace?</summary>
+          <p>Cloud bills stop at the node. Cost Deck combines node prices with what each pod requests and uses, adds volumes and load balancers, and splits every namespace into used, requested but idle, and unrequested cost.</p>
+        </details>
+        <details>
+          <summary>How do I allocate shared Kubernetes costs to teams?</summary>
+          <p>Label namespaces with their team or cost center. Cost Deck charges shared namespaces such as monitoring to the others, by what each requests or evenly, and shows capacity nobody requests as a line of its own or shares it out, so the rows add up to the bill. Finance gets the same table as CSV.</p>
+        </details>
+        <details>
+          <summary>How do I scale dev and staging environments to zero at night?</summary>
+          <p>Create a schedule for their namespaces, in any time zone. Outside working hours Cost Deck scales their workloads to zero, suspends CronJobs, pauses KEDA and stops the cloud databases you add, then brings everything back on time, ahead of the day if you like. The bill drops when your autoscaler removes the emptied nodes, and Cost Deck shows what kept the rest.</p>
+        </details>
+        <details>
+          <summary>Kubernetes 1.37 lets an HPA scale to zero. Do I still need this?</summary>
+          <p>The HPA scales one workload on external or object metrics, and nothing buffers HTTP requests while no pods are ready. Cost Deck puts whole environments to sleep on a schedule, with their dependencies and databases, and shows a sleep page with a wake button meanwhile.</p>
+        </details>
+        <details>
+          <summary>How do I right-size pods safely?</summary>
+          <p>Cost Deck bases requests on two weeks of real use with headroom, never cuts a resource that is throttled or was OOM-killed, and lets an admin choose: apply with a guard that puts the old requests back if pods fail, or open a pull request.</p>
+        </details>
+        <details>
+          <summary>How should I size memory for Java pods?</summary>
+          <p>By default the JVM takes a quarter of the container limit as its heap, and native memory comes on top. Cost Deck reads each container's JVM flags, keeps memory advice above heap plus native memory, and recommends a heap from what is left after garbage collection.</p>
+        </details>
+        <details>
+          <summary>How do I track LLM spend per team?</summary>
+          <p>Point Cost Deck at LiteLLM or at OpenTelemetry GenAI token metrics in VictoriaMetrics; it prices tokens by model, charges them to the team of each namespace, and shows what self-hosted models cost per million tokens.</p>
+        </details>
+        <details>
+          <summary>Does any data leave my cluster?</summary>
+          <p>No. There is no Cost Deck service outside your cluster. It calls only what you configure: cloud APIs for prices, bills and resources, your AI provider and your notification channels.</p>
+        </details>
+        <details>
+          <summary>Can AI assistants use it?</summary>
+          <p>Yes. Its MCP server at <code>/mcp</code> works with Claude Code, Claude Desktop, Cursor and other MCP clients, with an API token; a viewer token gives read-only tools.</p>
+        </details>
+        <details>
+          <summary>Is it an open-source Kubecost alternative?</summary>
+          <p>It covers cost allocation like OpenCost and Kubecost, and adds schedules to zero, right-sizing with a guard, budgets and performance risks in one operator. If allocation is all you need, OpenCost is the more mature choice.</p>
+        </details>
+        <details>
+          <summary>What does it cost?</summary>
+          <p>Nothing. It is Apache 2.0 with no paid tier; you pay only for the small pod it runs in (100m CPU and 128 MiB requested).</p>
+        </details>
+      </div>
+    </div>
+  </section>
+
+  <section class="section final-cta" aria-labelledby="cta-title">
+    <div class="container">
+      <div class="cta-panel">
+        <h2 id="cta-title">Find out what your cluster really costs, today.</h2>
+        <p>Install with Helm, sign in, and see cost per namespace and team in the first hour.</p>
+        <div class="cta-row">
+          <a class="button button-primary" href="#install">Install with Helm</a>
+          <a class="button button-secondary" href="https://github.com/migalsp/costdeck">
+            <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+            View on GitHub
+          </a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer class="site-footer">
+  <div class="container footer-inner">
+    <div class="footer-brand">
+      <img src="assets/cost-deck-icon-64.png" width="24" height="24" alt="" loading="lazy" decoding="async">
+      <span>Cost Deck</span>
+    </div>
+    <nav aria-label="Project links">
+      <ul class="footer-links">
+        <li><a href="https://github.com/migalsp/costdeck/blob/main/LICENSE">Apache 2.0</a></li>
+        <li><a href="https://github.com/migalsp/costdeck">GitHub</a></li>
+        <li><a href="https://github.com/migalsp/costdeck/blob/main/docs/installation.md">Installation guide</a></li>
+        <li><a href="https://github.com/migalsp/costdeck/blob/main/docs/roadmap.md">Roadmap</a></li>
+        <li><a href="https://github.com/migalsp/costdeck/blob/main/CHANGELOG.md">Changelog</a></li>
+        <li><a href="https://github.com/migalsp/costdeck/blob/main/SECURITY.md">Security policy</a></li>
+        <li><a href="https://github.com/migalsp/costdeck/releases">Releases</a></li>
+      </ul>
+    </nav>
+    <div class="footer-notes">
+      <p>No cookies. No tracking.</p>
+      <p>Screenshots from a demo cluster.</p>
+      <p>Last updated: <time datetime="2026-11-03">2026-11-03</time></p>
+    </div>
+  </div>
+</footer>
+</body>
+</html>
