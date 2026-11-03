@@ -253,6 +253,24 @@ var _ = Describe("ScalingGroup external targets", func() {
 		})).To(Succeed())
 	}
 
+	db1 := finopsv1.ExternalTarget{Provider: "fakecloud", Type: "aurora", Identifier: "db1", Region: "eu-west-1"}
+	createStoppedGroup := func(sequence []string, targets ...finopsv1.ExternalTarget) {
+		GinkgoHelper()
+		Expect(k8sClient.Create(ctx, &finopsv1.ScalingGroup{
+			Name: key.Name, Namespace: key.Namespace,
+			Spec: finopsv1.ScalingGroupSpec{Category: "Solution", Namespaces: []string{appNamespace}, Active: new(false), Sequence: sequence, ExternalTargets: targets},
+		})).To(Succeed())
+	}
+	deleteGroup := func() {
+		GinkgoHelper()
+		Expect(rawClient.Delete(ctx, &finopsv1.ScalingGroup{Name: key.Name, Namespace: key.Namespace})).To(Succeed())
+		_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: key})
+		Expect(err).NotTo(HaveOccurred())
+		Eventually(func() error {
+			return k8sClient.Get(ctx, key, &finopsv1.ScalingGroup{})
+		}).Should(Satisfy(errors.IsNotFound))
+	}
+
 	BeforeEach(func() {
 		Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, &corev1.Namespace{Name: appNamespace}))).To(Succeed())
 		labels := map[string]string{"app": "api"}
@@ -363,28 +381,52 @@ var _ = Describe("ScalingGroup external targets", func() {
 		Expect(apiReplicas()).To(BeZero(), "the dry run never stopped the app")
 	})
 
-	It("starts only the cloud targets its sequence stopped when the group is deleted", func() {
-		Expect(k8sClient.Create(ctx, &finopsv1.ScalingGroup{
-			Name: key.Name, Namespace: key.Namespace,
-			Spec: finopsv1.ScalingGroupSpec{
-				Category: "Solution", Namespaces: []string{appNamespace}, Active: new(false), Sequence: []string{"ext:db1", appNamespace},
-				ExternalTargets: []finopsv1.ExternalTarget{
-					{Provider: "fakecloud", Type: "aurora", Identifier: "db1", Region: "eu-west-1"},
-					{Provider: "fakecloud", Type: "aurora", Identifier: "reporting", Region: "eu-west-1"},
-				},
-			},
-		})).To(Succeed())
+	It("starts only the cloud targets it stopped when the group is deleted", func() {
+		createStoppedGroup([]string{"ext:db1", appNamespace}, db1, finopsv1.ExternalTarget{Provider: "fakecloud", Type: "aurora", Identifier: "reporting", Region: "eu-west-1"})
 		_, g := reconcileGroup()
 		Expect(g.Status.Phase).To(Equal(scaling.PhaseScalingDown))
 		Expect(cloud.scaledTo(false)).To(Equal([]string{"db1"}), "only the sequence reaches a cloud target")
+		Expect(g.Status.StoppedExternalTargets).To(Equal([]finopsv1.ExternalTarget{db1}))
 
-		Expect(rawClient.Delete(ctx, &finopsv1.ScalingGroup{Name: key.Name, Namespace: key.Namespace})).To(Succeed())
-		_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: key})
-		Expect(err).NotTo(HaveOccurred())
-		Eventually(func() error {
-			return k8sClient.Get(ctx, key, &finopsv1.ScalingGroup{})
-		}).Should(Satisfy(errors.IsNotFound))
+		deleteGroup()
 		Expect(cloud.scaledTo(true)).To(Equal([]string{"db1"}), "the group never stopped the reporting database")
+	})
+
+	It("starts a cloud target it stopped once the target leaves its sequence", func() {
+		createStoppedGroup([]string{"ext:db1", appNamespace}, db1)
+		_, g := reconcileGroup()
+		Expect(g.Status.StoppedExternalTargets).To(Equal([]finopsv1.ExternalTarget{db1}))
+
+		g.Spec.Sequence = []string{appNamespace}
+		Expect(k8sClient.Update(ctx, g)).To(Succeed())
+		_, g = reconcileGroup()
+		Expect(cloud.scaledTo(true)).To(Equal([]string{"db1"}))
+		Expect(g.Status.StoppedExternalTargets).To(BeEmpty())
+		var seen []string
+		for len(recorder.Events) > 0 {
+			seen = append(seen, <-recorder.Events)
+		}
+		Expect(seen).To(ContainElement("Normal ExternalTargetReleased Cloud target db1 left the group's sequence; started it again"))
+	})
+
+	It("starts a cloud target it stopped when deleted, even once its spec no longer lists the target", func() {
+		createStoppedGroup([]string{"ext:db1", appNamespace}, db1)
+		_, g := reconcileGroup()
+		g.Spec.Sequence, g.Spec.ExternalTargets = []string{appNamespace}, nil
+		Expect(k8sClient.Update(ctx, g)).To(Succeed())
+
+		deleteGroup()
+		Expect(cloud.scaledTo(true)).To(Equal([]string{"db1"}))
+	})
+
+	It("starts the cloud targets of its sequence when deleted before it recorded any", func() {
+		createStoppedGroup([]string{"ext:db1", appNamespace}, db1)
+		_, g := reconcileGroup()
+		g.Status.StoppedExternalTargets = nil
+		Expect(k8sClient.Status().Update(ctx, g)).To(Succeed())
+
+		deleteGroup()
+		Expect(cloud.scaledTo(true)).To(Equal([]string{"db1"}), "a group stopped by an operator version that kept no record")
 	})
 })
 

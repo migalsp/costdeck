@@ -102,6 +102,7 @@ func (r *ScalingGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, err
 	}
 	r.release(ctx, group, departed, plan)
+	r.releaseExternalTargets(ctx, group)
 	decision := plan.Decision
 	targetActive := decision.Active
 	l.Info("Reconciling ScalingGroup", "category", group.Spec.Category, "namespaces", group.Members(), "targetActive", targetActive, "mode", decision.Mode)
@@ -416,17 +417,53 @@ func (r *ScalingGroupReconciler) reconcileExternalTarget(ctx context.Context, gr
 	if extTarget == nil {
 		return false, fmt.Errorf("external target %s not found in spec", extId)
 	}
+	return r.scaleExternalTarget(ctx, group, *extTarget, targetActive)
+}
 
-	provider, err := r.Engine.Provider(ctx, extTarget.Provider)
+func (r *ScalingGroupReconciler) scaleExternalTarget(ctx context.Context, group *finopsv1.ScalingGroup, target finopsv1.ExternalTarget, active bool) (bool, error) {
+	provider, err := r.Engine.Provider(ctx, target.Provider)
 	if err != nil {
 		return false, err
 	}
-
-	if err := provider.Scale(ctx, *extTarget, targetActive); err != nil {
+	if err := provider.Scale(ctx, target, active); err != nil {
 		return false, err
 	}
+	stopped := slices.IndexFunc(group.Status.StoppedExternalTargets, sameExternalTarget(target))
+	switch {
+	case active && stopped >= 0:
+		group.Status.StoppedExternalTargets = slices.Delete(group.Status.StoppedExternalTargets, stopped, stopped+1)
+	case !active && stopped >= 0:
+		group.Status.StoppedExternalTargets[stopped] = target
+	case !active:
+		group.Status.StoppedExternalTargets = append(group.Status.StoppedExternalTargets, target)
+	}
+	return provider.IsReady(ctx, target, active)
+}
 
-	return provider.IsReady(ctx, *extTarget, targetActive)
+func sameExternalTarget(target finopsv1.ExternalTarget) func(finopsv1.ExternalTarget) bool {
+	return func(other finopsv1.ExternalTarget) bool { return other.Identifier == target.Identifier }
+}
+
+func (r *ScalingGroupReconciler) releaseExternalTargets(ctx context.Context, group *finopsv1.ScalingGroup) {
+	sequenced := sequencedExternalTargets(group)
+	for _, target := range slices.Clone(group.Status.StoppedExternalTargets) {
+		if slices.ContainsFunc(sequenced, sameExternalTarget(target)) {
+			continue
+		}
+		if _, err := r.scaleExternalTarget(ctx, group, target, true); err != nil {
+			logf.FromContext(ctx).Error(err, "Could not start a cloud target that left the group", "target", target.Identifier)
+			continue
+		}
+		r.Recorder.Eventf(group, nil, corev1.EventTypeNormal, "ExternalTargetReleased", "Release",
+			"Cloud target %s left the group's sequence; started it again", target.Identifier)
+	}
+}
+
+func externalTargetsToRestore(group *finopsv1.ScalingGroup) []finopsv1.ExternalTarget {
+	if len(group.Status.StoppedExternalTargets) > 0 || !phaseReachedByScaling(group.Status.Phase) {
+		return slices.Clone(group.Status.StoppedExternalTargets)
+	}
+	return sequencedExternalTargets(group)
 }
 
 // namespaceOriginals returns the replica counts the group recorded for a namespace, keyed
@@ -784,11 +821,9 @@ func (r *ScalingGroupReconciler) releaseEverything(ctx context.Context, group *f
 			errs = append(errs, err)
 		}
 	}
-	if phaseReachedByScaling(group.Status.Phase) {
-		for _, target := range sequencedExternalTargets(group) {
-			if _, err := r.reconcileExternalTarget(ctx, group, "ext:"+target.Identifier, true); err != nil {
-				errs = append(errs, fmt.Errorf("start %s: %w", target.Identifier, err))
-			}
+	for _, target := range externalTargetsToRestore(group) {
+		if _, err := r.scaleExternalTarget(ctx, group, target, true); err != nil {
+			errs = append(errs, fmt.Errorf("start %s: %w", target.Identifier, err))
 		}
 	}
 	if err := syncSleepGrantAfterRelease(ctx, r.Engine); err != nil {

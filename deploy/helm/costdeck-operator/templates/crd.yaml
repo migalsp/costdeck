@@ -3122,6 +3122,47 @@ spec:
                 items:
                   type: string
                 type: array
+              stoppedExternalTargets:
+                description: |-
+                  StoppedExternalTargets are the cloud targets the group stopped and has not started
+                  since. The group starts them again when it comes up, when they leave its sequence and
+                  when it is deleted, even once spec.externalTargets no longer lists them.
+                items:
+                  description: ExternalTarget represents a 3rd party resource to scale
+                  properties:
+                    executeAfter:
+                      description: ExecuteAfter specifies which namespace stage this
+                        resource should scale after
+                      type: string
+                    identifier:
+                      description: Identifier is the unique ID or ARN of the resource
+                      type: string
+                    name:
+                      description: Name is a human-readable name for the resource
+                        (e.g. EC2 "Name" tag)
+                      type: string
+                    provider:
+                      description: Provider is the cloud provider (e.g., "aws", "gcp",
+                        "azure")
+                      type: string
+                    region:
+                      description: Region where the resource resides
+                      type: string
+                    status:
+                      description: Status tells you if the DB is available or stopped
+                        (populated at runtime by UI/Discovery API)
+                      type: string
+                    type:
+                      description: Type of the resource (e.g., "aurora", "cloudsql")
+                      type: string
+                  required:
+                  - identifier
+                  - provider
+                  - region
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-type: atomic
               wakeUpStartedAt:
                 description: |-
                   WakeUpStartedAt is when the running scale-up from zero began. It is cleared once
