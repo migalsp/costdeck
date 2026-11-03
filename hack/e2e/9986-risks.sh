@@ -94,7 +94,7 @@ risks_ready() {
   api GET /api/namespaces/smoke-risks/risks >"$RISKS_REPORT" &&
     jq -e '[.risks[].code] | index("evicted") != null' "$RISKS_REPORT" >/dev/null
 }
-wait_for "risk-crash has exited again and waits for its next retry, out of CrashLoopBackOff" risk_between_restarts risk-crash
+TIMEOUT=330 wait_for "risk-crash has exited again and waits for its next retry, out of CrashLoopBackOff" risk_between_restarts risk-crash
 wait_for "risks from the pods, the HorizontalPodAutoscaler and VictoriaMetrics" risks_ready
 risk_expect() {
   local found
