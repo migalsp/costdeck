@@ -57,3 +57,24 @@ YAML
   fail "the CRD accepted a group with neither namespaces nor a selector"
 fi
 ok "the CRD refuses a group with neither namespaces nor a selector"
+
+log "A namespace that moves to another group is left to its new owner"
+MOVE_OLD_BODY='{"metadata":{"name":"smoke-move-1"},"spec":{"category":"e2e","namespaces":["smoke-move-a","smoke-move-x"],"schedules":'"$CLOSED_SCHEDULE_JSON"'}}'
+MOVE_OLD_LEFT='{"metadata":{"name":"smoke-move-1"},"spec":{"category":"e2e","namespaces":["smoke-move-a"],"schedules":'"$CLOSED_SCHEDULE_JSON"'}}'
+MOVE_NEW_BODY='{"metadata":{"name":"smoke-move-2"},"spec":{"category":"e2e","namespaces":["smoke-move-x"],"schedules":'"$CLOSED_SCHEDULE_JSON"'}}'
+released_by_first() { kubectl get events -n "$NS" --field-selector involvedObject.name=smoke-move-1,reason=NamespaceReleased -o jsonpath='{.items[*].message}' | grep -q "smoke-move-x"; }
+for ns in smoke-move-a smoke-move-x; do
+  new_namespace "$ns"
+  deployment "$ns" app 1
+done
+kubectl rollout status deploy/app -n smoke-move-x --timeout=120s >/dev/null
+track_group smoke-move-1 smoke-move-2
+expect_code 201 "an older schedule for two namespaces" POST /api/scaling/groups "$MOVE_OLD_BODY" -b "$JAR"
+wait_for "smoke-move-x is scaled to zero by the older schedule" replicas_are smoke-move-x app 0
+expect_code 201 "a newer schedule that also lists smoke-move-x" POST /api/scaling/groups "$MOVE_NEW_BODY" -b "$JAR"
+wait_for "the newer schedule reports the namespace the older one owns" group_field_is smoke-move-2 'conflictingNamespaces[0]' smoke-move-x
+expect_code 200 "smoke-move-x taken out of the older schedule" PUT /api/scaling/groups/smoke-move-1 "$MOVE_OLD_LEFT" -b "$JAR"
+wait_for "the newer schedule owns smoke-move-x now" group_field_is smoke-move-2 'conflictingNamespaces' ""
+holds_for 10 "smoke-move-x stays down under its new schedule" replicas_are smoke-move-x app 0
+released_by_first && fail "the older schedule restored smoke-move-x although the newer one owns it now"
+ok "the older schedule left smoke-move-x to its new owner"

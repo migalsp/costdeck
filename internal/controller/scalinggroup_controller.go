@@ -738,7 +738,7 @@ func (r *ScalingGroupReconciler) release(ctx context.Context, group *finopsv1.Sc
 	released := false
 	var unreleased []string
 	for _, ns := range departed {
-		if owner, ok := plan.NamespaceOwners[ns]; ok && owner != group.Name {
+		if owner, ok := plan.Owners[ns]; ok && owner != group.Name {
 			continue
 		}
 		if err := releaseNamespace(ctx, r.Engine, ns, r.rulesFor(ctx, group, ns)); err != nil {
@@ -876,7 +876,7 @@ func (r *ScalingGroupReconciler) releaseEverything(ctx context.Context, group *f
 	namespaces := group.Members()
 	namespaces = append(namespaces, removedNamespaces(group, namespaces)...)
 	for _, ns := range namespaces {
-		if owner, ok := plan.NamespaceOwners[ns]; ok && owner != group.Name {
+		if owner, ok := plan.Owners[ns]; ok && owner != group.Name {
 			continue
 		}
 		if err := releaseNamespace(ctx, r.Engine, ns, r.rulesFor(ctx, group, ns)); err != nil {

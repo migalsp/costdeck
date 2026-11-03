@@ -35,6 +35,9 @@ type GroupPlan struct {
 	ConflictingNamespaces []string
 	// NamespaceOwners maps each conflicting namespace to the group that owns it.
 	NamespaceOwners map[string]string
+	// Owners maps every namespace any group claims to the group that owns it, so a group can
+	// tell whether a namespace that left it belongs to another group now.
+	Owners map[string]string
 	// ExceptionProblems lists exceptions and calendars that could not be applied, such as a
 	// calendar that does not exist.
 	ExceptionProblems []string
@@ -108,6 +111,7 @@ func (e *Engine) PlanGroups(now time.Time, groups []finopsv1.ScalingGroup, calen
 	owners := NamespaceOwners(groups)
 	for name, g := range byName {
 		plan := plans[name]
+		plan.Owners = owners
 		if !plan.InCycle {
 			for _, dep := range g.Spec.DependsOn {
 				dg, ok := byName[dep]

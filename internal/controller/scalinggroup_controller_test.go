@@ -755,6 +755,45 @@ var _ = Describe("Two ScalingGroups claiming the same namespace", func() {
 		}
 	})
 
+	It("leaves a namespace that moves to another group to its new owner", func() {
+		Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, &corev1.Namespace{Name: "conflict-older"}))).To(Succeed())
+		labels := map[string]string{"app": "app"}
+		Expect(k8sClient.Create(ctx, &appsv1.Deployment{
+			Name: "app", Namespace: "conflict-older",
+			Spec: appsv1.DeploymentSpec{
+				Replicas: ptr.To[int32](3), Selector: &metav1.LabelSelector{MatchLabels: labels},
+				Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: labels}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "app", Image: "busybox"}}}},
+			},
+		})).To(Succeed())
+		DeferCleanup(func() {
+			Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, &appsv1.Deployment{Name: "app", Namespace: "conflict-older"}))).To(Succeed())
+		})
+		reconcileOlder := func() {
+			GinkgoHelper()
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: older})
+			Expect(err).NotTo(HaveOccurred())
+		}
+		setOlder := func(namespaces ...string) {
+			GinkgoHelper()
+			g := &finopsv1.ScalingGroup{}
+			Expect(k8sClient.Get(ctx, older, g)).To(Succeed())
+			g.Spec.Namespaces, g.Spec.Active = namespaces, new(false)
+			Expect(k8sClient.Update(ctx, g)).To(Succeed())
+		}
+
+		setOlder("conflict-shared", "conflict-older")
+		reconcileOlder()
+		Expect(replicasIn("conflict-shared")).To(BeZero())
+		reconcileNewer()
+
+		setOlder("conflict-older")
+		reconcileOlder()
+		Expect(replicasIn("conflict-shared")).To(BeZero(), "conflict-shared belongs to the newer group now, which keeps it down")
+		g := reconcileNewer()
+		Expect(g.Status.ConflictingNamespaces).To(BeEmpty())
+		Expect(replicasIn("conflict-shared")).To(BeZero())
+	})
+
 	It("leaves the shared namespace to the older group, says so, and takes it over once that group is gone", func() {
 		g := reconcileNewer()
 		Expect(replicasIn("conflict-own")).To(BeZero())
