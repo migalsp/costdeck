@@ -171,7 +171,8 @@ func crashLooping(pod corev1.Pod, cs corev1.ContainerStatus) bool {
 		return cs.State.Waiting.Reason == "CrashLoopBackOff"
 	}
 	exited := cs.State.Terminated
-	if exited == nil || cs.RestartCount == 0 || pod.Status.Phase != corev1.PodRunning {
+	live := pod.Status.Phase == corev1.PodRunning || pod.Status.Phase == corev1.PodPending
+	if exited == nil || cs.RestartCount == 0 || !live {
 		return false
 	}
 	switch pod.Spec.RestartPolicy {

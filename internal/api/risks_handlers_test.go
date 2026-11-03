@@ -186,6 +186,8 @@ func TestCrashLoopingLeavesStoppedContainersAlone(t *testing.T) {
 			corev1.ContainerStatus{RestartCount: 3, State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}}}, true},
 		{"exited again before its next retry", pod(corev1.RestartPolicyAlways, corev1.PodRunning), exited(3, 3), true},
 		{"a completed run is restarted too", pod("", corev1.PodRunning), exited(0, 2), true},
+		{"exited again while another container of the pod has never started", pod(corev1.RestartPolicyAlways, corev1.PodPending), exited(3, 3), true},
+		{"its pod lost its node", pod(corev1.RestartPolicyAlways, corev1.PodUnknown), exited(3, 3), false},
 		{"pulling its image", pod(corev1.RestartPolicyAlways, corev1.PodPending),
 			corev1.ContainerStatus{State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ContainerCreating"}}}, false},
 		{"exited for the first time", pod(corev1.RestartPolicyAlways, corev1.PodRunning), exited(3, 0), false},
