@@ -155,9 +155,20 @@ jobs:
           VERSION: ${{ needs.release-please.outputs.version }}
         run: make build-installer IMG="${IMAGE}:${VERSION}"
 
+      - name: Sign the release assets
+        env:
+          VERSION: ${{ needs.release-please.outputs.version }}
+        run: |
+          for asset in dist/install.yaml "costdeck-operator-${VERSION}.tgz"; do
+            cosign sign-blob --yes --bundle "${asset}.sigstore.json" "$asset"
+          done
+
       - name: Attach assets to the release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ needs.release-please.outputs.tag }}
           VERSION: ${{ needs.release-please.outputs.version }}
-        run: gh release upload "$TAG" dist/install.yaml "costdeck-operator-${VERSION}.tgz" --clobber
+        run: |
+          gh release upload "$TAG" --clobber \
+            dist/install.yaml dist/install.yaml.sigstore.json \
+            "costdeck-operator-${VERSION}.tgz" "costdeck-operator-${VERSION}.tgz.sigstore.json"
