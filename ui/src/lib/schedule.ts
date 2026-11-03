@@ -292,6 +292,15 @@ export const IDLE_CHOICES = ['30m', '1h', '2h', '4h', '8h']
 
 export const PREWARM_MINUTES = [5, 10, 15, 30]
 
+// prewarmOptions lists the leads the editor offers: the presets, plus a lead the API saved
+// that is not one of them, so the editor shows it instead of a blank choice.
+export const prewarmOptions = (choice: string): number[] => {
+  const saved = Number(choice)
+  return Number.isInteger(saved) && saved > 0 && !PREWARM_MINUTES.includes(saved)
+    ? [...PREWARM_MINUTES, saved].sort((a, b) => a - b)
+    : PREWARM_MINUTES
+}
+
 // prewarmChoice is the editor's choice for spec.prewarm: 'auto', the minutes as a string, or ''
 // for none. Auto wins over the minutes it falls back to.
 export const prewarmChoice = (p?: Prewarm): string => p?.auto ? 'auto' : p?.minutes ? String(p.minutes) : ''

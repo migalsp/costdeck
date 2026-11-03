@@ -4,7 +4,7 @@ import { apiError, errorMessage, getJSON } from '../lib/api'
 import { toast } from '../lib/toast'
 import { exceptionProblem } from '../lib/exceptions'
 import { hibernateIssue } from '../lib/hibernate'
-import { IDLE_CHOICES, PREWARM_MINUTES, planFromSpec, planProblem, prewarmChoice, prewarmSpec, shortDuration, specFromPlan, type SchedulePlan } from '../lib/schedule'
+import { IDLE_CHOICES, planFromSpec, planProblem, prewarmChoice, prewarmOptions, prewarmSpec, shortDuration, specFromPlan, type SchedulePlan } from '../lib/schedule'
 import type { ExternalTarget, HibernateRule, HolidayCalendar, LabelSelector, ScalingConfig, ScalingGroup, ScalingGroupSpec, ScalingSpec, ScheduleException } from '../lib/types'
 import { usePolling } from '../lib/usePolling'
 import ExceptionsEditor from './ExceptionsEditor'
@@ -285,7 +285,7 @@ export default function ScheduleWizard(props: Props) {
           <select value={prewarm} onChange={e => setPrewarm(e.target.value)} className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-sm" aria-label="Start ahead of the schedule">
             <option value="">no</option>
             <option value="auto">by how long it takes to wake up</option>
-            {PREWARM_MINUTES.map(m => <option key={m} value={String(m)}>{m} minutes</option>)}
+            {prewarmOptions(prewarm).map(m => <option key={m} value={String(m)}>{m} minutes</option>)}
           </select>
           <span className="basis-full">Start the workloads before each scheduled start, so they are ready when it comes. Measured, the lead is the slowest of the last five wake-ups plus a minute, at most 30 minutes.</span>
         </label>

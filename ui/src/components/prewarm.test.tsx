@@ -56,6 +56,15 @@ describe('Start ahead of the schedule', () => {
     expect(posted(fetch, '/api/scaling/configs/lab', 'PUT').spec.prewarm).toEqual({ auto: true, minutes: 10 })
   })
 
+  it('shows a lead set through the API that is not one of the presets', () => {
+    mockFetch(on('GET', '/api/settings', () => json({ calendars: [] })))
+    const config = { metadata: { name: 'lab' }, spec: { targetNamespace: 'lab', prewarm: { minutes: 12 } } } as unknown as ScalingConfig
+    render(<ScheduleWizard kind="config" existing={config} namespaces={['lab']} groups={[]} onClose={() => {}} onSaved={() => {}} />)
+    const select = screen.getByRole('combobox', { name: 'Start ahead of the schedule' }) as HTMLSelectElement
+    expect(select.value).toBe('12')
+    expect((screen.getByRole('option', { name: '12 minutes' }) as HTMLOptionElement).selected).toBe(true)
+  })
+
   it('says a namespace is up early, and the week shows the lead', () => {
     expect(statusLine({ phase: 'ScaledUp', status: { mode: 'Prewarm', desiredState: 'Up', prewarmMinutes: 9 } })).toMatchObject({ tone: 'up', title: 'Up early', detail: 'started 9 min ahead of its schedule to be ready on time' })
     const officeHours = [{ days: [1, 2, 3, 4, 5], startTime: '08:00', endTime: '18:00', timezone: 'UTC' }]
