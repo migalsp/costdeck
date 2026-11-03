@@ -3,7 +3,7 @@
   "name": "io.github.migalsp/costdeck",
   "title": "Cost Deck",
   "description": "Kubernetes cost, savings, scale-to-zero schedules and right-sizing advice from your Cost Deck",
-  "version": "1.6.2",
+  "version": "1.7.0",
   "websiteUrl": "https://migalsp.github.io/costdeck/",
   "repository": {
     "url": "https://github.com/migalsp/costdeck",
