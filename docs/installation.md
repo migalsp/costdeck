@@ -722,9 +722,9 @@ that is up from 8 to 18 but nobody touched after lunch stops paying for the afte
 ### Wake-ups and prewarm
 
 Every scale-up from zero is timed, from leaving `ScaledDown` until every target is ready:
-the last five are in `status.recentWakeUps`, newest first. A namespace whose wake-ups take
-two minutes or more shows a performance risk, since whoever opens it when its schedule
-starts waits that long.
+the last five are in `status.recentWakeUps`, newest first. A schedule whose wake-ups take
+two minutes or more shows a performance risk while its prewarm is shorter than the slowest
+of them, since whoever opens it when the schedule starts waits that long.
 
 **Start ahead of the schedule** (`spec.prewarm`) starts the workloads before each
 scheduled start, so they are ready when it comes. `minutes` is a fixed lead, up to 120;

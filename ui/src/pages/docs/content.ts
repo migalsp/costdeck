@@ -563,7 +563,7 @@ spec:
         id: 'prewarm',
         title: 'Ready when the schedule starts',
         blocks: [
-          { p: 'Cost Deck times every start from zero, from leaving **Down** until every workload is ready, and keeps the last five on the schedule. A namespace that takes two minutes or more to wake shows a performance risk, since whoever opens it when its schedule starts waits that long.' },
+          { p: 'Cost Deck times every start from zero, from leaving **Down** until every workload is ready, and keeps the last five on the schedule. A schedule whose wake-ups take two minutes or more shows a performance risk while its prewarm is shorter than the slowest of them, since whoever opens it when the schedule starts waits that long.' },
           { p: '**Start ahead of the schedule** in the schedule editor starts the workloads before each scheduled start, so they are ready when it comes: 5, 10, 15 or 30 minutes, or **by how long it takes to wake up**, which is the slowest of the last five wake-ups plus a minute, at most 30 minutes. While it runs early the card says **Prewarm**. The lead also counts when an exception that kept the namespace down ends, in "next change", in previews and in cost estimates; the end of a window is left alone.' },
           {
             ways: {
@@ -854,7 +854,7 @@ spec:
               'Memory at 90% of its limit or more.',
               'HorizontalPodAutoscalers that want more replicas than their maximum, and how many.',
               'JVM heaps still full after garbage collection, and Java setups that risk an OOM kill.',
-              'Namespaces that take two minutes or more to wake up.',
+              'Schedules that take two minutes or more to wake up, while their prewarm does not cover it.',
             ],
           },
           { p: 'The current state of pods and autoscalers is always read. CPU throttling and the last 14 days of OOM kills, restarts and evictions need VictoriaMetrics with cAdvisor and kube-state-metrics. Right-sizing never cuts a resource under pressure: a throttled container keeps its CPU request, and one that was OOM-killed, evicted or close to its limit keeps its memory, and the advice says why.' },
