@@ -23,6 +23,11 @@
           "type": "json",
           "path": "ui/package.json",
           "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "server.json",
+          "jsonpath": "$.version"
         }
       ]
     }

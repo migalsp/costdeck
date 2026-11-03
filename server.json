@@ -1,0 +1,32 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.migalsp/costdeck",
+  "title": "Cost Deck",
+  "description": "Kubernetes cost, savings, scale-to-zero schedules and right-sizing advice from your Cost Deck",
+  "version": "1.6.2",
+  "websiteUrl": "https://migalsp.github.io/costdeck/",
+  "repository": {
+    "url": "https://github.com/migalsp/costdeck",
+    "source": "github"
+  },
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://{costdeck_host}/mcp",
+      "variables": {
+        "costdeck_host": {
+          "description": "Host name of your Cost Deck installation, such as costdeck.example.com",
+          "isRequired": true
+        }
+      },
+      "headers": [
+        {
+          "name": "Authorization",
+          "description": "Bearer cdk_... API token from Settings, API tokens; a viewer token gives read-only tools",
+          "isRequired": true,
+          "isSecret": true
+        }
+      ]
+    }
+  ]
+}

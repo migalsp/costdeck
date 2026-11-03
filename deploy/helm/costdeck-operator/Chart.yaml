@@ -1,18 +1,71 @@
 apiVersion: v2
 name: costdeck-operator
 description: >-
-  Kubernetes FinOps operator: namespace cost and usage insights, right-sizing advice,
-  and schedule-driven scale-down of non-production workloads and cloud resources.
+  Open-source Kubernetes FinOps operator: cost per namespace, team, GPU and LLM token,
+  schedules that scale idle environments and their cloud databases to zero, budgets and
+  chargeback, and right-sizing with a rollback guard.
 home: https://github.com/migalsp/costdeck
 icon: https://raw.githubusercontent.com/migalsp/costdeck/main/docs/assets/brand/cost-deck-icon-256.png
 sources:
   - https://github.com/migalsp/costdeck
 keywords:
   - finops
-  - cost
-  - scaling
+  - kubernetes-cost
+  - cost-optimization
+  - cost-allocation
+  - chargeback
+  - scale-to-zero
+  - rightsizing
+  - gpu
+  - llm-cost
+  - mcp
   - operator
 kubeVersion: ">=1.26.0-0"
+annotations:
+  artifacthub.io/license: Apache-2.0
+  artifacthub.io/operator: "true"
+  artifacthub.io/operatorCapabilities: Full Lifecycle
+  artifacthub.io/category: monitoring-logging
+  artifacthub.io/links: |
+    - name: Website
+      url: https://migalsp.github.io/costdeck/
+    - name: Installation guide
+      url: https://github.com/migalsp/costdeck/blob/main/docs/installation.md
+    - name: Roadmap
+      url: https://github.com/migalsp/costdeck/blob/main/docs/roadmap.md
+    - name: Support
+      url: https://github.com/migalsp/costdeck/issues
+  artifacthub.io/crds: |
+    - kind: ScalingGroup
+      version: v1
+      name: scalinggroups.finops.costdeck.io
+      displayName: Scaling group
+      description: A schedule for several namespaces and cloud resources, with dependencies and start order
+    - kind: ScalingConfig
+      version: v1
+      name: scalingconfigs.finops.costdeck.io
+      displayName: Scaling config
+      description: A schedule and workload rules for one namespace
+    - kind: RightsizingPolicy
+      version: v1
+      name: rightsizingpolicies.finops.costdeck.io
+      displayName: Right-sizing policy
+      description: Bounds, headroom and apply rules for the right-sizing advice of a team's workloads
+    - kind: CostDeckConfig
+      version: v1
+      name: costdeckconfigs.finops.costdeck.io
+      displayName: Cost Deck settings
+      description: The installation's settings, one object named default
+    - kind: NamespaceFinOps
+      version: v1
+      name: namespacefinops.finops.costdeck.io
+      displayName: Namespace usage
+      description: Recent usage of one namespace, kept by the operator
+    - kind: NamespaceOptimization
+      version: v1
+      name: namespaceoptimizations.finops.costdeck.io
+      displayName: Right-sizing record
+      description: Right-sizing changes applied, proposed or put back in a namespace
 
 type: application
 
