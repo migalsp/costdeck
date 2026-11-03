@@ -67,7 +67,7 @@ describe('theme before the first paint', () => {
   it('comes from a script file, since the content security policy refuses inline scripts', async () => {
     const { default: html } = await import('../../index.html?raw')
     expect(html).toContain('<script src="/theme-init.js"></script>')
-    expect(html).not.toMatch(/<script>\s*\S/)
+    expect(html).not.toMatch(/<script\b[^>]*>\s*[^<\s]/i)
   })
 
   it('applies the saved choice the way the theme hook reads it', async () => {
