@@ -133,6 +133,74 @@ func TestRisksReadPodsAndAutoscalers(t *testing.T) {
 	}
 }
 
+func TestRisksSeeACrashLoopBetweenItsRestarts(t *testing.T) {
+	t.Setenv("POD_NAMESPACE", "costdeck")
+	server := buildMockServerWithK8s()
+	ctx := context.Background()
+	exitedAgain := corev1.PodStatus{Phase: corev1.PodRunning, ContainerStatuses: []corev1.ContainerStatus{{
+		Name: "main", RestartCount: 3,
+		State:                corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{Reason: "Error", ExitCode: 3}},
+		LastTerminationState: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{Reason: "Error", ExitCode: 3}},
+	}}}
+	for _, obj := range []client.Object{riskDeployment("worker"), riskPod("worker-5c6b7d-fghjk", exitedAgain)} {
+		if err := server.Client.Create(ctx, obj); err != nil {
+			t.Fatalf("creating %s: %v", obj.GetName(), err)
+		}
+	}
+	server.MetricsClient = metricsfake.NewSimpleClientset() //nolint:staticcheck // k8s.io/metrics generates no NewClientset
+
+	rr := httptest.NewRecorder()
+	server.routes().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/namespaces/shop/risks", nil))
+	var report risks.Report
+	if err := json.Unmarshal(rr.Body.Bytes(), &report); err != nil {
+		t.Fatalf("status %d: %v", rr.Code, err)
+	}
+	for _, r := range report.Risks {
+		if r.Workload == "worker" && r.Code == risks.CodeRestarts {
+			if r.Severity != risks.SeverityCritical || !strings.Contains(r.Message, "Crash-looping") || !strings.Contains(r.Message, "exit code 3") {
+				t.Errorf("restart risk = %+v: a container that exited again and waits for its next retry is crash-looping", r)
+			}
+			return
+		}
+	}
+	t.Errorf("no restart risk for worker in %+v", report.Risks)
+}
+
+func TestCrashLoopingLeavesStoppedContainersAlone(t *testing.T) {
+	exited := func(code int32, restarts int32) corev1.ContainerStatus {
+		return corev1.ContainerStatus{Name: "main", RestartCount: restarts,
+			State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{Reason: "Error", ExitCode: code}}}
+	}
+	pod := func(policy corev1.RestartPolicy, phase corev1.PodPhase) corev1.Pod {
+		return corev1.Pod{Spec: corev1.PodSpec{RestartPolicy: policy}, Status: corev1.PodStatus{Phase: phase}}
+	}
+	deleting := pod(corev1.RestartPolicyAlways, corev1.PodRunning)
+	deleting.DeletionTimestamp = &metav1.Time{}
+	for _, tc := range []struct {
+		name   string
+		pod    corev1.Pod
+		status corev1.ContainerStatus
+		want   bool
+	}{
+		{"waiting in back-off", pod(corev1.RestartPolicyAlways, corev1.PodRunning),
+			corev1.ContainerStatus{RestartCount: 3, State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}}}, true},
+		{"exited again before its next retry", pod(corev1.RestartPolicyAlways, corev1.PodRunning), exited(3, 3), true},
+		{"a completed run is restarted too", pod("", corev1.PodRunning), exited(0, 2), true},
+		{"pulling its image", pod(corev1.RestartPolicyAlways, corev1.PodPending),
+			corev1.ContainerStatus{State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ContainerCreating"}}}, false},
+		{"exited for the first time", pod(corev1.RestartPolicyAlways, corev1.PodRunning), exited(3, 0), false},
+		{"stopped by a pod deletion", deleting, exited(143, 2), false},
+		{"stopped by a node shutdown", pod(corev1.RestartPolicyAlways, corev1.PodFailed), exited(143, 2), false},
+		{"a job that finished", pod(corev1.RestartPolicyOnFailure, corev1.PodRunning), exited(0, 1), false},
+		{"a job that failed again", pod(corev1.RestartPolicyOnFailure, corev1.PodRunning), exited(1, 1), true},
+		{"never restarted", pod(corev1.RestartPolicyNever, corev1.PodRunning), exited(1, 1), false},
+	} {
+		if got := crashLooping(tc.pod, tc.status); got != tc.want {
+			t.Errorf("%s: crashLooping = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
 func TestRisksFlagASlowWakeUp(t *testing.T) {
 	t.Setenv("POD_NAMESPACE", "costdeck")
 	server := buildMockServerWithK8s()

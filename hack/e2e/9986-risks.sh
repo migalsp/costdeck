@@ -27,7 +27,8 @@ YAML
 risk_pod() { kubectl get pods -n smoke-risks -l "app=$1" -o jsonpath='{.items[0].metadata.name}'; }
 risk_status() { kubectl get pods -n smoke-risks -l "app=$1" -o jsonpath="{.items[0].status.containerStatuses[0].$2}"; }
 risk_last_termination_is() { [[ "$(risk_status "$1" lastState.terminated.reason)" == "$2" ]]; }
-risk_waiting_is() { [[ "$(risk_status "$1" state.waiting.reason)" == "$2" ]]; }
+risk_restarted_twice() { [[ "$(risk_status "$1" restartCount)" -ge 2 ]]; }
+risk_between_restarts() { risk_restarted_twice "$1" && [[ -n "$(risk_status "$1" state.terminated.reason)" ]]; }
 risk_hpa_limited() { [[ "$(kubectl get hpa risk-hpa -n smoke-risks -o jsonpath='{.status.conditions[?(@.type=="ScalingLimited")].reason}')" == TooManyReplicas ]]; }
 
 log "Workloads in trouble: an OOM kill, a crash loop and an HPA at its maximum, from real pods"
@@ -61,7 +62,7 @@ for w in risk-throttled risk-near; do
   kubectl rollout status "deploy/$w" -n smoke-risks --timeout=120s >/dev/null || fail "$w did not start"
 done
 wait_for "risk-oom is OOM-killed" risk_last_termination_is risk-oom OOMKilled
-wait_for "risk-crash is crash-looping" risk_waiting_is risk-crash CrashLoopBackOff
+wait_for "risk-crash is crash-looping" risk_restarted_twice risk-crash
 TIMEOUT=240 wait_for "the HorizontalPodAutoscaler of risk-hpa wants more than its maximum" risk_hpa_limited
 
 python3 - "$(risk_pod risk-throttled)" "$(risk_pod risk-near)" <<'PY' | curl -sf --data-binary @- "localhost:$VM_PORT/api/v1/import" || fail "importing the synthetic pressure history"
@@ -93,6 +94,7 @@ risks_ready() {
   api GET /api/namespaces/smoke-risks/risks >"$RISKS_REPORT" &&
     jq -e '[.risks[].code] | index("evicted") != null' "$RISKS_REPORT" >/dev/null
 }
+wait_for "risk-crash has exited again and waits for its next retry, out of CrashLoopBackOff" risk_between_restarts risk-crash
 wait_for "risks from the pods, the HorizontalPodAutoscaler and VictoriaMetrics" risks_ready
 risk_expect() {
   local found

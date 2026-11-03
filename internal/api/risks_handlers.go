@@ -131,7 +131,7 @@ func (s *Server) pressure(ctx context.Context, ns string, workloads []rightsizin
 					p.OOMKills = max(p.OOMKills, 1)
 				}
 			}
-			if cs.State.Waiting != nil && cs.State.Waiting.Reason == "CrashLoopBackOff" {
+			if crashLooping(pod, cs) {
 				p.CrashLooping = true
 			}
 			obs.containers[key] = p
@@ -161,6 +161,23 @@ func (s *Server) pressure(ctx context.Context, ns string, workloads []rightsizin
 	}
 	s.pressureCache.put(ns, obs)
 	return obs
+}
+
+func crashLooping(pod corev1.Pod, cs corev1.ContainerStatus) bool {
+	if cs.State.Waiting != nil {
+		return cs.State.Waiting.Reason == "CrashLoopBackOff"
+	}
+	exited := cs.State.Terminated
+	if exited == nil || cs.RestartCount == 0 || pod.DeletionTimestamp != nil || pod.Status.Phase != corev1.PodRunning {
+		return false
+	}
+	switch pod.Spec.RestartPolicy {
+	case corev1.RestartPolicyNever:
+		return false
+	case corev1.RestartPolicyOnFailure:
+		return exited.ExitCode != 0
+	}
+	return true
 }
 
 func wantedReplicas(h autoscalingv2.HorizontalPodAutoscaler) int32 {
