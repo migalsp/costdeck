@@ -38,11 +38,16 @@ api POST /api/scaling/preview "$WAKE_PREVIEW" | jq -e 'any(.intervals[]; .reason
 ok "the preview shows the prewarm before the window"
 
 WAKE_AUTO_SPEC='"spec":{"namespaces":["smoke-wake"],"schedules":'"$WAKE_SCHEDULE"',"prewarm":{"auto":true}}'
-wake_auto_prewarms() {
+wake_auto_preview() {
   local body='{"kind":"group",'"$1$WAKE_AUTO_SPEC"'}'
-  api POST /api/scaling/preview "$body" | jq -e 'any(.intervals[]; .reason == "prewarm" and .active)' >/dev/null
+  api POST /api/scaling/preview "$body" |
+    jq -r 'if (.intervals | type) == "array" and (.intervals | length) > 0
+      then (if any(.intervals[]; .reason == "prewarm" and .active) then "prewarms" else "waits" end)
+      else "no preview: \(.)" end' 2>&1
 }
-wake_auto_prewarms '"name":"smoke-wake",' ||
-  fail "the preview of smoke-wake with an automatic prewarm ignores its recorded ${WAKE_SECONDS}s wake-up"
-! wake_auto_prewarms '' || fail "a new schedule with no wake-ups yet prewarms automatically"
+WAKE_AUTO_SAVED=$(wake_auto_preview '"name":"smoke-wake",')
+[[ "$WAKE_AUTO_SAVED" == prewarms ]] ||
+  fail "the preview of smoke-wake with an automatic prewarm ignores its recorded ${WAKE_SECONDS}s wake-up: $WAKE_AUTO_SAVED"
+WAKE_AUTO_NEW=$(wake_auto_preview '')
+[[ "$WAKE_AUTO_NEW" == waits ]] || fail "a new schedule with no wake-ups yet prewarms automatically: $WAKE_AUTO_NEW"
 ok "an automatic prewarm in the preview follows the wake-ups the schedule recorded"
