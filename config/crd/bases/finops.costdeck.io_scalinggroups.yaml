@@ -713,9 +713,10 @@ spec:
                 type: array
               stoppedExternalTargets:
                 description: |-
-                  StoppedExternalTargets are the cloud targets the group stopped and has not started
-                  since. The group starts them again when it comes up, when they leave its sequence and
-                  when it is deleted, even once spec.externalTargets no longer lists them.
+                  StoppedExternalTargets are the cloud targets the group stopped and has not seen
+                  running since. The group starts them again when it comes up, when they leave its
+                  sequence and when it is deleted, even once spec.externalTargets no longer lists them;
+                  a deleted group stays until they run.
                 items:
                   description: ExternalTarget represents a 3rd party resource to scale
                   properties:

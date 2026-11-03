@@ -388,8 +388,36 @@ var _ = Describe("ScalingGroup external targets", func() {
 		Expect(cloud.scaledTo(false)).To(Equal([]string{"db1"}), "only the sequence reaches a cloud target")
 		Expect(g.Status.StoppedExternalTargets).To(Equal([]finopsv1.ExternalTarget{db1}))
 
+		cloud.setReady(true, true)
 		deleteGroup()
 		Expect(cloud.scaledTo(true)).To(Equal([]string{"db1"}), "the group never stopped the reporting database")
+	})
+
+	It("keeps a deleted group until the cloud targets it stopped run again", func() {
+		createStoppedGroup([]string{"ext:db1", appNamespace}, db1)
+		reconcileGroup()
+		cloud.setReady(true, false)
+
+		Expect(rawClient.Delete(ctx, &finopsv1.ScalingGroup{Name: key.Name, Namespace: key.Namespace})).To(Succeed())
+		res, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: key})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(res.RequeueAfter).To(Equal(releaseRetry))
+		g := &finopsv1.ScalingGroup{}
+		Expect(k8sClient.Get(ctx, key, g)).To(Succeed(), "a start the cloud accepted without starting anything is not a restore")
+		Expect(g.Status.StoppedExternalTargets).To(Equal([]finopsv1.ExternalTarget{db1}))
+		var seen []string
+		for len(recorder.Events) > 0 {
+			seen = append(seen, <-recorder.Events)
+		}
+		Expect(seen).To(ContainElement(ContainSubstring("db1 has not started yet")))
+
+		cloud.setReady(true, true)
+		_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: key})
+		Expect(err).NotTo(HaveOccurred())
+		Eventually(func() error {
+			return k8sClient.Get(ctx, key, &finopsv1.ScalingGroup{})
+		}).Should(Satisfy(errors.IsNotFound))
+		Expect(cloud.scaledTo(true)).To(Equal([]string{"db1", "db1"}))
 	})
 
 	It("starts a cloud target it stopped once the target leaves its sequence", func() {
@@ -399,6 +427,7 @@ var _ = Describe("ScalingGroup external targets", func() {
 
 		g.Spec.Sequence = []string{appNamespace}
 		Expect(k8sClient.Update(ctx, g)).To(Succeed())
+		cloud.setReady(true, true)
 		_, g = reconcileGroup()
 		Expect(cloud.scaledTo(true)).To(Equal([]string{"db1"}))
 		Expect(g.Status.StoppedExternalTargets).To(BeEmpty())
@@ -415,18 +444,33 @@ var _ = Describe("ScalingGroup external targets", func() {
 		g.Spec.Sequence, g.Spec.ExternalTargets = []string{appNamespace}, nil
 		Expect(k8sClient.Update(ctx, g)).To(Succeed())
 
+		cloud.setReady(true, true)
 		deleteGroup()
 		Expect(cloud.scaledTo(true)).To(Equal([]string{"db1"}))
 	})
 
-	It("starts the cloud targets of its sequence when deleted before it recorded any", func() {
+	It("starts no cloud target added just before the group is deleted", func() {
+		createStoppedGroup([]string{appNamespace})
+		_, g := reconcileGroup()
+		Expect(g.Status.Phase).To(Equal(scaling.PhaseScaledDown))
+		g.Spec.Sequence, g.Spec.ExternalTargets = []string{"ext:db1", appNamespace}, []finopsv1.ExternalTarget{db1}
+		Expect(k8sClient.Update(ctx, g)).To(Succeed())
+
+		deleteGroup()
+		Expect(cloud.scaledTo(true)).To(BeEmpty(), "the group never stopped db1")
+	})
+
+	It("records the cloud targets an operator version without the record stopped at its first reconcile", func() {
 		createStoppedGroup([]string{"ext:db1", appNamespace}, db1)
 		_, g := reconcileGroup()
 		g.Status.StoppedExternalTargets = nil
 		Expect(k8sClient.Status().Update(ctx, g)).To(Succeed())
 
+		_, g = reconcileGroup()
+		Expect(g.Status.StoppedExternalTargets).To(Equal([]finopsv1.ExternalTarget{db1}))
+		cloud.setReady(true, true)
 		deleteGroup()
-		Expect(cloud.scaledTo(true)).To(Equal([]string{"db1"}), "a group stopped by an operator version that kept no record")
+		Expect(cloud.scaledTo(true)).To(Equal([]string{"db1"}))
 	})
 })
 

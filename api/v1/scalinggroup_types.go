@@ -264,9 +264,10 @@ type ScalingGroupStatus struct {
 	// +optional
 	ConflictingNamespaces []string `json:"conflictingNamespaces,omitempty"`
 
-	// StoppedExternalTargets are the cloud targets the group stopped and has not started
-	// since. The group starts them again when it comes up, when they leave its sequence and
-	// when it is deleted, even once spec.externalTargets no longer lists them.
+	// StoppedExternalTargets are the cloud targets the group stopped and has not seen
+	// running since. The group starts them again when it comes up, when they leave its
+	// sequence and when it is deleted, even once spec.externalTargets no longer lists them;
+	// a deleted group stays until they run.
 	// +optional
 	// +listType=atomic
 	StoppedExternalTargets []ExternalTarget `json:"stoppedExternalTargets,omitempty"`
