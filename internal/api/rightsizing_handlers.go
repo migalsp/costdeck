@@ -126,24 +126,36 @@ func (s *Server) handleRecommendations(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, report)
 }
 
-// recommendations compares a namespace's requests with observed demand.
+// recommendations compares a namespace's requests with observed demand, serving a report made in
+// the last few minutes from the cache. Changes go through adviceFor, which never reads the cache.
 func (s *Server) recommendations(ctx context.Context, ns string) (rightsizing.Report, error) {
 	if report, ok := s.recommendationCache.get(ns); ok {
 		return report, nil
 	}
+	report, cacheable, err := s.analyzeNamespace(ctx, ns)
+	if err == nil && cacheable {
+		s.recommendationCache.put(ns, report)
+	}
+	return report, err
+}
+
+// analyzeNamespace compares a namespace's requests and right-sizing policies, as they are now, with
+// observed demand. The report is not worth caching for a namespace without workloads, nor when the
+// policies could not be read.
+func (s *Server) analyzeNamespace(ctx context.Context, ns string) (rightsizing.Report, bool, error) {
 	workloads, err := s.workloadRequests(ctx, ns)
 	if err != nil {
-		return rightsizing.Report{}, err
+		return rightsizing.Report{}, false, err
 	}
 	if len(workloads) == 0 {
-		return rightsizing.Report{Namespace: ns, Workloads: []rightsizing.WorkloadAdvice{}}, nil
+		return rightsizing.Report{Namespace: ns, Workloads: []rightsizing.WorkloadAdvice{}}, false, nil
 	}
 	demand, d, err := s.metricsProvider().ContainerDemand(ctx, ns)
 	if err != nil {
 		if errors.Is(err, metrics.ErrUnsupported) && d.Degraded != nil {
 			err = d.Degraded
 		}
-		return rightsizing.Report{}, fmt.Errorf("no usage data for namespace %s: %w", ns, err)
+		return rightsizing.Report{}, false, fmt.Errorf("no usage data for namespace %s: %w", ns, err)
 	}
 
 	holdUnderPressure(workloads, s.pressure(ctx, ns, workloads), demand)
@@ -167,10 +179,8 @@ func (s *Server) recommendations(ctx context.Context, ns string) (rightsizing.Re
 	case heapErr != nil:
 		report.Warning = "JVM heap metrics could not be read, so Java advice rests on the JVM flags alone: " + heapErr.Error()
 	}
-	if !slices.ContainsFunc(workloads, func(w rightsizing.Workload) bool { return w.Policy != nil && w.Policy.Name == policiesUnreadable }) {
-		s.recommendationCache.put(ns, report)
-	}
-	return report, nil
+	policiesRead := !slices.ContainsFunc(workloads, func(w rightsizing.Workload) bool { return w.Policy != nil && w.Policy.Name == policiesUnreadable })
+	return report, policiesRead, nil
 }
 
 // workloadRequests lists the Deployments, StatefulSets and Argo Rollouts of a namespace

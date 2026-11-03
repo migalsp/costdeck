@@ -144,6 +144,10 @@ func TestAdviceCannotBeAppliedWhilePoliciesCannotBeRead(t *testing.T) {
 	if w := report.Workloads[0]; !w.ApplyForbidden || w.Policy != policiesUnreadable {
 		t.Errorf("advice = %+v; without the policies nobody knows whether one forbids applying it", w)
 	}
+	server.routes().ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/namespaces/shop/recommendations", nil))
+	if policyLists < 2 {
+		t.Errorf("the policies were read %d time(s) for two requests; a report made without them must not be cached", policyLists)
+	}
 
 	rr = httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/namespaces/shop/rightsizing/apply", strings.NewReader(`{"kind":"Deployment","name":"api"}`))
@@ -156,7 +160,42 @@ func TestAdviceCannotBeAppliedWhilePoliciesCannotBeRead(t *testing.T) {
 	if err := server.Client.Get(ctx, client.ObjectKey{Namespace: "shop", Name: "api"}, &after); err != nil || after.Spec.Template.Spec.Containers[0].Resources.Requests.Cpu().String() != "2" {
 		t.Errorf("api was changed while its policies were unknown: %v", after.Spec.Template.Spec.Containers[0].Resources.Requests)
 	}
-	if policyLists < 2 {
-		t.Errorf("the policies were read %d time(s); a report made without them must not be cached", policyLists)
+}
+
+func TestAdviceIsAppliedOnlyIfAPolicyMadeSinceStillAllowsIt(t *testing.T) {
+	t.Setenv("POD_NAMESPACE", "costdeck")
+	ctx := context.Background()
+	server := buildMockServerWithK8s()
+	createAll(t, server.Client,
+		&finopsv1.CostDeckConfig{Name: "default", Namespace: "costdeck", Spec: finopsv1.CostDeckConfigSpec{Rightsizing: finopsv1.RightsizingConfig{Apply: true}}},
+		labelledDeployment("api"))
+	metricsClient := metricsfake.NewSimpleClientset() //nolint:staticcheck // k8s.io/metrics generates no NewClientset
+	pm := &metricsv1beta1.PodMetrics{Name: "api-7d9f8c-bcdfg", Namespace: "shop",
+		Containers: []metricsv1beta1.ContainerMetrics{{Name: "main", Usage: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("50m"), corev1.ResourceMemory: resource.MustParse("100Mi")}}}}
+	if err := metricsClient.Tracker().Create(metricsv1beta1.SchemeGroupVersion.WithResource("pods"), pm, "shop"); err != nil {
+		t.Fatal(err)
+	}
+	server.MetricsClient = metricsClient
+
+	rr := httptest.NewRecorder()
+	server.routes().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/namespaces/shop/recommendations", nil))
+	var report rightsizing.Report
+	if err := json.Unmarshal(rr.Body.Bytes(), &report); err != nil || len(report.Workloads) != 1 || report.Workloads[0].ApplyForbidden {
+		t.Fatalf("recommendations = %d %s, want advice that may be applied", rr.Code, rr.Body.String())
+	}
+	createAll(t, server.Client, &finopsv1.RightsizingPolicy{Name: "freeze", Namespace: "shop", Spec: finopsv1.RightsizingPolicySpec{
+		Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "api"}}, Apply: finopsv1.RightsizingApplyForbidden,
+	}})
+
+	rr = httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/namespaces/shop/rightsizing/apply", strings.NewReader(`{"kind":"Deployment","name":"api"}`))
+	req.Header.Set("Content-Type", "application/json")
+	server.routes().ServeHTTP(rr, req)
+	if rr.Code != http.StatusForbidden || !strings.Contains(rr.Body.String(), "RightsizingPolicy freeze forbids") {
+		t.Errorf("apply = %d %s, want 403: the policy forbids it now, whatever the cached advice says", rr.Code, rr.Body.String())
+	}
+	var after appsv1.Deployment
+	if err := server.Client.Get(ctx, client.ObjectKey{Namespace: "shop", Name: "api"}, &after); err != nil || after.Spec.Template.Spec.Containers[0].Resources.Requests.Cpu().String() != "2" {
+		t.Errorf("api was changed despite the policy made before applying: %v", after.Spec.Template.Spec.Containers[0].Resources.Requests)
 	}
 }

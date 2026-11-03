@@ -4,7 +4,8 @@
 # - a workload whose new pods fail with the smaller request (its container reads its CPU
 #   request through the downward API and exits below 100m) gets its old requests back
 #   from the guard, which tells the alert channel;
-# - a workload Argo CD manages is refused;
+# - a workload Argo CD manages is refused, and so is one whose RightsizingPolicy forbids it,
+#   even when the policy is newer than the advice;
 # - a pull request with the advice is opened in a Gitea repository holding the manifest.
 
 if [[ -z "$DISPOSABLE" ]]; then
@@ -86,6 +87,22 @@ api GET /api/namespaces/smoke-rs/recommendations |
   jq -e '.workloads[] | select(.name == "guarded") | .policy == "e2e-guarded" and .applyForbidden and .containers[0].cpu.recommended == "300m"' >/dev/null ||
   fail "the advice does not follow the policy: $(api GET /api/namespaces/smoke-rs/recommendations | jq -c '.workloads[] | select(.name == "guarded")')"
 ok "the RightsizingPolicy keeps its 300m floor and forbids applying"
+
+log "A policy made after the advice was given forbids applying it at once"
+api GET /api/namespaces/smoke-rs/recommendations | jq -e '.workloads[] | select(.name == "proposed") | .applyForbidden | not' >/dev/null ||
+  fail "the advice for proposed is not open to applying before its policy exists"
+kubectl apply -f - >/dev/null <<'YAML' || fail "applying the RightsizingPolicy that freezes proposed"
+apiVersion: finops.costdeck.io/v1
+kind: RightsizingPolicy
+metadata: {name: e2e-frozen, namespace: smoke-rs}
+spec:
+  selector: {matchLabels: {app: proposed}}
+  apply: Forbidden
+YAML
+[[ "$(rs_post apply proposed)" == 403 ]] || fail "the policy made after the advice did not stop applying it: $(rs_why apply proposed)"
+[[ "$(cpu_request proposed)" == 500m ]] || fail "proposed was changed despite its new policy"
+kubectl delete rightsizingpolicy e2e-frozen -n smoke-rs >/dev/null || fail "deleting the policy that froze proposed"
+ok "refused at once, though the advice the dashboard holds was made before the policy"
 
 log "New pods that fail with the smaller request get the old one back"
 [[ "$(rs_post apply crashy)" == 200 ]] || fail "applying the advice to crashy: $(rs_why apply crashy)"

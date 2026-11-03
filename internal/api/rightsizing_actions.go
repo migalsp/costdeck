@@ -33,9 +33,10 @@ type workloadRef struct {
 	Name string `json:"name"`
 }
 
-// adviceFor finds a workload's advice in a namespace's report.
+// adviceFor finds a workload's advice in a report made now rather than in the cache, so applying
+// or proposing it obeys the RightsizingPolicies as they are at that moment.
 func (s *Server) adviceFor(ctx context.Context, ns string, ref workloadRef) (rightsizing.WorkloadAdvice, rightsizing.Report, error) {
-	report, err := s.recommendations(ctx, ns)
+	report, _, err := s.analyzeNamespace(ctx, ns)
 	if err != nil {
 		return rightsizing.WorkloadAdvice{}, report, errNoUsage{err}
 	}
