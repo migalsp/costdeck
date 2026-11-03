@@ -1297,7 +1297,7 @@ spec:
             steps: [
               'In Keycloak, create a confidential OpenID Connect client with the standard flow, the redirect URI `https://<your-host>/api/auth/oidc/callback`, and a **Group Membership** mapper that adds `groups` to the ID token.',
               'In Cost Deck open **Settings** → **Single sign-on**, click **Keycloak defaults**, and enter the issuer (`https://<keycloak>/realms/<realm>`), client ID and secret.',
-              'Map groups to roles: with full group paths a mapping works with or without the leading slash (`/costdeck-admins`). Realm roles named viewer, operator or admin count as they are.',
+              'Map groups to roles: with full group paths a mapping works with or without the leading slash (`/costdeck-admins`). A role counts when **Role → role mapping** maps it, or when it is named `costdeck.viewer`, `costdeck.operator` or `costdeck.admin`; plain names such as `admin` grant nothing by themselves.',
               'Click **Test connection**, then use **Sign in with Keycloak** in a private window.',
             ],
           },

@@ -331,7 +331,7 @@ Elsewhere, such as GitLab CI, run the image directly:
 
 ```bash
 docker run --rm -v "$PWD:/work" -e COSTDECK_URL -e COSTDECK_TOKEN \
-  ghcr.io/migalsp/costdeck/costdeck-operator:1.6.0 estimate \
+  ghcr.io/migalsp/costdeck/costdeck-operator:<version> estimate \
   --base /work/base.yaml --head /work/head.yaml --format markdown
 ```
 
