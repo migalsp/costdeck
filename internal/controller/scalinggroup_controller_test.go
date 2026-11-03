@@ -612,6 +612,22 @@ var _ = Describe("ScalingGroup letting go of namespaces", func() {
 		}
 	})
 
+	It("restores a namespace removed from spec.namespaces just before the group is deleted", func() {
+		g := &finopsv1.ScalingGroup{}
+		Expect(k8sClient.Get(ctx, key, g)).To(Succeed())
+		g.Spec.Namespaces = []string{"letgo-a"}
+		Expect(k8sClient.Update(ctx, g)).To(Succeed())
+		Expect(rawClient.Delete(ctx, &finopsv1.ScalingGroup{Name: key.Name, Namespace: key.Namespace})).To(Succeed())
+		reconcileGroup()
+		Eventually(func() error {
+			return k8sClient.Get(ctx, key, &finopsv1.ScalingGroup{})
+		}).Should(Satisfy(errors.IsNotFound))
+		for _, ns := range namespaces {
+			Expect(replicasIn(ns)).To(Equal(int32(3)), "%s is back", ns)
+			Expect(cronJobSuspended(ns)).To(BeFalse(), "the CronJob of %s runs again", ns)
+		}
+	})
+
 	It("adds its finalizer so a deletion waits for the release", func() {
 		g := &finopsv1.ScalingGroup{}
 		Expect(k8sClient.Get(ctx, key, g)).To(Succeed())

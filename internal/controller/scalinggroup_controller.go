@@ -810,7 +810,9 @@ func (r *ScalingGroupReconciler) releaseEverything(ctx context.Context, group *f
 		return err
 	}
 	var errs []error
-	for _, ns := range group.Members() {
+	namespaces := group.Members()
+	namespaces = append(namespaces, removedNamespaces(group, namespaces)...)
+	for _, ns := range namespaces {
 		if owner, ok := plan.NamespaceOwners[ns]; ok && owner != group.Name {
 			continue
 		}
