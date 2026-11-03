@@ -709,6 +709,17 @@ func (r *ScalingGroupReconciler) rulesFor(ctx context.Context, group *finopsv1.S
 	}
 }
 
+func sequencedExternalTargets(group *finopsv1.ScalingGroup) []finopsv1.ExternalTarget {
+	var out []finopsv1.ExternalTarget
+	for _, target := range group.Spec.ExternalTargets {
+		ref := "ext:" + target.Identifier
+		if slices.ContainsFunc(group.Spec.Sequence, func(stage string) bool { return slices.Contains(strings.Fields(stage), ref) }) {
+			out = append(out, target)
+		}
+	}
+	return out
+}
+
 func removedNamespaces(group *finopsv1.ScalingGroup, already []string) []string {
 	members := group.Members()
 	var out []string
@@ -773,7 +784,7 @@ func (r *ScalingGroupReconciler) releaseEverything(ctx context.Context, group *f
 		}
 	}
 	if phaseReachedByScaling(group.Status.Phase) {
-		for _, target := range group.Spec.ExternalTargets {
+		for _, target := range sequencedExternalTargets(group) {
 			if _, err := r.reconcileExternalTarget(ctx, group, "ext:"+target.Identifier, true); err != nil {
 				errs = append(errs, fmt.Errorf("start %s: %w", target.Identifier, err))
 			}

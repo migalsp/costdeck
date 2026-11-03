@@ -362,6 +362,30 @@ var _ = Describe("ScalingGroup external targets", func() {
 		Expect(cloud.scaledTo(true)).To(BeEmpty(), "the dry run never stopped the database")
 		Expect(apiReplicas()).To(BeZero(), "the dry run never stopped the app")
 	})
+
+	It("starts only the cloud targets its sequence stopped when the group is deleted", func() {
+		Expect(k8sClient.Create(ctx, &finopsv1.ScalingGroup{
+			Name: key.Name, Namespace: key.Namespace,
+			Spec: finopsv1.ScalingGroupSpec{
+				Category: "Solution", Namespaces: []string{appNamespace}, Active: new(false), Sequence: []string{"ext:db1", appNamespace},
+				ExternalTargets: []finopsv1.ExternalTarget{
+					{Provider: "fakecloud", Type: "aurora", Identifier: "db1", Region: "eu-west-1"},
+					{Provider: "fakecloud", Type: "aurora", Identifier: "reporting", Region: "eu-west-1"},
+				},
+			},
+		})).To(Succeed())
+		_, g := reconcileGroup()
+		Expect(g.Status.Phase).To(Equal(scaling.PhaseScalingDown))
+		Expect(cloud.scaledTo(false)).To(Equal([]string{"db1"}), "only the sequence reaches a cloud target")
+
+		Expect(rawClient.Delete(ctx, &finopsv1.ScalingGroup{Name: key.Name, Namespace: key.Namespace})).To(Succeed())
+		_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: key})
+		Expect(err).NotTo(HaveOccurred())
+		Eventually(func() error {
+			return k8sClient.Get(ctx, key, &finopsv1.ScalingGroup{})
+		}).Should(Satisfy(errors.IsNotFound))
+		Expect(cloud.scaledTo(true)).To(Equal([]string{"db1"}), "the group never stopped the reporting database")
+	})
 })
 
 func groupScheme() *runtime.Scheme {
