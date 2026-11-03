@@ -994,9 +994,11 @@ picks up where you left off.
 Deleting a schedule restores what it scaled down: its finalizer
 (`finops.costdeck.io/release`) holds the deletion until the operator has brought back the
 replicas, CronJobs, KEDA objects, hibernated services, paused GitOps objects and
-sleep-page routes of its namespaces. A group or config that is up when you delete it
-changes nothing. If something cannot be restored within ten minutes, the deletion goes
-ahead and the schedule's events say what was left. To remove everything, delete the
+sleep-page routes of its namespaces. A group also starts the cloud resources it stopped,
+listed in `status.stoppedExternalTargets`, and waits until they run, even if its spec no
+longer names them. A group or config that is up when you delete it changes nothing. If
+something cannot be restored within ten minutes, the deletion goes ahead and the
+schedule's events say what was left. To remove everything, delete the
 schedules while the operator still runs, then the rest:
 
 ```bash
