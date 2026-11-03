@@ -47,7 +47,7 @@ settings, and keeps the CRDs on uninstall.
 
 ```bash
 kubectl get pods -n costdeck
-kubectl get crds | grep finops.costdeck.io     # 5 CRDs
+kubectl get crds | grep finops.costdeck.io     # 6 CRDs
 kubectl logs -n costdeck deploy/costdeck-operator
 ```
 

@@ -48,8 +48,9 @@ service: one operator in your cluster does it all.
   findings, filtered by environment, team, schedule or finding, and exported as CSV.
 - **Storage, network and the real bill.** Persistent volumes and load balancers are priced
   and charged to their namespace, and unused volumes and idle load balancers are found.
-  Costs can be reconciled with the AWS, Azure or Google Cloud bill, so discounts,
-  reservations, savings plans and spot prices show in every figure.
+  With reconciliation against the AWS, Azure or Google Cloud bill switched on, every compute
+  figure follows what the cloud charged, discounts, reservations, savings plans and spot
+  included; without it, figures are at list price.
 - **Prices you can check.** AWS and Azure list prices per instance type, your own rates,
   or an estimate in line with cloud list prices. Every figure says which basis it uses.
 - **Several clusters.** One installation shows the others side by side, read with a viewer
