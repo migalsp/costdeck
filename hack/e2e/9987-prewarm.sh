@@ -33,9 +33,9 @@ holds_for 10 "the workload stays up ahead of the window" replicas_are smoke-wake
 ok "up ten minutes ahead of a window that has not opened yet"
 
 WAKE_PREVIEW='{"kind":"group","spec":{"namespaces":["smoke-wake"],"schedules":'"$WAKE_SCHEDULE"',"prewarm":{"minutes":10}}}'
-api POST /api/scaling/preview "$WAKE_PREVIEW" | jq -e 'any(.intervals[]; .reason == "prewarm" and .active)' >/dev/null ||
-  fail "the preview does not show the prewarm: $(api POST /api/scaling/preview "$WAKE_PREVIEW" | jq -c '.intervals[0:3]')"
-ok "the preview shows the prewarm before the window"
+api POST /api/scaling/preview "$WAKE_PREVIEW" | jq -e '.intervals[0] | .reason == "prewarm" and .active' >/dev/null ||
+  fail "the preview does not start with the prewarm under way: $(api POST /api/scaling/preview "$WAKE_PREVIEW" | jq -c '.intervals[0:3]')"
+ok "the preview starts with the prewarm under way"
 
 WAKE_AUTO_SPEC='"spec":{"namespaces":["smoke-wake"],"schedules":'"$WAKE_SCHEDULE"',"prewarm":{"auto":true}}'
 wake_auto_preview() {
