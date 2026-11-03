@@ -125,7 +125,8 @@ func guardProxy(proxy func(*http.Request) (*url.URL, error), refuse func(net.IP)
 var lookupIPAddr = net.DefaultResolver.LookupIPAddr
 
 // checkProxiedHost refuses a proxied request whose host is, or resolves to, a refused address. A
-// name that does not resolve here is let through, since only the proxy may be able to resolve it.
+// name that does not resolve here is let through, since only the proxy may be able to resolve it;
+// where the proxy sends it is the proxy's to restrict, as docs/installation.md asks.
 func checkProxiedHost(ctx context.Context, host string, refuse func(net.IP) error) error {
 	if ip := net.ParseIP(host); ip != nil {
 		return refuse(ip)

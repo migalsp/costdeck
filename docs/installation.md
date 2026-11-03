@@ -959,6 +959,26 @@ helm upgrade costdeck-operator oci://ghcr.io/migalsp/costdeck/charts/costdeck-op
 
 `values.schema.json` rejects malformed values at install time.
 
+### Outbound proxy
+
+Cost Deck reads the standard `HTTPS_PROXY`, `HTTP_PROXY` and `NO_PROXY` variables, set through
+`extraEnv`. Keep the Kubernetes API server and in-cluster services in `NO_PROXY`, or the
+operator reaches them through the proxy too:
+
+```yaml
+extraEnv:
+  - name: HTTPS_PROXY
+    value: http://proxy.example.com:3128
+  - name: NO_PROXY
+    value: .svc,.cluster.local,10.0.0.0/8
+```
+
+Outbound connections refuse link-local and cloud metadata addresses. For a request through the
+proxy, Cost Deck checks the target when it is an IP address or a name that resolves inside the
+cluster. A name that only the proxy can resolve goes to the proxy unchecked, because Cost Deck
+cannot see where the proxy sends it. Block link-local and cloud metadata addresses on the proxy
+itself: `169.254.0.0/16`, `fe80::/10`, `fd00:ec2::254` and `100.100.100.200`.
+
 ## Upgrading
 
 ```bash
