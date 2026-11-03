@@ -3,319 +3,226 @@
 </p>
 
 <p align="center">
-  <strong>Kubernetes FinOps operator: see what every namespace costs, and stop paying for idle infrastructure.</strong>
+  <strong>Open-source Kubernetes FinOps operator: see what every namespace costs, cut the waste, keep performance safe.</strong>
 </p>
 
 <p align="center">
   <a href="https://github.com/migalsp/costdeck/actions/workflows/ci.yml"><img src="https://github.com/migalsp/costdeck/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://github.com/migalsp/costdeck/releases"><img src="https://img.shields.io/github/v/release/migalsp/costdeck" alt="Release"></a>
-  <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License"></a>
+  <a href="https://github.com/migalsp/costdeck/releases"><img src="https://img.shields.io/github/v/release/migalsp/costdeck" alt="Latest release"></a>
+  <a href="https://scorecard.dev/viewer/?uri=github.com/migalsp/costdeck"><img src="https://api.securityscorecards.dev/projects/github.com/migalsp/costdeck/badge" alt="OpenSSF Scorecard"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License: Apache 2.0"></a>
 </p>
 
-<br />
+<p align="center">
+  <a href="https://migalsp.github.io/costdeck/">Website</a> ·
+  <a href="docs/installation.md">Installation guide</a> ·
+  <a href="docs/roadmap.md">Roadmap</a> ·
+  <a href="CHANGELOG.md">Changelog</a>
+</p>
 
-Cost Deck runs in your cluster. It shows what the cluster, each namespace and each team
-cost and waste, including what applications pay LLM APIs and what GPUs and self-hosted
-models cost, sets budgets that warn you before the month runs over, and scales
-non-production environments to zero when nobody needs them, then brings them back on
-time. It advises on requests and node shapes and, if you allow it, applies the advice
-with a guard that puts it back, or opens a pull request with it. There is no external
-service: one operator in your cluster does it all.
+Cost Deck is an open-source (Apache 2.0) Kubernetes FinOps operator for platform teams and
+the people who pay the cloud bill. It shows what every namespace, team and environment
+costs, scales idle environments to zero, finds what is oversized, and checks that the
+savings do not hurt performance. One operator runs in your cluster, with no external
+service and no paid tier.
+
+```bash
+helm upgrade --install costdeck-operator \
+  oci://ghcr.io/migalsp/costdeck/charts/costdeck-operator \
+  --namespace costdeck --create-namespace
+```
+
+Needs Kubernetes 1.26+, Helm 3.8+ and metrics-server. [Quick start](#quick-start) has the
+sign-in steps.
+
+## Why
+
+| The problem in 2026 | What Cost Deck does |
+|---|---|
+| 29% of cloud spend is wasted, the first rise in five years ([Flexera, 2026](https://www.flexera.com/about-us/press-center/flexera-finds-cloud-value-is-rising-while-ai-waste-grows)) | Cost per namespace, team and environment, split into used, idle and unrequested, and reconciled with the AWS, Azure or Google Cloud bill |
+| Kubernetes CPU use averages 8% and memory 20% of what clusters reserve ([CAST AI, 2026](https://cast.ai/blog/2026-state-of-kubernetes-resource-optimization-cpu-at-8-memory-at-20-and-getting-worse/)) | Right-sizing advice with the saving per workload, Java heaps included, applied with a guard that rolls back or sent as a pull request |
+| Teams pad requests because cutting them risks throttling and OOM kills (CAST AI, 2026) | Performance risks for every namespace, and advice that never cuts a resource under pressure |
+| Dev and staging run 168 hours a week for about 50 hours of work | Schedules that scale environments, and the cloud databases behind them, to zero and wake them before the day starts |
+| 98% of FinOps teams manage AI spend ([State of FinOps 2026](https://data.finops.org/)), yet only 26% of large companies see it in real time ([KPMG, 2026](https://kpmg.com/us/en/media/news/q2-ai-pulse-2026.html)) | LLM API spend by team and model, the cost per million tokens of models you serve, GPU cost and idle GPUs |
+| For one company in three, finding why a cost spiked takes a week or more ([Harness, 2026](https://www.harness.io/state-of-ai-in-finops-2026)) | Budgets with forecasts, daily anomaly alerts and digests in Slack, Teams, email or Webex |
 
 ![Cost overview: the node bill split into used, idle and unrequested capacity, the month to date, savings and the daily cost by namespace](docs/assets/screenshots/overview.png)
 
 <table>
   <tr>
     <td width="33%" valign="top"><img src="docs/assets/screenshots/insights.png" alt="Namespace Insights"><br><sub><b>Namespace Insights</b>: cost, usage, trend and what could be saved, per namespace</sub></td>
-    <td width="33%" valign="top"><img src="docs/assets/screenshots/scaling.png" alt="Scaling schedules"><br><sub><b>Scaling Schedules</b>: working hours, platforms on demand, holidays and exceptions</sub></td>
-    <td width="33%" valign="top"><img src="docs/assets/screenshots/budgets.png" alt="Budgets and alerts"><br><sub><b>Budgets &amp; Alerts</b>: monthly limits, forecasts and alerts sent to Slack and Teams</sub></td>
+    <td width="33%" valign="top"><img src="docs/assets/screenshots/scaling.png" alt="Scaling schedules"><br><sub><b>Scaling schedules</b>: working hours, platforms on demand, holidays and exceptions</sub></td>
+    <td width="33%" valign="top"><img src="docs/assets/screenshots/budgets.png" alt="Budgets and alerts"><br><sub><b>Budgets and alerts</b>: monthly limits, forecasts and alerts sent to Slack and Teams</sub></td>
   </tr>
   <tr>
-    <td width="33%" valign="top"><img src="docs/assets/screenshots/rightsizing.png" alt="Performance risks and right-sizing"><br><sub><b>Right-sizing</b>: performance risks, what each workload could request and the Java heap it needs, applied with a guard or as a pull request</sub></td>
+    <td width="33%" valign="top"><img src="docs/assets/screenshots/rightsizing.png" alt="Performance risks and right-sizing"><br><sub><b>Right-sizing</b>: performance risks, what each workload could request and the Java heap it needs</sub></td>
     <td width="33%" valign="top"><img src="docs/assets/screenshots/allocation.png" alt="Cost allocation"><br><sub><b>Cost allocation</b>: a period's cost by team with shared and idle cost, as CSV</sub></td>
-    <td width="33%" valign="top"><img src="docs/assets/screenshots/sleep-page.png" alt="Sleep page"><br><sub><b>Sleep page</b>: what people see on a scaled-down environment, with a way to wake it</sub></td>
+    <td width="33%" valign="top"><img src="docs/assets/screenshots/ai-costs.png" alt="AI costs"><br><sub><b>AI costs</b>: LLM API spend by team and model, and what self-hosted models cost</sub></td>
   </tr>
 </table>
 
-## Features
+<sub>Screenshots from a demo cluster.</sub>
+
+## What it does
 
 ### See the cost
 
-- **Cost overview.** The node bill split into what pods use, what they request but leave
-  idle, and what nobody requests; the month to date with a forecast; week-over-week
-  changes; cost by team and environment; and the savings opportunities, ranked.
-- **Namespace Insights.** Every namespace with its cost, usage, efficiency, trend and
-  findings, filtered by environment, team, schedule or finding, and exported as CSV.
-- **Storage, network and the real bill.** Persistent volumes and load balancers are priced
-  and charged to their namespace, and unused volumes and idle load balancers are found.
-  With reconciliation against the AWS, Azure or Google Cloud bill switched on, every compute
-  figure follows what the cloud charged, discounts, reservations, savings plans and spot
-  included; without it, figures are at list price.
-- **Prices you can check.** AWS and Azure list prices per instance type, your own rates,
-  or an estimate in line with cloud list prices. Every figure says which basis it uses.
-- **Several clusters.** One installation shows the others side by side, read with a viewer
-  API token each: cost, savings, this month so far and totals.
+- **Cost overview**: the node bill split into what pods use, what they request but leave
+  idle and what nobody requests, the month to date with a forecast, and ranked savings.
+- **Namespace Insights**: cost, usage, efficiency, trend and findings for every namespace,
+  filtered by team, environment or schedule, and exported as CSV.
+- **Storage and network**: volumes and load balancers priced and charged to their
+  namespace; unused volumes and idle load balancers found.
+- **The real bill**: list prices (AWS, Azure), your own rates or an estimate, and with bill
+  reconciliation every compute figure follows what the cloud charged, discounts included.
+- **AI and GPUs**: LLM API spend by team and model (LiteLLM, OpenTelemetry GenAI), the cost
+  per million tokens of models you serve with vLLM, GPU cost and idle GPUs (DCGM).
+- **Several clusters** side by side, read with a viewer token each.
 
-### AI and GPU costs
+### Cut the waste
 
-<p align="center"><img src="docs/assets/screenshots/ai-costs.png" width="720" alt="AI Costs: what each team pays LLM APIs, by model, and what self-hosted models cost per million tokens"></p>
+- **Scaling schedules**: working hours, custom windows, any time zone; replica counts come
+  back afterwards. Suggested from a week of usage, with holiday calendars, dated
+  exceptions and overrides that end on their own.
+- **Whole environments**: shared platforms start first and only while an environment needs
+  them; stages start in order and stop in reverse, together with AWS Aurora and EC2, Azure
+  VMs and flexible servers, and Google Cloud Compute Engine and Cloud SQL.
+- **Everything in a namespace**: Deployments, StatefulSets, Argo Rollouts; CronJobs
+  suspended and KEDA paused while down; CloudNativePG, Zalando Postgres and Strimzi
+  stopped after the workloads and started before them.
+- **Sleep when unused, ready on time**: environments with no requests (Envoy Gateway,
+  Istio, ingress-nginx) go to sleep; a sleep page offers to wake them; prewarm starts them
+  ahead of the schedule.
+- **Right-sizing**: which requests can shrink and the saving, Java heaps sized from the JVM
+  flags and heap metrics, `RightsizingPolicy` bounds per team, and node shapes, arm64 and
+  spot per node pool.
+- **Savings that reach the bill**: which nodes the autoscaler removed after a scale-down,
+  and what keeps the others.
+- **Preview cleanup**: preview namespaces deleted after their time to live, with a warning
+  first (off by default).
 
-- **LLM API spend by team and model.** What applications pay OpenAI, Anthropic, Google
-  and others, read from LiteLLM's spend or from OpenTelemetry GenAI token counts
-  (`gen_ai.client.token.usage`) priced at your model prices, with every model that has no
-  price yet called out.
-- **Self-hosted models.** What a model you serve with vLLM costs per million tokens: its
-  namespace's run rate, GPUs included, divided by the tokens it serves.
-- **GPUs.** GPUs are priced apart from CPU and memory (their share of the node's list price,
-  or an estimate per model) and charged to the namespaces that request them. With NVIDIA's
-  DCGM exporter in VictoriaMetrics, Cost Deck finds idle GPUs, GPUs workloads could share
-  through MIG or time-slicing, and cheaper models with enough memory, and a namespace
-  whose GPUs sit idle can go to sleep.
-- **Asked from anywhere.** The assistant and MCP clients get the same numbers
-  (`get_ai_costs`, `get_gpu_usage`), and the assistant's own tokens have a monthly budget.
+### Keep performance safe
 
-### Scale non-production to zero
-
-- **Scaling schedules.** Pick namespaces and when they should run: working hours, the work
-  week non-stop, or any custom windows, in any time zone. Outside those hours workloads go
-  to zero; their replica counts are restored afterwards.
-- **Shared platforms on demand.** A schedule can depend on another one. An on-demand
-  platform (databases, Kafka, logging) starts only while an environment that needs it is
-  up, and environments wait until it is fully up.
-- **Schedules suggested from usage.** One click reads a week of a namespace's CPU usage and
-  fills in the hours it is busy, with the saving.
-- **Overrides that end on their own.** "Start now" or "Scale down now" holds until the next
-  scheduled change, or for a time you choose, then the schedule takes over again.
-- **Holidays and release weekends.** Dated exceptions and shared holiday calendars keep a
-  schedule down (or up) on given days without editing its hours.
-- **Namespaces by label.** A schedule can take every namespace with a label, so preview
-  environments join as they are created and leave when the label goes.
-- **Preview and dry run.** See what a schedule would stop, when, and what it saves before
-  saving it, or let it run in a dry run that decides but scales nothing.
-- **Sleep when unused.** An environment nobody has sent a request to for an hour (Envoy
-  Gateway, Istio or ingress-nginx metrics), or whose GPUs sat idle (DCGM), goes down
-  inside its schedule's hours too.
-- **A sleep page while down.** A sleeping environment's Gateway API routes show a page that
-  says it is asleep and links to waking it for an hour or two, instead of a gateway error.
-- **Ready when the day starts.** Every wake-up is timed, and prewarm starts an environment
-  that much ahead of its schedule, so nobody waits for it at nine.
-- **Everything that runs in a namespace.** Deployments, StatefulSets and Argo Rollouts
-  (canary and blue-green, including those that take their pods from a Deployment); CronJobs
-  are suspended and KEDA ScaledObjects paused while the namespace is down. CloudNativePG and
-  Zalando Postgres clusters, Strimzi Kafka Connect, MirrorMaker 2 and Bridge, or any
-  operator's resource with a replica field, stop after the namespace's workloads and start
-  before them.
-- **GitOps-aware.** Workloads managed by Argo CD or Flux are named in the preview, and a
-  schedule can pause the tool while it keeps them down and resume it afterwards.
-- **Cloud resources too.** Namespaces start stage by stage and stop in reverse, and the
-  stages can include AWS Aurora and EC2, Azure VMs and PostgreSQL/MySQL flexible servers,
-  and Google Cloud Compute Engine and Cloud SQL.
-- **Savings that reach the bill.** After a scale-down, each schedule shows which nodes the
-  autoscaler removed and what keeps the others: a PodDisruptionBudget, `do-not-disrupt`,
-  `safe-to-evict: "false"`, local storage, or other namespaces still using them.
-
-### Right-size and clean up
-
-- **Right-sizing advice.** Which requests can shrink (p95 usage when VictoriaMetrics is
-  connected), with the saving per workload. Cost Deck never touches nodes.
-- **Java heap advice.** A JVM takes its heap up front, so container metrics alone show a
-  Java service as busy as its heap allows. Cost Deck finds Java containers (the `java`
-  command, `JAVA_TOOL_OPTIONS`, `JDK_JAVA_OPTIONS`, `JAVA_OPTS`, `_JAVA_OPTIONS`, a JVM
-  image, or JVM metrics) and works out the heap their flags give them under the container
-  limit, as the JVM does. It flags a heap at the limit or with no room left for native
-  memory, the default heap of 25% of the limit, no limit at all, a request below the heap
-  and the Serial collector picked on small containers, and keeps memory advice from going
-  below the heap. When VictoriaMetrics has JVM metrics (Micrometer, the Prometheus Java
-  client or JMX exporter, OpenTelemetry), it recommends a heap of twice what was left
-  after garbage collection, the memory to pair with it, the flag to set and the saving.
-  Advice only: nothing changes the JVM. Set the annotation `costdeck.io/runtime` to `java`
-  or `none` on a workload or its pod template to correct the detection.
-- **Right-sizing policies.** A `RightsizingPolicy` in a team's namespace bounds and pads
-  the advice for its workloads, forbids applying it, or leaves them out.
-- **Performance risks.** What holds workloads back, most severe first, with the fix and
-  what it costs: CPU throttling by a limit, OOM kills, restarts and crash loops with their
-  reason, evictions, memory close to the limit, autoscalers stuck at their maximum and JVM
-  heaps still full after garbage collection. Right-sizing never cuts a resource under
-  pressure, and the assistant can explain why a namespace is slow.
-- **Applied with a guard, or as a pull request.** If you allow it, operators apply the
-  advice from a namespace's page: the new pods are watched, and the old requests come back
-  (with an alert) if one is OOMKilled, restarts or crash-loops. Workloads a GitOps tool
-  manages get a pull request in your GitHub, GitLab or Gitea repository instead, with the
-  manifest's comments kept. Every change is listed with who made it.
-- **Node advice.** Per node pool, the instance type and count that fit the requests, arm64
-  alternatives and spot capacity for non-production workloads.
-- **Cost in pull requests.** A GitHub Action (or the image in any CI) comments on a pull
-  request with what its manifests change will cost a month, at your cluster's rates and
-  schedules, and can fail the check above a limit.
-- **Preview cleanup.** Namespaces of preview environments are deleted some time after
-  they were created, with a warning first, a dry run and a way to keep one longer. Off
-  unless you turn it on, twice: in the chart and in the settings.
+- **Performance risks**: CPU throttling, OOM kills, crash loops, evictions, memory near the
+  limit, autoscalers at their maximum and full JVM heaps, each with the fix and its cost.
+- **Advice that respects pressure**: a throttled container keeps its CPU, and one that was
+  OOM-killed keeps its memory.
+- **Changes with a way back**: applied advice is watched and put back if pods fail;
+  GitOps-managed workloads get a pull request (GitHub, GitLab, Gitea) instead.
+- **Try before it acts**: preview and dry run for schedules, cost estimates on pull
+  requests, and no schedule means always on.
 
 ### Budgets and reports
 
-- **Budgets and alerts.** Monthly budgets per cluster, team, environment or any set of
-  namespaces, alerting at thresholds and when the month is heading over, daily cost
-  anomaly alerts, and alerts about new critical performance risks, listed in the digest
-  too.
-- **Showback and chargeback.** A period's cost by team, environment, namespace or any label
-  such as `cost-center`, with shared namespaces and idle capacity charged by your policy,
-  adding up to the bill, as a table and a CSV for finance.
-- **Digests and AI reports.** A weekly or monthly cost digest, and reports for leadership,
-  engineers and teams written by your AI model from the same numbers.
+- **Budgets** per cluster, team, environment or set of namespaces, with forecasts, anomaly
+  alerts and alerts on new critical performance risks.
+- **Showback and chargeback** by team, environment, namespace or label, with shared and
+  idle cost charged by your policy, adding up to the bill.
+- **Weekly or monthly digests**, and AI-written reports for leadership, engineers and teams.
 
-### Fits your team
+### Works with your tools and agents
 
-- **Access.** Local users with viewer, operator and admin roles, single sign-on with
-  Microsoft Entra ID, Keycloak or any OpenID Connect provider with group-to-role mapping,
-  API tokens, and least-privilege RBAC: Secrets are only read in the operator's own
-  namespace. Applying right-sizing advice and deleting preview namespaces are off until
-  an admin turns them on.
-- **Where you already work.** Alerts, digests and scaling changes in Slack, Microsoft
-  Teams, email and Webex, a Webex bot, an AI assistant (Claude, OpenAI-compatible or
-  Gemini) that proposes actions for you to confirm, an MCP server for AI clients, and
-  Prometheus metrics.
-- **A dashboard to share.** Every page has its own address, a light and a dark theme, and
-  every setting is in one place.
+- **Dashboard** with light and dark themes, a REST API with OpenAPI, and Prometheus metrics.
+- **MCP server** at `/mcp` for Claude Code, Claude Desktop, Cursor and other MCP clients,
+  and an AI assistant in the dashboard (Claude, OpenAI-compatible, Gemini) that proposes
+  actions for you to confirm.
+- **Notifications** in Slack, Microsoft Teams, email and Webex, plus a Webex bot.
+- **Access**: viewer, operator and admin roles, single sign-on with Entra ID, Keycloak or
+  any OpenID Connect provider, API tokens, and Secrets read only in its own namespace.
+- **GitOps**: Argo CD and Flux are detected, and can be paused while an environment sleeps.
 
-<p align="center"><img src="docs/assets/screenshots/overview-dark.png" width="720" alt="The cost overview in the dark theme"></p>
+## How it compares
+
+- **OpenCost and Kubecost** measure and allocate cost; OpenCost is the CNCF project for it.
+  Cost Deck allocates too, and also acts: schedules, guarded right-sizing and performance
+  risks. If allocation is all you need, OpenCost is the more mature choice.
+- **kube-green and kube-downscaler** scale workloads down on a schedule. Cost Deck adds
+  dependencies and start order, cloud databases and VMs, holidays, a sleep page, and what
+  each schedule saved.
+- **Karpenter and Cluster Autoscaler** remove empty nodes, and they work with Cost Deck: it
+  empties nodes, they remove them, and Cost Deck shows what kept the rest.
+- **Goldilocks and the VPA recommender** suggest requests. Cost Deck adds the money, Java
+  heap sizing, performance risks, and applying with a guard or a pull request.
+- **Not the right tool** for node autoscaling, managing reserved instances and savings
+  plans, or costs outside Kubernetes and the resources its schedules stop.
 
 ## Quick start
 
 ```bash
 helm upgrade --install costdeck-operator \
   oci://ghcr.io/migalsp/costdeck/charts/costdeck-operator \
-  --version <version> --namespace costdeck --create-namespace
+  --namespace costdeck --create-namespace
 
 kubectl get secret costdeck-operator-admin-credentials -n costdeck \
   -o jsonpath='{.data.password}' | base64 -d; echo
 kubectl port-forward -n costdeck svc/costdeck-operator-api 8082:8082
 ```
 
-Open http://localhost:8082 and sign in as `costdeck`. Pick the latest version from
-the [releases](https://github.com/migalsp/costdeck/releases). The
-[installation guide](docs/installation.md) covers Ingress, SSO, cloud accounts, monitoring
-and every chart value.
+Open http://localhost:8082 and sign in as `costdeck`. Add `--version` to pin a
+[release](https://github.com/migalsp/costdeck/releases). Connect VictoriaMetrics (or any
+Prometheus-compatible API) for history, throttling and advice over weeks instead of one
+reading. The [installation guide](docs/installation.md) covers Ingress, single sign-on,
+cloud accounts, monitoring and every chart value.
+
+## FAQ
+
+**Does any data leave my cluster?**
+No. Cost Deck has no service of its own outside your cluster. It calls only what you
+configure: cloud APIs for prices, bills and resources, your AI provider, and your
+notification channels.
+
+**What does it change in my cluster?**
+Replica counts (the original is kept on the workload), CronJob suspension, KEDA pausing
+and, if you turn them on, sleep-page routes and GitOps pausing. Applying right-sizing and
+deleting preview namespaces are off until an admin allows them. It never touches nodes.
+
+**What happens when I delete a schedule?**
+While the operator runs, deleting a schedule brings back what it scaled down, starts the
+cloud resources it stopped, and resumes what it paused before the schedule goes.
+
+**Kubernetes 1.37 lets an HPA scale to zero. Do I still need this?**
+The HPA scales one workload on external or object metrics, and nothing buffers HTTP
+requests while no pods are ready. Cost Deck puts whole environments to sleep on a
+schedule, with their dependencies and databases, and shows a sleep page meanwhile.
+
+**How should I size memory for Java pods?**
+The JVM takes a quarter of the container limit as its heap by default, and native memory
+comes on top. Cost Deck reads each container's JVM flags, keeps memory advice above heap
+plus native memory, and recommends a heap from what is left after garbage collection.
+
+**Can AI assistants use it?**
+Yes. Point an MCP client at `https://<your-costdeck>/mcp` with an API token from Settings.
+A viewer token gives read-only tools; actions need an operator token.
+
+**Which clouds does it work with?**
+Any Kubernetes cluster. Prices and bill reconciliation for AWS, Azure and Google Cloud;
+schedules for AWS Aurora and EC2, Azure VMs and PostgreSQL/MySQL flexible servers, and
+Google Cloud Compute Engine and Cloud SQL.
+
+**Is it free?**
+Yes, Apache 2.0, with no paid tier. Images and the Helm chart are signed with cosign.
+
+## Roadmap
+
+Next on the [roadmap](docs/roadmap.md): right-sizing in place without restarts, node pools
+that scale to zero with their environments, right-sizing that respects autoscalers, AI spend
+in team totals and budgets, and approvals in Slack and Teams. Then right-sizing on
+autopilot, GPU sharing advice, network cost and a FOCUS export. Open an issue to move an
+item up.
 
 ## Documentation
 
-- **In the dashboard**: the **Documentation** page has step-by-step guides (schedules,
-  cloud resources, cost and savings, nodes, storage and network, budgets, reports, access
-  and sign-in, the AI assistant, MCP clients, Slack, Teams and email, Webex, monitoring
-  Cost Deck, troubleshooting) and a REST API reference generated from the live OpenAPI
-  document.
+- **In the dashboard**: step-by-step guides on the **Documentation** page, and a REST API
+  reference generated from the live OpenAPI document (Swagger UI at `/api/docs`).
 - **[Installation guide](docs/installation.md)**: chart values, Ingress, single sign-on,
-  cloud permissions, monitoring, upgrades.
-- **API**: Swagger UI at `/api/docs` (swagger-ui comes from unpkg.com, pinned to one
-  version and checked against its hash), the specification at `/api/openapi.yaml` and
-  `/api/openapi.json`. Every operation names the role it needs.
+  cloud permissions, monitoring, upgrades and uninstalling.
+- **[Roadmap](docs/roadmap.md)**, **[changelog](CHANGELOG.md)** and **[security policy](SECURITY.md)**.
 
-## How it fits together
+## Contributing
 
-```mermaid
-graph TD
-    subgraph Clients
-        UI[Dashboard]
-        AI[AI clients via MCP]
-        CHAT[Slack, Teams, email, Webex]
-        CI[CI: cost estimate]
-        PR[Prometheus]
-    end
-
-    subgraph Operator["Cost Deck operator (one binary)"]
-        API[REST API, sign-in, MCP, sleep page]
-        CTRL[Controllers: schedules, dependencies, discovery, usage, idle]
-        FIN[FinOps: cost ledger, budgets, allocation, digests, bill reconciliation]
-        OPT[Right-sizing guard, preview cleanup]
-        NOTIFY[Notifications, Webex bot]
-        MET[metrics endpoint]
-    end
-
-    subgraph Cluster["Kubernetes"]
-        CRD[CRDs: ScalingGroup, ScalingConfig, NamespaceFinOps, CostDeckConfig]
-        WL[Deployments, StatefulSets, Argo Rollouts, CronJobs, KEDA, operator-run databases]
-        GW[Gateway API routes]
-        INF[Nodes, volumes, load balancers]
-        MS[metrics-server]
-    end
-
-    subgraph External
-        VM[VictoriaMetrics]
-        CLOUD[AWS, Azure, Google Cloud: resources, prices, bill]
-        GIT[GitHub, GitLab, Gitea]
-        LLM[AI provider]
-        SSO[Entra ID, Keycloak, OpenID Connect]
-        OTHER[Other Cost Deck clusters]
-    end
-
-    UI --> API
-    AI --> API
-    CI --> API
-    CHAT <--> NOTIFY
-    PR --> MET
-    API --> CRD
-    API --> OTHER
-    CTRL --> CRD
-    CTRL --> WL
-    CTRL --> GW
-    CTRL --> MS
-    CTRL --> VM
-    CTRL --> CLOUD
-    CTRL --> NOTIFY
-    FIN --> INF
-    FIN --> CLOUD
-    FIN --> NOTIFY
-    OPT --> WL
-    API --> GIT
-    OPT --> NOTIFY
-    API --> LLM
-    API --> SSO
-```
-
-## Development
-
-```bash
-make test        # unit and envtest tests
-make lint        # golangci-lint
-make ui-lint     # TypeScript and ESLint
-make ui-test     # dashboard unit and component tests (Vitest)
-make ui build    # dashboard + manager binary with the dashboard embedded
-make test-e2e    # Kind cluster + Helm install + the regression scenarios in hack/e2e
-```
-
-The end-to-end suite runs in CI on every pull request. Every scenario in `hack/e2e`
-covers behaviour users depend on, against real pods and real dependencies: scheduling,
-dependencies, stage timeouts, workload rules, holiday exceptions, namespace selectors,
-preview and dry run, GitOps pausing, operator-run services, realized savings, GPUs, AI
-costs, auth with Keycloak, the API, VictoriaMetrics history, MCP, the sleep page, sleep
-when unused, Slack, Teams and email, Argo Rollouts, preview cleanup, cost allocation,
-several clusters, cost estimates, Java heap advice from JVM flags and metrics, performance
-risks from real OOM kills, crash loops and autoscalers, timed wake-ups and prewarm, and
-right-sizing applied, guarded and proposed in a real Gitea. A change that breaks one fails the build. A feature or fix that changes
-behaviour adds or extends a scenario. To run it against an existing test cluster instead
-of a new Kind cluster:
-
-```bash
-SKIP_INSTALL=1 ./hack/e2e-smoke.sh                 # skips the settings-changing scenarios
-SKIP_INSTALL=1 DISPOSABLE=1 E2E_ONLY='30|40' ./hack/e2e-smoke.sh
-SKIP_INSTALL=1 DISPOSABLE=1 E2E_PART=2/3 ./hack/e2e-smoke.sh   # one of the three parts CI runs
-```
-
-Pull requests run the suite in three parts at once, each in its own Kind cluster on
-Kubernetes 1.35; `hack/e2e/durations.txt` keeps the parts the same length, and a new
-scenario joins one by itself. Every night the whole suite runs in order on Kubernetes 1.31
-and 1.37. The pull request check to require is **CI result**, which fails when any job of
-the run fails: Go, UI, Helm, the install bundle, known vulnerabilities, dependency review,
-conventional commit messages, zizmor on the workflows, shellcheck, the image scan and the
-end-to-end parts.
-
-Schedule windows, the next schedule change, holiday exceptions, cost estimates and the
-reading of JVM flags also have Go fuzz tests. `go test` runs their seed inputs, and every night each one is fuzzed
-for ten minutes; a failing input is kept as a workflow artifact, to be copied into
-`testdata/fuzz` as a regression test. To fuzz one locally:
-
-```bash
-go test ./internal/scaling -run '^$' -fuzz '^FuzzScheduleWindow$' -fuzztime 1m
-```
+Issues and pull requests are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) explains how to
+build Cost Deck, run its tests and the end-to-end suite, and write commits that
+release-please can read.
 
 ## License
 
