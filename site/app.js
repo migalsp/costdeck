@@ -146,9 +146,72 @@
     });
   };
 
+  const starsKey = "costdeck-github-stars";
+  const starsMaxAge = 60 * 60 * 1000;
+
+  const formatStars = (count) => {
+    if (count < 1000) {
+      return String(count);
+    }
+    const thousands = count / 1000;
+    return `${thousands >= 10 ? Math.round(thousands) : thousands.toFixed(1).replace(/\.0$/, "")}k`;
+  };
+
+  const showStars = (count) => {
+    document.querySelectorAll("[data-github-stars]").forEach((badge) => {
+      const value = badge.querySelector("[data-stars-value]");
+      if (value) {
+        value.textContent = formatStars(count);
+        badge.hidden = false;
+      }
+    });
+  };
+
+  const readCachedStars = () => {
+    try {
+      const cached = JSON.parse(window.sessionStorage.getItem(starsKey) || "null");
+      return cached && Number.isInteger(cached.count) && Date.now() - cached.at < starsMaxAge ? cached.count : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const cacheStars = (count) => {
+    try {
+      window.sessionStorage.setItem(starsKey, JSON.stringify({ count, at: Date.now() }));
+    } catch {
+      return;
+    }
+  };
+
+  const setupGithubStars = async () => {
+    if (!document.querySelector("[data-github-stars]") || !window.fetch) {
+      return;
+    }
+    const cached = readCachedStars();
+    if (cached !== null) {
+      showStars(cached);
+      return;
+    }
+    try {
+      const response = await window.fetch("https://api.github.com/repos/migalsp/costdeck", { headers: { Accept: "application/vnd.github+json" } });
+      if (!response.ok) {
+        return;
+      }
+      const count = (await response.json()).stargazers_count;
+      if (Number.isInteger(count)) {
+        showStars(count);
+        cacheStars(count);
+      }
+    } catch {
+      return;
+    }
+  };
+
   const start = () => {
     setupThemeToggle();
     setupCopyButtons();
+    setupGithubStars();
   };
 
   if (document.readyState === "loading") {

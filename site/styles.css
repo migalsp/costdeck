@@ -236,6 +236,26 @@ code {
   border: 1px solid var(--border-strong);
 }
 
+.github-stars {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin-left: 0.125rem;
+  padding-left: 0.5rem;
+  border-left: 1px solid var(--border-strong);
+  font-variant-numeric: tabular-nums;
+}
+
+.github-stars[hidden] {
+  display: none;
+}
+
+.github-stars .icon-star {
+  width: 0.875rem;
+  height: 0.875rem;
+  color: #e3a008;
+}
+
 .theme-toggle {
   display: inline-grid;
   place-items: center;
