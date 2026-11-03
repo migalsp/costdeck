@@ -53,7 +53,9 @@ func (a *RiskAlerter) Start(ctx context.Context) error {
 
 // Check assesses every namespace but the operator's, kube-* and terminating ones, and posts the
 // critical risks not announced in the last day. A failed post leaves them unannounced for the next
-// check; with no channel subscribed they are only recorded. Turned off, it forgets the open risks.
+// check; with no channel subscribed they are only recorded. A namespace that cannot be assessed
+// keeps its open risks, with when they began, but none of them is announced again until they are
+// seen. Turned off, it forgets the open risks.
 func (a *RiskAlerter) Check(ctx context.Context) error {
 	now := time.Now()
 	if a.Now != nil {
@@ -79,12 +81,15 @@ func (a *RiskAlerter) Check(ctx context.Context) error {
 		return err
 	}
 	open := map[string]finops.OpenRisk{}
+	unseen := map[string]bool{}
 	for _, ns := range namespaces.Items {
 		if ns.Name == a.Namespace || strings.HasPrefix(ns.Name, "kube-") || ns.Status.Phase == corev1.NamespaceTerminating {
 			continue
 		}
 		report, err := a.Server.risks(ctx, ns.Name)
 		if err != nil {
+			logf.FromContext(ctx).WithName("risk-alerts").Error(err, "Could not assess performance risks; the namespace keeps its open risks", "namespace", ns.Name)
+			keepUnseen(open, unseen, state.Open, ns.Name)
 			continue
 		}
 		for _, r := range report.Risks {
@@ -99,12 +104,7 @@ func (a *RiskAlerter) Check(ctx context.Context) error {
 		}
 	}
 	state.Open, state.CheckedAt = open, now
-	var fresh []finops.OpenRisk
-	for _, o := range state.Sorted() {
-		if fired, ok := state.Fired[o.Key()]; !ok || now.Sub(fired) >= riskRealertAfter {
-			fresh = append(fresh, o)
-		}
-	}
+	fresh := announceable(state, unseen, now)
 	var sendErr error
 	if len(fresh) > 0 {
 		delivered := ""
@@ -134,6 +134,31 @@ func (a *RiskAlerter) Check(ctx context.Context) error {
 		return err
 	}
 	return sendErr
+}
+
+// keepUnseen copies the risks a namespace had open at the last check into open and marks them
+// unseen, for a namespace that could not be assessed this time.
+func keepUnseen(open map[string]finops.OpenRisk, unseen map[string]bool, last map[string]finops.OpenRisk, namespace string) {
+	for key, prev := range last {
+		if prev.Namespace == namespace {
+			open[key], unseen[key] = prev, true
+		}
+	}
+}
+
+// announceable returns the open risks seen in this check that were never announced or not in the
+// last day, in the order the alert lists them.
+func announceable(state finops.RiskState, unseen map[string]bool, now time.Time) []finops.OpenRisk {
+	var fresh []finops.OpenRisk
+	for _, o := range state.Sorted() {
+		if unseen[o.Key()] {
+			continue
+		}
+		if fired, ok := state.Fired[o.Key()]; !ok || now.Sub(fired) >= riskRealertAfter {
+			fresh = append(fresh, o)
+		}
+	}
+	return fresh
 }
 
 // riskAlertMarkdown lists the new risks with their fixes, at most riskAlertLines of them, and
